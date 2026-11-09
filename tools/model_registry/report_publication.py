@@ -21,7 +21,7 @@ from typing import Any
 from urllib.parse import quote
 
 from jsonschema import Draft202012Validator
-from model_report import CORE_REPORT_FILE, METRICS, REPORT_FILE, REQUIRED_PERFORMANCE_METRICS
+from model_report import CORE_REPORT_FILE, METRICS, REPORT_FILE, REQUIRED_PERFORMANCE_METRICS, accuracy_value_error
 
 from .benchmark_declarations import benchmarked_profiles
 from .dependencies import resolve_benchmark_runtime
@@ -114,8 +114,9 @@ def _run_id(value: Any, path: Path) -> str:
 
 def runner_environment() -> JsonObject:
     """The DevKit's installation and clocks, without taking performance measurements."""
+    # Core installs the Neat runtime as Scheduler packages named simaai-*.
     packages = subprocess.run(
-        ["dpkg-query", "-W", "-f=${db:Status-Abbrev}\t${binary:Package}\t${Version}\n", "*neat*"],
+        ["dpkg-query", "-W", "-f=${db:Status-Abbrev}\t${binary:Package}\t${Version}\n", "*neat*", "simaai-*"],
         capture_output=True,
         text=True,
         check=True,
@@ -125,8 +126,6 @@ def runner_environment() -> JsonObject:
         fields = line.split("\t", 2)
         if len(fields) == 3 and fields[0] == "ii " and fields[2].strip():
             installed[fields[1]] = fields[2]
-    if not any(name.partition(":")[0] == "neat-runtime" for name in installed):
-        raise ValidationError("could not establish installed Neat Internals version")
     return {
         "buildinfo": Path("/etc/buildinfo").read_text(encoding="utf-8"),
         "packages": installed,
@@ -185,6 +184,11 @@ def _check_metrics(label: str, stage: str, metrics: dict[str, float], required: 
     missing = [name for name in required if name not in metrics]
     if missing:
         raise ValidationError(f"{label}: required {stage} metrics were not measured: {', '.join(missing)}")
+    if stage == "accuracy":
+        # The schema cannot bound a score by its metric's unit, so a report written without from_accuracy() stops here.
+        errors = [error for name, value in metrics.items() if (error := accuracy_value_error(name, value))]
+        if errors:
+            raise ValidationError(f"{label}: {'; '.join(errors)}")
 
 
 def _put_file(

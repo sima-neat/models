@@ -4,7 +4,7 @@ import base64
 import hashlib
 import json
 import math
-import os
+import random
 import subprocess
 import tempfile
 import time
@@ -21,15 +21,21 @@ from urllib.request import urlopen
 
 from jsonschema import Draft202012Validator
 
-from .artifact import compile_output_fields, deployment_files, validate_compile_outputs, verify_artifact, verify_llima
+from .artifact import (
+    compile_output_fields, deployment_files, llima_compiled_parameters,
+    validate_compile_outputs, verify_artifact, verify_llima,
+)
 from .compile_matrix import build_matrix
 from .dependencies import resolve_model_compiler
 from .documentation import load_model_documentation
-from .errors import ModelRegistryError, ValidationError
+from .errors import ValidationError
 from .fetch import sha256_file
 from .fingerprints import benchmark_fingerprint, compile_fingerprint
+from .mla_stage_simulation import SIMULATION_FILE
 from .model import compile_invocations_for, load_and_validate_model, load_models, mpk_filename
 from .package import FIDELITY_FILE
+from .registry_http import RegistryPublicationError, SigV4RegistryClient
+from .registry_http import read_registry_json_authenticated as _public_registry_json
 from .runner_approval import runner_provenance
 from .source import source_identity
 from .stage_plan import merge_catalog_sources, read_catalog_sources, read_current_catalog
@@ -52,83 +58,6 @@ def canonical_sha256(value: Any) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
-class RegistryPublicationError(ModelRegistryError):
-    """A model compilation could not be published to the artifact registry."""
-
-
-class SigV4RegistryClient:
-    def __init__(self, api_url: str, region: str, *, request: Request | None = None) -> None:
-        self.api_url = api_url.rstrip("/")
-        self.region = region
-        self._request = request or self._curl_request
-
-    def request(self, method: str, path: str, body: JsonObject | None, idempotency_key: str) -> JsonObject:
-        try:
-            return self._request(method, path, body, idempotency_key)
-        except RegistryPublicationError as exc:
-            raise RegistryPublicationError(f"{method} {path}: {exc}") from exc
-
-    def _curl_request(self, method: str, path: str, body: JsonObject | None, idempotency_key: str) -> JsonObject:
-        access_key = os.environ.get("AWS_ACCESS_KEY_ID", "")
-        secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY", "")
-        session_token = os.environ.get("AWS_SESSION_TOKEN", "")
-        if not access_key or not secret_key or not session_token:
-            raise RegistryPublicationError("AWS session credentials are required for registry publication")
-
-        command = [
-            "curl",
-            "--silent",
-            "--show-error",
-            "--aws-sigv4",
-            f"aws:amz:{self.region}:execute-api",
-            "--user",
-            f"{access_key}:{secret_key}",
-            "--header",
-            f"x-amz-security-token: {session_token}",
-            "--header",
-            "content-type: application/json",
-            "--header",
-            f"idempotency-key: {idempotency_key}",
-            "--request",
-            method,
-            "--write-out",
-            "\n%{http_code}",
-            f"{self.api_url}{path}",
-        ]
-        payload = None
-        if body is not None:
-            command.extend(["--data-binary", "@-"])
-            payload = json.dumps(body, sort_keys=True, separators=(",", ":"))
-
-        for attempt in range(1, 6):
-            completed = subprocess.run(command, input=payload, text=True, capture_output=True, check=False)
-            if completed.returncode != 0:
-                if attempt == 5:
-                    raise RegistryPublicationError(
-                        f"artifact registry request failed before receiving HTTP: {completed.stderr.strip()}"
-                    )
-                time.sleep(2 ** (attempt - 1))
-                continue
-            response_body, separator, status_text = completed.stdout.rpartition("\n")
-            if not separator or not status_text.isdigit():
-                raise RegistryPublicationError("artifact registry returned an invalid HTTP response")
-            status = int(status_text)
-            try:
-                decoded = json.loads(response_body) if response_body else {}
-            except json.JSONDecodeError as exc:
-                raise RegistryPublicationError(f"artifact registry returned non-JSON HTTP {status}") from exc
-            if 200 <= status < 300:
-                if not isinstance(decoded, dict):
-                    raise RegistryPublicationError("artifact registry response must be a JSON object")
-                return decoded
-            if status in {429, 502, 503, 504} and attempt < 5:
-                time.sleep(2 ** (attempt - 1))
-                continue
-            error = decoded.get("error", {}) if isinstance(decoded, dict) else {}
-            code = error.get("code", "unknown_error")
-            message = error.get("message", "request rejected")
-            raise RegistryPublicationError(f"artifact registry HTTP {status} {code}: {message}")
-        raise AssertionError("unreachable")
 
 
 @dataclass(frozen=True)
@@ -362,10 +291,22 @@ def _selected_invocation_keys(selected_matrix: Path | None) -> set[tuple[str, st
     return selected
 
 
+def _catalog_models(models: dict[str, Any]) -> dict[str, Any]:
+    """Only refresh conversion-backed catalog entries selected by this workflow."""
+    from .conversion import selections
+
+    selected = selections()
+    return {key: model for key, model in models.items()
+            if model["components"][0]["source"]["type"] != "conversion" or key in selected}
+
+
 def _head_matrix(root: Path, models: dict[str, Any]) -> list[JsonObject]:
     """Every compile invocation the checkout declares, with its compile fingerprint."""
+    models = _catalog_models(models)
     compiler_version = resolve_model_compiler(root)["identity"]
-    return build_matrix(models, sorted(models), repository=root, compiler_version=compiler_version)["include"]
+    return build_matrix(
+        models, sorted(models), repository=root, compiler_version=compiler_version,
+    )["include"]
 
 
 def build_catalog_snapshot(
@@ -385,7 +326,9 @@ def build_catalog_snapshot(
         raise ValidationError("git SHA must contain exactly 40 hexadecimal characters")
     if not branch.strip():
         raise ValidationError("branch must not be empty")
-    models = load_models(root)
+    all_models = load_models(root)
+    models = _catalog_models(all_models)
+    deferred = set(all_models) - set(models)
     taxonomy = canonical_taxonomy_document(load_taxonomy(root / TAXONOMY_RELATIVE_PATH))
     taxonomy_digest = taxonomy_sha256(taxonomy)
     matrix = _head_matrix(root, models)
@@ -635,6 +578,22 @@ def build_catalog_snapshot(
                 raise ValidationError(f"model documentation receipt is missing: {model_id}")
             entry["documentation"] = documentation
         model_entries.append(entry)
+    # Unselected conversions retain their complete published model entry, including
+    # package links and on-demand requirements. New ones wait for a selected plan.
+    for model in (previous or {}).get("models", []):
+        if model["id"] not in deferred:
+            continue
+        entry = dict(model)
+        if documentation_receipts is not None:
+            documentation = documentation_receipts.get(model["id"])
+            if not isinstance(documentation, dict):
+                raise ValidationError(f"model documentation receipt is missing: {model['id']}")
+            # Documentation must belong to the new catalog revision even when
+            # the model's conversion/build artifacts are carried forward.
+            entry["documentation"] = documentation
+        model_entries.append(entry)
+    model_entries.sort(key=lambda model: model["id"])
+    pending_builds.extend(item for item in (previous or {}).get("pending_builds", []) if item["model_id"] in deferred)
     document: JsonObject = {
         "schema_version": 2 if incremental else 1,
         "repository": "sima-neat/models",
@@ -873,8 +832,21 @@ def publish_catalog(
     # Base branches seed a new revision only. During progress publication they
     # could restore a deliberately withheld package, or replace a published one
     # when a base branch finishes rebuilding before this branch does.
-    previous = merge_catalog_sources(sources[:1] if continuing_revision else sources,
-                                     _head_matrix(root, load_models(root)))
+    models = load_models(root)
+    # Apply the same revision boundary when carrying deferred conversion entries.
+    sources = sources[:1] if continuing_revision else sources
+    previous = merge_catalog_sources(sources, _head_matrix(root, models))
+    deferred = set(models) - set(_catalog_models(models))
+    if deferred:
+        previous = previous or {"models": []}
+        for source in sources:
+            for model in source.get("models", []):
+                if model["id"] in deferred:
+                    previous["models"].append(model)
+                    previous.setdefault("pending_builds", []).extend(
+                        item for item in source.get("pending_builds", []) if item["model_id"] == model["id"]
+                    )
+                    deferred.remove(model["id"])
     document = build_catalog_snapshot(
         repository=repository,
         branch=branch,
@@ -917,40 +889,23 @@ def _revision_documentation_receipts(
     return receipts
 
 
-def _public_registry_json(url: str) -> JsonObject:
-    # Sign only the explicitly configured API, never artifact download URLs.
-    iam_api = os.environ.get("MODEL_REGISTRY_IAM_READ_API_URL", "").rstrip("/")
-    if iam_api and url.startswith(iam_api + "/v1/"):
-        region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION")
-        if not region:
-            raise RegistryPublicationError("AWS_REGION is required for authenticated registry reads")
-        return SigV4RegistryClient(iam_api, region).request("GET", url[len(iam_api):], None, "")
-    try:
-        with urlopen(UrlRequest(url, headers={"User-Agent": "sima-neat-model-registry/0.1"}), timeout=30) as response:
-            value = json.load(response)
-    except HTTPError as exc:
-        code = "unknown_error"
-        message = str(exc)
-        try:
-            payload = json.loads(exc.read())
-            error = payload.get("error", {}) if isinstance(payload, dict) else {}
-            if isinstance(error, dict):
-                code = str(error.get("code", code))
-                message = str(error.get("message", message))
-        except (OSError, json.JSONDecodeError):
-            pass
-        raise RegistryPublicationError(
-            f"public artifact registry HTTP {exc.code} {code}: {message}"
-        ) from exc
-    except (OSError, json.JSONDecodeError) as exc:
-        raise RegistryPublicationError(f"could not read public artifact registry endpoint {url}: {exc}") from exc
-    if not isinstance(value, dict):
-        raise RegistryPublicationError(f"artifact registry endpoint did not return an object: {url}")
-    return value
 
 
 def _download_registry_file(url: str, destination: Path, artifact: JsonObject,
                             download: DownloadRequest | None = None) -> None:
+    # An orchestrator run stages every build's benchmark at once, so retry a dropped or throttled download.
+    for attempt in range(1, 6):
+        try:
+            return _download_registry_file_once(url, destination, artifact, download)
+        except RegistryPublicationError as exc:
+            cause = exc.__cause__
+            if isinstance(cause, HTTPError) and cause.code not in {429, 502, 503, 504} or attempt == 5:
+                raise
+        time.sleep(2 ** (attempt - 1) + random.uniform(0, 1))
+
+
+def _download_registry_file_once(url: str, destination: Path, artifact: JsonObject,
+                                 download: DownloadRequest | None = None) -> None:
     """Stream into a temporary file and install only after size and checksum verification."""
     destination.parent.mkdir(parents=True, exist_ok=True)
     digest = hashlib.sha256()
@@ -1284,6 +1239,69 @@ def _publish_fidelity(
     )
 
 
+def _mla_stage_simulation_result(path: Path, schema_path: Path, *, model_id: str, build_profile_id: str) -> JsonObject:
+    try:
+        simulation = json.loads(path.read_text(encoding="utf-8"))
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValidationError(f"{path}: could not read MLA stage simulation: {exc}") from exc
+    errors = sorted(
+        Draft202012Validator(schema).iter_errors(simulation),
+        key=lambda error: tuple(str(part) for part in error.absolute_path),
+    )
+    if errors:
+        first = errors[0]
+        location = ".".join(str(part) for part in first.absolute_path) or "<root>"
+        raise ValidationError(f"{path}: MLA stage simulation {location}: {first.message}")
+    for field, value in {"model_id": model_id, "build_profile_id": build_profile_id}.items():
+        if simulation[field] != value:
+            raise ValidationError(f"{path}: MLA stage simulation {field} must be {value!r}")
+    return simulation
+
+
+def _publish_mla_stage_simulation(
+    client: SigV4RegistryClient,
+    store: S3ArtifactStore,
+    path: Path,
+    simulation: JsonObject,
+    *,
+    run_id: str,
+    stable_key: str,
+    bucket: str,
+    retention_class: str,
+    s3_key: str,
+) -> None:
+    """Attach a profile's MLA stage simulation to its package run, where the model browser reads it."""
+    stored = store.ensure_native_sha256(path, s3_key, sha256_file(path)[0], media_type="application/json")
+    artifact = client.request(
+        "PUT",
+        f"/v1/runs/{run_id}/artifacts/mla-stage-simulation",
+        {
+            "artifact_type": "mla-stage-simulation",
+            "s3_bucket": bucket,
+            "s3_key": stored.key,
+            "s3_version_id": stored.version_id,
+            "sha256": stored.sha256,
+            "size_bytes": stored.size_bytes,
+            "media_type": "application/json",
+            "retention_class": retention_class,
+            "metadata": {key: simulation[key] for key in ("model_id", "build_profile_id")},
+        },
+        f"{stable_key}-mla-stage-simulation-artifact",
+    )
+    # A component mla-msim could not simulate leaves nothing to compare, which is not a failure of the model.
+    simulated = all(component["status"] == "ok" for component in simulation["components"].values())
+    test: JsonObject = {"status": "passed" if simulated else "skipped", "summary": simulation}
+    if artifact.get("artifact_id"):
+        test["report_artifact_id"] = artifact["artifact_id"]
+    client.request(
+        "PUT",
+        f"/v1/runs/{run_id}/test-results/performance/mla-stage-simulation",
+        test,
+        f"{stable_key}-mla-stage-simulation-test-result",
+    )
+
+
 def _compile_timing(path: Path) -> JsonObject:
     """Read the recipe timing the compile runner writes; registry run timestamps measure publication."""
     try:
@@ -1317,6 +1335,9 @@ def _preflight_compilations(
         if model_id not in models:
             raise ValidationError(f"compile outputs reference unknown model: {model_id}")
         model = models[model_id]
+        from .conversion import apply_selection
+
+        apply_selection(model, root=root)
         profiles = {item["id"]: item for item in model["build_profiles"]}
         if build_profile_id not in profiles:
             raise ValidationError(f"compile outputs reference unknown build profile: {model_id}/{build_profile_id}")
@@ -1350,6 +1371,9 @@ def _preflight_compilations(
     for result_path in sorted(actual_results):
         model_id, build_profile_id, component_id = result_path.relative_to(dist).parts[:3]
         model = models[model_id]
+        from .conversion import apply_selection
+
+        apply_selection(model, root=root)
         profiles = {item["id"]: item for item in model["build_profiles"]}
         components = {item["id"]: item for item in model["components"]}
         profile = profiles[build_profile_id]
@@ -1406,23 +1430,9 @@ def _preflight_compilations(
             raise ValidationError(f"{result_path}: archive checksum or size does not match")
 
         compiled_parameters = {}
-        if native and any(name in binding["parameters"] for name in (
-            "max_num_tokens", "language_group_size", "input_height", "input_width"
-        )):
-            config = json.loads((archive.parent / "deployment/devkit/vlm_config.json").read_text(encoding="utf-8"))
-            compiled_parameters = {
-                name: config["pipeline_cfg"][field]
-                for name, field in (("max_num_tokens", "max_num_tokens"),
-                                    ("language_group_size", "input_token_group_size"))
-                if field in config["pipeline_cfg"]
-            }
-            image_size = (config.get("vm_cfg") or {}).get("image_size")
-            if type(image_size) is int and image_size > 0:
-                image_size = [image_size, image_size]
-            if (isinstance(image_size, list) and len(image_size) == 2
-                    and all(type(value) is int and value > 0 for value in image_size)):
-                compiled_parameters.update(input_height=image_size[0], input_width=image_size[1])
-            for name in ("max_num_tokens", "language_group_size", "input_height", "input_width"):
+        if native:
+            compiled_parameters = llima_compiled_parameters(archive.parent / "deployment")
+            for name in ("max_num_tokens", "language_group_size", "input_height", "input_width", "speculative_method"):
                 if name in binding["parameters"] and compiled_parameters.get(name) != binding["parameters"][name]:
                     raise ValidationError(f"{result_path}: compiled {name} does not match model.yaml")
 
@@ -1469,6 +1479,13 @@ def _preflight_compilations(
             }
         )
     return prepared
+
+
+def _conversion_input(source, source_metadata):
+    from .conversion import input_record
+
+    record = input_record(source)
+    return {**record, "metadata": {**source_metadata, **record["metadata"]}}
 
 
 def publish_compilations(
@@ -1614,6 +1631,8 @@ def publish_compilations(
         if isinstance(model_card, str) and model_card:
             source_metadata["model_card"] = model_card
         source_reference = source.get("uri")
+        if source["type"] == "conversion":
+            source_reference = f"run:{source['run_id']}/artifacts/onnx"
         if not isinstance(source_reference, str):
             source_reference = f"{model['upstream']['repository']}#{source['entrypoint']}"
         client.request(
@@ -1628,6 +1647,7 @@ def publish_compilations(
                 ),
                 "media_type": _component_source_media_type(source),
                 "metadata": source_metadata,
+                **(_conversion_input(source, source_metadata) if source["type"] == "conversion" else {}),
             },
             f"{stable_key}-input",
         )
@@ -1838,6 +1858,13 @@ def publish_packages(
             build_profile_id=profile_id,
             config=model["numerical_fidelity"],
         ) if fidelity_path.is_file() else None
+        simulation_path = result_path.parent / SIMULATION_FILE
+        simulation = _mla_stage_simulation_result(
+            simulation_path,
+            root / "schemas" / "mla-stage-simulation.schema.json",
+            model_id=model_id,
+            build_profile_id=profile_id,
+        ) if simulation_path.is_file() else None
 
         manifest_sha = canonical_sha256(manifest)
         parameters = {
@@ -1927,6 +1954,13 @@ def publish_packages(
                 retention_class=retention_class,
                 s3_key=(f"{candidate['upload_prefix'].rstrip('/')}/{run_id}/numerical-fidelity.json" if candidate else
                         f"models/{branch_key}/{commit_tag}/{model_id}/{profile_id}/numerical-fidelity.json"),
+            )
+        if simulation is not None:
+            _publish_mla_stage_simulation(
+                client, store, simulation_path, simulation, run_id=run_id, stable_key=stable_key, bucket=bucket,
+                retention_class=retention_class,
+                s3_key=(f"{candidate['upload_prefix'].rstrip('/')}/{run_id}/{SIMULATION_FILE}" if candidate else
+                        f"models/{branch_key}/{commit_tag}/{model_id}/{profile_id}/{SIMULATION_FILE}"),
             )
         client.request("POST", f"/v1/runs/{run_id}/finalize", {"status": "completed"}, f"{stable_key}-finalize")
         published.append({

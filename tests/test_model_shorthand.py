@@ -48,6 +48,7 @@ def test_normalization_does_not_modify_authored_settings() -> None:
     assert [profile["compile_invocations"] for profile in model["build_profiles"]] == [
         [{"id": "w16a16", "components": ["model"]}],
         [{"id": "w8a8", "components": ["model"]}],
+        [{"id": "w8a16", "components": ["model"]}],
     ]
     assert model["performance"] == authored["performance"]
     assert model["compositions"][0]["entrypoint"] == "default"
@@ -60,9 +61,7 @@ def test_multi_component_model_compiles_and_packages_its_components_together() -
     model = normalize_model(authored, MODELS / "rf_detr_nano")
 
     assert [component["id"] for component in model["components"]] == ["backbone", "decoder"]
-    assert {component["source"]["sha256"] for component in model["components"]} == {
-        authored["compilation"]["source"]["sha256"]
-    }
+    assert [component["source"] for component in model["components"]] == [{"type": "conversion"}] * 2
     for profile in model["build_profiles"]:
         assert profile["compile_invocations"] == [{"id": profile["id"], "components": ["backbone", "decoder"]}]
         # The recipe calibrates the backbone; the decoder calibrates on the backbone's outputs.
@@ -139,9 +138,11 @@ def test_accuracy_names_each_dataset_by_its_registry_source_and_keeps_measured_b
     model = normalize_model(authored, MODELS / "resnet_50")
     [pin] = authored["accuracy"]["datasets"]
 
-    assert model["accuracy"] == {**authored["accuracy"], "datasets": {"imagenet-2012-mini": pin}}
-    assert benchmarked_profiles(model, "accuracy") == ["w8a8"]
-    assert benchmarked_profiles(model, "performance") == ["w16a16", "w8a8"]
+    assert model["accuracy"] == {**authored["accuracy"], "datasets": {"imagenet-2012-val": pin}}
+    assert benchmarked_profiles(model, "accuracy") == ["w16a16", "w8a8", "w8a16"]
+    assert benchmarked_profiles(model, "performance") == ["w16a16", "w8a8", "w8a16"]
+    authored["accuracy"]["build_profiles"] = ["w8a8", "w8a16"]
+    assert benchmarked_profiles(normalize_model(authored, MODELS / "resnet_50"), "accuracy") == ["w8a8", "w8a16"]
     authored = _authored("yolo26n")
     del authored["accuracy"]
     without_accuracy = normalize_model(authored, MODELS / "yolo26n")

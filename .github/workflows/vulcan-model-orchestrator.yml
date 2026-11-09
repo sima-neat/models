@@ -1,18 +1,12 @@
 name: Vulcan Model Orchestrator
 
-run-name: Vulcan Model Orchestrator (${{ inputs.environment != 'default' && inputs.environment || vars.VULCAN_ENV || 'staging' }}) — ${{ github.ref_name }}
+run-name: Vulcan Model Orchestrator (${{ vars.VULCAN_ENV }}) — ${{ github.ref_name }}
 
 on:
   # Every push publishes its revision's catalog; unchanged fingerprints compile and benchmark nothing.
   push:
   workflow_dispatch:
     inputs:
-      environment:
-        description: Override Vulcan environment; default uses repository VULCAN_ENV (staging if unset)
-        required: true
-        default: default
-        type: choice
-        options: [default, staging, production]
       models:
         description: Comma-separated model IDs; leave empty to plan the entire catalog
         required: false
@@ -45,7 +39,7 @@ env:
 # builds the cancelled one left pending. Each manual dispatch runs to completion.
 concurrency:
   group: >-
-    model-compile-${{ github.ref }}-${{ inputs.environment != 'default' && inputs.environment || vars.VULCAN_ENV || 'staging' }}${{
+    model-compile-${{ github.ref }}-${{ vars.VULCAN_ENV }}${{
     github.event_name == 'workflow_dispatch' && format('-{0}', github.run_id) || '' }}
   cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
 
@@ -82,10 +76,10 @@ jobs:
       - name: Resolve Vulcan environment
         id: environment
         env:
-          REQUESTED_ENVIRONMENT: ${{ inputs.environment != 'default' && inputs.environment || vars.VULCAN_ENV || 'staging' }}
+          REQUESTED_ENVIRONMENT: ${{ vars.VULCAN_ENV }}
         run: |
           set -euo pipefail
-          environment="${REQUESTED_ENVIRONMENT:-staging}"
+          environment="${REQUESTED_ENVIRONMENT:?Set VULCAN_ENV to staging or production}"
           case "$environment" in
             staging) runner_environment="vulcan-stg" ;;
             production) runner_environment="vulcan-production" ;;
@@ -148,6 +142,8 @@ jobs:
   portal:
     name: Check the model browser portal
     uses: ./.github/workflows/developer-docs.yml
+    with:
+      environment: staging
 
   resolve-vulcan-config:
     name: Resolve Vulcan publication config
@@ -160,31 +156,49 @@ jobs:
       vulcan_env: ${{ needs.select.outputs.vulcan_environment }}
     secrets: inherit
 
+  # The run's benchmarks share one resolution: every resolver call uploads the same artifact name.
+  resolve-benchmark-runner:
+    name: Resolve the benchmark DevKit runner
+    uses: sima-neat/.github/.github/workflows/vulcan-resolve-modalix-runner.yml@main
+    with:
+      # DevKit placement is independent of registry and dataset selection.
+      runner-labels: '["self-hosted", "Linux", "ARM64", "modalix", "modalix-som-16gig", "model-registry", "vulcan-staging"]'
+
+  # Frontend staging publication is independent of the model build/registry environment.
+  resolve-staging-browser-config:
+    name: Resolve staging model browser publication config
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop'
+    permissions:
+      contents: read
+      id-token: write
+    uses: sima-neat/.github/.github/workflows/vulcan-resolve-config.yml@main
+    with:
+      vulcan_env: staging
+    secrets: inherit
+
   # Staging serves the model browser of main and develop: the portal this run built and checked.
   # Both branches publish to the same prefix, and a publish deletes files missing from its site, so
   # publishes queue in one group instead of overlapping.
   publish-model-browser:
     name: Publish the staging model browser
-    needs: [select, portal, resolve-vulcan-config]
+    needs: [portal, resolve-staging-browser-config]
     concurrency:
       group: ${{ github.repository }}-model-browser-staging
       cancel-in-progress: false
-    if: >-
-      (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop') &&
-      needs.select.outputs.vulcan_environment == 'staging'
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop'
     permissions:
       contents: read
       actions: write
       id-token: write
     uses: sima-neat/.github/.github/workflows/vulcan-publish-static-site.yml@main
     with:
-      environment_name: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
+      environment_name: ${{ needs.resolve-staging-browser-config.outputs.vulcan_env }}
       site_key: DOCS
-      aws_region: ${{ needs.resolve-vulcan-config.outputs.aws_region }}
-      bucket: ${{ needs.resolve-vulcan-config.outputs.docs_bucket }}
-      role_to_assume: ${{ needs.resolve-vulcan-config.outputs.docs_publisher_role_arn }}
-      sse_kms_key_id: ${{ needs.resolve-vulcan-config.outputs.docs_kms_key_id }}
-      cloudfront_distribution_id: ${{ needs.resolve-vulcan-config.outputs.sysdoc_cloudfront_distribution_id }}
+      aws_region: ${{ needs.resolve-staging-browser-config.outputs.aws_region }}
+      bucket: ${{ needs.resolve-staging-browser-config.outputs.docs_bucket }}
+      role_to_assume: ${{ needs.resolve-staging-browser-config.outputs.docs_publisher_role_arn }}
+      sse_kms_key_id: ${{ needs.resolve-staging-browser-config.outputs.docs_kms_key_id }}
+      cloudfront_distribution_id: ${{ needs.resolve-staging-browser-config.outputs.sysdoc_cloudfront_distribution_id }}
       artifact_pattern: model-browser-site
       s3_prefix: models
       cloudfront_paths: "/models /models/*"
@@ -198,6 +212,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: ${{ needs.select.outputs.vulcan_environment }}
     outputs:
+      conversion_sources: ${{ steps.plan.outputs.conversion_sources }}
       compile_count: ${{ steps.plan.outputs.compile_count }}
       compile_matrix: ${{ steps.plan.outputs.compile_matrix }}
       benchmark_count: ${{ steps.plan.outputs.benchmark_count }}
@@ -217,8 +232,7 @@ jobs:
       - name: Install registry tooling
         run: python -m pip install .
 
-      - name: Configure authenticated production registry reads
-        if: needs.select.outputs.vulcan_environment == 'production'
+      - name: Configure registry planning credentials
         uses: aws-actions/configure-aws-credentials@v6
         with:
           aws-region: ${{ needs.resolve-vulcan-config.outputs.aws_region }}
@@ -228,6 +242,7 @@ jobs:
       - name: Compare fingerprints with published runs
         id: plan
         env:
+          VULCAN_ARTIFACT_REGISTRY_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_API_URL }}
           MODEL_REGISTRY_IAM_READ_API_URL: ${{ needs.select.outputs.vulcan_environment == 'production' && vars.VULCAN_ARTIFACT_REGISTRY_API_URL || '' }}
           REGISTRY_READ_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL || vars.VULCAN_ARTIFACT_REGISTRY_API_URL }}
           COMPILER_IDENTITY: ${{ needs.select.outputs.model_compiler_identity }}
@@ -254,16 +269,13 @@ jobs:
             --compiler-version "$COMPILER_IDENTITY" \
             --branch "$GITHUB_REF_NAME" --base-branches "$BASE_BRANCHES" \
             "${scope_args[@]}")"
+          echo "conversion_sources=$(jq -c .conversion_sources <<< "$plan")" >> "$GITHUB_OUTPUT"
           compile_matrix="$(jq -c '.compile' <<< "$plan")"
           # Benchmarks run on Modalix boards only.
           benchmark_matrix="$(jq -c '{include: [.benchmark.include[] | select(.target == "modalix")]}' <<< "$plan")"
           compile_count="$(jq -r '.include | length' <<< "$compile_matrix")"
           candidate_matrix="$(jq -c '{include: [.include[] | select(.build_on_demand and .runner_script != "scripts/run_llima_compilation.sh") | {model_id, build_profile_id}] | unique}' <<< "$compile_matrix")"
           candidate_count="$(jq -r '.include | length' <<< "$candidate_matrix")"
-          if [[ "$VULCAN_ENVIRONMENT" != "staging" ]] && jq -e '.include | any(.build_on_demand)' <<< "$compile_matrix" >/dev/null; then
-            echo "On-demand candidate publication is currently enabled only in staging." >&2
-            exit 1
-          fi
           benchmark_count="$(jq -r '.include | length' <<< "$benchmark_matrix")"
           {
             echo "compile_matrix=$compile_matrix"
@@ -333,7 +345,7 @@ jobs:
 
   initialize-catalog:
     name: Mark the selected builds pending in the catalog
-    needs: [select, resolve-vulcan-config, authorize-runner-classes]
+    needs: [select, plan, resolve-vulcan-config, authorize-runner-classes]
     if: >-
       !cancelled() &&
       needs.resolve-vulcan-config.result == 'success' &&
@@ -365,6 +377,7 @@ jobs:
           FORCE_REBUILD_ALL: ${{ inputs.force_rebuild_all }}
           SELECTED_MATRIX: ${{ needs.authorize-runner-classes.outputs.matrix }}
           REGISTRY_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_API_URL }}
+          MODEL_REGISTRY_CONVERSIONS: ${{ needs.plan.outputs.conversion_sources || '{}' }}
           MODEL_REGISTRY_IAM_READ_API_URL: ${{ needs.select.outputs.vulcan_environment == 'production' && vars.VULCAN_ARTIFACT_REGISTRY_API_URL || '' }}
           REGISTRY_READ_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL || vars.VULCAN_ARTIFACT_REGISTRY_API_URL }}
           AWS_REGION: ${{ needs.resolve-vulcan-config.outputs.aws_region }}
@@ -389,11 +402,12 @@ jobs:
             --base-branches "$BASE_BRANCHES" --git-sha "$GITHUB_SHA"
 
   compile:
-    name: Compile ${{ matrix.model_id }}/${{ matrix.compile_invocation_id }} (${{ matrix.build_profile_id }})
-    needs: [select, resolve-vulcan-config, authorize-runner-classes, initialize-catalog]
+    name: ${{ matrix.model_id }}/${{ matrix.compile_invocation_id }} (${{ matrix.build_profile_id }})
+    needs: [select, plan, resolve-vulcan-config, resolve-benchmark-runner, authorize-runner-classes, initialize-catalog]
     if: >-
       !cancelled() &&
       needs.resolve-vulcan-config.result == 'success' &&
+      needs.resolve-benchmark-runner.result == 'success' &&
       needs.authorize-runner-classes.result == 'success' &&
       (needs.initialize-catalog.result == 'success' ||
        (needs.select.outputs.publishable != 'true' && needs.initialize-catalog.result == 'skipped'))
@@ -415,9 +429,12 @@ jobs:
       base_branches: ${{ needs.select.outputs.base_branches }}
       publishable: ${{ needs.select.outputs.publishable == 'true' }}
       aws_region: ${{ needs.resolve-vulcan-config.outputs.aws_region }}
+      conversion_sources: ${{ needs.plan.outputs.conversion_sources }}
       dataset_bucket: ${{ needs.resolve-vulcan-config.outputs.dataset_bucket }}
       artifact_bucket: ${{ needs.resolve-vulcan-config.outputs.artifact_bucket }}
       artifact_kms_key_id: ${{ needs.resolve-vulcan-config.outputs.artifact_kms_key_id }}
+      vulcan_config: ${{ toJSON(needs.resolve-vulcan-config.outputs) }}
+      devkit_runner: ${{ toJSON(needs.resolve-benchmark-runner.outputs) }}
     secrets: inherit
 
   publish-candidates:
@@ -435,10 +452,12 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.plan.outputs.candidate_matrix) }}
     env:
+      MODEL_REGISTRY_CONVERSIONS: ${{ needs.plan.outputs.conversion_sources || '{}' }}
       MODEL_ID: ${{ matrix.model_id }}
       BUILD_PROFILE_ID: ${{ matrix.build_profile_id }}
       REGISTRY_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_API_URL }}
-      REGISTRY_READ_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL }}
+      MODEL_REGISTRY_IAM_READ_API_URL: ${{ needs.select.outputs.vulcan_environment == 'production' && vars.VULCAN_ARTIFACT_REGISTRY_API_URL || '' }}
+      REGISTRY_READ_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL || vars.VULCAN_ARTIFACT_REGISTRY_API_URL }}
       AWS_REGION: ${{ needs.resolve-vulcan-config.outputs.aws_region }}
       ARTIFACT_BUCKET: ${{ needs.resolve-vulcan-config.outputs.artifact_bucket }}
       KMS_KEY_ID: ${{ needs.resolve-vulcan-config.outputs.artifact_kms_key_id }}
@@ -544,6 +563,7 @@ jobs:
         env:
           BASE_BRANCHES: ${{ needs.select.outputs.base_branches }}
           REGISTRY_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_API_URL }}
+          MODEL_REGISTRY_CONVERSIONS: ${{ needs.plan.outputs.conversion_sources || '{}' }}
           MODEL_REGISTRY_IAM_READ_API_URL: ${{ needs.select.outputs.vulcan_environment == 'production' && vars.VULCAN_ARTIFACT_REGISTRY_API_URL || '' }}
           REGISTRY_READ_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL || vars.VULCAN_ARTIFACT_REGISTRY_API_URL }}
           AWS_REGION: ${{ needs.resolve-vulcan-config.outputs.aws_region }}
@@ -567,54 +587,70 @@ jobs:
             --base-branches "$BASE_BRANCHES" \
             --git-sha "$GITHUB_SHA"
 
-  # One job starts every reused build's benchmarks; each build's line links its benchmarking workflow run.
-  # The pending catalog already links every reused build, so its benchmarks need not wait for compiles.
+  # Benchmarks the reused builds still lack, one call per build. The pending catalog already links every reused
+  # build, so its benchmarks need not wait for compiles.
   benchmark:
-    name: Dispatch benchmarks for reused builds
-    needs: [select, plan, initialize-catalog]
+    name: ${{ matrix.model_id }}/${{ matrix.compile_invocation_id }} (${{ matrix.build_profile_id }})
+    needs: [select, plan, resolve-vulcan-config, resolve-benchmark-runner, initialize-catalog]
     if: >-
       !cancelled() &&
       needs.initialize-catalog.result == 'success' &&
+      needs.resolve-benchmark-runner.result == 'success' &&
       needs.select.outputs.publishable == 'true' &&
-      needs.select.outputs.vulcan_environment == 'staging' &&
       needs.plan.outputs.benchmark_count != '0'
-    runs-on: ubuntu-latest
     permissions:
       actions: write
       contents: read
-    steps:
-      - name: Check out the trusted revision
-        uses: actions/checkout@v6
-
-      - name: Start the benchmarks reused builds still lack
-        env:
-          GH_TOKEN: ${{ github.token }}
-          BENCHMARK_MATRIX: ${{ needs.plan.outputs.benchmark_matrix }}
-        run: scripts/start_benchmarks.sh "$BENCHMARK_MATRIX"
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.benchmark_matrix) }}
+    uses: ./.github/workflows/vulcan-model-benchmarking.yml
+    with:
+      environment: ${{ needs.select.outputs.vulcan_environment }}
+      # A reused build is restored from the registry.
+      source_run_id: ""
+      source_sha: ${{ github.sha }}
+      source_branch: ${{ github.ref_name }}
+      model_id: ${{ matrix.model_id }}
+      build_profile_id: ${{ matrix.build_profile_id }}
+      compile_invocation_id: ${{ matrix.compile_invocation_id }}
+      stages: ${{ join(matrix.stages, ',') }}
+      vulcan_config: ${{ toJSON(needs.resolve-vulcan-config.outputs) }}
+      devkit_runner: ${{ toJSON(needs.resolve-benchmark-runner.outputs) }}
+    secrets: inherit
 
   # Without compiles the pending catalog is skipped, so the snapshot is the catalog the benchmarks read.
   benchmark-without-compiles:
-    name: Dispatch benchmarks for reused builds
-    needs: [select, plan, publish-catalog]
+    name: ${{ matrix.model_id }}/${{ matrix.compile_invocation_id }} (${{ matrix.build_profile_id }})
+    needs: [select, plan, resolve-vulcan-config, resolve-benchmark-runner, publish-catalog]
     if: >-
       !cancelled() &&
       needs.plan.outputs.compile_count == '0' &&
       needs.publish-catalog.result == 'success' &&
-      needs.select.outputs.vulcan_environment == 'staging' &&
+      needs.resolve-benchmark-runner.result == 'success' &&
       needs.plan.outputs.benchmark_count != '0'
-    runs-on: ubuntu-latest
     permissions:
       actions: write
       contents: read
-    steps:
-      - name: Check out the trusted revision
-        uses: actions/checkout@v6
-
-      - name: Start the benchmarks reused builds still lack
-        env:
-          GH_TOKEN: ${{ github.token }}
-          BENCHMARK_MATRIX: ${{ needs.plan.outputs.benchmark_matrix }}
-        run: scripts/start_benchmarks.sh "$BENCHMARK_MATRIX"
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.benchmark_matrix) }}
+    uses: ./.github/workflows/vulcan-model-benchmarking.yml
+    with:
+      environment: ${{ needs.select.outputs.vulcan_environment }}
+      # A reused build is restored from the registry.
+      source_run_id: ""
+      source_sha: ${{ github.sha }}
+      source_branch: ${{ github.ref_name }}
+      model_id: ${{ matrix.model_id }}
+      build_profile_id: ${{ matrix.build_profile_id }}
+      compile_invocation_id: ${{ matrix.compile_invocation_id }}
+      stages: ${{ join(matrix.stages, ',') }}
+      vulcan_config: ${{ toJSON(needs.resolve-vulcan-config.outputs) }}
+      devkit_runner: ${{ toJSON(needs.resolve-benchmark-runner.outputs) }}
+    secrets: inherit
 
   report-partial-publication:
     name: Report failed model builds
@@ -647,8 +683,9 @@ jobs:
             fi
             sleep $(( attempt * 15 ))
           done
+          # A build's own jobs end in / Compile or / Publish; its nested benchmark jobs report their own failures.
           jq '[.[].jobs[] | select(
-                (.name | startswith("Compile ")) and
+                (.name | test(" / (Compile|Publish)$")) and
                 .conclusion != "success" and .conclusion != "skipped"
               ) | {name, conclusion, html_url}]' "$jobs" > "$failed"
           count="$(jq 'length' "$failed")"

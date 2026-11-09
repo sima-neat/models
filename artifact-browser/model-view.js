@@ -1,6 +1,10 @@
 // Model page: performance, accuracy, model card, build details, and license.
-import { accuracyMetricLabel, orderedMetricNames, referenceScores } from "./accuracy-metrics.js";
-import { selectLayers, layerTimeScale, layerFamily, LAYER_FAMILIES } from "./layer-stats.js";
+import {
+  REFERENCE_ORIGINS, accuracyDisplay, accuracyMetricLabel, formatAccuracy, orderedMetricNames, referenceNotes, referenceOrigin,
+  referenceScores,
+} from "./accuracy-metrics.js";
+import { selectLayers, layerTimeScale, layerFamily, LAYER_FAMILIES } from "./mla-layer-stats.js";
+import { MLA_PEAK_INT8_TOPS, matchMlaStages, mlaPeakTops, mlaStageSimulation, mlaUtilizationMetrics, sustainedEffectiveTops } from "./mla-utilization.js";
 import { readAccuracy, readPerformance } from "./model-report.js";
 import { renderMarkdown, resolveDocumentationLink } from "./markdown.js";
 import { customerView, state, elements, catalogMode, currentVariant, showView, taxonomyLabel } from "./state.js";
@@ -166,9 +170,9 @@ const DETAIL_CARDS = [
     ...Object.keys(RAILS).filter((key) => !SOC_RAILS.includes(key)).map((key) => [RAILS[key][0], key, RAILS[key][1], null, 1]),
   ]],
   ["memory", "Memory", "memory", ["Average", "Peak"], [
-    ["MLA", ["mla_memory_avg_mib", "mla_memory_peak_mib"], "Memory allocated to the MLA."],
-    ["CMA pool", ["avg_cma_memory_mib", "peak_cma_memory_mib"], "Contiguous memory in use, shared with other drivers."],
-    ["Linux", ["avg_linux_memory_mib", "peak_linux_memory_mib"], "Memory used by Linux and its processes."],
+    ["MLA", ["mla_memory_avg_mib", "mla_memory_peak_mib"], "Buffers the MLA holds: weights, working memory, and inputs only the MLA reads."],
+    ["EV74", ["ev74_memory_avg_mib", "ev74_memory_peak_mib"], "Buffers EV74 holds, such as the frames it preprocesses for the MLA.\nMLA plus EV74 is the model's accelerator memory."],
+    ["Linux (board)", ["avg_linux_memory_mib", "peak_linux_memory_mib"], "Memory the whole board uses, every process included.\nIt includes EV74 buffers, so do not add it to the rows above."],
   ]],
 ];
 // Performance, heat, and CPU fill the left column; power, memory, and any other measurements the right.
@@ -505,20 +509,26 @@ function layerAnalysisPanel({ sources, selected, view }) {
 function executionGraphSection(components, key) {
   const graphed = components.filter(({ graph }) => graph);
   if (!graphed.length) return "";
-  const panels = graphed.map(({ id, graph }, index) => `<div data-graph-panel="${index}"${index ? " hidden" : ""}>${executionGraphDiagram(graph, id)}</div>`).join("");
-  const switcher = graphed.length > 1 ? componentSwitch(graphed.map(({ label }) => label), 0, "data-graph-component") : "";
   const meta = graphed.length > 1
     ? graphed.map(({ label }) => label).join(" · ")
     : graphed[0].graph.steps.filter((step) => step.runsOn).map((step) => step.runsOn).join(" · ");
-  return disclosure(`graphs:${key}`, "Execution graph", `<div data-execution-graphs>${switcher}${panels}</div>`, meta);
+  return disclosure(`graphs:${key}`, "Execution Graph",
+    componentPanels(graphed.map(({ label }) => label), graphed.map(({ id, graph }) => executionGraphDiagram(graph, id))), meta);
 }
 
-export function selectExecutionGraph(event) {
-  const button = event.target.closest("[data-graph-component]");
+// Every component's panel, with a switch that shows one at a time when there are several.
+function componentPanels(labels, panels) {
+  const switcher = labels.length > 1 ? componentSwitch(labels, 0, "data-component-switch") : "";
+  return `<div data-component-panels>${switcher}${panels.map((markup, index) =>
+    `<div data-component-panel="${index}"${index ? " hidden" : ""}>${markup}</div>`).join("")}</div>`;
+}
+
+export function selectComponentPanel(event) {
+  const button = event.target.closest("[data-component-switch]");
   if (!button) return;
-  const panel = button.closest("[data-execution-graphs]");
-  panel.querySelectorAll("[data-graph-component]").forEach((item) => item.setAttribute("aria-pressed", String(item === button)));
-  panel.querySelectorAll("[data-graph-panel]").forEach((item) => { item.hidden = item.dataset.graphPanel !== button.value; });
+  const panel = button.closest("[data-component-panels]");
+  panel.querySelectorAll("[data-component-switch]").forEach((item) => item.setAttribute("aria-pressed", String(item === button)));
+  panel.querySelectorAll("[data-component-panel]").forEach((item) => { item.hidden = item.dataset.componentPanel !== button.value; });
 }
 
 function layerAnalysisSection(sources, key) {
@@ -575,7 +585,7 @@ function performanceSummary(performance, run, modelId) {
   const details = performanceDetails(performance, run);
   return `${tiles ? `<div class="kpis">${tiles}</div>` : ""}
     <p class="performance-context">${escapeHtml(performanceContext(performance))}${measurementSource(run, modelId)}</p>
-    ${disclosure(`performance:${run.id}`, "Performance details", details.markup, details.titles.join(" · "))}`;
+    ${disclosure(`performance:${run.id}`, "Performance Details", details.markup, details.titles.join(" · "))}`;
 }
 
 // Component and role ids read as words: "feature_extractor" becomes "Feature extractor".
@@ -601,9 +611,60 @@ function pipelineStrip(pipeline) {
   return `<ol class="component-pipeline" aria-label="Order the components run in"><li class="pipeline-end">Input</li>${stages.join("")}<li class="pipeline-end">Output</li></ol>`;
 }
 
-// The build profile's numbers for the whole model, with each component's layer analysis and execution graph.
-function modelPerformance(benchmarkRun, modelId) {
-  const result = readPerformance(benchmarkRun);
+// Each component's MLA stages set against the simulator's operation counts, in developer mode only: the rates rest
+// on a simulator estimate.
+function renderMlaUtilization(components, simulation, precisions, throughputFps, key) {
+  if (customerView || !simulation && !components.some(({ mlaStageStats }) => mlaStageStats?.status === "ok")) return "";
+  const results = components.map((component) => {
+    const { stages, reason } = matchMlaStages(component.mlaStageStats, simulation?.components?.[component.id]);
+    const peak = mlaPeakTops(precisions[component.id]);
+    return { ...component, reason, peak, metrics: stages && mlaUtilizationMetrics(stages, { peakTops: peak?.tops }) };
+  });
+  const number = (value, digits) => value === null ? "—" : value.toLocaleString(undefined, { maximumFractionDigits: digits });
+  const percent = (value) => value === null ? "—" : `${(value * 100).toFixed(1)}%`;
+  // Component numbers are never added up, so only a single-component model gets a model-level rate.
+  const compared = results.length === 1 && results[0].metrics && Number.isFinite(throughputFps) && results[0].batch > 0;
+  const sustainedTops = compared ? sustainedEffectiveTops(results[0].metrics.total, throughputFps, results[0].batch) : null;
+  // A component's totals as tiles in the layer summary's style, each explained behind an (i) mark.
+  const tile = (value, digits, unit, label, info) => `<div><strong>${number(value, digits)}${value === null ? "" : unit}</strong><span>${label}${infoMark(info)}</span></div>`;
+  const summary = ({ peak, metrics: { stages, total } }) => `<div class="layer-summary mla-summary">
+    ${total.utilization === null ? "" : tile(total.utilization * 100, 1, "<small>%</small>", "Utilization",
+      `Effective TOPS as a share of the MLA's ${number(peak.tops, 1)} TOPS ${peak.datatype} peak.${peak.datatype === "BF16"
+        ? `\nA BF16 multiply takes four times the cycles of an INT8 one, so the peak is a quarter of ${MLA_PEAK_INT8_TOPS} TOPS.` : ""}`)}
+    ${tile(total.effectiveTops, 2, " <small>TOPS</small>", "Effective TOPS",
+      `Useful operations per second: the Model Compiler simulator's count over the measured MLA time.${compared ? `\nSustained at the measured throughput: ${number(sustainedTops, 2)} TOPS.` : ""}`)}
+    ${tile(total.packing === null ? null : total.packing * 100, 1, "<small>%</small>", "Packing",
+      "Share of the operations the MLA executes that are useful. The rest is padding.")}
+    ${tile(total.measuredUs, 1, " <small>µs</small>", "MLA time",
+      `Measured on the board${stages.length > 1 ? ` across ${stages.length} MLA stages` : ` for MLA stage ${stages[0].index}`}.`)}
+  </div>`;
+  const row = (stage) => `<tr><th scope="row">MLA stage ${stage.index}</th>${[number(stage.measuredUs, 1), number(stage.simulatedUs, 1),
+    number(stage.effectiveOps / 1e9, 2), percent(stage.packing), number(stage.effectiveTops, 2), percent(stage.utilization)]
+    .map((value) => `<td>${value}</td>`).join("")}</tr>`;
+  const headings = ["Stage", "Measured <small>(µs)</small>", "Simulated <small>(µs)</small>", "Effective GOP", "Packing",
+    "Effective TOPS", "Utilization"];
+  // Each stage's numbers stay behind a Details button, as the execution graph's tensors do.
+  const stageDetails = ({ id, peak, metrics }) => {
+    const detailsKey = `mla-stages:${key}:${id}`;
+    const open = state.openDisclosures.has(detailsKey);
+    return `<div class="mla-summary-row">${summary({ peak, metrics })}
+      <button type="button" class="execution-details" data-details="${escapeHtml(detailsKey)}" aria-controls="${escapeHtml(detailsKey)}" aria-expanded="${open}">Details${icons.chevron}</button></div>
+      <div id="${escapeHtml(detailsKey)}" class="tensor-table"${open ? "" : " hidden"}><table><thead><tr>${headings.map((heading) => `<th scope="col">${heading}</th>`).join("")}</tr></thead>
+      <tbody>${metrics.stages.map(row).join("")}</tbody></table></div>`;
+  };
+  const panels = results.map((result) => (result.metrics
+    ? stageDetails(result) : `<p class="muted-message">${escapeHtml(result.reason)}</p>`));
+  const meta = compared ? `${number(sustainedTops, 2)} effective TOPS sustained`
+    : results.length > 1 ? results.map(({ label }) => label).join(" · ") : "";
+  return disclosure(`mla-utilization:${key}`, "MLA Utilization",
+    `<div class="mla-utilization">${componentPanels(results.map(({ label }) => label), panels)}</div>`, meta);
+}
+
+// The build profile's numbers for the whole model, with each component's layer analysis, MLA utilization and
+// execution graph.
+function modelPerformance(variant, modelId) {
+  const benchmarkRun = variant.performance;
+  const result = readPerformance(benchmarkRun, pipelineOrder(variant) || []);
   if (result.kind === "missing") return `<p class="muted-message">Not measured at this revision.</p>`;
   if (result.kind === "unsupported") return `<p class="muted-message">This result format is not supported by this browser.</p>`;
   const { run } = benchmarkRun;
@@ -611,8 +672,16 @@ function modelPerformance(benchmarkRun, modelId) {
   return `<div class="component-performance">
     ${performanceSummary(result.value, run, modelId)}
     ${layerAnalysisSection(components.map(({ label, layerAnalysis }) => ({ label, analysis: layerAnalysis })), run.id)}
+    ${renderMlaUtilization(components, mlaStageSimulation(variant.packageTests?.test_results), componentPrecisions(variant),
+      result.value.measurements.throughput_fps?.value, run.id)}
     ${executionGraphSection(components.map(({ id, label, executionGraph }) => ({ id: `${run.id}:${id}`, label, graph: executionGraph })), run.id)}
   </div>`;
+}
+
+// Each component's compile precision, such as w8a8.
+function componentPrecisions(variant) {
+  return Object.fromEntries(variant.details.map((detail) => [detail.summary.run.metadata.component_id,
+    detail.provenance.parameters?.parameters?.compile_parameters?.precision]));
 }
 
 function compileDuration(run) {
@@ -658,22 +727,22 @@ export function accuracyHeadline(variant) {
   const { metrics, dataset } = result.value.datasets[0];
   const [name, value] = orderedAccuracyMetrics(metrics)[0] || [];
   if (!name) return null;
+  const display = accuracyDisplay(name, value);
   return {
-    label: accuracyMetricLabel(name), value: percentage(value),
-    reference: percentage(referenceScores(variant.reference, dataset.id)[name], { blank: true }),
-    numericValue: value * 100,
-    unit: "%",
+    label: accuracyMetricLabel(name), value: formatAccuracy(name, value),
+    reference: formatAccuracy(name, referenceScores(variant.reference, dataset.id)[name], { blank: true }),
+    numericValue: display.number,
+    unit: display.unit,
+    direction: display.direction,
     dataset,
     comparisonKey: dataset.id ? JSON.stringify([dataset.id, dataset.variant, dataset.split, dataset.sha256, name]) : null,
   };
 }
 
-// The build profile's accuracy run, with the scores the model's authors published on the same dataset.
+// The build profile's accuracy run, with the published and FP32 baseline scores on the same dataset.
 function accuracyPanel(variant, modelId) {
   const reference = variant.reference || [];
-  const referenceMarkup = !customerView && reference.length
-    ? disclosure("published-scores", "Published scores", referenceTables(reference), `${reference.length} ${reference.length === 1 ? "source" : "sources"}`)
-    : "";
+  const referenceMarkup = customerView ? "" : referenceDisclosures(reference);
   const result = readAccuracy(variant.accuracy);
   if (result.kind === "missing") return referenceAccuracySection(reference);
   if (result.kind === "unsupported") {
@@ -688,7 +757,7 @@ function accuracyPanel(variant, modelId) {
   // One dataset keeps its coverage beside the section title; several each title their own result.
   const badge = datasets.length === 1 ? coverageBadge(datasets[0].dataset) : "";
   const results = datasets.map((entry) => accuracyResult(
-    entry, tool, referenceScores(reference, entry.dataset.id), sourceMarkup, datasets.length > 1,
+    entry, tool, scoresByOrigin(reference, entry.dataset.id), sourceMarkup, datasets.length > 1,
   )).join("");
   return `<section id="accuracy-section" class="accuracy-section" tabindex="-1">
     <div class="detail-section-title"><h3>Accuracy</h3>${badge}</div>
@@ -697,25 +766,27 @@ function accuracyPanel(variant, modelId) {
   </section>`;
 }
 
-// Accuracy metrics and reference scores are ratios, shown as percentages.
-function percentage(value, { blank = false } = {}) {
-  if (!Number.isFinite(value)) return blank ? "" : "—";
-  return `${(value * 100).toFixed(2)}%`;
+// Each origin's reference scores on a dataset, keyed by origin.
+function scoresByOrigin(reference, datasetId) {
+  return Object.fromEntries(Object.keys(REFERENCE_ORIGINS).map((origin) => [origin, referenceScores(reference, datasetId, origin)]));
 }
 
 function accuracyMetricTiles(metrics, scores) {
   return orderedAccuracyMetrics(metrics).slice(0, ACCURACY_SUMMARY_TILES).map(([name, value], index) => {
-    const published = percentage(scores[name], { blank: true });
-    return `<div class="accuracy-metric${index === 0 ? " primary" : ""}"><span>${escapeHtml(accuracyMetricLabel(name))}</span><strong>${escapeHtml(percentage(value))}</strong><small>${escapeHtml(published ? `Published ${published}` : "")}</small></div>`;
+    const notes = referenceNotes(name, scores).map((note) => `<small>${escapeHtml(note)}</small>`).join("");
+    return `<div class="accuracy-metric${index === 0 ? " primary" : ""}"><span>${escapeHtml(accuracyMetricLabel(name))}</span><strong>${escapeHtml(formatAccuracy(name, value))}</strong>${notes || "<small></small>"}</div>`;
   }).join("");
 }
 
+// The Published column always shows; the FP32 baseline column only when the model has a baseline here.
 function accuracyMetricTable(metrics, scores) {
+  const origins = Object.keys(REFERENCE_ORIGINS).filter((origin) => origin === "published" || Object.keys(scores[origin]).length);
   const rows = orderedAccuracyMetrics(metrics).slice(ACCURACY_SUMMARY_TILES).map(([name, value]) => (
-    `<tr><th scope="row">${escapeHtml(accuracyMetricLabel(name))}</th><td>${escapeHtml(percentage(value))}</td><td>${escapeHtml(percentage(scores[name]))}</td></tr>`
+    `<tr><th scope="row">${escapeHtml(accuracyMetricLabel(name))}</th><td>${escapeHtml(formatAccuracy(name, value))}</td>${origins.map((origin) => `<td>${escapeHtml(formatAccuracy(name, scores[origin][name]))}</td>`).join("")}</tr>`
   )).join("");
   if (!rows) return "";
-  return `<div class="metric-table"><h4>Additional metrics</h4><div class="metric-table-wrap"><table><thead><tr><th scope="col">Metric</th><th scope="col">Value</th><th scope="col">Published</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
+  const headers = origins.map((origin) => `<th scope="col">${escapeHtml(REFERENCE_ORIGINS[origin].label)}</th>`).join("");
+  return `<div class="metric-table"><h4>Additional metrics</h4><div class="metric-table-wrap"><table><thead><tr><th scope="col">Metric</th><th scope="col">Value</th>${headers}</tr></thead><tbody>${rows}</tbody></table></div></div>`;
 }
 
 // Conditions are written as a phrase, such as "640x640, FP32"; notes may already end a sentence.
@@ -723,28 +794,49 @@ function sentence(text = "") {
   return !text || /[.!?]$/.test(text) ? text : `${text}.`;
 }
 
-// Each source the model's authors published scores in, with the dataset and conditions they measured on.
-function referenceTables(reference) {
-  return reference.map((entry) => {
-    const metrics = entry.metrics || {};
-    const rows = orderedMetricNames(Object.keys(metrics)).map((name) => (
-      `<tr><th scope="row">${escapeHtml(accuracyMetricLabel(name))}</th><td>${escapeHtml(percentage(metrics[name]))}</td></tr>`
-    )).join("");
-    const source = trustedHttpsUrl(entry.source);
-    const link = source ? ` <a class="measurement-link" href="${escapeHtml(source.href)}" target="_blank" rel="noreferrer">Source${icons.external}</a>` : "";
-    return `<div class="metric-table published-scores"><h4>${escapeHtml(`${entry.dataset?.id || ""} ${entry.dataset?.split || ""}`.trim())}</h4>
-      <p class="disclosure-text">${escapeHtml(sentence(entry.conditions))}${entry.note ? ` ${escapeHtml(sentence(entry.note))}` : ""}${link}</p>
-      <div class="metric-table-wrap"><table><thead><tr><th scope="col">Metric</th><th scope="col">Published</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
+// One row per origin the model has, listing that origin's entries.
+function referenceDisclosures(reference) {
+  return Object.entries(REFERENCE_ORIGINS).map(([origin, { title, id }]) => {
+    const entries = reference.filter((entry) => referenceOrigin(entry) === origin);
+    if (!entries.length) return "";
+    return disclosure(id, title, referenceTables(entries), `${entries.length} ${entries.length === 1 ? "source" : "sources"}`);
   }).join("");
 }
 
-// A build without an accuracy result still shows what the model's authors published.
+// Each reference entry with the dataset and conditions it was measured on, and where it came from.
+function referenceTables(reference) {
+  return reference.map((entry) => {
+    const { label } = REFERENCE_ORIGINS[referenceOrigin(entry)] || REFERENCE_ORIGINS.published;
+    const metrics = entry.metrics || {};
+    const rows = orderedMetricNames(Object.keys(metrics)).map((name) => (
+      `<tr><th scope="row">${escapeHtml(accuracyMetricLabel(name))}</th><td>${escapeHtml(formatAccuracy(name, metrics[name]))}</td></tr>`
+    )).join("");
+    const source = trustedHttpsUrl(entry.source);
+    const link = source
+      ? ` <a class="measurement-link" href="${escapeHtml(source.href)}" target="_blank" rel="noreferrer">Source${icons.external}</a>`
+      : entry.script ? ` Measured by ${escapeHtml(entry.script)}.` : "";
+    return `<div class="metric-table published-scores"><h4>${escapeHtml(`${entry.dataset?.id || ""} ${entry.dataset?.split || ""}`.trim())}</h4>
+      <p class="disclosure-text">${escapeHtml(sentence(entry.conditions))}${entry.note ? ` ${escapeHtml(sentence(entry.note))}` : ""}${link}</p>
+      <div class="metric-table-wrap"><table><thead><tr><th scope="col">Metric</th><th scope="col">${escapeHtml(label)}</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
+  }).join("");
+}
+
+// A build without an accuracy result still shows its reference scores, each origin under its own explanation.
+const REFERENCE_SCOPES = {
+  published: "The model's authors published these scores for the source model.",
+  fp32_baseline: "The FP32 source model scores these on the package's own inputs.",
+};
+
 function referenceAccuracySection(reference) {
   if (!reference.length) return "";
+  const groups = Object.keys(REFERENCE_ORIGINS).map((origin) => {
+    const entries = reference.filter((entry) => referenceOrigin(entry) === origin);
+    return entries.length ? `<p class="accuracy-scope">${escapeHtml(REFERENCE_SCOPES[origin])}</p>${referenceTables(entries)}` : "";
+  }).join("");
   return `<section id="accuracy-section" class="accuracy-section" tabindex="-1">
     <div class="detail-section-title"><h3>Accuracy</h3></div>
-    <p class="accuracy-scope">No accuracy result for this build yet. The model's authors published these scores for the source model.</p>
-    ${referenceTables(reference)}
+    <p class="accuracy-scope">No accuracy result for this build yet.</p>
+    ${groups}
   </section>`;
 }
 
@@ -1015,7 +1107,7 @@ export function renderDetail(variant) {
     <section id="components-section" class="component-section" tabindex="-1"><div class="detail-section-title"><h3>Performance on ${escapeHtml(targetName(run))}</h3></div>
       ${singleComponent ? "" : `<p class="section-lede">This model runs as ${details.length} components, measured running together.</p>`}
       ${order ? pipelineStrip(variant.pipeline) : ""}
-      ${modelPerformance(variant.performance, model)}
+      ${modelPerformance(variant, model)}
     </section>
 
     ${accuracyMarkup}

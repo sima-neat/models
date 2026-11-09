@@ -11,27 +11,32 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .benchmark_declarations import ACCURACY_REQUIREMENTS, SCRIPTS
+from .benchmark_declarations import ACCURACY_REQUIREMENTS, FP32_BASELINE_SCRIPT, SCRIPTS
 from .dependencies import resolve_benchmark_runtime
 from .errors import ValidationError
-from .model import CONVERSION_FILES, SCRIPTS_DIR, compile_invocations_for, load_and_validate_model
+from .model import CONVERSION_FILES, SCRIPTS_DIR, build_profile_for, compile_invocations_for, load_and_validate_model
 from .source import source_identity
 
 # Shared code used by ONNX builds.
-COMPILE_TOOLING = ("scripts/run_model_compilation.sh", "tools/model_registry/model.py")
+COMPILE_TOOLING = (
+    "scripts/run_model_compilation.sh",
+    "tools/model_registry/model.py",
+    "tools/model_registry/mla_stage_simulation.py",
+)
 
 _IGNORED_BUILD_PARTS = {".git", "__pycache__"}
 _IGNORED_BUILD_SUFFIXES = {".pyc", ".pyo"}
-# Conversion produces the pinned source, and the benchmarks consume the MPK; none changes compilation.
-NON_COMPILE_SCRIPTS = {*SCRIPTS.values(), *CONVERSION_FILES}
+# Conversion produces the pinned source, the benchmarks consume the MPK, and the FP32 baseline script runs the
+# source on a host; none changes compilation.
+NON_COMPILE_SCRIPTS = {*SCRIPTS.values(), FP32_BASELINE_SCRIPT, *CONVERSION_FILES}
 
 # Each benchmark stage's registry run type.
 BENCHMARK_RUN_TYPES = {"performance": "model_performance", "accuracy": "model_accuracy"}
 # The workflow runs the benchmark, model_report writes its report, and report_publication checks and publishes it.
+# metrics.json is left out: it names and labels metrics, so adding or editing one must not rerun every benchmark.
 BOARD_STAGE_TOOLING = (
     ".github/workflows/vulcan-model-benchmarking.yml",
     "tools/model_report/__init__.py",
-    "tools/model_report/metrics.json",
     "schemas/model-report.schema.json",
     "tools/model_registry/report_publication.py",
 )
@@ -114,7 +119,10 @@ def _calibration_projection(model: dict[str, Any], binding: dict[str, Any]) -> d
 
 
 def _component_compile_projection(component: dict[str, Any]) -> dict[str, Any]:
-    return {key: component[key] for key in ("id", "source")}
+    source = component["source"]
+    if source["type"] == "conversion":
+        source = {"type": "conversion", "sha256": source["sha256"]}
+    return {"id": component["id"], "source": source}
 
 
 def _binding_compile_projection(
@@ -140,6 +148,8 @@ def compile_fingerprint(
     profile_id: str,
     compile_invocation_id: str,
     compiler_version: str,
+    *,
+    conversion_sources: dict[str, Any] | None = None,
 ) -> str:
     """Identity of one compile invocation: what it compiles, how, and with which compiler."""
     root = Path(repository).expanduser().resolve()
@@ -156,6 +166,9 @@ def compile_fingerprint(
         raise ValidationError(
             f"unknown compile invocation: {model_id}/{profile_id}/{compile_invocation_id}"
         ) from exc
+    from .conversion import apply_selection
+
+    apply_selection(model, conversion_sources, root=root)
     components = {item["id"]: item for item in model["components"]}
     bindings = {item["id"]: item for item in profile["components"]}
     if any(components[item]["interface"]["format"] == "huggingface" for item in invocation["components"]):
@@ -222,6 +235,7 @@ def benchmark_fingerprint(
     model_dir = f"models/{model_id}"
     required = [f"{model_dir}/{SCRIPTS[stage]}", *(PERFORMANCE_TOOLING if stage == "performance" else ACCURACY_TOOLING)]
     optional = [f"{model_dir}/{ACCURACY_REQUIREMENTS}"] if stage == "accuracy" else []
+    baseline = build_profile_for(model, build_profile_id).get("benchmark_baseline") if stage == "performance" else None
     return _fingerprint({
         "stage": stage,
         "model_id": model_id,
@@ -234,6 +248,7 @@ def benchmark_fingerprint(
             for component_id in components
         },
         stage: {key: value for key, value in model[stage].items() if key != "build_profiles"},
+        **({"benchmark_baseline": baseline} if baseline else {}),
         "files": _file_digests(root, required, optional),
         "runtime": resolve_benchmark_runtime(root),
     })

@@ -59,10 +59,10 @@ test('reads the plan the performance script recorded and shows nothing for anoth
 
 test('reads a multi-component report as one score with each component\'s layers and execution graph', () => {
   const saved = report();
-  const layers = [{name: 'MLA_0/conv2d_0', stage_index: 0, total_execution_time_us: 120.5}];
+  const layers = [{stage_index: 0, name: 'MLA_0/conv2d_0', latency_us: 120.5}];
   saved.components = {
-    backbone: {layer_stats: layers, execution_plan: plan},
-    decoder: {layer_stats: [], execution_plan: null},
+    backbone: {mla_layer_stats: {status: 'ok', layers}, execution_plan: plan},
+    decoder: {mla_layer_stats: {status: 'not requested', layers: []}, execution_plan: null},
   };
   const benchmark = readPerformance({report: saved}).value;
   assert.equal(benchmark.measurements.throughput_fps.value, saved.metrics.throughput_fps);
@@ -71,4 +71,12 @@ test('reads a multi-component report as one score with each component\'s layers 
   assert.equal(benchmark.components[0].layerAnalysis.layers.length, 1);
   assert.equal(benchmark.components[1].executionGraph, null);
   assert.equal(benchmark.components[1].layerAnalysis, null);
+});
+
+test('orders components as the model runs them, though the registry stores the report keys reordered', () => {
+  const saved = report();
+  saved.components = {decoder: {execution_plan: plan}, backbone: {execution_plan: plan}, extra: {execution_plan: plan}};
+  const ids = (order) => readPerformance({report: saved}, order).value.components.map(({id}) => id);
+  assert.deepEqual(ids(['backbone', 'decoder']), ['backbone', 'decoder', 'extra']);
+  assert.deepEqual(ids(), ['decoder', 'backbone', 'extra']);
 });

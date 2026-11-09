@@ -76,6 +76,8 @@ execution graph in the order its pipeline runs them. These synthetic
 layer names include fused operations, nested reshapes, segmentation helpers,
 outputs and zero-time entries. Input placeholders are omitted, matching the
 benchmark API. These names do not describe the selected model's actual graph.
+Each preview package run also carries a generated MLA stage simulation for the
+same stages, at illustrative rates, so developer mode shows MLA Utilization.
 `fixtures/model-report-accuracy.json` gives each accuracy run its shape; the
 preview fills in the metrics the model's tests expect. YOLO26n W16A16
 keeps its benchmark fingerprint without a run, so its page shows **Not measured at
@@ -97,9 +99,13 @@ publishes that portal to the staging docs bucket under `models/`. The
 Developer Center CloudFront distribution routes that prefix to the docs bucket,
 making the browser available at <https://developer-stg.sima.ai/models>.
 
-A manual staging dispatch of the orchestrator on either branch republishes it. The job resolves the bucket, publisher
-role, KMS key, and CloudFront distribution from the shared staging Vulcan
-configuration; those deployment values are not hard-coded in this repository.
+A manual dispatch of the orchestrator on either branch also republishes it.
+The frontend build and publication always use staging, independently of
+`VULCAN_ENV` and the selected model build/registry environment. The separate
+`resolve-staging-browser-config` job resolves the bucket, publisher role, KMS key,
+and CloudFront distribution from the shared staging Vulcan configuration.
+Production frontend deployment remains a manual, owner-gated
+**Deploy Model Browser & Docs** dispatch.
 
 `website/scripts/portal-config.mjs` selects the UI at build time from `GITHUB_REF`:
 Main builds the customer view of the main catalog; Develop, feature branches and
@@ -183,7 +189,7 @@ everything longer sits in one expandable row.
   inference for the whole model, one number per tile, from the build profile's
   performance run. A multi-component model is measured with its components
   running together, and its layer analysis and execution graph switch between
-  the components. **Performance details** is
+  the components. **Performance Details** is
   performance, heat, and CPU cards, with power (SoM; SoC as the sum of its
   MLA and Non-MLA rails; and each other power rail) and memory cards beside
   them,
@@ -193,10 +199,11 @@ everything longer sits in one expandable row.
 - **Accuracy** shows the coverage, the first four metrics, and the dataset,
   from the build profile's accuracy run. In the developer UI, **Evaluation
   details** explains the coverage and lists the context and remaining metrics.
-  **Published scores** lists each `reference_metrics` entry of `model.yaml`
-  with its dataset, conditions, and source; a published score sits beside a
-  measured one only when both name the same dataset. A build without an
-  accuracy result shows only the published scores.
+  **Published scores** and **FP32 baseline** list the `reference_metrics`
+  entries of `model.yaml` of each origin, with their dataset, conditions, and
+  source or script; a reference score sits beside a measured one only when both
+  name the same dataset. A build without an accuracy result shows only the
+  reference scores.
 - **Details**, in the developer UI only, shows the package card (size, SHA-256, **Download package**,
   and **Download components** for a multi-component build) and the package's numerical
   fidelity, then rows for build provenance, source models (one
@@ -218,7 +225,7 @@ and metric identities separate. A multi-component model shows its whole-model re
 shows the model name, variant, throughput and accuracy.
 
 Select up to three points or use **Add model** to inspect exact measurements
-in a table. It includes throughput, latency, power, energy, peak MLA memory and
+in a table. It includes throughput, latency, power, energy, peak MLA and EV74 memory and
 accuracy. Bold marks the best value.
 Models without measurements remain available in **Add model**. LLM/VLM comparisons show **TBD**.
 Links preserve the task and selected builds with `compare_task` and repeated
@@ -241,6 +248,8 @@ delegation.
 | `model-view.js` | The model page |
 | `compare-view.js` | The Compare page: pickers and table |
 | `model-report.js` | Reading performance and accuracy model reports |
+| `mla-layer-stats.js` | Analyzing a component's MLA layer stats |
+| `mla-utilization.js` | Comparing measured MLA stages with their simulation |
 | `metrics.js` | Metric labels, units, and formatting |
 | `downloads.js` | Component discovery for downloads |
 | `markdown.js` | The README renderer |
@@ -353,7 +362,7 @@ pages use only the compiled layer timings in each published model report.
 
 ### Staging hero CDN
 
-Staging developer builds use the existing public-reader hostname's
+Staging and production developer builds use their own public-reader hostname's
 `/images/sha256/<hero artifact SHA-256>.png` path. The hash comes from catalog
 metadata; no signed URLs or extra per-image API resolution are needed. Vulcan
 publishes validated hero derivatives into a private S3 origin when documentation
@@ -361,8 +370,8 @@ runs finish. Deploy that infrastructure and backfill current images **before**
 merging/deploying this browser change. See the companion Vulcan
 `docs/artifact-registry-hero-cdn.md` runbook.
 
-`MODEL_HERO_CDN_BASE_URL` is an optional build setting. Its default is the staging
-CDN path for developer builds using the standard staging API; customer builds and
+`MODEL_HERO_CDN_BASE_URL` is an optional build setting. Its default is the matching environment
+CDN path for developer builds using either standard registry API; customer builds and
 custom API origins default to disabled. Set it to an empty string and rebuild to
 roll back to API image URLs. The source preview `config.js` selects staging CDN.
 Image loading retries twice on the CDN and then uses the existing API URL with
@@ -404,3 +413,10 @@ The preview does not replace your saved branch preference. Omit the parameter
 (or use `branches=1`) to restore the normal branch behavior; customer UI remains
 Main-only. Combine with `env=prod` as `/models/?env=prod&branches=0` to preview
 production Main. That catalog must be published before it can display models.
+
+## Production deployment
+
+`MODEL_BROWSER_ENVIRONMENT=production` selects the production public registry,
+Developer Center origin and environment label. Audience remains independent.
+See [production frontend deployment](../docs/model-browser.md#production-frontend)
+for the tested, prefix-scoped operator deployment and rollback procedure.

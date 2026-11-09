@@ -155,7 +155,6 @@ def test_surgery_requires_the_prototype_silu(tmp_path: Path, load_script: Callab
 def _mpk_manifest(compile_module: ModuleType) -> dict:
     sizes = compile_module.OUTPUT_BYTES
     return {
-        "model_sdk_version": compile_module.COMPILER_VERSION,
         "input_nodes": [{"name": "images", "size": 1 * 3 * 640 * 640 * 4}],
         "plugins": [
             {"sequence": 0, "processor": "EV74", "config_params": {"kernel": "quantize"}},
@@ -178,7 +177,7 @@ def _write_mpk(path: Path, manifest: dict) -> None:
             stream.addfile(info, io.BytesIO(content))
 
 
-@pytest.mark.parametrize("case", ["valid", "reordered", "two_mla", "host", "compiler"])
+@pytest.mark.parametrize("case", ["valid", "reordered", "two_mla", "host"])
 def test_mpk_audit_requires_one_mla_segment_and_the_declared_interface(
     tmp_path: Path,
     case: str,
@@ -194,8 +193,6 @@ def test_mpk_audit_requires_one_mla_segment_and_the_declared_interface(
         plugins.insert(2, {"sequence": 1, "processor": "MLA", "config_params": {}})
     elif case == "host":
         plugins.insert(2, {"sequence": 1, "processor": "A65", "config_params": {}})
-    elif case == "compiler":
-        manifest["model_sdk_version"] = "0.0.0"
     archive = tmp_path / "model_mpk.tar.gz"
     _write_mpk(archive, manifest)
 
@@ -206,17 +203,18 @@ def test_mpk_audit_requires_one_mla_segment_and_the_declared_interface(
             compile_module.audit_mpk(archive)
 
 
-def test_compile_reads_the_declared_build_parameters(load_script: Callable[[str], ModuleType]) -> None:
-    compile_module = load_script("compile")
+@pytest.mark.parametrize("profile_id", ["w16a16", "w8a8", "w8a16"])
+def test_compile_reads_the_declared_build_parameters(load_script: Callable[[str], ModuleType], profile_id: str) -> None:
+    expected = {"precision": profile_id}
+    if profile_id == "w8a8":
+        expected |= {"calibration_bins": 1024, "calibration_samples": 50}
 
-    assert compile_module._parameters("w16a16") == {"precision": "w16a16"}
-    assert compile_module._parameters("w8a8") == {
-        "precision": "w8a8",
-        "calibration_bins": 1024,
-        "calibration_samples": 50,
-    }
+    assert load_script("compile")._parameters(profile_id) == expected
+
+
+def test_compile_rejects_an_undeclared_build_profile(load_script: Callable[[str], ModuleType]) -> None:
     with pytest.raises(ValueError, match="no build profile"):
-        compile_module._parameters("w32a32")
+        load_script("compile")._parameters("w32a32")
 
 
 @pytest.fixture
@@ -230,7 +228,6 @@ def accuracy_script(monkeypatch: pytest.MonkeyPatch, load_script: Callable[[str]
 def test_model_preserves_compilation_and_quality_settings(accuracy_script: ModuleType) -> None:
     model = load_metadata(MODEL_DIR)
     assert model["components"][0]["interface"]["format"] == "onnx"
-    assert {profile["id"] for profile in model["build_profiles"]} == {"w16a16", "w8a8"}
     assert model["license"] == {
         "spdx": "AGPL-3.0-only",
         "redistribution": "restricted",
@@ -242,3 +239,46 @@ def test_model_preserves_compilation_and_quality_settings(accuracy_script: Modul
         assert set(expected["coco-2017-val"]) == metric_names
     assert list(declared["datasets"]) == ["coco-2017-val"]
     assert model["reference_metrics"][0]["metrics"] == {"coco_mask_map": 0.455, "coco_box_map": 0.544}
+
+
+@pytest.mark.parametrize(
+    ("precision", "calibrates", "per_token"), [("w8a8", True, False), ("w8a16", False, True), ("w16a16", False, False)]
+)
+def test_quantization_calibrates_only_int8_activations(
+    load_script: Callable[[str], ModuleType], precision: str, calibrates: bool, per_token: bool
+) -> None:
+    recipe = load_script("compile")
+
+    recipe._quantization(precision, 2048 if calibrates else None)
+
+    arguments = recipe.QuantizationParams.call_args.kwargs
+    calibration = recipe.HistogramMSEMethod.return_value if calibrates else recipe.SkipCalibration.return_value
+    assert arguments["calibration_method"] is calibration
+    assert arguments.get("per_token_quant", False) is per_token
+    if calibrates:
+        recipe.HistogramMSEMethod.assert_called_once_with(2048)
+
+
+@pytest.mark.parametrize("precision", ["w16a16", "w8a16", "w8a8"])
+def test_only_the_int8_build_quantizes_with_calibration_data(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    load_script: Callable[[str], ModuleType],
+    precision: str,
+) -> None:
+    recipe = load_script("compile")
+    parameters = {"precision": precision}
+    if precision == "w8a8":
+        parameters |= {"calibration_bins": 2048, "calibration_samples": 2}
+    monkeypatch.setattr(recipe, "_parameters", lambda profile_id: parameters)
+    monkeypatch.setattr(recipe, "calibration_images", lambda dataset, count: np.zeros((count, 640, 640, 3), np.float32))
+    monkeypatch.setattr(recipe, "prepare_model", lambda source, output_dir: output_dir / "cut.onnx")
+
+    with pytest.raises(RuntimeError, match="expected one MPK"):
+        recipe.compile_model(tmp_path / "model.onnx", tmp_path / "out", precision, tmp_path / "coco.tgz")
+
+    data = recipe.load_model.return_value.quantize.call_args.kwargs["calibration_data"]
+    if precision == "w8a8":
+        assert data is recipe.convert_data_generator_to_iterable.return_value
+    else:
+        assert data is None

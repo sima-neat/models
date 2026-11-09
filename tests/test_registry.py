@@ -245,10 +245,10 @@ def _assembled_package(tmp_path: Path) -> tuple[Path, dict]:
     return packages, assembled
 
 
-def _publish_packages(packages: Path, request, store: FakeStore) -> dict:
+def _publish_packages(packages: Path, request, store: FakeStore, environment: str = "staging") -> dict:
     return publish_packages(
         repository=ROOT, package_dir=packages, api_url="https://registry.example.invalid", aws_region="us-west-2",
-        bucket="artifacts", kms_key_id=None, environment="staging", branch="feature/models", git_sha="a" * 40,
+        bucket="artifacts", kms_key_id=None, environment=environment, branch="feature/models", git_sha="a" * 40,
         github_run_id="1234", github_run_attempt="1", github_run_url="https://example.invalid/run",
         request=request, artifact_store=store,
     )
@@ -350,6 +350,80 @@ def test_publish_package_rejects_fidelity_that_does_not_match_the_declaration(
         return {"run_id": "package-run"}
 
     with pytest.raises(ValidationError, match=message):
+        _publish_packages(packages, request, FakeStore())
+    assert calls == []
+
+
+def _add_mla_stage_simulation(packages: Path, status: str = "ok") -> Path:
+    path = packages / "resnet_50/w16a16/packages/default/mla-stage-simulation.json"
+    stages = [{"stage_index": 0, "effective_ops": 8213719016, "total_ops": 10445905152,
+               "simulated_latency_us": 678.432}] if status == "ok" else []
+    path.write_text(json.dumps({
+        "schema_version": 1, "model_id": "resnet_50", "build_profile_id": "w16a16",
+        "components": {"model": {"status": status, "stages": stages}},
+    }), encoding="utf-8")
+    return path
+
+
+@pytest.mark.parametrize("environment", ["staging", "production"])
+@pytest.mark.parametrize(("status", "test_status"), [("ok", "passed"), ("mla-msim not found", "skipped")])
+def test_package_publishes_the_mla_stage_simulation(
+    tmp_path: Path, status: str, test_status: str, environment: str,
+) -> None:
+    packages, _ = _assembled_package(tmp_path)
+    simulation_path = _add_mla_stage_simulation(packages, status)
+    calls: list[tuple[str, str, dict | None, str]] = []
+
+    def request(method: str, path: str, body: dict | None, key: str) -> dict:
+        calls.append((method, path, body, key))
+        if path == "/v1/runs":
+            return {"run_id": "package-run"}
+        if path.endswith("/artifacts/mla-stage-simulation"):
+            return {"artifact_id": "00000000-0000-4000-8000-000000000003"}
+        return {"ok": True}
+
+    store = FakeStore()
+    _publish_packages(packages, request, store, environment=environment)
+
+    bodies = {path: body for _, path, body, _ in calls}
+    artifact = bodies["/v1/runs/package-run/artifacts/mla-stage-simulation"]
+    assert artifact["artifact_type"] == "mla-stage-simulation"
+    assert artifact["s3_key"] == "models/feature%2Fmodels/aaaaaaaaaaaa/resnet_50/w16a16/mla-stage-simulation.json"
+    assert bodies["/v1/runs/package-run/test-results/performance/mla-stage-simulation"] == {
+        "status": test_status,
+        "summary": json.loads(simulation_path.read_text(encoding="utf-8")),
+        "report_artifact_id": "00000000-0000-4000-8000-000000000003",
+    }
+    assert [path for _, path, _, _ in calls][-1] == "/v1/runs/package-run/finalize"
+    assert store.objects[-1][0] == simulation_path
+
+
+def test_package_carries_the_profile_mla_stage_simulation(tmp_path: Path) -> None:
+    compiled = _packaged_result(tmp_path)
+    (compiled / "resnet_50/w16a16/mla-stage-simulation.json").write_text('{"simulated": true}', encoding="utf-8")
+
+    assemble_package(
+        repository=ROOT, compiled_dir=compiled, output_dir=tmp_path / "packages",
+        model_id="resnet_50", build_profile_id="w16a16", package_id="default",
+    )
+
+    copied = tmp_path / "packages/resnet_50/w16a16/packages/default/mla-stage-simulation.json"
+    assert copied.read_text(encoding="utf-8") == '{"simulated": true}'
+
+
+def test_publish_package_rejects_a_simulation_of_another_build_profile(tmp_path: Path) -> None:
+    packages, _ = _assembled_package(tmp_path)
+    simulation_path = _add_mla_stage_simulation(packages)
+    simulation = json.loads(simulation_path.read_text(encoding="utf-8"))
+    simulation["build_profile_id"] = "w8a8"
+    simulation_path.write_text(json.dumps(simulation), encoding="utf-8")
+    calls = []
+
+    def request(method, path, *args):
+        calls.append((method, path))
+        return {"run_id": "package-run"}
+
+    with pytest.raises(ValidationError, match="build_profile_id must be 'w16a16'"):
         _publish_packages(packages, request, FakeStore())
     assert calls == []
 
@@ -480,10 +554,11 @@ def test_publish_records_one_run_per_compiled_variant(tmp_path: Path, monkeypatc
     )
     resnet = next(model for model in snapshot["models"] if model["id"] == "resnet_50")
     assert resnet["builds"][0]["artifact_sha256"] == artifact["artifact_sha256"]
-    # The fresh build carries its profile's whole-model performance fingerprint; w16a16 has no accuracy.
-    assert resnet["benchmark_fingerprints"] == {"w16a16": {"performance": benchmark_fingerprint(
-        ROOT, models["resnet_50"], "w16a16", {"model": resnet["builds"][0]}, "performance",
-    )}}
+    # The fresh build carries one whole-model fingerprint for each stage its profile benchmarks.
+    assert resnet["benchmark_fingerprints"] == {"w16a16": {
+        stage: benchmark_fingerprint(ROOT, models["resnet_50"], "w16a16", {"model": resnet["builds"][0]}, stage)
+        for stage in ("performance", "accuracy")
+    }}
     package_dir = tmp_path / "packages" / "resnet_50/w16a16/packages/default"
     package_dir.mkdir(parents=True)
     package_dir.joinpath("registry-publication.json").write_text(json.dumps({"packages": [{
@@ -608,8 +683,30 @@ def test_publish_retry_reuses_idempotency_keys_across_run_attempts(tmp_path: Pat
     assert publish("1") == publish("2")
 
 
+def test_conversion_input_keeps_the_model_card_the_browser_links_to() -> None:
+    from model_registry.conversion import FIELDS
+    from model_registry.registry import _conversion_input
+
+    source = {
+        **dict.fromkeys(FIELDS, "value"),
+        "run_id": "conversion-run", "artifact_id": "artifact", "conversion_fingerprint": "f" * 64,
+    }
+    metadata = _conversion_input(source, {"model_card": "https://example.test/card"})["metadata"]
+
+    assert metadata["model_card"] == "https://example.test/card"
+    assert metadata["conversion_run_id"] == "conversion-run"
+
+
+def _direct_source_models() -> dict:
+    """The models whose catalog entries need no saved conversion selection."""
+    return {
+        model_id: model for model_id, model in load_models(ROOT).items()
+        if model["components"][0]["source"]["type"] != "conversion"
+    }
+
+
 def test_catalog_snapshot_reuses_unchanged_compile_runs() -> None:
-    models = load_models(ROOT)
+    models = _direct_source_models()
     compiler_version = resolve_model_compiler(ROOT)["identity"]
     first = build_catalog_snapshot(
         repository=ROOT,
@@ -649,7 +746,7 @@ def test_catalog_snapshot_reuses_unchanged_compile_runs() -> None:
 
 
 def test_catalog_records_benchmark_fingerprints_bound_to_their_compile_runs() -> None:
-    models = load_models(ROOT)
+    models = _direct_source_models()
     model = models["resnet_50"]
     matrix = build_matrix(
         models, sorted(models), repository=ROOT, compiler_version=COMPILER_IDENTITY,
@@ -676,13 +773,13 @@ def test_catalog_records_benchmark_fingerprints_bound_to_their_compile_runs() ->
     assert all(set(build["model"]) == {
         "build_profile_id", "compile_invocation_id", "component_id", "compile_fingerprint", "artifact_sha256", "run_id",
     } for build in builds.values())
-    # Each profile records one fingerprint per stage it benchmarks; only w8a8 declares accuracy.
+    # Each profile records one fingerprint per stage it benchmarks.
     assert resnet["benchmark_fingerprints"] == {
-        "w16a16": {"performance": benchmark_fingerprint(ROOT, model, "w16a16", builds["w16a16"], "performance")},
-        "w8a8": {
-            "performance": benchmark_fingerprint(ROOT, model, "w8a8", builds["w8a8"], "performance"),
-            "accuracy": benchmark_fingerprint(ROOT, model, "w8a8", builds["w8a8"], "accuracy"),
-        },
+        profile_id: {
+            stage: benchmark_fingerprint(ROOT, model, profile_id, builds[profile_id], stage)
+            for stage in ("performance", "accuracy")
+        }
+        for profile_id in ("w16a16", "w8a8", "w8a16")
     }
     w8a8 = resnet["benchmark_fingerprints"]["w8a8"]
     assert w8a8["performance"] != w8a8["accuracy"]
@@ -1241,6 +1338,37 @@ def test_progress_publication_does_not_reimport_base_packages(
     assert captured["selected_matrix"] == (None if continuing_revision else selected)
 
 
+@pytest.mark.parametrize("continuing_revision", [False, True])
+@pytest.mark.parametrize("has_previous", [False, True])
+def test_deferred_conversion_inheritance_respects_catalog_revision(monkeypatch, continuing_revision, has_previous):
+    """Unselected conversion entries keep their complete branch state during progress."""
+    prior = {"id": "deferred", "builds": [], "packages": [{"run_id": "target-package"}],
+             "build_requirements": {"unchanged": "requirements"}}
+    base = {**prior, "packages": [{"run_id": "base-package"}]}
+    pending = {"model_id": "deferred", "build_profile_id": "w16a16", "component_ids": ["model"],
+               "compile_fingerprint": "target-fingerprint"}
+    target_document = {"models": [prior] if has_previous else [],
+                       "pending_builds": [pending] if has_previous else []}
+    target = {"catalog_revision": ("a" if continuing_revision else "b") * 40,
+              "canonical_sha256": "c" * 64, "document": target_document}
+    monkeypatch.setattr("model_registry.registry.load_models", lambda root: {"deferred": object()})
+    monkeypatch.setattr("model_registry.registry._catalog_models", lambda models: {})
+    monkeypatch.setattr("model_registry.registry._head_matrix", lambda *args: [])
+    monkeypatch.setattr("model_registry.registry.build_catalog_snapshot", lambda **kwargs: kwargs["previous"])
+    result = publish_catalog(
+        repository=ROOT, api_url="https://registry.example.invalid",
+        read_api_url="https://registry.example.invalid", aws_region="us-west-2",
+        branch="feature", git_sha="a" * 40, base_branches=["develop"],
+        request=lambda *args: {"stored": True},
+        read_request=lambda url: {"catalog": (
+            {"document": {"models": [base], "pending_builds": []}} if url.endswith("develop") else target
+        )},
+    )["catalog"]
+    expected = [prior] if has_previous else ([] if continuing_revision else [base])
+    assert result["models"] == expected
+    assert result.get("pending_builds", []) == ([pending] if has_previous else [])
+
+
 @pytest.mark.parametrize("same_revision", [False, True])
 @pytest.mark.parametrize("force", [False, True])
 @pytest.mark.parametrize("published", [False, True])
@@ -1293,6 +1421,7 @@ def test_forced_rebuild_checks_revision_before_publication(
 
 def test_iam_registry_reads_sign_only_the_configured_api(monkeypatch):
     import io
+
     import model_registry.registry as registry
 
     base = "https://private.example.test"
@@ -1305,10 +1434,12 @@ def test_iam_registry_reads_sign_only_the_configured_api(monkeypatch):
         return {"authenticated": True}
 
     monkeypatch.setattr(registry.SigV4RegistryClient, "request", signed)
-    monkeypatch.setattr(registry, "urlopen", lambda request, timeout: io.BytesIO(b'{"public": true}'))
+    monkeypatch.setattr("model_registry.fetch.urlopen", lambda request, timeout: io.BytesIO(b'{"public": true}'))
     assert registry._public_registry_json(base + "/v1/repositories") == {"authenticated": True}
     assert calls == [(base, "us-west-2", "GET", "/v1/repositories")]
-    for url in ["https://private.example.test.attacker.test/v1/repositories", "https://s3.example.test/object", base + "/other"]:
+    for url in [
+        "https://private.example.test.attacker.test/v1/repositories", "https://s3.example.test/object", base + "/other",
+    ]:
         assert registry._public_registry_json(url) == {"public": True}
     assert len(calls) == 1
 
@@ -1321,3 +1452,71 @@ def test_iam_registry_reads_require_a_region(monkeypatch):
     monkeypatch.delenv("AWS_DEFAULT_REGION", raising=False)
     with pytest.raises(RegistryPublicationError, match="AWS_REGION is required"):
         registry._public_registry_json("https://private.example.test/v1/repositories")
+
+
+def test_private_conversion_reader_keeps_dataset_credentials_separate(monkeypatch):
+    import subprocess
+
+    import model_registry.registry as registry
+
+    base = "https://private.example.test"
+    monkeypatch.setenv("MODEL_REGISTRY_IAM_READ_API_URL", base)
+    monkeypatch.setenv("AWS_REGION", "us-west-2")
+    for name in ("ACCESS_KEY_ID", "SECRET_ACCESS_KEY", "SESSION_TOKEN"):
+        monkeypatch.setenv("AWS_" + name, "dataset-" + name)
+        monkeypatch.setenv("MODEL_REGISTRY_READ_AWS_" + name, "registry-" + name)
+    commands = []
+    def request(command, **kwargs):
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, '{"artifact": {}}\n200', '')
+    monkeypatch.setattr(registry.subprocess, "run", request)
+    assert registry._public_registry_json(base + "/v1/runs/run/artifacts/onnx") == {"artifact": {}}
+    assert "registry-ACCESS_KEY_ID:registry-SECRET_ACCESS_KEY" in commands[0]
+    assert "x-amz-security-token: registry-SESSION_TOKEN" in commands[0]
+    assert not any("dataset-" in argument for argument in commands[0])
+    import os
+    assert os.environ["AWS_ACCESS_KEY_ID"] == "dataset-ACCESS_KEY_ID"
+
+
+def fake_artifact_download(monkeypatch: pytest.MonkeyPatch, responses: list[Exception | bytes]) -> list[float]:
+    """Answer each artifact download with the next response, and record the backoff sleeps."""
+    import io
+
+    sleeps = []
+
+    def urlopen(request, timeout):
+        response = responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return io.BytesIO(response)
+
+    monkeypatch.setattr("model_registry.registry.urlopen", urlopen)
+    monkeypatch.setattr("model_registry.registry.time.sleep", sleeps.append)
+    monkeypatch.setattr("model_registry.registry.random.uniform", lambda low, high: 0.5)
+    return sleeps
+
+
+def test_dropped_artifact_download_is_retried(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from model_registry.registry import _download_registry_file
+
+    payload = b"compiled model"
+    artifact = {"sha256": hashlib.sha256(payload).hexdigest(), "size_bytes": len(payload)}
+    sleeps = fake_artifact_download(monkeypatch, [ConnectionResetError(104, "Connection reset by peer"), payload])
+
+    _download_registry_file("https://registry.example/model.tar.gz", tmp_path / "model.tar.gz", artifact)
+
+    assert (tmp_path / "model.tar.gz").read_bytes() == payload
+    assert sleeps == [1.5]
+
+
+def test_missing_artifact_download_is_not_retried(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from urllib.error import HTTPError
+
+    from model_registry.registry import _download_registry_file
+
+    url = "https://registry.example/model.tar.gz"
+    sleeps = fake_artifact_download(monkeypatch, [HTTPError(url, 404, "Not Found", {}, None)])
+
+    with pytest.raises(RegistryPublicationError, match="HTTP Error 404"):
+        _download_registry_file(url, tmp_path / "model.tar.gz", {"sha256": "0" * 64, "size_bytes": 1})
+    assert sleeps == []

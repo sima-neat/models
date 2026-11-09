@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import io
 import json
 import os
 import re
@@ -40,8 +41,41 @@ def evaluate(condition: str, values: dict[str, object]) -> bool:
     return eval(expression, {"__builtins__": {}}, {})
 
 
-def dispatched_inputs(script: str) -> set[str]:
-    return set(re.findall(r"-f (\w+)=", script))
+LOCAL_BENCHMARK_WORKFLOW = "./.github/workflows/vulcan-model-benchmarking.yml"
+PERMISSION_LEVELS = {"none": 0, "read": 1, "write": 2}
+BUILD_NAME = "${{ matrix.model_id }}/${{ matrix.compile_invocation_id }} (${{ matrix.build_profile_id }})"
+# What a job that needs both resolvers passes the benchmark workflow.
+RESOLVED_JSON = {
+    "vulcan_config": "${{ toJSON(needs.resolve-vulcan-config.outputs) }}",
+    "devkit_runner": "${{ toJSON(needs.resolve-benchmark-runner.outputs) }}",
+}
+
+
+# Every job that calls the benchmark workflow, keyed by workflow and job ID.
+BENCHMARK_CALLERS = {
+    "compile.benchmark": (BUILD_WORKFLOW, "benchmark"),
+    "orchestrator.benchmark": (WORKFLOW, "benchmark"),
+    "orchestrator.benchmark-without-compiles": (WORKFLOW, "benchmark-without-compiles"),
+}
+
+
+def benchmark_caller(caller: str) -> dict:
+    """Return the job that calls the benchmark workflow under the caller's key."""
+    workflow, job_id = BENCHMARK_CALLERS[caller]
+    return load(workflow)["jobs"][job_id]
+
+
+def excess_permissions(caller: dict, called: Path) -> list[str]:
+    """Return each permission a called workflow's job requests above what its caller job grants."""
+    workflow = load(called)
+    granted = caller["permissions"]
+    excess = []
+    for name, job in workflow["jobs"].items():
+        requested = job.get("permissions", workflow.get("permissions", {}))
+        for scope, level in requested.items():
+            if PERMISSION_LEVELS[level] > PERMISSION_LEVELS[granted.get(scope, "none")]:
+                excess.append(f"{name}: {scope}: {level}")
+    return excess
 
 
 def jq_program(script: str, prefix: str) -> str:
@@ -69,51 +103,33 @@ def test_every_push_runs_so_every_branch_revision_gets_a_catalog() -> None:
     assert "push" in on and not on["push"]
 
 
-def test_manual_environment_can_override_the_repository_default() -> None:
+def test_build_environment_is_owned_by_vulcan_env() -> None:
     inputs = load(WORKFLOW)["on"]["workflow_dispatch"]["inputs"]
-
-    assert set(inputs) == {"environment", "models", "profiles", "components", "base_branch", "force_rebuild_all"}
-    assert inputs["environment"]["options"] == ["default", "staging", "production"]
-    assert inputs["environment"]["default"] == "default"
+    assert set(inputs) == {"models", "profiles", "components", "base_branch", "force_rebuild_all"}
     assert inputs["force_rebuild_all"]["type"] == "boolean"
 
 
-@pytest.mark.parametrize(
-    ("override", "repository_env", "expected"),
-    [
-        ("", "staging", "staging"),
-        ("", "production", "production"),
-        ("", "", "staging"),
-        ("default", "production", "production"),
-        ("default", "staging", "staging"),
-        ("default", "", "staging"),
-        ("production", "staging", "production"),
-        ("staging", "production", "staging"),
-        ("", "invalid", "invalid"),
-    ],
-)
-def test_environment_selection_and_runner_mapping(tmp_path, override, repository_env, expected) -> None:
+@pytest.mark.parametrize("environment", ["staging", "production", "", "invalid"])
+def test_environment_selection_and_runner_mapping(tmp_path, environment) -> None:
     workflow = load(WORKFLOW)
     resolve = step(workflow["jobs"]["select"], "Resolve Vulcan environment")
-    expression = resolve["env"]["REQUESTED_ENVIRONMENT"][3:-3].strip()
-    selected = evaluate(expression, {"inputs.environment": override, "vars.VULCAN_ENV": repository_env})
-    assert selected == expected
-    assert expression in workflow["concurrency"]["group"]
-    assert expression in workflow["run-name"]
+    assert resolve["env"]["REQUESTED_ENVIRONMENT"] == "${{ vars.VULCAN_ENV }}"
+    assert "${{ vars.VULCAN_ENV }}" in workflow["run-name"]
+    assert "${{ vars.VULCAN_ENV }}" in workflow["concurrency"]["group"]
     output = tmp_path / "outputs"
     result = subprocess.run(
         ["bash", "-c", resolve["run"]],
-        env={**os.environ, "REQUESTED_ENVIRONMENT": selected, "GITHUB_OUTPUT": str(output)},
+        env={**os.environ, "REQUESTED_ENVIRONMENT": environment, "GITHUB_OUTPUT": str(output)},
         capture_output=True, text=True,
     )
-    if expected == "invalid":
+    if environment not in {"staging", "production"}:
         assert result.returncode != 0
         assert not output.exists()
     else:
         assert result.returncode == 0, result.stderr
-        runner = "vulcan-stg" if expected == "staging" else "vulcan-production"
+        runner = "vulcan-stg" if environment == "staging" else "vulcan-production"
         assert output.read_text().splitlines() == [
-            f"vulcan_environment={expected}", f"runner_environment={runner}",
+            f"vulcan_environment={environment}", f"runner_environment={runner}",
         ]
 
 
@@ -124,7 +140,7 @@ def test_newer_pushes_supersede_runs_but_manual_dispatches_run_to_completion() -
     # Only dispatches get a per-run group, so they never cancel or replace one another.
     assert "github.event_name == 'workflow_dispatch' && format('-{0}', github.run_id)" in concurrency["group"]
     assert "github.ref" in concurrency["group"]
-    assert "inputs.environment" in concurrency["group"]
+    assert "vars.VULCAN_ENV" in concurrency["group"]
 
 
 # Job graph and pull-request isolation
@@ -137,7 +153,9 @@ def test_compile_workflow_has_independent_build_stages() -> None:
         "select",
         "portal",
         "resolve-vulcan-config",
+        "resolve-benchmark-runner",
         "publish-model-browser",
+        "resolve-staging-browser-config",
         "plan",
         "authorize-runner-classes",
         "initialize-catalog",
@@ -148,6 +166,21 @@ def test_compile_workflow_has_independent_build_stages() -> None:
         "benchmark-without-compiles",
         "report-partial-publication",
     }
+
+
+@pytest.mark.parametrize("environment", ["staging", "production"])
+@pytest.mark.parametrize("event", ["push", "workflow_dispatch"])
+@pytest.mark.parametrize("branch, allowed", [("develop", True), ("main", True), ("feature/example", False)])
+def test_frontend_staging_publication_is_independent_of_model_environment(environment, event, branch, allowed):
+    jobs = load(WORKFLOW)["jobs"]
+    values = {
+        "github.ref": f"refs/heads/{branch}",
+        "github.event_name": event,
+        "vars.VULCAN_ENV": environment,
+        "needs.select.outputs.vulcan_environment": environment,
+    }
+    for name in ("resolve-staging-browser-config", "publish-model-browser"):
+        assert evaluate(jobs[name]["if"], values) is allowed
 
 
 def test_json_catalog_and_package_publication_are_retired() -> None:
@@ -187,9 +220,13 @@ def test_workflow_never_schedules_pull_requests_on_vulcan() -> None:
     assert jobs["compile"]["uses"] == "./.github/workflows/vulcan-model-compile.yml"
     self_hosted = [
         name for name, job in build_workflow["jobs"].items()
-        if isinstance(job["runs-on"], list) and "self-hosted" in job["runs-on"]
+        if isinstance(job.get("runs-on"), list) and "self-hosted" in job["runs-on"]
     ]
     assert self_hosted == ["compile"]
+    # The DevKits are reachable only through the benchmark workflow, which a pull request never starts.
+    assert [name for name, job in jobs.items() if job.get("uses") == LOCAL_BENCHMARK_WORKFLOW] == [
+        "benchmark", "benchmark-without-compiles",
+    ]
 
 
 @pytest.mark.parametrize("event", ["push", "workflow_dispatch"])
@@ -200,10 +237,28 @@ def test_trusted_events_reach_the_build(event) -> None:
         "github.event_name": event,
         "needs.select.outputs.publishable": "true",
         "needs.resolve-vulcan-config.result": "success",
+        "needs.resolve-benchmark-runner.result": "success",
         "needs.authorize-runner-classes.result": "success",
         "needs.initialize-catalog.result": "success",
     }
     assert evaluate(condition, values) is True
+
+
+@pytest.mark.parametrize(("runner_result", "expected"), [
+    ("success", True), ("failure", False), ("skipped", False), ("cancelled", False),
+])
+def test_builds_wait_for_the_shared_benchmark_runner(runner_result, expected) -> None:
+    jobs = load(WORKFLOW)["jobs"]
+    values = {
+        "!cancelled()": True,
+        "needs.select.outputs.publishable": "true",
+        "needs.resolve-vulcan-config.result": "success",
+        "needs.resolve-benchmark-runner.result": runner_result,
+        "needs.authorize-runner-classes.result": "success",
+        "needs.initialize-catalog.result": "success",
+    }
+
+    assert evaluate(jobs["compile"]["if"], values) is expected
 
 
 # Selection and planning
@@ -306,9 +361,12 @@ def test_plan_compares_fingerprints_with_the_environment_registry() -> None:
     assert plan_job["needs"] == ["select", "portal", "resolve-vulcan-config"]
     assert plan_job["environment"] == "${{ needs.select.outputs.vulcan_environment }}"
     assert plan_job["permissions"] == {"contents": "read", "id-token": "write"}
-    credentials = step(plan_job, "Configure authenticated production registry reads")
-    assert credentials["if"] == "needs.select.outputs.vulcan_environment == 'production'"
-    assert plan["env"]["REGISTRY_READ_API_URL"] == "${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL || vars.VULCAN_ARTIFACT_REGISTRY_API_URL }}"
+    credentials = step(plan_job, "Configure registry planning credentials")
+    assert "if" not in credentials
+    assert plan["env"]["VULCAN_ARTIFACT_REGISTRY_API_URL"] == "${{ vars.VULCAN_ARTIFACT_REGISTRY_API_URL }}"
+    assert plan["env"]["REGISTRY_READ_API_URL"] == (
+        "${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL || vars.VULCAN_ARTIFACT_REGISTRY_API_URL }}"
+    )
     assert "model-registry plan-stages" in plan["run"]
     assert '--read-api-url "$REGISTRY_READ_API_URL"' in plan["run"]
     assert "--offline" not in plan["run"]
@@ -316,6 +374,7 @@ def test_plan_compares_fingerprints_with_the_environment_registry() -> None:
         assert name in plan["env"]
     assert "--force-rebuild-all" in plan["run"]
     assert plan_job["outputs"] == {
+        "conversion_sources": "${{ steps.plan.outputs.conversion_sources }}",
         "compile_count": "${{ steps.plan.outputs.compile_count }}",
         "compile_matrix": "${{ steps.plan.outputs.compile_matrix }}",
         "benchmark_count": "${{ steps.plan.outputs.benchmark_count }}",
@@ -352,20 +411,25 @@ def test_runner_classes_are_authorized_before_builds_are_queued() -> None:
     assert authorization["env"]["SELECTED_MATRIX"] == "${{ needs.plan.outputs.compile_matrix }}"
     assert authorization["env"]["VULCAN_CONFIG_S3_URI"] == "${{ needs.resolve-vulcan-config.outputs.config_s3_uri }}"
 
-    assert build["needs"] == ["select", "resolve-vulcan-config", "authorize-runner-classes", "initialize-catalog"]
+    assert build["needs"] == [
+        "select", "plan", "resolve-vulcan-config", "resolve-benchmark-runner", "authorize-runner-classes",
+        "initialize-catalog",
+    ]
     assert build["strategy"]["matrix"] == "${{ fromJSON(needs.authorize-runner-classes.outputs.matrix) }}"
     assert build["strategy"]["fail-fast"] == "false"
     assert build["with"]["entry"] == "${{ toJSON(matrix) }}"
+    assert build["with"]["vulcan_environment"] == "${{ needs.select.outputs.vulcan_environment }}"
     assert build["with"]["publishable"] == "${{ needs.select.outputs.publishable == 'true' }}"
     assert build["secrets"] == "inherit"
     assert set(build["with"]) == set(load(BUILD_WORKFLOW)["on"]["workflow_call"]["inputs"])
+    assert {name: build["with"][name] for name in RESOLVED_JSON} == RESOLVED_JSON
 
 
 def test_catalog_marks_authorized_builds_pending_before_they_run() -> None:
     initialize = load(WORKFLOW)["jobs"]["initialize-catalog"]
     publish = step(initialize, "Publish the pending invocation plan")
 
-    assert initialize["needs"] == ["select", "resolve-vulcan-config", "authorize-runner-classes"]
+    assert initialize["needs"] == ["select", "plan", "resolve-vulcan-config", "authorize-runner-classes"]
     assert "needs.select.outputs.publishable == 'true'" in initialize["if"]
     assert "needs.authorize-runner-classes.result == 'success'" in initialize["if"]
     assert publish["env"]["SELECTED_MATRIX"] == "${{ needs.authorize-runner-classes.outputs.matrix }}"
@@ -430,6 +494,7 @@ def test_build_allows_only_intentional_catalog_initialization_skips(
         "github.event_name": "push",
         "needs.select.outputs.publishable": publishable,
         "needs.resolve-vulcan-config.result": "success",
+        "needs.resolve-benchmark-runner.result": "success",
         "needs.authorize-runner-classes.result": "success",
         "needs.initialize-catalog.result": initialize_result,
     }
@@ -486,33 +551,35 @@ def test_catalog_snapshot_carries_this_revision_without_build_outputs() -> None:
 
 
 @pytest.mark.parametrize(
-    ("event", "environment", "publishable", "catalog_result", "benchmark_count", "expected"),
+    ("event", "environment", "publishable", "catalog_result", "runner_result", "benchmark_count", "expected"),
     [
-        ("push", "staging", "true", "success", "1", True),
-        ("workflow_dispatch", "staging", "true", "success", "3", True),
-        ("push", "production", "true", "success", "1", False),
+        ("push", "staging", "true", "success", "success", "1", True),
+        ("workflow_dispatch", "staging", "true", "success", "success", "3", True),
+        ("push", "production", "true", "success", "success", "1", True),
         # A feature branch publishes a pending catalog for on-demand candidates only.
-        ("push", "staging", "false", "success", "1", False),
-        ("push", "staging", "true", "failure", "1", False),
-        ("push", "staging", "true", "skipped", "1", False),
-        ("push", "staging", "true", "success", "0", False),
+        ("push", "staging", "false", "success", "success", "1", False),
+        ("push", "staging", "true", "failure", "success", "1", False),
+        ("push", "staging", "true", "skipped", "success", "1", False),
+        ("push", "staging", "true", "success", "failure", "1", False),
+        ("push", "staging", "true", "success", "success", "0", False),
     ],
 )
 def test_reused_builds_start_benchmarks_once_the_pending_catalog_publishes(
-    event, environment, publishable, catalog_result, benchmark_count, expected,
+    event, environment, publishable, catalog_result, runner_result, benchmark_count, expected,
 ) -> None:
     job = load(WORKFLOW)["jobs"]["benchmark"]
     values = {
         "!cancelled()": True,
         "github.event_name": event,
         "needs.initialize-catalog.result": catalog_result,
+        "needs.resolve-benchmark-runner.result": runner_result,
         "needs.select.outputs.publishable": publishable,
         "needs.select.outputs.vulcan_environment": environment,
         "needs.plan.outputs.benchmark_count": benchmark_count,
     }
 
     # The pending catalog already links reused builds, so their benchmarks do not wait for compiles.
-    assert job["needs"] == ["select", "plan", "initialize-catalog"]
+    assert job["needs"] == ["select", "plan", "resolve-vulcan-config", "resolve-benchmark-runner", "initialize-catalog"]
     # Without a status function GitHub adds success(), which also requires the
     # indirectly needed jobs and skips reused builds when one of them is skipped.
     assert job["if"].startswith("!cancelled() &&")
@@ -520,46 +587,107 @@ def test_reused_builds_start_benchmarks_once_the_pending_catalog_publishes(
 
 
 @pytest.mark.parametrize(
-    ("environment", "compile_count", "catalog_result", "benchmark_count", "expected"),
+    ("environment", "compile_count", "catalog_result", "runner_result", "benchmark_count", "expected"),
     [
-        ("staging", "0", "success", "1", True),
+        ("staging", "0", "success", "success", "1", True),
         # With compiles, the benchmark job already started them after the pending catalog.
-        ("staging", "2", "success", "1", False),
-        ("production", "0", "success", "1", False),
-        ("staging", "0", "failure", "1", False),
-        ("staging", "0", "skipped", "1", False),
-        ("staging", "0", "success", "0", False),
+        ("staging", "2", "success", "success", "1", False),
+        ("production", "0", "success", "success", "1", True),
+        ("staging", "0", "failure", "success", "1", False),
+        ("staging", "0", "skipped", "success", "1", False),
+        ("staging", "0", "success", "failure", "1", False),
+        ("staging", "0", "success", "success", "0", False),
     ],
 )
 def test_reused_builds_start_benchmarks_after_the_snapshot_when_nothing_compiles(
-    environment, compile_count, catalog_result, benchmark_count, expected,
+    environment, compile_count, catalog_result, runner_result, benchmark_count, expected,
 ) -> None:
     job = load(WORKFLOW)["jobs"]["benchmark-without-compiles"]
     values = {
         "!cancelled()": True,
         "needs.plan.outputs.compile_count": compile_count,
         "needs.publish-catalog.result": catalog_result,
+        "needs.resolve-benchmark-runner.result": runner_result,
         "needs.select.outputs.vulcan_environment": environment,
         "needs.plan.outputs.benchmark_count": benchmark_count,
     }
 
-    assert job["needs"] == ["select", "plan", "publish-catalog"]
+    assert job["needs"] == ["select", "plan", "resolve-vulcan-config", "resolve-benchmark-runner", "publish-catalog"]
     assert job["if"].startswith("!cancelled() &&")
     assert evaluate(job["if"], values) is expected
 
 
 @pytest.mark.parametrize("job_id", ["benchmark", "benchmark-without-compiles"])
-def test_reused_builds_start_their_benchmarks_from_one_job(job_id) -> None:
+def test_reused_builds_are_benchmarked_one_call_per_build(job_id) -> None:
     job = load(WORKFLOW)["jobs"][job_id]
-    start = step(job, "Start the benchmarks reused builds still lack")
 
-    assert job["name"] == "Dispatch benchmarks for reused builds"
-    assert job["permissions"] == {"actions": "write", "contents": "read"}
-    assert "strategy" not in job
-    assert job["steps"][0]["uses"] == "actions/checkout@v6"
-    assert start["env"]["BENCHMARK_MATRIX"] == "${{ needs.plan.outputs.benchmark_matrix }}"
-    # An empty source run restores each reused build from the registry at this catalog revision.
-    assert start["run"] == 'scripts/start_benchmarks.sh "$BENCHMARK_MATRIX"'
+    # GitHub prefixes each benchmark job with this name, so the build's name alone tells the builds apart.
+    assert job["name"] == BUILD_NAME
+    assert job["uses"] == LOCAL_BENCHMARK_WORKFLOW
+    assert "runs-on" not in job
+    assert job["permissions"] == {"actions": "write", "contents": "read", "id-token": "write"}
+    # One build's failed benchmark does not cancel the others.
+    assert job["strategy"] == {"fail-fast": "false", "matrix": "${{ fromJSON(needs.plan.outputs.benchmark_matrix) }}"}
+    assert job["secrets"] == "inherit"
+    assert job["with"] == {
+        "environment": "${{ needs.select.outputs.vulcan_environment }}",
+        # An empty source run restores each reused build from the registry at this catalog revision.
+        "source_run_id": "",
+        "source_sha": "${{ github.sha }}",
+        "source_branch": "${{ github.ref_name }}",
+        "model_id": "${{ matrix.model_id }}",
+        "build_profile_id": "${{ matrix.build_profile_id }}",
+        "compile_invocation_id": "${{ matrix.compile_invocation_id }}",
+        "stages": "${{ join(matrix.stages, ',') }}",
+        **RESOLVED_JSON,
+    }
+
+
+def test_the_run_resolves_one_devkit_runner_for_every_benchmark() -> None:
+    jobs, dispatch = load(WORKFLOW)["jobs"], load(BENCHMARK_WORKFLOW)["jobs"]
+    resolver, manual = jobs["resolve-benchmark-runner"], dispatch["resolve-benchmark-runner"]
+
+    assert resolver["uses"] == manual["uses"]
+    assert jobs["resolve-vulcan-config"]["uses"] == dispatch["resolve-vulcan-config"]["uses"]
+    assert "if" not in resolver
+    # An orchestrator run and a manual dispatch benchmark a build on the same DevKits.
+    assert json.loads(resolver["with"]["runner-labels"]) == json.loads(manual["with"]["runner-labels"])
+
+
+@pytest.mark.parametrize("caller", BENCHMARK_CALLERS)
+def test_every_benchmark_caller_passes_the_json_of_its_resolvers_outputs(caller) -> None:
+    workflow, _ = BENCHMARK_CALLERS[caller]
+    job = benchmark_caller(caller)
+    if workflow == BUILD_WORKFLOW:
+        # The build workflow forwards what the orchestrator's compile job passed it.
+        assert {name: job["with"][name] for name in RESOLVED_JSON} == {
+            name: f"${{{{ inputs.{name} }}}}" for name in RESOLVED_JSON
+        }
+        workflow, job = WORKFLOW, load(WORKFLOW)["jobs"]["compile"]
+
+    assert {"resolve-vulcan-config", "resolve-benchmark-runner"} <= set(job["needs"])
+    assert {"resolve-vulcan-config", "resolve-benchmark-runner"} <= set(load(workflow)["jobs"])
+    assert {name: job["with"][name] for name in RESOLVED_JSON} == RESOLVED_JSON
+
+
+@pytest.mark.parametrize("caller", BENCHMARK_CALLERS)
+def test_every_benchmark_caller_passes_declared_inputs_and_every_required_one(caller) -> None:
+    job = benchmark_caller(caller)
+    inputs = load(BENCHMARK_WORKFLOW)["on"]["workflow_call"]["inputs"]
+
+    assert job["uses"] == LOCAL_BENCHMARK_WORKFLOW
+    assert set(job["with"]) <= set(inputs)
+    assert {name for name, value in inputs.items() if value["required"] == "true"} <= set(job["with"])
+
+
+@pytest.mark.parametrize("caller", BENCHMARK_CALLERS)
+def test_benchmark_callers_grant_every_permission_the_benchmark_jobs_request(caller) -> None:
+    assert excess_permissions(benchmark_caller(caller), BENCHMARK_WORKFLOW) == []
+
+
+def test_orchestrator_compile_grants_every_permission_its_build_jobs_request() -> None:
+    # The build workflow's benchmark job passes its own grant on to the benchmark workflow.
+    assert excess_permissions(load(WORKFLOW)["jobs"]["compile"], BUILD_WORKFLOW) == []
 
 
 def test_failed_builds_are_reported_after_the_snapshot() -> None:
@@ -575,22 +703,36 @@ def test_failed_builds_are_reported_after_the_snapshot() -> None:
     assert "for attempt in 1 2 3" in script
     assert report["if"].startswith("always() &&")
     assert report["permissions"] == {"actions": "read", "contents": "read"}
-    # The filter matches the compile job's name, and no other job shares its prefix.
-    assert jobs["compile"]["name"].startswith("Compile ")
-    assert [name for name, job in jobs.items() if job["name"].startswith("Compile ")] == ["compile"]
+    # GitHub names a called job "<caller job name> / <called job name>", and the build calls are named by build.
+    assert jobs["compile"]["name"] == BUILD_NAME
+    # A build's own jobs are the build workflow's Compile and Publish; its benchmark is a nested call.
+    assert [job["name"] for job in load(BUILD_WORKFLOW)["jobs"].values()] == ["Compile", "Publish", "Benchmark"]
+    benchmark_names = [job["name"] for job in load(BENCHMARK_WORKFLOW)["jobs"].values()]
+    assert benchmark_names == [
+        "Resolve Vulcan config", "Resolve the benchmark DevKit runner", "Stage benchmark input", "Benchmark on DevKit", "Publish benchmarks to Vulcan",
+        "Check model tests and clean up",
+    ]
 
     def job(name: str, conclusion: str) -> dict:
         return {"name": name, "conclusion": conclusion, "html_url": f"https://example.test/{name}"}
 
     pages = [{"jobs": [
-        job("Compile a/b (p) / Compile", "failure"),
-        job("Compile a/b (p) / Publish", "skipped"),
-        job("Compile c/d (p) / Publish", "cancelled"),
-        job("Compile e/f (p) / Publish", "success"),
+        job("a/b (p) / Compile", "failure"),
+        job("a/b (p) / Publish", "skipped"),
+        job("e/f (p) / Publish", "cancelled"),
+        job("g/h (p) / Publish", "success"),
+        job("i/j (p) / Publish", "failure"),
         job("Publish the catalog at this revision", "failure"),
+    ]}, {"jobs": [
+        # A published build's failed benchmark reports itself; the build's catalog entry is not pending.
+        *(job(f"a/b (p) / Benchmark / {name}", "failure") for name in benchmark_names),
+        # A reused build's benchmark is called by the orchestrator itself, under the same build name.
+        *(job(f"c/d (p) / {name}", "failure") for name in benchmark_names),
     ]}]
     failed = run_jq(program, pages)
-    assert [item["name"] for item in failed] == ["Compile a/b (p) / Compile", "Compile c/d (p) / Publish"]
+    assert [item["name"] for item in failed] == [
+        "a/b (p) / Compile", "e/f (p) / Publish", "i/j (p) / Publish",
+    ]
 
 
 # Reusable build workflow: compile on the self-hosted compiler
@@ -611,15 +753,67 @@ def test_self_hosted_compile_holds_no_publication_credentials() -> None:
     compile_job = load(BUILD_WORKFLOW)["jobs"]["compile"]
     text = yaml.safe_dump(compile_job)
 
-    assert compile_job["permissions"] == {"contents": "read"}
-    assert all("aws-actions/configure-aws-credentials" not in item.get("uses", "") for item in compile_job["steps"])
+    assert compile_job["permissions"] == {"contents": "read", "id-token": "write"}
+    credentials = step(compile_job, "Configure read-only conversion registry credentials")
+    assert credentials["if"] == "${{ inputs.vulcan_environment == 'production' && inputs.conversion_sources != '{}' }}"
+    assert credentials["with"]["output-env-credentials"] == "false"
+    assert credentials["with"]["output-credentials"] == "true"
+    compile_env = step(compile_job, "Compile the invocation with its model's compile script")["env"]
+    assert set(compile_env) == {
+        "MODEL_REGISTRY_READ_AWS_ACCESS_KEY_ID", "MODEL_REGISTRY_READ_AWS_SECRET_ACCESS_KEY",
+        "MODEL_REGISTRY_READ_AWS_SESSION_TOKEN",
+    }
+    policy = json.loads(credentials["with"]["inline-session-policy"])
+    assert policy["Statement"] == [{
+        "Effect": "Allow", "Action": "execute-api:Invoke",
+        "Resource": "arn:aws:execute-api:${{ inputs.aws_region }}:*:*/*/GET/v1/runs/*/artifacts/onnx",
+    }]
+    assert compile_job["env"]["MODEL_REGISTRY_IAM_READ_API_URL"] == (
+        "${{ inputs.vulcan_environment == 'production' && vars.VULCAN_ARTIFACT_REGISTRY_API_URL || '' }}"
+    )
     assert "${{ secrets." not in text
-    assert "${{ vars." not in text
     for item in compile_job["steps"]:
         run = item.get("run", "")
         assert "model-registry publish" not in run
         assert "model_registry publish" not in run
         assert "gh workflow run" not in run
+
+
+def test_conversion_fetch_steps_receive_isolated_reader_credentials() -> None:
+    compile_job = load(BUILD_WORKFLOW)["jobs"]["compile"]
+    for name, reader in (
+        ("Compile the invocation with its model's compile script", "conversion-reader"),
+        ("Verify every MPK and record its provenance", "conversion-verification-reader"),
+    ):
+        expected = {
+            "MODEL_REGISTRY_READ_AWS_ACCESS_KEY_ID": "${{ steps." + reader + ".outputs.aws-access-key-id }}",
+            "MODEL_REGISTRY_READ_AWS_SECRET_ACCESS_KEY": "${{ steps." + reader + ".outputs.aws-secret-access-key }}",
+            "MODEL_REGISTRY_READ_AWS_SESSION_TOKEN": "${{ steps." + reader + ".outputs.aws-session-token }}",
+        }
+        assert step(compile_job, name).get("env", {}) == expected
+    # Dataset downloads must keep the runner's default AWS credential chain.
+    for env in [compile_job["env"], *(item.get("env", {}) for item in compile_job["steps"])]:
+        assert not {"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"} & env.keys()
+
+
+def test_verification_refreshes_the_restricted_reader_after_compilation() -> None:
+    job = load(BUILD_WORKFLOW)["jobs"]["compile"]
+    initial = step(job, "Configure read-only conversion registry credentials")
+    refresh_name = "Refresh read-only conversion registry credentials for verification"
+    refresh = step(job, refresh_name)
+
+    # A six-hour compilation must not leave verification using the original one-hour session.
+    assert job["timeout-minutes"] == "360"
+    assert refresh["id"] == "conversion-verification-reader"
+    assert refresh["if"] == initial["if"]
+    assert refresh["uses"] == initial["uses"]
+    assert {key: value for key, value in refresh["with"].items() if key != "role-session-name"} == {
+        key: value for key, value in initial["with"].items() if key != "role-session-name"
+    }
+    assert refresh["with"]["role-session-name"] == "models-conversion-verifier-${{ github.run_id }}"
+    compilation_index = step_index(job, "Compile the invocation with its model's compile script")
+    assert step_index(job, refresh_name) == compilation_index + 1
+    assert step_index(job, "Verify every MPK and record its provenance") == step_index(job, refresh_name) + 1
 
 
 def test_compile_script_runs_in_activated_model_compiler_shell() -> None:
@@ -749,6 +943,7 @@ def test_build_is_published_from_a_hosted_runner() -> None:
     )
     assert publish["runs-on"] == "ubuntu-latest"
     assert publish["permissions"] == {"actions": "write", "contents": "read", "id-token": "write"}
+    assert publish["outputs"] == {"package_count": "${{ steps.packages.outputs.count }}"}
     assert upload["with"]["name"].startswith("compiler-output-")
     assert download["with"]["name"] == upload["with"]["name"]
     assert "continue-on-error" not in download
@@ -768,7 +963,6 @@ def test_build_is_published_from_a_hosted_runner() -> None:
             "Assemble the packages this build completes",
             "Publish the finalized packages",
             "Retain the published model output for the benchmarks",
-            "Start the benchmarks",
             "Publish this build in the catalog",
         )
     ]
@@ -778,7 +972,7 @@ def test_build_is_published_from_a_hosted_runner() -> None:
 def test_published_output_is_the_artifact_the_benchmark_verifies() -> None:
     publish = load(BUILD_WORKFLOW)["jobs"]["publish"]
     retained = step(publish, "Retain the published model output for the benchmarks")
-    stage = load(BENCHMARK_WORKFLOW)["jobs"]["stage-dispatched-benchmark"]
+    stage = load(BENCHMARK_WORKFLOW)["jobs"]["stage"]
     verify = step(stage, "Verify the source run and compiled artifact")["run"]
 
     assert retained["with"]["name"] == (
@@ -804,7 +998,7 @@ def test_published_package_receipt_travels_with_the_build() -> None:
         (True, False, "1", "staging", "modalix", "performanceaccuracy", True),
         (True, False, "1", "staging", "modalix", "accuracy", True),
         (True, False, "1", "staging", "modalix", "", False),
-        (True, False, "1", "production", "modalix", "performance", False),
+        (True, False, "1", "production", "modalix", "performance", True),
         (True, False, "1", "staging", "davinci", "performance", False),
         # A benchmark runs under the profile's published package.
         (False, False, "1", "staging", "modalix", "performance", False),
@@ -815,116 +1009,46 @@ def test_published_package_receipt_travels_with_the_build() -> None:
 def test_new_builds_start_only_their_applicable_benchmarks(
     publishable, on_demand, packages, environment, target, stages, expected
 ) -> None:
-    start = step(load(BUILD_WORKFLOW)["jobs"]["publish"], "Start the benchmarks")
+    benchmark = load(BUILD_WORKFLOW)["jobs"]["benchmark"]
     values = {
         "inputs.publishable": publishable,
         "fromJSON(inputs.entry).build_on_demand": on_demand,
-        "steps.packages.outputs.count": packages,
+        "needs.publish.outputs.package_count": packages,
         "inputs.vulcan_environment": environment,
         "fromJSON(inputs.entry).target": target,
         "join(fromJSON(inputs.entry).stages, '')": stages,
     }
 
-    assert evaluate(start["if"], values) is expected
+    assert evaluate(benchmark["if"], values) is expected
 
 
-def test_new_build_starts_its_stages_with_the_shared_script() -> None:
-    start = step(load(BUILD_WORKFLOW)["jobs"]["publish"], "Start the benchmarks")
+def test_new_build_benchmarks_its_own_compile_output() -> None:
+    workflow = load(BUILD_WORKFLOW)
+    benchmark = workflow["jobs"]["benchmark"]
 
-    # A failed dispatch leaves the build published; the next run plans the missing stages.
-    assert start["continue-on-error"] == "true"
-    assert start["env"]["ENTRY"] == "${{ inputs.entry }}"
-    # The benchmark downloads this compile run's output.
-    assert start["run"] == 'scripts/start_benchmarks.sh "$ENTRY" "$GITHUB_RUN_ID"'
-
-
-START_SCRIPT = ROOT / "scripts" / "start_benchmarks.sh"
-
-
-def run_start_script(tmp_path: Path, gh: str, *args: str) -> tuple[subprocess.CompletedProcess, Path, Path]:
-    """Run the start script with a fake gh that records each call's arguments."""
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    calls = tmp_path / "calls"
-    (bin_dir / "gh").write_text(f'#!/bin/sh\necho "$*" >> {calls}\n{gh}\n', encoding="utf-8")
-    (bin_dir / "gh").chmod(0o755)
-    summary = tmp_path / "summary.md"
-    env = {
-        **os.environ,
-        "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
-        "GITHUB_STEP_SUMMARY": str(summary),
-        "GITHUB_REPOSITORY": "sima-neat/models",
-        "GITHUB_SHA": "0" * 40,
-        "GITHUB_REF_NAME": "develop",
+    # It starts once this build publishes, while other builds may still compile.
+    assert benchmark["needs"] == "publish"
+    assert benchmark["name"] == "Benchmark"
+    assert benchmark["uses"] == LOCAL_BENCHMARK_WORKFLOW
+    assert "runs-on" not in benchmark
+    assert benchmark["permissions"] == {"actions": "write", "contents": "read", "id-token": "write"}
+    assert benchmark["secrets"] == "inherit"
+    assert benchmark["with"] == {
+        "environment": "${{ inputs.vulcan_environment }}",
+        # The benchmark downloads this compile run's output.
+        "source_run_id": "${{ github.run_id }}",
+        "source_sha": "${{ github.sha }}",
+        "source_branch": "${{ github.ref_name }}",
+        "model_id": "${{ fromJSON(inputs.entry).model_id }}",
+        "build_profile_id": "${{ fromJSON(inputs.entry).build_profile_id }}",
+        "compile_invocation_id": "${{ fromJSON(inputs.entry).compile_invocation_id }}",
+        "stages": "${{ join(fromJSON(inputs.entry).stages, ',') }}",
+        "vulcan_config": "${{ inputs.vulcan_config }}",
+        "devkit_runner": "${{ inputs.devkit_runner }}",
     }
-    result = subprocess.run(["bash", str(START_SCRIPT), *args], env=env, capture_output=True, text=True)
-    return result, summary, calls
-
-
-def build(model_id: str, stages: list[str]) -> dict:
-    return {"model_id": model_id, "build_profile_id": "int8", "compile_invocation_id": "default", "stages": stages}
-
-
-def test_start_script_dispatches_every_benchmark_input() -> None:
-    script = START_SCRIPT.read_text(encoding="utf-8")
-    benchmark_inputs = load(BENCHMARK_WORKFLOW)["on"]["workflow_dispatch"]["inputs"]
-
-    assert "gh workflow run vulcan-model-benchmarking.yml" in script
-    assert dispatched_inputs(script) == set(benchmark_inputs)
-    # A checkout-free caller has no git remote for gh to infer the repository from.
-    assert '--repo "$GITHUB_REPOSITORY"' in script
-    # The benchmark only runs when dispatched on its source branch.
-    assert '--ref "$GITHUB_REF_NAME"' in script
-    assert '-f source_branch="$GITHUB_REF_NAME"' in script
-
-
-@pytest.mark.parametrize(
-    ("gh", "link"),
-    [
-        ("echo https://github.com/sima-neat/models/actions/runs/123", "https://github.com/sima-neat/models/actions/runs/123"),
-        ("true", "link unavailable"),
-    ],
-)
-def test_start_script_logs_one_devkit_run_link_per_build(tmp_path: Path, gh: str, link: str) -> None:
-    matrix = {"include": [build("alpha", ["performance", "accuracy"]), build("beta", ["accuracy"])]}
-
-    result, summary, calls = run_start_script(tmp_path, gh, json.dumps(matrix))
-
-    lines = (
-        f"DevKit run for alpha/int8/default (performance,accuracy): {link}\n"
-        f"DevKit run for beta/int8/default (accuracy): {link}\n"
-    )
-    assert result.returncode == 0, result.stderr
-    assert result.stdout == lines
-    assert summary.read_text(encoding="utf-8") == lines
-    alpha, beta = calls.read_text(encoding="utf-8").splitlines()
-    assert "-f source_run_id= " in alpha
-    assert alpha.endswith("-f stages=performance,accuracy")
-    assert beta.endswith("-f compile_invocation_id=default -f stages=accuracy")
-
-
-def test_start_script_accepts_one_build_with_its_source_run(tmp_path: Path) -> None:
-    result, _, calls = run_start_script(tmp_path, "true", json.dumps(build("alpha", ["performance"])), "77")
-
-    assert result.returncode == 0, result.stderr
-    assert result.stdout == "DevKit run for alpha/int8/default (performance): link unavailable\n"
-    assert "-f source_run_id=77 " in calls.read_text(encoding="utf-8")
-
-
-def test_start_script_starts_the_other_builds_after_a_failure(tmp_path: Path) -> None:
-    gh = 'case "$*" in *model_id=alpha*) echo "HTTP 404: not found" >&2; exit 1;; esac'
-    matrix = {"include": [build("alpha", ["performance"]), build("beta", ["performance"])]}
-
-    result, summary, calls = run_start_script(tmp_path, gh, json.dumps(matrix))
-
-    assert result.returncode == 1
-    assert "HTTP 404: not found" in result.stderr
-    assert result.stdout == (
-        "DevKit run for alpha/int8/default (performance): not started\n"
-        "DevKit run for beta/int8/default (performance): link unavailable\n"
-    )
-    assert summary.read_text(encoding="utf-8") == result.stdout
-    assert len(calls.read_text(encoding="utf-8").splitlines()) == 2
+    inputs = workflow["on"]["workflow_call"]["inputs"]
+    for name in ("vulcan_config", "devkit_runner"):
+        assert (inputs[name]["required"], inputs[name]["type"]) == ("true", "string")
 
 
 def test_native_candidates_finalize_and_select_in_the_existing_publish_job() -> None:
@@ -1069,3 +1193,69 @@ def test_compile_dataset_mirror_uses_the_selected_environment_config() -> None:
     assert caller["with"]["dataset_bucket"] == "${{ needs.resolve-vulcan-config.outputs.dataset_bucket }}"
     assert build["on"]["workflow_call"]["inputs"]["dataset_bucket"]["required"] == "true"
     assert build["jobs"]["compile"]["env"]["SIMA_DATASET_S3_URI"] == "s3://${{ inputs.dataset_bucket }}"
+
+
+def test_on_demand_planner_does_not_restrict_the_selected_environment() -> None:
+    plan = step(load(WORKFLOW)["jobs"]["plan"], "Compare fingerprints with published runs")["run"]
+    assert '"$VULCAN_ENVIRONMENT" != "staging"' not in plan
+    assert 'enabled only in staging' not in plan
+    assert '--include-on-demand' in plan
+
+
+@pytest.mark.parametrize("environment,public_url", [
+    ("production", ""), ("production", "https://public.example.test"),
+    ("staging", "https://public.example.test"),
+])
+def test_mpk_candidate_selects_its_branch_with_private_or_public_registry_reads(
+    tmp_path, monkeypatch, environment, public_url,
+):
+    from model_registry import fetch, registry
+    from model_registry.candidates import publish_branch_deployment
+
+    private_url = "https://private.example.test"
+    values = {
+        "vars.VULCAN_ARTIFACT_REGISTRY_API_URL": private_url,
+        "vars.VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL": public_url,
+        "needs.select.outputs.vulcan_environment": environment,
+    }
+    job_env = load(WORKFLOW)["jobs"]["publish-candidates"]["env"]
+    read_url = evaluate(job_env["REGISTRY_READ_API_URL"][3:-3], values)
+    iam_url = evaluate(job_env["MODEL_REGISTRY_IAM_READ_API_URL"][3:-3], values)
+    monkeypatch.setenv("MODEL_REGISTRY_IAM_READ_API_URL", iam_url)
+    monkeypatch.setenv("AWS_REGION", "us-west-2")
+    reads, writes = [], []
+    catalog = {"catalog": {"canonical_sha256": "b" * 64, "document": {"models": []}}}
+
+    def signed(client, method, path, body, key):
+        assert method == "GET" and body is None
+        reads.append(("signed", client.api_url + path))
+        return catalog
+
+    def unsigned(request, timeout):
+        reads.append(("public", request.full_url))
+        return io.BytesIO(json.dumps(catalog).encode())
+
+    monkeypatch.setattr(registry.SigV4RegistryClient, "_curl_request", signed)
+    monkeypatch.setattr(fetch, "urlopen", unsigned)
+    candidate = tmp_path / "candidate.json"
+    candidate.write_text(json.dumps({
+        "deployment_id": "11111111-1111-4111-8111-111111111111", "manifest_digest": "a" * 64,
+        "git_ref": "refs/heads/feature/mpk-model", "state": "finalized",
+    }))
+
+    def write(method, path, body, key):
+        assert method == "POST" and path.endswith("/branch-deployments")
+        assert body["expected_snapshot"] == "b" * 64
+        assert body["git_ref"] == "refs/heads/feature/mpk-model"
+        writes.append(body)
+        return {"selection": {"deployment_id": body["deployment_id"]}, "result_snapshot": "c" * 64}
+
+    result = publish_branch_deployment(
+        candidate, api_url=private_url, read_api_url=read_url,
+        aws_region="us-west-2", request=write,
+    )
+    assert len(reads) == len(writes) == 1
+    assert reads[0][0] == ("signed" if environment == "production" and not public_url else "public")
+    assert reads[0][1].startswith((public_url or private_url) + "/v1/")
+    assert result["selection"]["deployment_id"] == json.loads(candidate.read_text())["deployment_id"]
+    assert json.loads((tmp_path / "branch-publication.json").read_text()) == result

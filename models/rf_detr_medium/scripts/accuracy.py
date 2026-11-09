@@ -51,16 +51,6 @@ PREFETCH = 8
 NORMALIZE = ((np.arange(256, dtype=np.float32)[:, None] / 255.0 - MEAN.ravel()) / STD.ravel()).reshape(1, 256, 3)
 
 
-def tensor_options() -> pyneat.ModelOptions:
-    options = pyneat.ModelOptions()
-    options.preprocess.kind = pyneat.InputKind.Tensor
-    # The script already resized and normalized the image; Neat still quantizes and tessellates.
-    options.preprocess.resize.enable = pyneat.AutoFlag.Off
-    options.preprocess.color_convert.enable = pyneat.AutoFlag.Off
-    options.preprocess.normalize.enable = pyneat.AutoFlag.Off
-    return options
-
-
 def preprocess(content: bytes) -> np.ndarray:
     """Return the same values as calibration.preprocess_image, in the backbone's HWC layout."""
     with Image.open(io.BytesIO(content)) as image:
@@ -81,7 +71,7 @@ def prefetched(load: Callable, items: Sequence) -> Iterator:
 
 class ModelArtifact:
     def __init__(self, path: Path) -> None:
-        self.model = pyneat.Model(str(path), tensor_options())
+        self.model = pyneat.Model(str(path))
         self.runner = None
 
     def __call__(self, *inputs: np.ndarray | pyneat.Tensor) -> list[pyneat.Tensor]:
@@ -169,9 +159,9 @@ def main(argv: list[str] | None = None) -> int:
     images = prefetched(lambda record: preprocess((dataset / IMAGES / record["file_name"]).read_bytes()), records)
     for count, (record, image) in enumerate(zip(records, images), start=1):
         features, scores, boxes = backbone(image)
-        # The feature tensor goes to the decoder as is; only the proposals pass through NumPy.
+        # The decoder's EV74 input stage needs the features in EV74 memory; only the proposals pass through NumPy.
         proposals = select_top_proposals(view(scores), view(boxes))
-        dets, labels = (view(output) for output in decoder(features, proposals))
+        dets, labels = (view(output) for output in decoder(features.cvu(), proposals))
         rows.append(decode(dets, labels, record["id"], record["width"], record["height"], valid))
         if count == 1 or count % 250 == 0 or count == len(records):
             log(f"{count}/{len(records)} images, {(time.monotonic() - started) / count * 1000:.0f} ms/image")
@@ -191,7 +181,7 @@ def main(argv: list[str] | None = None) -> int:
     stats = coco_stats(scorer)
     scoring_seconds = time.monotonic() - started
 
-    report = model_report.accuracy({
+    report = model_report.from_accuracy({
         dataset_id: {
             "metrics": stats,
             "split": IMAGES, "evaluated_samples": len(image_ids), "available_samples": len(available),

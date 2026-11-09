@@ -35,6 +35,7 @@ const PERFORMANCE_ROWS = [
   ["avg_power_watts", "SoM power"],
   ["energy_per_inference_joules", "Energy per inference"],
   ["mla_memory_peak_mib", "Peak MLA memory"],
+  ["ev74_memory_peak_mib", "Peak EV74 memory"],
 ];
 
 function catalogVariants() {
@@ -134,7 +135,9 @@ function comparisonPlot(columns) {
     return Number.isFinite(y) ? [{...point, y}] : [];
   });
   const accuracy = plotted[0]?.column.accuracy;
-  const yLabel = `${accuracy?.label || "Accuracy"}${accuracy?.unit ? ` (${accuracy.unit})` : ""}`;
+  // A lower-is-better metric, such as a disparity error, says so: the chart's best builds then sit low.
+  const scale = [accuracy?.unit, accuracy?.direction === "lower" ? "lower is better" : ""].filter(Boolean).join(", ");
+  const yLabel = `${accuracy?.label || "Accuracy"}${scale ? ` (${scale})` : ""}`;
   const maxX = Math.max(1, ...plotted.map(point => point.x)) * 1.12;
   const maxY = Math.max(1, ...plotted.map(point => point.y));
   const minY = Math.max(0, Math.min(maxY, ...plotted.map(point => point.y)) - (maxY * .08));

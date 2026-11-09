@@ -156,9 +156,11 @@ def validate_model_tests(model_dir: str | Path, model: dict[str, Any], schema_pa
 
 def _require_expected_values(path: Path, stage: str, expected: dict[str, Any], model: dict[str, Any]) -> None:
     """Every benchmarked build profile expects its required metrics, for accuracy on each dataset (performance: its
-    throughput), and nothing else."""
+    throughput), and no other declared profile expects any. A profile model.yaml leaves out, such as one commented
+    out until it works, keeps its expectations unchecked."""
     profiles = benchmarked_profiles(model, stage)
-    unknown_profiles = set(expected) - set(profiles)
+    declared = {profile["id"] for profile in model["build_profiles"]}
+    unknown_profiles = (set(expected) & declared) - set(profiles)
     if unknown_profiles:
         names = ", ".join(sorted(unknown_profiles))
         raise ValidationError(f"{path}: {stage}.expected names build profiles that are not benchmarked: {names}")

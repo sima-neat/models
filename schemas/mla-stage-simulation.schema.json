@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.sima.ai/model-registry/mla-stage-simulation.schema.json",
+  "title": "Model Registry MLA stage simulation",
+  "description": "A build profile's MLA stages as the Model Compiler simulator estimates them, written by model-registry simulate-mla-stages after compile. stage_index numbers each component's MLA and A65 stages in execution order, as Core's MLA stage stats do.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "model_id", "build_profile_id", "components"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "model_id": {"$ref": "#/$defs/id"},
+    "build_profile_id": {"$ref": "#/$defs/id"},
+    "components": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {"$ref": "#/$defs/id"},
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["status", "stages"],
+        "properties": {
+          "status": {"description": "\"ok\", or why the component's stages were not simulated.", "type": "string", "minLength": 1},
+          "stages": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["stage_index", "effective_ops", "total_ops", "simulated_latency_us"],
+              "properties": {
+                "stage_index": {"type": "integer", "minimum": 0},
+                "effective_ops": {"description": "Arithmetic operations that contribute to the model's result.", "type": "integer", "minimum": 0},
+                "total_ops": {"description": "Arithmetic operations the MLA executes, including padding.", "type": "integer", "minimum": 0},
+                "simulated_latency_us": {"type": "number", "minimum": 0}
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "id": {"type": "string", "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$"}
+  }
+}
