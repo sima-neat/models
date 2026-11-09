@@ -276,14 +276,15 @@ def main() -> int:
         report = measure_fidelity(
             source, quantized, args.fidelity_dataset.expanduser().resolve(), fidelity, args.build_profile
         )
-    LOG.info("Fidelity: %s", report["metrics"][0])
-    output_dir.mkdir(parents=True, exist_ok=False)
-    (output_dir / "fidelity.json").write_text(
-        json.dumps(report, allow_nan=False, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
-    # The calibration frames and the float graph are released; collecting them lowers the compile's peak memory.
-    gc.collect()
-    LOG.info("Compiled MPK: %s", compile_model(quantized, output_dir, args.build_profile))
+        LOG.info("Fidelity: %s", report["metrics"][0])
+        output_dir.mkdir(parents=True, exist_ok=False)
+        (output_dir / "fidelity.json").write_text(
+            json.dumps(report, allow_nan=False, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        # The calibration frames and the float graph are released; collecting them lowers the compile's peak memory.
+        gc.collect()
+        # Inside the block: the MPK manifest records the checksum of the ONNX it compiled from.
+        LOG.info("Compiled MPK: %s", compile_model(quantized, output_dir, args.build_profile))
     return 0
 
 
