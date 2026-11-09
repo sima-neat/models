@@ -15,7 +15,7 @@ as one component.
 **Input.** Resize the image with bicubic resampling so its shorter side is 341,
 then crop the center 299×299. Scale the RGB values to 0–1, subtract the mean
 (0.5, 0.5, 0.5), and divide by the standard deviation (0.5, 0.5, 0.5). The
-reference scripts pass this image as a 299×299×3 (height, width,
+accuracy script passes this image as a 299×299×3 (height, width,
 channel) float tensor, with Neat's resize, color conversion, and normalization
 turned off.
 

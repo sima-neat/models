@@ -24,6 +24,7 @@ STD = np.asarray([0.5, 0.5, 0.5], dtype=np.float32)
 # annotations/labels_<split>.json, whose category IDs are the ImageNet class indices.
 IMAGE_SUFFIXES = (".jpeg",)
 CALIBRATION_SPLIT = "cal2012"
+CALIBRATION_SEED = 42
 VALIDATION_SPLIT = "val2012"
 CLASSES = 1000
 
@@ -91,12 +92,13 @@ def read_images(dataset: Path, names: Iterable[str]) -> dict[str, bytes]:
 
 
 def calibration_samples(dataset: Path, count: int) -> np.ndarray:
-    """Every calibration image, preprocessed and stacked in NHWC order."""
+    """A seeded sample of the calibration images, preprocessed and stacked in NHWC order."""
     names = split_names(dataset, CALIBRATION_SPLIT)
-    if len(names) != count:
+    if count > len(names):
         raise ValueError(f"calibration requires {count} images, but {dataset} has {len(names)}")
-    images = read_images(dataset, names)
-    return np.stack([preprocess_image(images[name]) for name in names])
+    selected = random.Random(CALIBRATION_SEED).sample(names, count)
+    images = read_images(dataset, selected)
+    return np.stack([preprocess_image(images[name]) for name in selected])
 
 
 def fidelity_names(dataset: Path, seed: int, offset: int, samples: int) -> list[str]:
