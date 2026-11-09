@@ -397,6 +397,7 @@ def test_every_single_component_script_benchmarks_a_dataset_image(script, monkey
         assert (options.preprocess.resize.mode, options.preprocess.preset) == ("Stretch", "ImageNet")
         assert STEREO_PAIR.format(view="left") in report["workload"]
     elif getattr(options, "decode_type", "").startswith(("YoloV26", "YoloV8")):
+        # Box decoders take a probability threshold, in [0, 1).
         assert_letterboxed_frame(frame)
         assert (options.preprocess.resize.mode, options.top_k, options.score_threshold) == ("Letterbox", 10, 0.25)
         if options.decode_type in {"YoloV8", "YoloV8Obb"}:

@@ -1575,7 +1575,7 @@ def test_compare_bolds_the_best_whole_model_value() -> None:
     assert best_value([build(8.4), build(None)], "latency_avg_ms") is None
 
 
-@pytest.mark.parametrize("family", ["YOLO26", "YOLO11"])
+@pytest.mark.parametrize("family", ["YOLO26", "YOLO11", "YOLOv8"])
 def test_catalog_orders_a_family_from_smallest_to_largest(family: str) -> None:
     script = _browser_source("catalog-view.js")
     ordering = script[script.index("// Size words order a family"):script.index("function modelCardImage(")]

@@ -129,6 +129,10 @@ architectures:
     display_name: YOLO26-seg
     paradigm: cnn
     allowed_model_types: [vision]
+  yolov8_det:
+    display_name: YOLOv8-det
+    paradigm: cnn
+    allowed_model_types: [vision]
   yolov8_obb:
     display_name: YOLOv8-obb
     paradigm: cnn
