@@ -38,22 +38,15 @@ def image_options() -> pyneat.ModelOptions:
     """The backbone's: Neat stretches, normalizes, quantizes and tessellates the frame inside the pipeline."""
     options = pyneat.ModelOptions()
     options.preprocess.kind = pyneat.InputKind.Image
+    # Size Neat's input buffers for the benchmark frame, not the 1920x1080 default.
+    options.preprocess.input_max_width = FRAME_WIDTH
+    options.preprocess.input_max_height = FRAME_HEIGHT
     options.preprocess.enable = pyneat.AutoFlag.On
     options.preprocess.resize.enable = pyneat.AutoFlag.On
     options.preprocess.resize.mode = pyneat.ResizeMode.Stretch
     options.preprocess.normalize.enable = pyneat.AutoFlag.On
     # Without a preset Neat only scales pixels to [0, 1]; the model expects ImageNet mean and std.
     options.preprocess.preset = pyneat.NormalizePreset.ImageNet
-    return options
-
-
-def tensor_options() -> pyneat.ModelOptions:
-    """The decoder's: its inputs are the backbone's features and the selected proposals."""
-    options = pyneat.ModelOptions()
-    options.preprocess.kind = pyneat.InputKind.Tensor
-    options.preprocess.resize.enable = pyneat.AutoFlag.Off
-    options.preprocess.color_convert.enable = pyneat.AutoFlag.Off
-    options.preprocess.normalize.enable = pyneat.AutoFlag.Off
     return options
 
 
@@ -128,13 +121,14 @@ def build_runners(models: dict[str, pyneat.Model], image: pyneat.Tensor) -> tupl
     run_options.overflow_policy = pyneat.OverflowPolicy.Block
     backbone = models["backbone"].build([image], run_options=run_options)
     features, scores, boxes = backbone.run([image], timeout_ms=TIMEOUT_MS)
-    decoder = models["decoder"].build([features, select_top_proposals(scores, boxes)], run_options=run_options)
+    # The decoder's EV74 input stage cannot read the backbone's output memory, so features are copied with cvu().
+    decoder = models["decoder"].build([features.cvu(), select_top_proposals(scores, boxes)], run_options=run_options)
     return backbone, decoder
 
 
 def infer_one(backbone: pyneat.ModelRunner, decoder: pyneat.ModelRunner, image: pyneat.Tensor) -> None:
     features, scores, boxes = backbone.run([image], timeout_ms=TIMEOUT_MS)
-    decoder.run([features, select_top_proposals(scores, boxes)], timeout_ms=TIMEOUT_MS)
+    decoder.run([features.cvu(), select_top_proposals(scores, boxes)], timeout_ms=TIMEOUT_MS)
 
 
 def measure_latency(backbone: pyneat.ModelRunner, decoder: pyneat.ModelRunner, image: pyneat.Tensor) -> list[float]:
@@ -227,7 +221,7 @@ def measure_throughput(backbone: pyneat.ModelRunner, decoder: pyneat.ModelRunner
         try:
             for features, scores, boxes in drain(backbone, "backbone", pushed):
                 proposals = select_top_proposals(scores, boxes)
-                push(decoder, [features, proposals], "decoder")
+                push(decoder, [features.cvu(), proposals], "decoder")
                 pushed["decoder"] += 1
                 # The decoder holds its inputs now, so the backbone gets its output buffers back.
                 del features, scores, boxes, proposals
@@ -305,7 +299,7 @@ def benchmark_pipeline(mpks: dict[str, Path], dataset_id: str, dataset: Path, ou
         mla_layer_stats[name], mla_stage_stats[name] = mla_stats(mpk)
     models = {
         "backbone": pyneat.Model(str(mpks["backbone"]), image_options()),
-        "decoder": pyneat.Model(str(mpks["decoder"]), tensor_options()),
+        "decoder": pyneat.Model(str(mpks["decoder"])),
     }
     path = sample_image(dataset)
     image = frame_tensor(path)

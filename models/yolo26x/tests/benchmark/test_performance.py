@@ -19,6 +19,12 @@ def test_performance_records_the_execution_plan_the_browser_draws(performance: d
     assert plan["nodes"] and plan["edges"]
 
 
+def test_execution_plan_takes_the_benchmark_frame(performance: dict[str, Any]) -> None:
+    (component,) = performance["components"].values()
+    (frame,) = component["execution_plan"]["edges"][0]["tensors"]
+    assert frame["shape"] == [1, 720, 1280, 3]
+
+
 def test_mla_stats_collected(performance: dict[str, Any]) -> None:
     (component,) = performance["components"].values()
     layer_stats, stage_stats = component["mla_layer_stats"], component["mla_stage_stats"]

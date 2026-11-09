@@ -12,6 +12,7 @@ Needs only the Python standard library, so it runs in PyNeat's environment on a 
 from __future__ import annotations
 
 import json
+import math
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -26,6 +27,20 @@ METRICS: dict[str, dict[str, Any]] = json.loads(Path(__file__).with_name("metric
 REQUIRED_PERFORMANCE_METRICS = [name for name, metric in METRICS.items() if metric.get("required")]
 # Derived from the measured power and rate rather than read from Core.
 ENERGY_PER_INFERENCE = "energy_per_inference_joules"
+
+
+def accuracy_value_error(metric: str, value: float) -> str | None:
+    """Why an accuracy score is out of its unit's range, or None.
+
+    A ratio lies from 0 to 1 and a percentage from 0 to 100; any other unit, such as the pixels of a disparity
+    error, takes a finite value of at least 0.
+    """
+    unit = METRICS[metric]["unit"]
+    if unit == "ratio":
+        return None if 0 <= value <= 1 else f"{metric} must be a ratio from 0 to 1; found {value}"
+    if unit == "%":
+        return None if 0 <= value <= 100 else f"{metric} must be a percentage from 0 to 100; found {value}"
+    return None if math.isfinite(value) and value >= 0 else f"{metric} must be at least 0 {unit}; found {value}"
 
 
 class Report:
@@ -93,7 +108,7 @@ def from_performance(
 
 
 def from_accuracy(datasets: dict[str, dict[str, Any]]) -> Report:
-    """An accuracy report: per dataset, each metric's score as a ratio from 0 to 1 over its evaluated part.
+    """An accuracy report: per dataset, each metric's score over its evaluated part, in the metric's unit.
 
     ``datasets`` maps each dataset name model.yaml's accuracy lists to its result: the ``metrics``, the
     ``split`` evaluated, ``evaluated_samples``, ``available_samples``, and optional ``details``.
@@ -128,8 +143,8 @@ def _dataset_result(name: str, result: dict[str, Any]) -> dict[str, Any]:
     if unknown:
         raise ValueError(f"{name}: unknown accuracy metrics: {', '.join(unknown)}")
     for metric, value in metrics.items():
-        if not 0 <= value <= 1:
-            raise ValueError(f"{name}: {metric} must be a ratio from 0 to 1; found {value}")
+        if error := accuracy_value_error(metric, value):
+            raise ValueError(f"{name}: {error}")
     if not 0 < result["evaluated_samples"] <= result["available_samples"]:
         raise ValueError(f"{name}: evaluated_samples must be positive and at most available_samples")
     return {
