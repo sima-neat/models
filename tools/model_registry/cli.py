@@ -75,6 +75,11 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     conversion.add_argument("--environment", required=True)
     conversion.add_argument("--validation", required=True, choices=["passed"])
 
+    entrypoint = subcommands.add_parser(
+        "conversion-entrypoint", help="print the conversion output compile.py receives as --model"
+    )
+    entrypoint.add_argument("model_dir", type=Path)
+
     fetch = subcommands.add_parser("fetch", help="download and verify a model's immutable source")
     fetch.add_argument("model_dir", type=Path)
     fetch.add_argument("--schema", type=Path)
@@ -123,7 +128,7 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     pipelines.add_argument("--output", type=Path, required=True)
 
     reference = subcommands.add_parser(
-        "reference-metrics", help="write the scores each source model's authors published, for the model browser"
+        "reference-metrics", help="write each model's published and FP32 baseline scores, for the model browser"
     )
     reference.add_argument("--repository", type=Path, default=Path.cwd())
     reference.add_argument("--output", type=Path, required=True)
@@ -355,6 +360,10 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
         "--selected-matrix",
         type=Path,
         help="omit prior packages for build profiles selected for replacement",
+    )
+    publish_catalog_parser.add_argument(
+        "--force-rebuild-all", action="store_true",
+        help="reject forced replacement of packages already published in the current revision",
     )
     publish_catalog_parser.add_argument("--api-url", required=True)
     publish_catalog_parser.add_argument("--read-api-url", required=True)
@@ -881,6 +890,7 @@ def _publish_catalog(args: argparse.Namespace) -> int:
         compiled_dir=args.compiled_dir,
         package_dir=args.package_dir,
         selected_matrix=args.selected_matrix,
+        force_rebuild_all=args.force_rebuild_all,
         api_url=args.api_url,
         read_api_url=args.read_api_url,
         aws_region=args.aws_region,
@@ -940,6 +950,11 @@ def _main(argv: Sequence[str] | None, *, author_safe: bool) -> int:
                 compile_invocation_id=args.compile_invocation_id,
                 component_ids=_id_list(args.components, "--components"),
             ))
+            return 0
+        if args.command == "conversion-entrypoint":
+            from .conversion import conversion_outputs
+
+            print(conversion_outputs(args.model_dir)[0])
             return 0
         if args.command == "publish-conversion":
             from .conversion import publish_conversion

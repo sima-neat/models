@@ -4,14 +4,17 @@ import base64
 import hashlib
 import json
 import math
+import random
 import subprocess
 import tempfile
+import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from urllib.error import HTTPError
 from urllib.parse import quote
 from urllib.request import Request as UrlRequest
 from urllib.request import urlopen
@@ -771,6 +774,7 @@ def publish_catalog(
     compiled_dir: str | Path | None = None,
     package_dir: str | Path | None = None,
     selected_matrix: str | Path | None = None,
+    force_rebuild_all: bool = False,
     base_branches: list[str] | None = None,
     bucket: str | None = None,
     kms_key_id: str | None = None,
@@ -808,7 +812,33 @@ def publish_catalog(
     # before the compare-and-swap POST below.
     root = Path(repository).expanduser().resolve()
     target_catalog, sources = read_catalog_sources(read, read_api_url, branch, base_branches)
+    target_revision = target_catalog.get("catalog_revision") if isinstance(target_catalog, dict) else None
+    continuing_revision = target_revision == git_sha.lower()
+    if continuing_revision and force_rebuild_all:
+        selected = _selected_invocation_keys(
+            Path(selected_matrix).expanduser().resolve() if selected_matrix else None
+        )
+        selected_profiles = {(model_id, profile_id) for model_id, profile_id, _ in selected}
+        published_profiles = {
+            (model["id"], package["build_profile_id"])
+            for model in target_catalog["document"].get("models", [])
+            for package in model.get("packages", [])
+            if not model.get("build_on_demand", False)
+        }
+        conflicts = sorted(selected_profiles & published_profiles)
+        if conflicts:
+            profiles = ", ".join(f"{model}/{profile}" for model, profile in conflicts)
+            raise ValidationError(
+                f"cannot force rebuild published packages in current catalog revision {git_sha}: {profiles}. "
+                "Publish the forced rebuild from a new Git revision; packages are immutable within a revision. "
+                "For an initialization retry, omit --force-rebuild-all."
+            )
+    # Base branches seed a new revision only. During progress publication they
+    # could restore a deliberately withheld package, or replace a published one
+    # when a base branch finishes rebuilding before this branch does.
     models = load_models(root)
+    # Apply the same revision boundary when carrying deferred conversion entries.
+    sources = sources[:1] if continuing_revision else sources
     previous = merge_catalog_sources(sources, _head_matrix(root, models))
     deferred = set(models) - set(_catalog_models(models))
     if deferred:
@@ -827,12 +857,11 @@ def publish_catalog(
         git_sha=git_sha,
         compiled_dir=compiled_dir,
         package_dir=package_dir,
-        selected_matrix=selected_matrix,
+        selected_matrix=None if continuing_revision else selected_matrix,
         previous=previous,
         incremental=True,
         documentation_receipts=documentation_receipts,
     )
-    target_revision = target_catalog.get("catalog_revision") if isinstance(target_catalog, dict) else None
     previous_snapshot = target_catalog.get("canonical_sha256") if isinstance(target_catalog, dict) else None
     snapshot = {
         "initialize": target_revision != git_sha.lower(),
@@ -868,6 +897,19 @@ def _revision_documentation_receipts(
 
 def _download_registry_file(url: str, destination: Path, artifact: JsonObject,
                             download: DownloadRequest | None = None) -> None:
+    # An orchestrator run stages every build's benchmark at once, so retry a dropped or throttled download.
+    for attempt in range(1, 6):
+        try:
+            return _download_registry_file_once(url, destination, artifact, download)
+        except RegistryPublicationError as exc:
+            cause = exc.__cause__
+            if isinstance(cause, HTTPError) and cause.code not in {429, 502, 503, 504} or attempt == 5:
+                raise
+        time.sleep(2 ** (attempt - 1) + random.uniform(0, 1))
+
+
+def _download_registry_file_once(url: str, destination: Path, artifact: JsonObject,
+                                 download: DownloadRequest | None = None) -> None:
     """Stream into a temporary file and install only after size and checksum verification."""
     destination.parent.mkdir(parents=True, exist_ok=True)
     digest = hashlib.sha256()

@@ -222,7 +222,9 @@ configuration remain staging:
    branch's catalog and, on a feature branch, its base branches' catalogs. A
    build compiles when no published run carries its fingerprint. A build that
    is reused but lacks a completed performance or accuracy run for its current
-   benchmark fingerprint is queued for that benchmark only.
+   benchmark fingerprint is queued for that benchmark only. A feature branch
+   leaves to its closest base branch the build profiles that base branch is
+   compiling and the benchmarks whose fingerprints its catalog records.
 3. **Authorize.** Each requested runner class and market is checked against the protected
    environment specification before a self-hosted compile is queued.
 4. **Compile.** On a self-hosted compiler runner with read-only repository
@@ -231,33 +233,37 @@ configuration remain staging:
    verified with its provenance, and the model's compile tests check the
    output. A failing test leaves the build unpublished.
 5. **Publish.** A GitHub-hosted job verifies the complete component set,
-   publishes each component and its fidelity report as a compile run, starts
-   the benchmarks for a new Modalix build, assembles and publishes the
-   packages the build completes, and records the build in the catalog.
-6. **Benchmark.** For reused builds, the workflow starts only the benchmarks
+   publishes each component and its fidelity report as a compile run,
+   assembles and publishes the packages the build completes, and records the
+   build in the catalog. A new Modalix build is then benchmarked right away,
+   while other builds may still compile.
+6. **Benchmark.** For reused builds, the workflow runs only the benchmarks
    they still lack, once the catalog marks the selected builds pending. They
    run while the changed builds compile.
-7. **Publish the catalog.** The catalog snapshot for the revision is published
-   and promoted.
+7. **Publish the catalog.** Once every compile and each new build's benchmarks
+   end, the catalog snapshot for the revision is published and promoted.
 
-**Vulcan Model Benchmarking** runs the requested `performance` and `accuracy`
-stages of one build on a DevKit, runs the model's benchmark tests on each result,
-then publishes each result as its own registry run under the build profile's
-package run, with the test outcome. A failed test fails the run after
-publication.
+The benchmark workflow (`vulcan-model-benchmarking.yml`) runs the requested
+`performance` and `accuracy` stages of one build on a DevKit, runs the model's
+benchmark tests on each result, then publishes each result as its own registry
+run under the build profile's package run, with the test outcome. A failed test
+fails the run after publication. The orchestrator runs it as part of its own
+run, for every new and reused build, with each build's jobs grouped under the
+build's name. To benchmark one build by hand, run **Vulcan Model
+Benchmarking**.
 
-The benchmark workflow's `environment=default` resolves repository `VULCAN_ENV`
+Its `environment=default` resolves repository `VULCAN_ENV`
 (with staging as the fallback); explicit staging/production overrides are supported.
-Automatic dispatch pins the parent build's resolved environment so artifacts,
-datasets, credentials, and report publication stay in the same registry even if
-the repository default changes before the benchmark starts. DevKit discovery and
+The orchestrator passes its resolved environment so artifacts, datasets,
+credentials, and report publication stay in the same registry as the build. DevKit discovery and
 scheduling independently use the checked-in `vulcan-staging` runner label.
 Production registry reads and report writes run on GitHub-hosted runners; the
 DevKit receives staged model artifacts and only dataset-reader credentials.
 
-The compile and the benchmarks are separate GitHub Actions runs. A
-successful compile does not by itself mean the dispatched benchmark succeeded;
-inspect the `Vulcan Model Benchmarking` run of each build and the model's
+The compile and the benchmarks are jobs of one orchestrator run, and each
+build's benchmark jobs report their own result. A successful compile does not
+by itself mean the benchmark succeeded; inspect each build's benchmark jobs in
+the orchestrator run and the model's
 selected environment's registry record. If trusted compilation or measurement fails, follow
 up with a focused manifest, recipe, or script change and reproducible evidence.
 
@@ -277,7 +283,13 @@ Publish job; models with multiple invocations join them in the orchestrator's
 `publish-candidates` job before publication.
 Each complete candidate publishes independently of failures in other models
 or profiles.
-Develop and Main still require separate approval and promotion.
+Develop and Main require separate approval and promotion. Use the manual
+[Promote model workflow](model-promotion.md) from Develop, choosing the target;
+Main is production-only, uses a separate protected gate and retains S3 storage.
+Use **Publish Main model metadata** from Develop to publish the Main source
+revision's model/profile metadata without compiling. Main requires a completed
+Develop approval of the same candidate before its separate review.
+Hugging Face publication is a separate release operation.
 
 ## Review and merge expectations
 
@@ -304,6 +316,10 @@ If trusted compilation exposes a model-specific failure, update the recipe or
 manifest with reproducible evidence and tests. Use `status: unsupported` only
 after a combination is proven unusable, not as a shortcut around an unresolved
 failure.
+
+Forced rebuilds of packages already published in the current catalog revision
+require a new Git commit. Initialization rejects the conflict before compilation;
+see [forced rebuilds](https://github.com/sima-neat/models/blob/develop/design-doc/model-registry-architecture.md#forced-rebuilds-of-published-packages).
 
 Converted ONNX models resolve a validated registry output before compile reuse is
 checked. Deploy the Vulcan contract and publish matching conversions before

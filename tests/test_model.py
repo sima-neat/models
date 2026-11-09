@@ -380,6 +380,46 @@ def _reference_metrics(**settings) -> dict:
     }
 
 
+def _fp32_baseline(**settings) -> dict:
+    return {
+        "origin": "fp32_baseline",
+        "script": "scripts/fp32_baseline_accuracy.py",
+        "dataset": {"id": "imagenet-2012", "split": "mini"},
+        "conditions": "FP32 ONNX on the host",
+        "metrics": {"top1_accuracy": 0.5},
+        **settings,
+    }
+
+
+def test_an_fp32_baseline_sits_beside_a_published_score_of_its_dataset(tmp_path: Path) -> None:
+    directory, authored = _benchmarked_model(tmp_path, "accuracy")
+    (directory / "scripts" / "fp32_baseline_accuracy.py").write_text("", encoding="utf-8")
+    published = _reference_metrics(dataset={"id": "imagenet-2012", "split": "mini"}, metrics={"top1_accuracy": 0.6})
+    authored["reference_metrics"] = [published, _fp32_baseline()]
+
+    model = validate_model(directory, authored, SCHEMA)
+
+    assert model["reference_metrics"] == [published, _fp32_baseline()]
+
+
+@pytest.mark.parametrize(
+    ("baseline", "script", "expected"),
+    [
+        (_fp32_baseline(), False, "needs scripts/fp32_baseline_accuracy.py"),
+        (_fp32_baseline(dataset={"id": "coco-2017", "split": "val"}), True, "coco-2017 is not an accuracy dataset"),
+    ],
+)
+def test_an_fp32_baseline_needs_its_script_and_an_accuracy_dataset(
+    tmp_path: Path, baseline: dict, script: bool, expected: str
+) -> None:
+    directory, authored = _benchmarked_model(tmp_path, "accuracy")
+    if script:
+        (directory / "scripts" / "fp32_baseline_accuracy.py").write_text("", encoding="utf-8")
+    authored["reference_metrics"] = [baseline]
+    with pytest.raises(ValidationError, match=expected):
+        validate_model(directory, authored, SCHEMA)
+
+
 def test_reference_metrics_accept_scores_of_known_metrics() -> None:
     authored = _authored()
     authored["reference_metrics"] = [
@@ -400,10 +440,13 @@ def test_reference_metrics_accept_scores_of_known_metrics() -> None:
         ([_reference_metrics(metrics={"d1_all": 250.0})], "d1_all must be a percentage from 0 to 100; found 250.0"),
         (
             [_reference_metrics(), _reference_metrics(source="https://example.com/other")],
-            "coco_map on coco-2017 is already published",
+            "coco_map on coco-2017 already has a published score",
         ),
         ([_reference_metrics(source="http://example.com/card")], "does not match"),
         ([{key: value for key, value in _reference_metrics().items() if key != "conditions"}], "'conditions'"),
+        ([_reference_metrics(script="scripts/fp32_baseline_accuracy.py")], "should not be valid"),
+        ([_fp32_baseline(source="https://example.com/card")], "should not be valid"),
+        ([_fp32_baseline(origin="measured")], "'measured' is not one of"),
     ],
 )
 def test_reference_metrics_are_validated(entries: list[dict], expected: str) -> None:
@@ -595,13 +638,13 @@ def test_catalog_model_is_valid() -> None:
     assert set(profiles) == {"w16a16", "w8a8", "w8a16"}
     assert profiles["w16a16"]["components"][0]["parameters"]["precision"] == "w16a16"
     assert profiles["w8a8"]["components"][0]["parameters"]["precision"] == "w8a8"
-    assert profiles["w8a8"]["components"][0]["parameters"]["calibration_samples"] == 500
+    assert profiles["w8a8"]["components"][0]["parameters"]["calibration_samples"] == 50
     assert profiles["w8a16"]["components"][0]["parameters"]["precision"] == "w8a16"
     assert model["calibrations"][0]["dataset"] == {
         "id": "imagenet-2012",
-        "variant": "mini",
-        "sha256": "d769e759abba1fe6e03db704020dcff3f1e8309a8cac8885ab60f5a0e512c239",
-        "size_bytes": 356052889,
+        "variant": "cal",
+        "sha256": "e6c18b281f5ac5fc7cf6d36ef9a5f486ce95eb43ead99ee8523bd8162bc49a6f",
+        "size_bytes": 112710756,
     }
 
 

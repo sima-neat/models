@@ -4,8 +4,9 @@ The performance stage measures each build profile's whole model on a Modalix
 DevKit: every compiled MPK and the CPU work between them. Each model's
 standalone `scripts/performance.py` contains its benchmark setup, including
 its input: one image from the model's accuracy dataset in a 1280x720 frame,
-which Neat preprocesses inside the measurement (see [Benchmark
-input](#benchmark-input)). Scripts of single-component models load the MPK
+which Neat preprocesses inside the measurement, or one sample as tensors for a
+model whose inputs are not images (see [Benchmark input](#benchmark-input)).
+Scripts of single-component models load the MPK
 with `pyneat.Model` and call Neat Core's benchmark API; RF-DETR, a
 multi-component model, times its pipeline itself in its script. Core owns
 warmup, latency and throughput measurement, board telemetry, and runner
@@ -55,7 +56,7 @@ needed:
 ```bash
 PYTHONPATH=tools ~/pyneat/bin/python models/resnet_50/scripts/performance.py \
   --mpk /workspace/resnet_50_mpk.tar.gz \
-  --dataset imagenet-2012-mini=/media/nvme/datasets/imagenet-2012-mini \
+  --dataset imagenet-2012-val=/media/nvme/datasets/imagenet-2012-val \
   --output /workspace/performance
 ```
 
@@ -130,8 +131,9 @@ The script runs once per benchmarked build profile, with every component's MPK.
 
 ### Benchmark input
 
-The benchmark repeats one real camera-sized frame, so its throughput is what
-an application gets from a 720p frame to decoded results, not the MPK alone:
+For an image model, the benchmark repeats one real camera-sized frame, so its
+throughput is what an application gets from a 720p frame to decoded results,
+not the MPK alone:
 
 1. The script picks one image from the dataset's validation split with
    `random.Random(0)`, so every run measures the same image. Pose models pick
@@ -144,6 +146,9 @@ an application gets from a 720p frame to decoded results, not the MPK alone:
    `pyneat.Tensor`. The Model uses the image route
    (`preprocess.kind = InputKind.Image`), so Neat's preprocessing resizes,
    normalizes, quantizes and tessellates the frame in every timed inference.
+   It sets `preprocess.input_max_width` and `input_max_height` to the frame
+   size. Otherwise Neat sizes its input buffers for 1920x1080, and the
+   execution plan shows that size as the model's input.
    YOLO26 resizes with `ResizeMode.Letterbox` and keeps Neat's default
    scaling of pixels to [0, 1]. ResNet-50 and RF-DETR's backbone resize with
    `ResizeMode.Stretch` and set `preprocess.preset =
@@ -162,6 +167,20 @@ reads both views as RGB, and passes them as one frame, the left view beside
 the right one (1920x540 for Scene Flow). Its Model resizes with
 `ResizeMode.Stretch` and sets the ImageNet preset, and the workload names the
 pair's left image.
+
+A model whose inputs are not images, such as a keypoint matcher, measures one
+sample of its accuracy dataset instead of a frame. The script picks the sample
+from the dataset's validation list with `random.Random(0)` (for SuperGlue, one
+pair of `pairs_val.txt` whose images both hold 512 keypoints), passes its arrays
+to Core as `pyneat.Tensor` inputs on the tensor route (`preprocess.kind =
+InputKind.Tensor`, with resizing, color conversion and normalization off), and
+names the dataset and the sample in `workload`. Each timed sample also runs the
+CPU steps that turn the MPK's outputs into the model's result, such as
+SuperGlue's Sinkhorn iterations and match extraction, so throughput is what an
+application gets from inputs to matches, as for image models. The shared
+dataset-image test in `tests/test_model_report.py` skips a model without an
+image input, so its own `tests/benchmark/test_performance.py` checks the sample,
+the tensors and the CPU steps.
 
 A model without an accuracy dataset builds a fixed, realistic input in its
 own script and takes no `--dataset`.
@@ -262,7 +281,8 @@ threshold includes zero-time layers. Stage indices remain visible per layer.
 ## Workload and measurements
 
 The workload is the script's [benchmark input](#benchmark-input) on the image
-route, with the script's model and benchmark options; the report's `workload`
+route, or on the tensor route for a model whose inputs are not images, with the
+script's model and benchmark options; the report's `workload`
 states both. Results measured before scripts took a dataset image used Core's
 synthetic inputs without image preprocessing, and YOLO26 decoded up to 100
 detections at any score. Do not compare those results with current ones.
@@ -364,7 +384,7 @@ failed test still publishes the report and completes its run, then fails the
 workflow run. A failed measurement keeps its workflow evidence and is not
 published. Performance and accuracy publish on their own outcomes: when one
 stage fails, the other's report is still published, and the next push reruns
-only the stage that has no run. A dispatched run stops before measuring when
+only the stage that has no run. A manual dispatch stops before measuring when
 its branch has since changed the tooling the benchmark fingerprints hash; the
 newer push benchmarks that build instead.
 
