@@ -57,8 +57,10 @@ def test_decode_returns_nothing_when_no_score_clears_the_threshold(load_script: 
     accuracy = load_script("accuracy")
     outputs = _board_outputs(accuracy)
     assert accuracy.decode_tile(outputs).shape == (0, 7)
-    # sigmoid(-6.95) is just below SCORE_THRESHOLD.
-    outputs[5][0, :2, :2, 3] = -6.95
+    # A logit just under the threshold, yet above LOGIT_FLOOR, is ranked but never kept.
+    just_below = math.log(accuracy.SCORE_THRESHOLD / (1 - accuracy.SCORE_THRESHOLD)) - 0.001
+    assert just_below > accuracy.LOGIT_FLOOR
+    outputs[5][0, :2, :2, 3] = just_below
 
     assert accuracy.decode_tile(outputs).shape == (0, 7)
 
@@ -69,7 +71,7 @@ def _full_selection(accuracy: ModuleType, outputs: list[np.ndarray]) -> tuple[np
     anchors = np.argsort(-scores.max(axis=1), kind="stable")[:300]
     pairs = scores[anchors].ravel()
     order = np.argsort(-pairs, kind="stable")[:300]
-    order = order[pairs[order] > 0.001]
+    order = order[pairs[order] > accuracy.SCORE_THRESHOLD]
     return anchors[order // 15], order % 15, pairs[order]
 
 
@@ -95,12 +97,12 @@ def test_decode_matches_the_full_sigmoid_selection(seed: int, load_script: Calla
     np.testing.assert_array_equal(detections[:, 4], angles[anchors])
 
 
-def test_top_cuts_a_stable_descending_sort(load_script: Callable[[str], ModuleType]) -> None:
+def test_top_indices_cut_a_stable_descending_sort(load_script: Callable[[str], ModuleType]) -> None:
     accuracy = load_script("accuracy")
     rng = np.random.default_rng(0)
     for size, count in [(0, 5), (4, 5), (5, 5), (1000, 300), (1000, 1)]:
         values = rng.integers(0, 7, size).astype(np.float32)
-        np.testing.assert_array_equal(accuracy.top(values, count), np.argsort(-values, kind="stable")[:count])
+        np.testing.assert_array_equal(accuracy.top_indices(values, count), np.argsort(-values, kind="stable")[:count])
 
 
 @pytest.mark.parametrize(("output", "value"), [(0, np.nan), (0, np.inf), (4, np.nan), (4, np.inf), (7, np.nan)])

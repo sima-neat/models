@@ -27,12 +27,13 @@ CLASSES = (
     "bridge large-vehicle small-vehicle helicopter roundabout soccer-ball-field swimming-pool"
 ).split()
 STRIDES = (8, 16, 32)
-# Ultralytics' end-to-end selection and validation settings: the best 300 anchor/class pairs scoring above 0.001.
+# Ultralytics' end-to-end selection and oriented-box validation settings: the best 300 anchor/class pairs scoring
+# above 0.01, the confidence its validator sets for the obb task.
 TOP_K = 300
-SCORE_THRESHOLD = 0.001
-# sigmoid(-7) is about 0.00091, below SCORE_THRESHOLD, so a logit at or below LOGIT_FLOOR is never kept and the
+SCORE_THRESHOLD = 0.01
+# sigmoid(-4.6) is about 0.00995, below SCORE_THRESHOLD, so a logit at or below LOGIT_FLOOR is never kept and the
 # decoder skips its sigmoid.
-LOGIT_FLOOR = -7.0
+LOGIT_FLOOR = -4.6
 # Ultralytics merges the tiles of an image with Fast-NMS on probabilistic IoU at 0.3, one class at a time.
 MERGE_IOU = 0.3
 # Fast-NMS compares at most this many boxes at a time against every higher-scoring box, to bound memory.
@@ -55,16 +56,6 @@ ANCHORS = np.concatenate(
 ANCHOR_STRIDES = np.repeat(STRIDES, [size * size for size in GRIDS])[:, None]
 
 
-def tensor_options() -> pyneat.ModelOptions:
-    options = pyneat.ModelOptions()
-    options.preprocess.kind = pyneat.InputKind.Tensor
-    # The script already letterboxed and scaled the tile; Neat still quantizes and tessellates.
-    options.preprocess.resize.enable = pyneat.AutoFlag.Off
-    options.preprocess.color_convert.enable = pyneat.AutoFlag.Off
-    options.preprocess.normalize.enable = pyneat.AutoFlag.Off
-    return options
-
-
 def prefetched(load: Callable, items: Sequence) -> Iterator:
     """Yield load(item) in order, keeping at most PREFETCH items in flight."""
     with ThreadPoolExecutor(WORKERS) as pool:
@@ -80,7 +71,7 @@ def sigmoid(logits: np.ndarray) -> np.ndarray:
     return 1.0 / (1.0 + np.exp(-np.clip(logits, -80, 80)))
 
 
-def top(values: np.ndarray, count: int) -> np.ndarray:
+def top_indices(values: np.ndarray, count: int) -> np.ndarray:
     """Indices of the count largest values, largest first, ties in index order, like a stable descending sort."""
     chosen = np.arange(len(values))
     if len(values) > count:
@@ -108,11 +99,11 @@ def decode_tile(outputs: Sequence[np.ndarray]) -> np.ndarray:
     if not (np.isfinite(distances).all() and np.isfinite(best).all() and np.isfinite(angles).all()):
         raise ValueError("MPK output contains non-finite values")
     live_anchors = np.flatnonzero(best > LOGIT_FLOOR)
-    anchors = live_anchors[top(sigmoid(best[live_anchors]), TOP_K)]
+    anchors = live_anchors[top_indices(sigmoid(best[live_anchors]), TOP_K)]
     pair_logits = logits[anchors].ravel()
     live_pairs = np.flatnonzero(pair_logits > LOGIT_FLOOR)
     scores = sigmoid(pair_logits[live_pairs])
-    picked = top(scores, TOP_K)
+    picked = top_indices(scores, TOP_K)
     picked = picked[scores[picked] > SCORE_THRESHOLD]
     anchor, label = anchors[live_pairs[picked] // len(CLASSES)], live_pairs[picked] % len(CLASSES)
     # Ultralytics' dist2rbox: box side distances are in grid cells, left and top then right and bottom, in the
@@ -263,11 +254,11 @@ def score(detections: dict[str, np.ndarray], label_dir: Path) -> tuple[dict[str,
         difficult_flags.append(difficult)
         positives += np.bincount(labels[~difficult], minlength=len(CLASSES))
         for label in range(len(CLASSES)):
-            mine, theirs = boxes[boxes[:, 6] == label], np.flatnonzero(labels == label)
-            best, index = best_overlaps(corners(mine), polygons[theirs])
-            truth = np.full(len(mine), -1)
-            truth[index >= 0] = theirs[index[index >= 0]] + offset
-            found[label].append(np.column_stack([mine[:, 5], best, truth]))
+            class_detections, class_truths = boxes[boxes[:, 6] == label], np.flatnonzero(labels == label)
+            best, index = best_overlaps(corners(class_detections), polygons[class_truths])
+            truth = np.full(len(class_detections), -1)
+            truth[index >= 0] = class_truths[index[index >= 0]] + offset
+            found[label].append(np.column_stack([class_detections[:, 5], best, truth]))
         offset += len(labels)
     truth_difficult = np.concatenate(difficult_flags)
     table = np.zeros((len(CLASSES), len(IOU_THRESHOLDS)))
@@ -302,7 +293,7 @@ def main(argv: list[str] | None = None) -> int:
     dataset_id, dataset_dir = args.dataset.split("=", 1)
     dataset = Path(dataset_dir)
 
-    model = pyneat.Model(str(parse_mpks(args.mpk)), tensor_options())
+    model = pyneat.Model(str(parse_mpks(args.mpk)))
     image_dir = dataset / IMAGES
     available = sorted(path.name for path in image_dir.glob("*.jpg"))
     if len(available) != VAL_IMAGES:
@@ -316,7 +307,7 @@ def main(argv: list[str] | None = None) -> int:
     images = prefetched(lambda name: decode_image((image_dir / name).read_bytes()), names)
     for count, (name, image) in enumerate(zip(names, images), start=1):
         height, width = image.shape[:2]
-        found = []
+        tile_detections = []
         for window in tile_windows(width, height):
             x0, y0, x1, y1 = window
             tile = image[y0:y1, x0:x1]
@@ -324,9 +315,9 @@ def main(argv: list[str] | None = None) -> int:
             if runner is None:
                 runner = model.build([tensor])
             outputs = [output.to_numpy(copy=False) for output in runner.run([tensor], timeout_ms=120000)]
-            found.append(image_detections(decode_tile(outputs), window, tile.shape[1], tile.shape[0]))
-        tiles += len(found)
-        detections[name] = merge(np.concatenate(found))
+            tile_detections.append(image_detections(decode_tile(outputs), window, tile.shape[1], tile.shape[0]))
+        tiles += len(tile_detections)
+        detections[name] = merge(np.concatenate(tile_detections))
         if count == 1 or count % 50 == 0 or count == len(names):
             elapsed = time.monotonic() - started
             log(f"{count}/{len(names)} images, {tiles} tiles, {elapsed / tiles * 1000:.0f} ms/tile")
