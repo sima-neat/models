@@ -3,8 +3,7 @@ conversion:
 compile:
   run_tests: true
 accuracy:
-  run_tests: false
-  skip_reason: The w8a16 build fails to compile, so it has no published report to expect values from.
+  run_tests: true
   expected:
     w16a16:
       dota-v1-0-val:
@@ -15,8 +14,7 @@ accuracy:
         dota_obb_map50: 0.7344
         dota_obb_map: 0.4595
 performance:
-  run_tests: false
-  skip_reason: The w8a16 build fails to compile, so it has no published report to expect values from.
+  run_tests: true
   expected:
     w16a16:
       throughput_fps: 82.0
