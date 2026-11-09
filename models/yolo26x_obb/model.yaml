@@ -46,7 +46,8 @@ build_profiles:
         parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 50}
 
   # w8a16 is disabled because it has no build: its Model Compiler 3.0.0 compile failed on the default
-  # 32 GiB runner, likely from memory. Uncomment it once it compiles.
+  # 32 GiB runner. A 3.0.0.1 compile with 64 GiB passed, peaking at 26.7 GiB on x86_64, so it likely
+  # needs the 64 GiB moderate runner class. Uncomment it once that class is granted.
   # w8a16:
   #   components:
   #     model:
