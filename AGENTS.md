@@ -61,6 +61,11 @@ ONNX consumed as either a pinned source or `compilation.source: conversion`.
 It writes `model.onnx` unless `conversion.outputs` lists other files: several
 ONNX models, or a `.pt`/`.pth` checkpoint that `surgery.py` exports to ONNX.
 `compile.py` receives the first as `--model`, with the rest beside it.
+`convert.py` exports the upstream forward pass at the shipped input shape, from
+its input to the final outputs the package keeps. Every other change for the
+compiler, even an exact one, belongs in `surgery.py`. That includes a cut: an
+export that ends at an inner tensor, such as raw heads before the upstream
+decode, or starts after an upstream step.
 Registry sources resolve during planning; only resolved content enters the compile
 fingerprint. See [conversion artifacts](docs/conversion-artifacts.md).
 
