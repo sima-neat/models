@@ -399,7 +399,7 @@ def assemble_portal(root: Path) -> subprocess.CompletedProcess[str]:
     (root / "website" / "build").mkdir()
     shutil.copy(PORTAL_ASSEMBLER, root / "website" / "scripts" / PORTAL_ASSEMBLER.name)
     shutil.copy(PORTAL_ASSEMBLER.with_name("portal-config.mjs"), root / "website" / "scripts" / "portal-config.mjs")
-    for source in ("models", "schemas", "tools"):
+    for source in ("models", "schemas", "tools", "licenses.json"):
         (root / source).symlink_to(ROOT / source)
     return subprocess.run(
         ["node", str(root / "website" / "scripts" / PORTAL_ASSEMBLER.name)],
@@ -458,8 +458,10 @@ def test_assembled_portal_ships_the_model_data_api_fetches(tmp_path: Path) -> No
     assert [stage.get("component") for stage in pipelines["rf_detr_nano"]] == ["backbone", None, "decoder"]
     reference = json.loads((portal / "reference-metrics.aaaaaaaaaaaa.json").read_text(encoding="utf-8"))
     assert reference["rf_detr_nano"][0]["metrics"] == {"coco_ap50": 0.676, "coco_map": 0.484}
+    licenses = json.loads((portal / "licenses.aaaaaaaaaaaa.json").read_text(encoding="utf-8"))
+    assert licenses == json.loads((ROOT / "licenses.json").read_text(encoding="utf-8"))
     api = (portal / "api.aaaaaaaaaaaa.js").read_text(encoding="utf-8")
-    for name in ("component-pipelines", "reference-metrics"):
+    for name in ("component-pipelines", "reference-metrics", "licenses"):
         assert f'"./{name}.aaaaaaaaaaaa.json"' in api
         assert f'"./{name}.json"' not in api
 
@@ -1686,8 +1688,8 @@ def test_model_license_metadata_is_rendered_with_redistribution_and_attribution(
     script = _browser_source("model-view.js")
     styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
 
-    assert "const license = run.metadata?.license" in script
-    assert "function licensePanel(license)" in script
+    assert "const license = catalogModel?.license || run.metadata?.license" in script
+    assert "function licensePanel(license, listed)" in script
     assert 'detailTag(icons.license, license.spdx, "license")' in script
     assert '<p class="license-line"><strong>${escapeHtml(license.spdx)}</strong>' in script
     assert "<span>${escapeHtml(redistribution)}</span></p>" in script
@@ -1695,6 +1697,27 @@ def test_model_license_metadata_is_rendered_with_redistribution_and_attribution(
     assert 'class="license-attribution"' in script
     assert ".detail-tag-license svg" in styles
     assert ".license-attribution" in styles
+
+
+def test_model_page_names_the_license_and_what_it_asks_from_the_license_list() -> None:
+    script = _browser_source("model-view.js")
+
+    assert "licensePanel(license, variant.licenses?.[license?.spdx])" in script
+    assert "<span>${escapeHtml(listed.name)}</span>" in script
+    assert '<p class="license-summary">${escapeHtml(listed.summary)}</p>' in script
+    assert ".license-summary" in (BROWSER / "styles.css").read_text(encoding="utf-8")
+
+
+def test_model_page_offers_artifact_downloads_only_under_a_downloadable_license() -> None:
+    script = _browser_source("model-view.js")
+    render_detail = script.split("export function renderDetail(", 1)[1]
+
+    assert "const offered = downloadOffered(license?.spdx, variant.licenses)" in render_detail
+    assert 'const downloadAction = !offered ? `<span class="download-unavailable">' in render_detail
+    assert "${offered ? packageCard(variant," in render_detail
+    # Every artifact download on the page sits in the header action or the package card.
+    assert script.count("data-download-variant=") == 2
+    assert script.count('data-download="package"') == 2
 
 
 def test_local_preview_fixtures_are_current_model_reports_and_server_is_same_origin() -> None:
@@ -1791,7 +1814,7 @@ def test_variant_page_shows_build_facts_once_and_one_row_per_component() -> None
     order = [
         "detailBuildSwitcher(variant)", "${overviewMarkup}", 'id="components-section"', "${accuracyMarkup}",
         "packageCard(variant,", 'disclosure("provenance", "Build provenance"', "sourceInputPanel(inputs)",
-        "licensePanel(license)",
+        "licensePanel(license,",
     ]
     positions = [render_detail.index(marker) for marker in order]
     assert positions == sorted(positions)

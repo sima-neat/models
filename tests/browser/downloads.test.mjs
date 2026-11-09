@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 
-const {variantDownloads, prepareDownloads, startDownloads, packageFormat, artifactDelivery, deploymentSize, huggingFaceLocation, modelDownloadCommand} = await import(new URL('../../artifact-browser/downloads.js', import.meta.url));
+const {variantDownloads, prepareDownloads, startDownloads, packageFormat, artifactDelivery, deploymentSize, downloadOffered, huggingFaceLocation, modelDownloadCommand} = await import(new URL('../../artifact-browser/downloads.js', import.meta.url));
 const run = {
   id: 'decoder-run', repository: 'sima-neat/models', git_ref: 'refs/heads/develop',
   commit_sha: 'commit', toolchain_name: 'compiler', toolchain_version: '2.1.3', target_platform: 'modalix',
@@ -248,4 +248,15 @@ test('CLI commands preserve branch, variant and staging and quote shell argument
   assert.equal(modelDownloadCommand('model', 'int8', 'main'),
     'sima-cli models download --id model --variant int8 --branch main');
   assert.ok(modelDownloadCommand('model', 'int8', 'feat/$(touch bad)').includes("--branch 'feat/$(touch bad)'"));
+});
+
+test('a download is offered only under a listed license that permits redistribution', async () => {
+  const {readFile} = await import('node:fs/promises');
+  const licenses = JSON.parse(await readFile(new URL('../../licenses.json', import.meta.url), 'utf8'));
+  assert.equal(downloadOffered('Apache-2.0', licenses), true);
+  assert.equal(downloadOffered('LicenseRef-MagicLeap-Noncommercial-Research', licenses), false);
+  assert.equal(downloadOffered('LicenseRef-Unlisted', licenses), false);
+  assert.equal(downloadOffered(undefined, licenses), false);
+  // The list did not load.
+  assert.equal(downloadOffered('Apache-2.0', null), false);
 });

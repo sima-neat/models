@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.neat.sima.ai/model-registry/licenses.schema.json",
+  "title": "SiMa Neat Model Registry licenses",
+  "description": "licenses.json: every license a model.yaml may declare in license.spdx, by SPDX ID. A license without an SPDX ID uses LicenseRef-<Name>.",
+  "type": "object",
+  "minProperties": 1,
+  "propertyNames": {"pattern": "^[A-Za-z0-9][A-Za-z0-9.+-]*$"},
+  "additionalProperties": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["name", "summary", "downloadable"],
+    "properties": {
+      "name": {"description": "The license's name, shown beside its ID on the model page.", "type": "string", "minLength": 1},
+      "summary": {
+        "description": "What the license asks of someone who redistributes the model, in one or two sentences shown on the model page.",
+        "type": "string", "minLength": 1
+      },
+      "downloadable": {
+        "description": "false when the license does not permit redistributing the model. The model page then offers no download.",
+        "type": "boolean"
+      }
+    }
+  }
+}

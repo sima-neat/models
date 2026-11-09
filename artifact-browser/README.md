@@ -172,6 +172,8 @@ A page shows one variant build: the component runs of one model and build
 profile compiled by one workflow. Its header carries the name, description,
 category tags and **Download**, with validation and source-link icons beside it.
 **Copy CLI command** is available inside the download dialog for current catalog builds.
+A model whose license `licenses.json` does not mark `downloadable` shows **Not
+available for download** in place of **Download** and has no package card.
 The model image sits beside the header content on wide screens and stacks below
 it on narrow screens. Both UI modes use this layout. Variant tabs and section
 links to **Overview**, **Performance**, **Accuracy**, **Details**, and **License**
@@ -209,8 +211,9 @@ everything longer sits in one expandable row.
   fidelity, then rows for build provenance, source models (one
   per distinct digest), and each component: checksum, run identity, and a nested
   **Compile parameters** row.
-- **License** is one line with the SPDX identifier and redistribution, plus
-  the attribution.
+- **License** is one line with the license identifier, its name, and
+  redistribution, then the license's summary from `licenses.json` and the
+  attribution.
 
 The catalog records each build profile's benchmark fingerprints. A fingerprint
 without a run, or a profile without one, shows **Not measured at this
@@ -275,6 +278,8 @@ It also writes `component-pipelines.<revision>.json` from the `pipeline` field
 of each `model.yaml`, which draws the component order on a multi-component
 model page, and `reference-metrics.<revision>.json` from each
 `reference_metrics`; `preview.py` serves the same data from `models/`.
+It copies the repository's `licenses.json` to `licenses.<revision>.json`, which
+names each license and decides whether a model page offers downloads.
 `metrics.js` and `accuracy-metrics.js` keep the labels, units, and directions
 of `tools/model_report/metrics.json`, and tests keep them in step. Run
 `build:portal` with the repository installed or `PYTHON` set, as for

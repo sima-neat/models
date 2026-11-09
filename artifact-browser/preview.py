@@ -673,6 +673,8 @@ class PreviewHandler(SimpleHTTPRequestHandler):
         elif path == "/component-pipelines.json":
             # The unbuilt sources request this name; an assembled portal requests the file it ships.
             self._json(component_pipelines(_repository()["models"]))
+        elif path == "/licenses.json":
+            self._bytes((ROOT / "licenses.json").read_bytes(), "application/json")
         elif path.startswith(f"{REPOSITORY_API}/"):
             self._repository_api(path.removeprefix(REPOSITORY_API), query)
         elif path.startswith("/v1/runs/"):
