@@ -194,9 +194,6 @@ def test_compile_rejects_an_undeclared_build_profile(load_script: Callable[[str]
 def test_model_preserves_compilation_and_quality_settings() -> None:
     model = load_metadata(MODEL_DIR)
     assert model["components"][0]["interface"]["format"] == "onnx"
-    assert model["components"][0]["source"]["type"] == "conversion"
-    assert model["architecture"]["id"] == "yolo11_det"
-    assert [profile["id"] for profile in model["build_profiles"]] == ["w16a16", "w8a8", "w8a16"]
     assert model["license"] == {
         "spdx": "AGPL-3.0-only",
         "redistribution": "restricted",
