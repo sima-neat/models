@@ -44,10 +44,15 @@ args = parser.parse_args()
 dataset_id, dataset_dir = args.dataset.split("=", 1)
 dataset = Path(dataset_dir)
 left, right = sample_pair(dataset)
+# The pair as one RGB frame: the left view, then the right view.
+frame = np.concatenate([read_rgb(dataset / left), read_rgb(dataset / right)], axis=1)
 
 options = pyneat.ModelOptions()
 # Neat resizes, normalizes, quantizes and tessellates the frame inside the measured pipeline.
 options.preprocess.kind = pyneat.InputKind.Image
+# Size Neat's input buffers for the benchmark frame, not the 1920x1080 default.
+options.preprocess.input_max_width = frame.shape[1]
+options.preprocess.input_max_height = frame.shape[0]
 options.preprocess.enable = pyneat.AutoFlag.On
 options.preprocess.resize.enable = pyneat.AutoFlag.On
 options.preprocess.resize.mode = pyneat.ResizeMode.Stretch
@@ -61,8 +66,6 @@ benchmark_options.num_samples = 1000
 benchmark_options.min_duration_ms = 60000
 benchmark_options.include_mla_layer_stats = True
 benchmark_options.include_mla_stage_stats = True
-# The pair as one RGB frame: the left view, then the right view.
-frame = np.concatenate([read_rgb(dataset / left), read_rgb(dataset / right)], axis=1)
 benchmark_options.inputs = [pyneat.Tensor.from_numpy(frame, copy=True, image_format=pyneat.PixelFormat.RGB)]
 report = model_report.from_performance(
     model.benchmark(benchmark_options),
