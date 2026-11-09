@@ -515,6 +515,7 @@ def test_publish_fresh_branch_reuses_only_compatible_catalog_runs(model_reposito
     [
         "scripts/performance.py",
         "scripts/accuracy.py",
+        "scripts/fp32_baseline_accuracy.py",
         "scripts/requirements-accuracy.txt",
         "scripts/convert.py",
         "scripts/requirements-convert.txt",

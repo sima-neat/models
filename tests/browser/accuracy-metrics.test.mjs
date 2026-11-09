@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 
-const {accuracyDisplay, formatAccuracy, orderedMetricNames, referenceScores} = await import(new URL('../../artifact-browser/accuracy-metrics.js', import.meta.url));
+const {accuracyDisplay, formatAccuracy, orderedMetricNames, referenceNotes, referenceScores} = await import(new URL('../../artifact-browser/accuracy-metrics.js', import.meta.url));
 
 test('detection metrics follow the label order whatever order the registry returns', () => {
   // The registry returned RF-DETR Small's metrics in this order.
@@ -45,6 +45,20 @@ test('reference scores sit beside measurements of the same dataset only', () => 
   assert.deepEqual(referenceScores(reference, 'coco-2017'), {coco_map: 0.53, coco_ap50: 0.721});
   assert.deepEqual(referenceScores(reference, 'imagenet-2012'), {});
   assert.deepEqual(referenceScores(undefined, 'coco-2017'), {});
+});
+
+test('published and FP32 baseline scores stay apart', () => {
+  const baseline = {origin: 'fp32_baseline', dataset: {id: 'coco-2017', split: 'val'}, metrics: {coco_map: 0.51}};
+  assert.deepEqual(referenceScores([...reference, baseline], 'coco-2017'), {coco_map: 0.53, coco_ap50: 0.721});
+  assert.deepEqual(referenceScores([...reference, baseline], 'coco-2017', 'fp32_baseline'), {coco_map: 0.51});
+  assert.deepEqual(referenceScores(reference, 'coco-2017', 'fp32_baseline'), {});
+});
+
+test('an accuracy tile notes each origin that scores its metric, published first', () => {
+  const scores = {published: {pose_auc_5: 0.3902}, fp32_baseline: {pose_auc_5: 0.2865, matching_score: 0.2783}};
+  assert.deepEqual(referenceNotes('pose_auc_5', scores), ['Published 39.02%', 'FP32 baseline 28.65%']);
+  assert.deepEqual(referenceNotes('matching_score', scores), ['FP32 baseline 27.83%']);
+  assert.deepEqual(referenceNotes('match_precision', scores), []);
 });
 
 test('ratios show as percentages and other units as reported, each with its direction', () => {

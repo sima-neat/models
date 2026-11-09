@@ -132,12 +132,17 @@
       }
     },
     "reference_metrics": {
-      "description": "Scores the source model's authors published for these weights, copied from a pinned page.",
+      "description": "Reference scores beside the measured accuracy: what the source model's authors published (origin published, the default), copied from a pinned page, or what the FP32 source model scores on the package's own inputs (origin fp32_baseline), measured by the model's baseline script.",
       "type": "array",
       "items": {
-        "type": "object", "additionalProperties": false, "required": ["source", "dataset", "conditions", "metrics"],
+        "type": "object", "additionalProperties": false, "required": ["dataset", "conditions", "metrics"],
+        "if": {"required": ["origin"], "properties": {"origin": {"const": "fp32_baseline"}}},
+        "then": {"required": ["script"], "not": {"required": ["source"]}},
+        "else": {"required": ["source"], "not": {"required": ["script"]}},
         "properties": {
+          "origin": {"enum": ["published", "fp32_baseline"], "default": "published"},
           "source": {"type": "string", "format": "uri", "pattern": "^https://"},
+          "script": {"const": "scripts/fp32_baseline_accuracy.py"},
           "dataset": {
             "type": "object", "additionalProperties": false, "required": ["id", "split"],
             "properties": {"id": {"$ref": "#/$defs/datasetId"}, "split": {"$ref": "#/$defs/datasetId"}}

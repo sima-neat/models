@@ -284,7 +284,8 @@ access to it before continuing; validation alone is not enough to submit.
 The performance stage runs the model's standalone `scripts/performance.py`
 once per benchmarked build profile, with every component's MPK, and measures
 the whole model. Its input is one image from the model's accuracy dataset in
-a 1280x720 frame, which Neat preprocesses inside the measurement (see
+a 1280x720 frame, which Neat preprocesses inside the measurement, or one sample
+as tensors for a model whose inputs are not images (see
 [Benchmark input](benchmarking.md#benchmark-input)); the stage does not
 measure accuracy.
 
@@ -297,7 +298,7 @@ script:
 ```bash
 PYTHONPATH=tools ~/pyneat/bin/python models/resnet_50/scripts/performance.py \
   --mpk /workspace/resnet_50_mpk.tar.gz \
-  --dataset imagenet-2012-mini=/media/nvme/datasets/imagenet-2012-mini \
+  --dataset imagenet-2012-val=/media/nvme/datasets/imagenet-2012-val \
   --output /workspace/performance 2>&1 | tee /workspace/performance.log
 ```
 
