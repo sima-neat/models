@@ -19,6 +19,8 @@ from .errors import ValidationError
 
 BENCHMARK_STAGES = ("performance", "accuracy")
 SCRIPTS = {"performance": "scripts/performance.py", "accuracy": "scripts/accuracy.py"}
+# An optional host script that measures a reference_metrics entry with origin fp32_baseline; no stage runs it.
+FP32_BASELINE_SCRIPT = "scripts/fp32_baseline_accuracy.py"
 ACCURACY_REQUIREMENTS = "scripts/requirements-accuracy.txt"
 DATASET_REQUIREMENTS_DIR = "datasets"
 DATASET_REQUIREMENTS_SCHEMA = "schemas/dataset-requirements.schema.json"
@@ -79,26 +81,36 @@ def validate_benchmark_declarations(model: dict[str, Any], directory: Path) -> N
         if unknown_profiles:
             names = ", ".join(sorted(unknown_profiles))
             raise ValidationError(f"{directory}: {stage} names unknown build profiles: {names}")
-    _validate_reference_metrics(model.get("reference_metrics", []), directory)
+    datasets = {dataset["id"] for dataset in model.get("accuracy", {}).get("datasets", {}).values()}
+    _validate_reference_metrics(model.get("reference_metrics", []), datasets, directory)
 
 
-def _validate_reference_metrics(entries: list[dict[str, Any]], directory: Path) -> None:
-    """Each published score names an accuracy metric, in the metric's unit, at most once per dataset."""
-    seen: set[tuple[str, str]] = set()
+def _validate_reference_metrics(entries: list[dict[str, Any]], datasets: set[str], directory: Path) -> None:
+    """Each reference score names an accuracy metric, in the metric's unit, at most once per origin and dataset.
+
+    An FP32 baseline is measured on one of the model's accuracy datasets by the model's baseline script.
+    """
+    seen: set[tuple[str, str, str]] = set()
     for index, entry in enumerate(entries):
         label = f"{directory}: reference_metrics[{index}]"
+        origin, dataset = entry.get("origin", "published"), entry["dataset"]["id"]
+        if origin == "fp32_baseline":
+            if dataset not in datasets:
+                raise ValidationError(f"{label}: the FP32 baseline's dataset {dataset} is not an accuracy dataset")
+            if not (directory / entry["script"]).is_file():
+                raise ValidationError(f"{label}: needs {entry['script']}")
         for name, value in entry["metrics"].items():
             if METRICS.get(name, {}).get("stage") != "accuracy":
                 raise ValidationError(f"{label}: {name!r} is not an accuracy metric")
             if error := accuracy_value_error(name, value):
                 raise ValidationError(f"{label}: {error}")
-            if (entry["dataset"]["id"], name) in seen:
-                raise ValidationError(f"{label}: {name} on {entry['dataset']['id']} is already published")
-            seen.add((entry["dataset"]["id"], name))
+            if (origin, dataset, name) in seen:
+                raise ValidationError(f"{label}: {name} on {dataset} already has a {origin} score")
+            seen.add((origin, dataset, name))
 
 
 def reference_metrics_by_model(models: dict[str, dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
-    """Each model's published scores, keyed by model ID, for the model browser."""
+    """Each model's reference scores, keyed by model ID, for the model browser."""
     return {
         model_id: model["reference_metrics"]
         for model_id, model in sorted(models.items())

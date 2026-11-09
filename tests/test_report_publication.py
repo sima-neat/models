@@ -92,7 +92,7 @@ def dataset_result(**changes: object) -> dict:
     }  # fmt: skip
 
 
-IMAGENET = "imagenet-2012-mini"
+IMAGENET = "imagenet-2012-val"
 
 
 def accuracy_report(datasets: dict | None = None) -> dict:
