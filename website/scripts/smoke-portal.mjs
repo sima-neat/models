@@ -413,22 +413,14 @@ async function checkTaskComparison(browser, base) {
         if (!(await page.locator('.compare-chart-dataset').innerText()).includes('coco-2017')) throw new Error('chart does not identify its accuracy dataset');
         await page.locator('[data-compare-control="task"]').selectOption('image_classification');
         await add.waitFor();
-        // Each classifier's variants by exact model name, and nothing from another task.
-        const classifiers = {'ResNet-50': 3, 'Inception v3': 2};
+        // Each classifier's variants by exact model name (Wide ResNet-50-2 contains "ResNet-50"), and nothing from another task.
+        const classifiers = {'ResNet-50': 3, 'ResNet-18': 2, 'ResNet-34': 2, 'ResNeXt-50 32x4d': 2, 'ResNeXt-101 32x8d': 2, 'ResNeXt-101 64x4d': 2, 'Wide ResNet-50-2': 2, 'Inception v3': 2};
         const variants = Object.values(classifiers).reduce((total, count) => total + count, 0);
         const choices = (await add.locator('option').allTextContents()).slice(1);
         if (choices.length !== variants || !Object.entries(classifiers).every(([name, count]) => choices.filter(text => text.startsWith(`${name} · `)).length === count)) throw new Error('comparison mixed tasks or omitted a variant');
-        // ResNet-50 measures accuracy on ImageNet mini and the other classifiers on val, so each plots on its own dataset axis.
-        const datasets = {mini: classifiers['ResNet-50'], val: variants - classifiers['ResNet-50']};
-        const axis = page.locator('[data-compare-control="axis"]');
-        const axes = await axis.locator('option').evaluateAll(options => options.map(option => option.value));
-        if (axes.length !== Object.keys(datasets).length) throw new Error('chart did not offer one axis per classification dataset');
-        for (const value of axes) {
-          await axis.selectOption(value);
-          const [id, variant] = JSON.parse(value);
-          if (id !== 'imagenet-2012' || !(await page.locator('.compare-chart-dataset').innerText()).includes(`/ ${variant} /`)) throw new Error('chart dataset did not follow the selected task');
-          if (await page.locator('.compare-point').count() !== datasets[variant]) throw new Error('chart omitted a measured classification variant');
-        }
+        const dataset = await page.locator('.compare-chart-dataset').innerText();
+        if (!dataset.includes('imagenet-2012') || !dataset.includes('/ val /')) throw new Error('chart dataset did not follow the selected task');
+        if (await page.locator('.compare-point').count() !== variants) throw new Error('chart omitted a measured classification variant');
         await add.selectOption('resnet_50.w16a16');
         if (!(await page.locator('.compare-table').innerText()).includes('W16A16')) throw new Error('selected variant is missing from the table');
         await page.locator('.compare-table .compare-remove').click();
