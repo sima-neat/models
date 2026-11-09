@@ -1,9 +1,10 @@
-# Promoting a model to Develop
+# Promoting a model to Develop or Main
 
 The **Promote model** workflow selects an existing finalized candidate in
-the selected Vulcan environment's Develop catalog. It never compiles, copies binaries, or changes source
-provenance. Main/Hugging Face release is not supported. Production approval
-configuration is deployed; end-to-end acceptance remains tracked in
+the selected Vulcan environment's target catalog. It never compiles, copies binaries, or changes source
+provenance. Develop is available in staging and production; Main is available
+only in production and keeps the same S3 artifacts. Hugging Face publication is a
+separate release operation. Develop acceptance remains tracked in
 [Models #574](https://github.com/sima-neat/models/issues/574).
 
 ## Enable the protected gate
@@ -17,7 +18,7 @@ reads its `VULCAN_ARTIFACT_REGISTRY_API_URL` (authenticated writer origin) and
 promotion operations use the signed writer client; catalog snapshots are fetched
 without AWS credentials from the public reader.
 Each subsequent job uses the resolved environment and URLs, with publisher roles
-from that environment and approver credentials from `<VULCAN_ENV>-promote-develop`.
+from that environment and approver credentials from `<VULCAN_ENV>-promote-<target_branch>`.
 Both URLs are configuration, not embedded in Python. For source CLI use, export all three
 variables explicitly. Missing/invalid configuration fails before any registry call.
 
@@ -28,14 +29,14 @@ Environment-local candidate and promotion IDs must never be moved between regist
 
 Before normal use, a repository administrator and Vulcan operator must:
 
-1. Create `<VULCAN_ENV>-promote-develop` (`staging-promote-develop` or
-   `production-promote-develop`) with required reviewers, prevent self-review,
+1. Create `<VULCAN_ENV>-promote-<target_branch>` (`staging-promote-develop`,
+   `production-promote-develop`, or `production-promote-main`) with required reviewers, prevent self-review,
    and restrict deployment branches to `develop`. Verify the repository plan
    supports these protection rules, and restrict administrator bypass according
    to the team's approval policy. GitHub requires one eligible listed reviewer,
    not all listed reviewers.
 2. Configure Vulcan's `promotion_approvers` entry for `sima-neat/models` with that
-   exact environment and a separate role authorized only for Develop request
+   exact environment and a separate role authorized only for that target's request
    inspection/approval/rejection. Scope its OIDC trust to that environment.
 3. Set environment variable `VULCAN_ARTIFACT_REGISTRY_PROMOTION_ROLE_ARN` in
    the selected protected environment to the provisioned role ARN. Keep the publisher
@@ -46,7 +47,7 @@ Before normal use, a repository administrator and Vulcan operator must:
 5. Make `.github/workflows/model-promotion.yml` available on the repository default
    branch (`main`) so GitHub discovers its [manual dispatch trigger](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow). Dispatch with
    `develop` selected; execution from Main is intentionally excluded. This is
-   workflow discovery, not Main artifact promotion.
+   workflow discovery; the selected `target_branch` determines the target catalog.
 6. Run disposable fixture acceptance below. Provisioning the environment or a
    successful unit test does not establish working OIDC or backend authorization.
 
@@ -68,7 +69,7 @@ The publisher role and writer/public-reader URLs stay in the separate
 For production, supply `deployment_id` explicitly as well as `model_id`,
 `build_profile` and a nonempty reason with evidence links. Use that production
 build's finalized `candidate.json`; staging receipts cannot be reused. The
-candidate's model/profile must still be declared as build-on-demand on Develop,
+candidate's model/profile must still be declared as build-on-demand on the target branch,
 with matching `build_requirements`. A finalized candidate alone does not imply
 promotion eligibility. If the model becomes an automatic build or its requirements
 change, review the current target instead of changing policy to force approval.
@@ -85,12 +86,62 @@ protected promotion. Production automatic cleanup is still disabled: explicitly
 cancel/reject abandoned pending requests before expiry and arrange controlled
 cleanup of expired holds.
 
+## Production Main selection
+
+Run **Promote model** from **develop** and choose `target_branch: main` with
+production selected. The workflow always executes trusted Develop code, even
+when selecting Main. The configure job rejects Main in staging before obtaining
+publisher credentials. The protected gate is `production-promote-main`, with
+its own `NeatProductionModelsRegistryMainPromotionRole`; the Develop role cannot
+inspect or decide Main requests, and the Main role cannot inspect or decide
+Develop requests. Both gates restrict deployment branches to `develop` because
+that is the workflow's execution ref.
+
+The Main environment requires `owners-models` review, self-review prevention,
+administrator bypass disabled, and its own
+`VULCAN_ARTIFACT_REGISTRY_PROMOTION_ROLE_ARN`. Activate that IAM role only after
+those controls exist. Vulcan migration `021_main_candidate_promotions` must be
+applied before deploying the updated API package. Deployments preserve existing
+Develop pending requests, approved selections and retention holds.
+
+Run **Publish Main model metadata** from **develop** to publish Main's metadata
+catalog before requesting selection. It checks out Main, installs that revision's
+matching producer and publishes only definitions/documentation, without compiling
+or approving artifacts. It records the exact checked-out Main SHA and does not
+inherit Develop's definitions. The Main model/profile must declare matching on-demand
+`build_requirements`, even if it has not been compiled on Main. A model present
+only on Develop needs a reviewed source/metadata release to Main first. The
+workflow does not copy Develop's definitions into Main or silently change the
+target requirements to fit a candidate. Missing Main metadata fails explicitly.
+
+Before Main can select a candidate, that exact candidate and manifest digest
+must have a completed Develop approval. Main's request pins its Develop promotion
+UUID and exposes the original workflow evidence for review. A later Develop
+selection does not invalidate that historical approval or retarget the Main
+request. Main still requires its own protected approval and matching target
+requirements.
+
+Main selection reuses the same finalized production candidate and exact S3
+versions. It neither recompiles nor copies model payloads. Develop and Main
+have independent catalog snapshots and approval retention holds; replacing one
+selection does not release the other's hold. This production registry operation
+does not upload to Hugging Face or change downloads to a different host.
+
+The saved plan pins the target as well as the environment and URLs. Select the
+same target for status/cancel/reject, CLI operations and retries. For CLI use,
+add `--target-branch main` to every `model-registry promotion` operation;
+omitting it keeps the Develop default. A target change requires a fresh request
+and protected review. The default branch's discovery workflow must expose the
+same input schema. Copy both manual workflow files to Main for discovery; their
+Develop execution guards keep the implementation on trusted Develop code.
+
 ## Build, request, review, consume
 
 1. Run **Vulcan Model Orchestrator** with the on-demand model and profile selected.
    Candidates may originate on a feature branch or Develop. Compile
    success is not runtime qualification; review the relevant evidence first.
-2. Run **Promote model** from **develop**, choose `promote`, enter `model_id` and
+2. Run **Promote model** from **develop**, choose the target (`develop` by default,
+   or production `main`) and `promote`, enter `model_id` and
    `build_profile`, and a reason including validation evidence links. The model ID
    is the folder name under `models/` (also the top-level `id` in `model.yaml`);
    the profile is an `id` under `build_profiles` in that file. For Qwen3.5 0.8B,
@@ -102,7 +153,7 @@ cleanup of expired holds.
    resolved source commit and candidate in the review summary. Retries restore
    the saved plan instead of resolving a newer build. Source CLI users may still
    supply an exact UUID with `--deployment-id`.
-3. The prepare job reads the candidate and current Develop canonical snapshot,
+3. The prepare job reads the candidate and current target canonical snapshot,
    creates a correlated request issue, and uploads `promotion-plan`. At this point
    the issue is only a preparation record: no pending hold is promised yet.
 4. The request job submits the saved body/key, verifies backend pending protection,
