@@ -1341,3 +1341,47 @@ def test_private_conversion_reader_keeps_dataset_credentials_separate(monkeypatc
     assert not any("dataset-" in argument for argument in commands[0])
     import os
     assert os.environ["AWS_ACCESS_KEY_ID"] == "dataset-ACCESS_KEY_ID"
+
+
+def fake_artifact_download(monkeypatch: pytest.MonkeyPatch, responses: list[Exception | bytes]) -> list[float]:
+    """Answer each artifact download with the next response, and record the backoff sleeps."""
+    import io
+
+    sleeps = []
+
+    def urlopen(request, timeout):
+        response = responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return io.BytesIO(response)
+
+    monkeypatch.setattr("model_registry.registry.urlopen", urlopen)
+    monkeypatch.setattr("model_registry.registry.time.sleep", sleeps.append)
+    monkeypatch.setattr("model_registry.registry.random.uniform", lambda low, high: 0.5)
+    return sleeps
+
+
+def test_dropped_artifact_download_is_retried(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from model_registry.registry import _download_registry_file
+
+    payload = b"compiled model"
+    artifact = {"sha256": hashlib.sha256(payload).hexdigest(), "size_bytes": len(payload)}
+    sleeps = fake_artifact_download(monkeypatch, [ConnectionResetError(104, "Connection reset by peer"), payload])
+
+    _download_registry_file("https://registry.example/model.tar.gz", tmp_path / "model.tar.gz", artifact)
+
+    assert (tmp_path / "model.tar.gz").read_bytes() == payload
+    assert sleeps == [1.5]
+
+
+def test_missing_artifact_download_is_not_retried(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from urllib.error import HTTPError
+
+    from model_registry.registry import _download_registry_file
+
+    url = "https://registry.example/model.tar.gz"
+    sleeps = fake_artifact_download(monkeypatch, [HTTPError(url, 404, "Not Found", {}, None)])
+
+    with pytest.raises(RegistryPublicationError, match="HTTP Error 404"):
+        _download_registry_file(url, tmp_path / "model.tar.gz", {"sha256": "0" * 64, "size_bytes": 1})
+    assert sleeps == []
