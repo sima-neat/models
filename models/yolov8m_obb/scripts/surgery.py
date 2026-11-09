@@ -8,7 +8,7 @@ import onnx
 
 IMAGE_SIZE = 1024
 CLASS_COUNT = 15
-DFL_BINS = 16
+REG_MAX = 16
 STRIDES = (8, 16, 32)
 ANCHOR_COUNT = sum((IMAGE_SIZE // stride) ** 2 for stride in STRIDES)
 
@@ -18,19 +18,14 @@ INPUT_SHAPE = [1, 3, IMAGE_SIZE, IMAGE_SIZE]
 SOURCE_OUTPUT_SHAPES = {"output0": [1, 4 + CLASS_COUNT + 1, ANCHOR_COUNT]}
 # DFL box logits (cv2), class logits (cv3), then angle logits (cv4), each from P3 to P5. Every head tensor is the
 # output of the last convolution in its branch, before the DFL softmax and the class and angle sigmoids.
-BRANCHES = {
-    "bbox": ("cv2.{level}/cv2.{level}.2", 4 * DFL_BINS),
-    "class_logit": ("cv3.{level}/cv3.{level}.2", CLASS_COUNT),
-    "angle": ("cv4.{level}/cv4.{level}.2", 1),
-}
 HEADS = {
-    f"{name}_{level}": f"/model.22/{branch.format(level=level)}/Conv_output_0"
-    for name, (branch, _) in BRANCHES.items()
+    f"{name}_{level}": f"/model.22/{branch}.{level}/{branch}.{level}.2/Conv_output_0"
+    for name, branch in (("bbox", "cv2"), ("class_logit", "cv3"), ("angle", "cv4"))
     for level in range(len(STRIDES))
 }
 OUTPUT_SHAPES = {
     f"{name}_{level}": [1, channels, IMAGE_SIZE // stride, IMAGE_SIZE // stride]
-    for name, (_, channels) in BRANCHES.items()
+    for name, channels in (("bbox", 4 * REG_MAX), ("class_logit", CLASS_COUNT), ("angle", 1))
     for level, stride in enumerate(STRIDES)
 }
 OUTPUTS = list(OUTPUT_SHAPES)
@@ -83,10 +78,15 @@ def prepare_model(source: Path, output_dir: Path) -> Path:
         onnx.helper.make_tensor_value_info(name, onnx.TensorProto.FLOAT, shape) for name, shape in OUTPUT_SHAPES.items()
     )
     _prune(model)
-    # convert.py folds the export with onnxsim; the kept graph must hold no static-value computation.
-    unfolded = sorted({node.op_type for node in model.graph.node} & {"Constant", "Shape"})
-    _require(not unfolded, f"heads still depend on {unfolded} nodes; fold the source with onnxsim first")
     del model.graph.value_info[:]
+    # Compiler-specific constant folding belongs with the graph cut, not the upstream conversion.
+    if any(node.op_type in {"Constant", "Shape"} for node in model.graph.node):
+        from onnxsim import simplify
+
+        model, valid = simplify(model, perform_optimization=False, overwrite_input_shapes={INPUT: INPUT_SHAPE})
+        _require(valid, "onnxsim could not validate constant folding")
+    unfolded = sorted({node.op_type for node in model.graph.node} & {"Constant", "Shape"})
+    _require(not unfolded, f"heads still depend on {unfolded} nodes after constant folding")
     model = onnx.shape_inference.infer_shapes(model, strict_mode=True)
     onnx.checker.check_model(model, full_check=True)
     path = output_dir / "yolov8m_obb_heads.onnx"

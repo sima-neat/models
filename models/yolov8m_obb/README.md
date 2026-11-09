@@ -7,16 +7,15 @@
 YOLOv8m-obb is the Medium size of the Ultralytics YOLOv8 oriented-box model,
 trained on the 15 DOTA aerial object classes, such as planes and ships. It
 finds each object in a 1024×1024 RGB tile of an aerial image and returns a
-rotated box around it as raw box, class, and angle outputs at three scales,
-which your application decodes with the steps below.
+rotated box around it as raw box, class, and angle outputs at three scales.
 
 ## Inputs and outputs
 
-**Input.** Cut larger images into 1024×1024 windows that overlap by 200 pixels.
-Letterbox each window to 1024×1024 with gray (114, 114, 114) padding, scaling it
-up with bilinear resampling only when it is smaller, and scale RGB values
-to 0–1. Pass a 1024×1024×3 (height, width, channel) float tensor, with Neat's
-resize, color conversion, and normalization off.
+**Input.** Split large images into 1024×1024 windows with 200-pixel overlap.
+Letterbox each window to 1024×1024 using bilinear resizing and gray
+(114, 114, 114) padding; scale RGB values to 0–1. For tensor input, use a
+1024×1024×3 float32 tensor with Neat's resize, color conversion, and normalization
+off. For image input, let Neat perform these steps.
 
 **Outputs.** Height, width, channel tensors at stride 8, 16, and 32 (grids of
 128, 64, and 32 cells; the cell in column c and row r is centered at
@@ -36,11 +35,9 @@ resize, color conversion, and normalization off.
 Classes 0 to 14 are plane, ship, storage-tank, baseball-diamond,
 tennis-court, basketball-court, ground-track-field, harbor, bridge,
 large-vehicle, small-vehicle, helicopter, roundabout, soccer-ball-field, and
-swimming-pool. Neat's `YoloV8Obb` box decoder runs steps 1 to 4.
+swimming-pool. Neat's `YoloV8Obb` box decoder runs steps 1 to 4. For example,
+set `score_threshold = 0.25` to keep detections scoring above 25%.
 
 ## Building applications
 
-Run the package with the [Neat Model
-API](https://developer.sima.ai/software/develop-apps/development-workflow/model).
-For complete applications, start from the [Neat example
-apps](https://developer.sima.ai/examples).
+Run the package with the [Neat Model API](https://developer.sima.ai/software/develop-apps/development-workflow/model). For complete applications, start from the [Neat example apps](https://developer.sima.ai/examples).

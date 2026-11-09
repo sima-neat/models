@@ -7,7 +7,7 @@ modalities:
   inputs: [image]
   outputs: [bounding_boxes, class_scores]
 
-architecture: yolo
+architecture: yolov8_obb
 
 license:
   spdx: AGPL-3.0-only
@@ -31,11 +31,7 @@ conversion:
 
 compilation:
   format: onnx
-  source:
-    # TODO(#518): pin the source block printed by the Vulcan Model Convert run.
-    uri: https://artifacts.stg.neat.sima.ai/models-onnx/yolov8x_obb/TODO/model.onnx
-    sha256: TODO
-    size_bytes: 0
+  source: conversion
 
 calibrations:
 - id: dota-v1-0-cal
@@ -52,6 +48,11 @@ build_profiles:
     components:
       model:
         parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 50}
+
+  w8a16:
+    components:
+      model:
+        parameters: {precision: w8a16}
 
 accuracy:
   datasets:

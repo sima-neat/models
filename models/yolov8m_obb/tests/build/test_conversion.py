@@ -17,52 +17,23 @@ def converter(load_script: Callable[[str], ModuleType]) -> ModuleType:
     return load_script("convert")
 
 
-class Reference:
-    """Stands in for the torch tensors Ultralytics returns: compare_heads only calls numpy()."""
-
-    def __init__(self, array):
-        self.array = array
-
-    def numpy(self):
-        return self.array
-
-
-def _heads():
-    levels = [128, 64, 32]
-    boxes = [np.random.RandomState(g).normal(0, 4, (1, 64, g, g)).astype(np.float32) for g in levels]
-    scores = [np.random.RandomState(g + 1).normal(0, 4, (1, 15, g, g)).astype(np.float32) for g in levels]
-    angle = [np.random.RandomState(g + 2).normal(0, 1, (1, 1, g, g)).astype(np.float32) for g in levels]
-    expected = {
-        "boxes": Reference(np.concatenate([value.reshape(1, 64, -1) for value in boxes], axis=2)),
-        "scores": Reference(np.concatenate([value.reshape(1, 15, -1) for value in scores], axis=2)),
-        # Ultralytics returns decoded angles, (sigmoid(logit) - 0.25) * pi; the ONNX keeps the logits.
-        "angle": Reference((1 / (1 + np.exp(-np.concatenate([value.reshape(1, 1, -1) for value in angle], axis=2)))
-                            - 0.25) * np.pi),
-    }
-    return expected, [*boxes, *scores, *angle]
-
-
-@pytest.mark.parametrize("case", ["valid", "level_order", "angle_order", "shape", "nan"])
-def test_head_agreement(case, converter: ModuleType):
-    expected, actual = _heads()
-    error, match = ValueError, "Unexpected or non-finite"
-    if case == "level_order":
-        actual[3], actual[4] = actual[4], actual[3]
-        error, match = AssertionError, "scores"
-    elif case == "angle_order":
-        actual[6], actual[7] = actual[7], actual[6]
-        error, match = AssertionError, "angle"
+@pytest.mark.parametrize("case", ["valid", "shape", "nan", "changed"])
+def test_complete_upstream_output_agreement(case, converter: ModuleType):
+    expected = np.random.default_rng(352).normal(0, 1, (1, 20, 21504)).astype(np.float32)
+    actual = expected.copy()
+    if case == "valid":
+        converter.compare_outputs(expected, actual)
     elif case == "shape":
-        actual[0] = actual[0][:, :, :-1]
+        with pytest.raises(ValueError, match="predictions"):
+            converter.compare_outputs(expected, actual[:, :, :-1])
     elif case == "nan":
-        actual[5] = actual[5].copy()
-        actual[5][0, 0, 0, 0] = np.nan
+        actual[0, 0, 0] = np.nan
+        with pytest.raises(ValueError, match="non-finite"):
+            converter.compare_outputs(expected, actual)
     else:
-        actual = [value + 1e-5 for value in actual]
-        converter.compare_heads(expected, actual)
-        return
-    with pytest.raises(error, match=match):
-        converter.compare_heads(expected, actual)
+        actual[0, 0, 0] += 1
+        with pytest.raises(AssertionError):
+            converter.compare_outputs(expected, actual)
 
 
 @pytest.mark.parametrize("case", ["valid", "opset", "order", "dtype", "shape"])
@@ -98,6 +69,6 @@ def test_fixed_onnx_interface(tmp_path, case, converter: ModuleType):
 def test_source_must_be_the_pinned_checkpoint(converter: ModuleType):
     model = load_metadata(ROOT / "models/yolov8m_obb")
     converter.validate_source(model["conversion"]["default"]["source"])
-    for other in ("yolov8m.pt", "yolo11n-obb.pt"):
+    for other in ("yolov8m.pt", "yolo11m-obb.pt"):
         with pytest.raises(ValueError, match="yolov8m-obb.pt"):
-            converter.validate_source({"type": "file", "uri": f"hf://models/simaai/yolo-obb@main/{other}"})
+            converter.validate_source({"type": "file", "uri": f"hf://models/example/checkpoints@main/{other}"})
