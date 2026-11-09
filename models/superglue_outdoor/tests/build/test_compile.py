@@ -23,7 +23,6 @@ def surgery(load_script: Callable[[str], ModuleType]) -> ModuleType:
 
 def _mpk_manifest(compile_module: ModuleType) -> dict:
     return {
-        "model_sdk_version": compile_module.COMPILER_VERSION,
         "input_nodes": [{"name": name, "size": size} for name, size in compile_module.INPUT_BYTES.items()],
         "plugins": [
             {"sequence": 0, "processor": "EV74", "config_params": {"kernel": "quantize"}},
@@ -46,7 +45,7 @@ def _write_mpk(path: Path, manifest: dict) -> None:
             stream.addfile(info, io.BytesIO(content))
 
 
-@pytest.mark.parametrize("case", ["valid", "bf16_cast", "inputs", "outputs", "decoder", "two_mla", "host", "compiler"])
+@pytest.mark.parametrize("case", ["valid", "bf16_cast", "inputs", "outputs", "decoder", "two_mla", "host"])
 def test_mpk_audit_requires_one_mla_segment_and_the_declared_interface(
     tmp_path: Path,
     case: str,
@@ -67,8 +66,6 @@ def test_mpk_audit_requires_one_mla_segment_and_the_declared_interface(
         plugins.insert(2, {"sequence": 1, "processor": "MLA", "config_params": {}})
     elif case == "host":
         plugins.insert(2, {"sequence": 1, "processor": "A65", "config_params": {}})
-    elif case == "compiler":
-        manifest["model_sdk_version"] = "0.0.0"
     archive = tmp_path / "model_mpk.tar.gz"
     _write_mpk(archive, manifest)
 

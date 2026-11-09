@@ -53,6 +53,9 @@ options = pyneat.ModelOptions()
 # [0, 1], then quantizes and tessellates it, inside the measured pipeline. Neat's RGB to GRAY8 conversion keeps the
 # red channel rather than mixing the three as SuperPoint's training did, so the keypoints differ from accuracy.py's.
 options.preprocess.kind = pyneat.InputKind.Image
+# Size Neat's input buffers for the benchmark frame, not the 1920x1080 default.
+options.preprocess.input_max_width = FRAME_WIDTH
+options.preprocess.input_max_height = FRAME_HEIGHT
 options.preprocess.enable = pyneat.AutoFlag.On
 options.preprocess.resize.enable = pyneat.AutoFlag.On
 options.preprocess.resize.mode = pyneat.ResizeMode.Stretch
