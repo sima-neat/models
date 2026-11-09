@@ -50,6 +50,8 @@ image = sample_image(Path(dataset_dir))
 options = pyneat.ModelOptions()
 # Neat letterboxes, normalizes, quantizes and tessellates the frame inside the measured pipeline.
 options.preprocess.kind = pyneat.InputKind.Image
+options.preprocess.input_max_width = FRAME_WIDTH
+options.preprocess.input_max_height = FRAME_HEIGHT
 options.preprocess.enable = pyneat.AutoFlag.On
 options.preprocess.resize.enable = pyneat.AutoFlag.On
 options.preprocess.resize.mode = pyneat.ResizeMode.Letterbox
@@ -57,8 +59,8 @@ options.preprocess.normalize.enable = pyneat.AutoFlag.On
 options.decode_type = pyneat.BoxDecodeType.YoloV8
 # An application's decoder keeps a few confident detections, not every candidate.
 options.top_k = 10
-# The YoloV8 decoder takes the score threshold as a probability in [0, 1); Neat rejects a logit.
 options.score_threshold = 0.25
+options.nms_iou_threshold = 0.7
 model = pyneat.Model(args.mpk, options)
 # Request 1000 samples and a 60 s minimum measurement duration.
 benchmark_options = pyneat.BenchmarkOptions()
@@ -74,7 +76,7 @@ report = model_report.from_performance(
     {"model": model},
     workload=(
         f"{dataset_id} {image.name} in a {FRAME_WIDTH}x{FRAME_HEIGHT} RGB frame, Neat preprocessing, "
-        f"YoloV8 box decoder, top 10 above 0.25, {postprocess} post-processing"
+        f"YoloV8 box decoder, top 10 above 0.25, NMS IoU 0.7, {postprocess} post-processing"
     ),
 )
 report.save(args.output)

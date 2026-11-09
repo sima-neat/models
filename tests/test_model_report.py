@@ -399,6 +399,9 @@ def test_every_single_component_script_benchmarks_a_dataset_image(script, monkey
         # Box decoders take a probability threshold, in [0, 1).
         assert_letterboxed_frame(frame)
         assert (options.preprocess.resize.mode, options.top_k, options.score_threshold) == ("Letterbox", 10, 0.25)
+        if options.decode_type == "YoloV8":
+            assert options.nms_iou_threshold == 0.7
+            assert "NMS IoU 0.7" in report["workload"]
         # Pose accuracy scores only images with a labelled person.
         expected = "000000000002.jpg" if options.decode_type == "YoloV26Pose" else ".jpg"
         assert expected in report["workload"]

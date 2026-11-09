@@ -5,8 +5,7 @@
 ## Overview
 
 YOLOv8x-det is the Extra-Large size of the Ultralytics YOLOv8 object detector,
-trained on the 80 COCO classes. It finds obstacles such as people, vehicles, and
-animals for drones and robots. It takes a 640×640 RGB image and returns raw box
+trained on the 80 COCO classes. It takes a 640×640 RGB image and returns raw box
 and class outputs at three scales. Your application turns them into detections
 with the steps below. YOLOv8 predicts overlapping boxes for one object, so the
 application filters them by score and removes duplicates with non-maximum
@@ -16,9 +15,9 @@ suppression.
 
 **Input.** Letterbox the image to 640×640: resize it with bilinear resampling so
 its longer side is 640, center it, and fill the rest with gray (114, 114, 114).
-Scale the RGB values to 0–1. The reference scripts pass this image as a
-640×640×3 (height, width, channel) float tensor, with Neat's resize, color
-conversion, and normalization turned off.
+Scale RGB values to 0–1. For tensor input, use a 640×640×3 float32 tensor and
+disable Neat's resize, color conversion, and normalization. For image input,
+let Neat perform these steps.
 
 **Outputs.** Each tensor is in height, width, channel order, at stride 8, 16, or
 32 (grids of 80, 40, and 20 cells):
@@ -34,8 +33,8 @@ conversion, and normalization turned off.
 6. Remove the letterbox padding, divide by the letterbox scale, and clip to the image.
 
 Class index i is the i-th COCO category ID in ascending order. Neat's `YoloV8`
-box decoder decodes these outputs; give its score threshold as a probability,
-such as 0.25.
+box decoder handles these outputs. For example, set `score_threshold = 0.25`
+to keep detections scoring above 25%.
 
 ## Building applications
 

@@ -7,7 +7,7 @@ modalities:
   inputs: [image]
   outputs: [bounding_boxes, class_scores]
 
-architecture: yolo
+architecture: yolov8_det
 
 license:
   spdx: AGPL-3.0-only
@@ -27,10 +27,7 @@ conversion:
 
 compilation:
   format: onnx
-  source:
-    uri: https://artifacts.stg.neat.sima.ai/models-onnx/yolov8n/5502bc28c5cdf85d1b5812774bed777b12032a98dccf294f683334134272abab/39727229537-1/model.onnx
-    sha256: 5502bc28c5cdf85d1b5812774bed777b12032a98dccf294f683334134272abab
-    size_bytes: 12836805
+  source: conversion
 
 calibrations:
 - id: coco-2017-cal

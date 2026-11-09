@@ -80,7 +80,7 @@ def _source_graph(load_script: Callable[[str], ModuleType], constant_weight: boo
     nodes, initializers = [], []
     for (name, head), shape in zip(surgery.HEADS.items(), surgery.OUTPUT_SHAPES.values()):
         stride = 640 // shape[2]
-        weight = np.zeros((shape[1], 3, stride, stride), np.float32)
+        weight = np.full((shape[1], 3, stride, stride), 1 / (stride + 1), np.float32)
         if constant_weight and name == "bbox_0":
             nodes.append(helper.make_node("Constant", [], [f"{name}_w"], value=onnx.numpy_helper.from_array(weight)))
         else:
@@ -98,7 +98,7 @@ def _source_graph(load_script: Callable[[str], ModuleType], constant_weight: boo
         [helper.make_tensor_value_info("output0", onnx.TensorProto.FLOAT, [1, 84, anchors])],
         initializers,
     )
-    return helper.make_model(graph, opset_imports=[helper.make_opsetid("", 12)])
+    return helper.make_model(graph, opset_imports=[helper.make_opsetid("", 12)], ir_version=10)
 
 
 def test_surgery_cuts_at_the_six_raw_heads_in_order(tmp_path: Path, load_script: Callable[[str], ModuleType]) -> None:
@@ -115,19 +115,42 @@ def test_surgery_cuts_at_the_six_raw_heads_in_order(tmp_path: Path, load_script:
     assert [node.op_type for node in cut.graph.node] == ["Conv"] * 6
 
 
-def test_surgery_requires_a_folded_source(tmp_path: Path, load_script: Callable[[str], ModuleType]) -> None:
-    surgery = load_script("surgery")
-    source = tmp_path / "source.onnx"
-    onnx.save(_source_graph(load_script, constant_weight=True), source)
+def test_surgery_folds_static_computation_and_preserves_head_values(
+    tmp_path: Path, load_script: Callable[[str], ModuleType]
+) -> None:
+    import onnxruntime as ort
 
-    with pytest.raises(ValueError, match="fold the source with onnxsim first"):
-        surgery.prepare_model(source, tmp_path / "out")
+    surgery = load_script("surgery")
+    model = _source_graph(load_script, constant_weight=True)
+    # Different nonzero weights make this a numerical test of the cut and constant folding.
+    for index, initializer in enumerate(model.graph.initializer):
+        array = onnx.numpy_helper.to_array(initializer)
+        initializer.CopyFrom(onnx.numpy_helper.from_array(np.full_like(array, (index + 1) / 100), initializer.name))
+    source = tmp_path / "source.onnx"
+    onnx.save(model, source)
+    expected = onnx.ModelProto()
+    expected.CopyFrom(model)
+    del expected.graph.output[:]
+    expected.graph.output.extend(
+        onnx.helper.make_tensor_value_info(head, onnx.TensorProto.FLOAT, shape)
+        for head, shape in zip(surgery.HEADS.values(), surgery.OUTPUT_SHAPES.values())
+    )
+    cut_path = surgery.prepare_model(source, tmp_path / "out")
+    cut = onnx.load(cut_path)
+    assert not {node.op_type for node in cut.graph.node} & {"Constant", "Shape"}
+    options = ort.SessionOptions()
+    options.intra_op_num_threads = 2
+    providers = ["CPUExecutionProvider"]
+    before = ort.InferenceSession(expected.SerializeToString(), sess_options=options, providers=providers)
+    after = ort.InferenceSession(str(cut_path), sess_options=options, providers=providers)
+    sample = np.random.default_rng(352).uniform(0, 1, surgery.INPUT_SHAPE).astype(np.float32)
+    for original, rewritten in zip(before.run(None, {"images": sample}), after.run(None, {"images": sample})):
+        np.testing.assert_allclose(rewritten, original, rtol=1e-6, atol=1e-6)
 
 
 def _mpk_manifest(compile_module: ModuleType) -> dict:
     sizes = compile_module.OUTPUT_BYTES
     return {
-        "model_sdk_version": compile_module.COMPILER_VERSION,
         "input_nodes": [{"name": "images", "size": 1 * 3 * 640 * 640 * 4}],
         "plugins": [
             {"sequence": 0, "processor": "EV74", "config_params": {"kernel": "quantize"}},
@@ -150,7 +173,7 @@ def _write_mpk(path: Path, manifest: dict) -> None:
             stream.addfile(info, io.BytesIO(content))
 
 
-@pytest.mark.parametrize("case", ["valid", "reordered", "two_mla", "host", "compiler"])
+@pytest.mark.parametrize("case", ["valid", "reordered", "two_mla", "host"])
 def test_mpk_audit_requires_one_mla_segment_and_the_declared_interface(
     tmp_path: Path,
     case: str,
@@ -166,8 +189,6 @@ def test_mpk_audit_requires_one_mla_segment_and_the_declared_interface(
         plugins.insert(2, {"sequence": 1, "processor": "MLA", "config_params": {}})
     elif case == "host":
         plugins.insert(2, {"sequence": 1, "processor": "A65", "config_params": {}})
-    elif case == "compiler":
-        manifest["model_sdk_version"] = "0.0.0"
     archive = tmp_path / "model_mpk.tar.gz"
     _write_mpk(archive, manifest)
 
@@ -178,23 +199,25 @@ def test_mpk_audit_requires_one_mla_segment_and_the_declared_interface(
             compile_module.audit_mpk(archive)
 
 
-def test_compile_reads_the_declared_build_parameters(load_script: Callable[[str], ModuleType]) -> None:
-    compile_module = load_script("compile")
+@pytest.mark.parametrize("profile_id", ["w16a16", "w8a8", "w8a16"])
+def test_compile_reads_the_declared_build_parameters(load_script: Callable[[str], ModuleType], profile_id: str) -> None:
+    expected = {"precision": profile_id}
+    if profile_id == "w8a8":
+        expected |= {"calibration_bins": 2048, "calibration_samples": 50}
 
-    assert compile_module._parameters("w16a16") == {"precision": "w16a16"}
-    assert compile_module._parameters("w8a16") == {"precision": "w8a16"}
-    assert compile_module._parameters("w8a8") == {
-        "precision": "w8a8",
-        "calibration_bins": 2048,
-        "calibration_samples": 50,
-    }
+    assert load_script("compile")._parameters(profile_id) == expected
+
+
+def test_compile_rejects_an_undeclared_build_profile(load_script: Callable[[str], ModuleType]) -> None:
     with pytest.raises(ValueError, match="no build profile"):
-        compile_module._parameters("w32a32")
+        load_script("compile")._parameters("w32a32")
 
 
 def test_model_preserves_compilation_and_quality_settings() -> None:
     model = load_metadata(MODEL_DIR)
     assert model["components"][0]["interface"]["format"] == "onnx"
+    assert model["components"][0]["source"]["type"] == "conversion"
+    assert model["architecture"]["id"] == "yolov8_det"
     assert [profile["id"] for profile in model["build_profiles"]] == ["w16a16", "w8a8", "w8a16"]
     assert model["license"] == {
         "spdx": "AGPL-3.0-only",
@@ -202,3 +225,49 @@ def test_model_preserves_compilation_and_quality_settings() -> None:
         "attribution": "YOLOv8 is developed by Ultralytics and distributed under AGPL-3.0.",
     }
     assert list(model["accuracy"]["datasets"]) == ["coco-2017-val"]
+
+
+@pytest.mark.parametrize(
+    ("precision", "calibrates", "per_token"), [("w8a8", True, False), ("w8a16", False, True), ("w16a16", False, False)]
+)
+def test_quantization_calibrates_only_int8_activations(
+    load_script: Callable[[str], ModuleType], precision: str, calibrates: bool, per_token: bool
+) -> None:
+    recipe = load_script("compile")
+
+    recipe._quantization(precision, 2048 if calibrates else None)
+
+    recipe.QuantizationParams.return_value.with_requantization_mode.assert_called_once_with(
+        recipe.RequantizationMode.sima
+    )
+    arguments = recipe.QuantizationParams.call_args.kwargs
+    calibration = recipe.HistogramMSEMethod.return_value if calibrates else recipe.SkipCalibration.return_value
+    assert arguments["calibration_method"] is calibration
+    assert arguments.get("per_token_quant", False) is per_token
+    if calibrates:
+        recipe.HistogramMSEMethod.assert_called_once_with(2048)
+
+
+@pytest.mark.parametrize("precision", ["w16a16", "w8a16", "w8a8"])
+def test_only_the_int8_build_quantizes_with_calibration_data(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    load_script: Callable[[str], ModuleType],
+    precision: str,
+) -> None:
+    recipe = load_script("compile")
+    parameters = {"precision": precision}
+    if precision == "w8a8":
+        parameters |= {"calibration_bins": 2048, "calibration_samples": 2}
+    monkeypatch.setattr(recipe, "_parameters", lambda profile_id: parameters)
+    monkeypatch.setattr(recipe, "calibration_images", lambda dataset, count: np.zeros((count, 640, 640, 3), np.float32))
+    monkeypatch.setattr(recipe, "prepare_model", lambda source, output_dir: output_dir / "cut.onnx")
+
+    with pytest.raises(RuntimeError, match="expected one MPK"):
+        recipe.compile_model(tmp_path / "model.onnx", tmp_path / "out", precision, tmp_path / "coco.tgz")
+
+    data = recipe.load_model.return_value.quantize.call_args.kwargs["calibration_data"]
+    if precision == "w8a8":
+        assert data is recipe.convert_data_generator_to_iterable.return_value
+    else:
+        assert data is None
