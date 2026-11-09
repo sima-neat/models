@@ -166,6 +166,20 @@ the right one (1920x540 for Scene Flow). Its Model resizes with
 `ResizeMode.Stretch` and sets the ImageNet preset, and the workload names the
 pair's left image.
 
+A model whose inputs are not images, such as a keypoint matcher, measures one
+sample of its accuracy dataset instead of a frame. The script picks the sample
+from the dataset's validation list with `random.Random(0)` (for SuperGlue, one
+pair of `pairs_val.txt` whose images both hold 512 keypoints), passes its arrays
+to Core as `pyneat.Tensor` inputs on the tensor route (`preprocess.kind =
+InputKind.Tensor`, with resizing, color conversion and normalization off), and
+names the dataset and the sample in `workload`. Each timed sample also runs the
+CPU steps that turn the MPK's outputs into the model's result, such as
+SuperGlue's Sinkhorn iterations and match extraction, so throughput is what an
+application gets from inputs to matches, as for image models. The shared
+dataset-image test in `tests/test_model_report.py` skips a model without an
+image input, so its own `tests/benchmark/test_performance.py` checks the sample,
+the tensors and the CPU steps.
+
 A model without an accuracy dataset builds a fixed, realistic input in its
 own script and takes no `--dataset`.
 
@@ -363,7 +377,7 @@ failed test still publishes the report and completes its run, then fails the
 workflow run. A failed measurement keeps its workflow evidence and is not
 published. Performance and accuracy publish on their own outcomes: when one
 stage fails, the other's report is still published, and the next push reruns
-only the stage that has no run. A dispatched run stops before measuring when
+only the stage that has no run. A manual dispatch stops before measuring when
 its branch has since changed the tooling the benchmark fingerprints hash; the
 newer push benchmarks that build instead.
 

@@ -199,10 +199,11 @@ everything longer sits in one expandable row.
 - **Accuracy** shows the coverage, the first four metrics, and the dataset,
   from the build profile's accuracy run. In the developer UI, **Evaluation
   details** explains the coverage and lists the context and remaining metrics.
-  **Published scores** lists each `reference_metrics` entry of `model.yaml`
-  with its dataset, conditions, and source; a published score sits beside a
-  measured one only when both name the same dataset. A build without an
-  accuracy result shows only the published scores.
+  **Published scores** and **FP32 baseline** list the `reference_metrics`
+  entries of `model.yaml` of each origin, with their dataset, conditions, and
+  source or script; a reference score sits beside a measured one only when both
+  name the same dataset. A build without an accuracy result shows only the
+  reference scores.
 - **Details**, in the developer UI only, shows the package card (size, SHA-256, **Download package**,
   and **Download components** for a multi-component build) and the package's numerical
   fidelity, then rows for build provenance, source models (one

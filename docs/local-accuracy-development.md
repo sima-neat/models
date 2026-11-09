@@ -160,6 +160,25 @@ PYTHONPATH=tools ~/pyneat/bin/python models/resnet_50/scripts/accuracy.py \
 A model whose `accuracy.py` imports another file under `scripts/`, such as
 ResNet-50's `calibration.py`, needs that file beside it.
 
+### FP32 baseline
+
+When no published score matches the package's setup, such as SuperGlue's 512
+keypoints from a 640x480 image, the model page can show an FP32 baseline instead:
+what the unquantized source model scores on the same inputs and protocol. A
+standalone `scripts/fp32_baseline_accuracy.py` measures it on a host. It runs the
+FP32 ONNX the model compiles with ONNX Runtime and scores it with the model's own `accuracy.py`,
+so only the model execution differs from the DevKit stage:
+
+```bash
+PYTHONPATH=tools python models/superglue_outdoor/scripts/fp32_baseline_accuracy.py \
+  --onnx <model.onnx from surgery.py> --dataset yfcc100m-keypoints-val=<extracted dataset> \
+  --output fp32-baseline.json
+```
+
+Copy its metrics into a `reference_metrics` entry with `origin: fp32_baseline`
+([reference metrics](metadata-schema.md#reference-metrics)). No stage runs the
+script and no fingerprint includes it, so adding or editing it reruns nothing.
+
 ### Report and publication
 
 `model-report.json` follows
