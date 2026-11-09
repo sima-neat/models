@@ -7,7 +7,7 @@ modalities:
   inputs: [image]
   outputs: [bounding_boxes, class_scores]
 
-architecture: yolo
+architecture: yolo26_det
 
 license:
   spdx: AGPL-3.0-only

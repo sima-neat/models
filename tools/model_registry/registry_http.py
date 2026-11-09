@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import subprocess
 import time
 from collections.abc import Callable
@@ -111,9 +112,16 @@ def read_registry_json_authenticated(url: str) -> JsonObject:
         return SigV4RegistryClient(iam_api, region, credential_env_prefix=prefix).request(
             "GET", url[len(iam_api):], None, ""
         )
-    try:
-        return read_registry_json(url)
-    except FetchError as exc:
-        raise RegistryPublicationError(str(exc)) from exc
+    # An orchestrator run starts every build's benchmark at once, so the public endpoint rate-limits a burst of
+    # reads; retry those with jittered backoff so the requests spread out.
+    for attempt in range(1, 6):
+        try:
+            return read_registry_json(url)
+        except FetchError as exc:
+            # read_registry_json raises an HTTP failure from its HTTPError, which carries the status.
+            if getattr(exc.__cause__, "code", None) not in {429, 502, 503, 504} or attempt == 5:
+                raise RegistryPublicationError(str(exc)) from exc
+        time.sleep(2 ** (attempt - 1) + random.uniform(0, 1))
+    raise AssertionError("unreachable")
 
 
