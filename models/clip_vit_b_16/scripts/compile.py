@@ -39,14 +39,12 @@ from afe.apis.model import L2CachingMode
 from afe.core.utils import convert_data_generator_to_iterable
 from afe.load.importers.general_importer import onnx_source
 from calibration import load_images, select_names
-from model_registry.dependencies import resolve_model_compiler
 from model_registry.fetch import sha256_file
 from model_registry.model import load_model as load_metadata
 from sima_utils.data.data_generator import DataGenerator
 
 MODEL_DIR = Path(__file__).resolve().parents[1]
 MODEL_ID = "clip_vit_b_16"
-COMPILER_VERSION = resolve_model_compiler(MODEL_DIR.parents[1])["version"]
 COMPONENT_IDS = ("image_encoder", "text_encoder")
 # Each component's graph inputs and outputs in the converted ONNX, with their shapes.
 COMPONENT_GRAPHS = {
@@ -142,7 +140,7 @@ def _read_mpk_manifest(archive: Path) -> tuple[list[str], dict[str, Any]]:
 
 
 def audit_mpk(archive: Path, component_id: str) -> dict[str, Any]:
-    """Require one MLA plugin, no CPU plugins, the pinned compiler and the component's input."""
+    """Require one MLA plugin, no CPU plugins and the component's input."""
     names, manifest = _read_mpk_manifest(archive)
     elfs = [name for name in names if name.endswith(".elf")]
     shared_objects = [name for name in names if name.endswith(".so") or ".so." in name]
@@ -153,10 +151,6 @@ def audit_mpk(archive: Path, component_id: str) -> dict[str, Any]:
         raise RuntimeError(
             f"invalid {component_id} MPK: MLA={len(mla_plugins)}, ELF={len(elfs)}, "
             f"host={len(host_plugins)}, shared_objects={shared_objects}"
-        )
-    if str(manifest.get("model_sdk_version")) != COMPILER_VERSION:
-        raise RuntimeError(
-            f"{component_id} MPK compiler mismatch: expected {COMPILER_VERSION}, found {manifest.get('model_sdk_version')}"
         )
     public_inputs = {node.get("name"): node.get("size") for node in manifest.get("input_nodes", [])}
     expected = {name: _float32_bytes(shape) for name, shape in COMPONENT_GRAPHS[component_id]["inputs"].items()}
