@@ -179,37 +179,138 @@ def test_compile_rejects_an_undeclared_build_profile(load_script: Callable[[str]
         recipe._parameters("w32a32")
 
 
-@pytest.mark.parametrize(
-    ("precision", "calibrates", "per_token"), [("w8a8", True, False), ("w8a16", False, True), ("w16a16", False, False)]
-)
+def test_model_preserves_compilation_and_quality_settings(load_script: Callable[[str], ModuleType]) -> None:
+    model = load_script("compile").load_metadata(MODEL_DIR)
+
+    assert model["components"][0]["interface"]["format"] == "onnx"
+    assert model["license"] == {
+        "spdx": "BSD-3-Clause",
+        "redistribution": "allowed",
+        "attribution": model["license"]["attribution"],
+    }
+    assert list(model["accuracy"]["datasets"]) == ["imagenet-2012-val"]
+    profiles = {profile["id"]: profile["components"][0]["parameters"] for profile in model["build_profiles"]}
+    assert profiles["w8a8"]["calibration_bins"] == 2048
+    assert profiles["w8a8"]["calibration_samples"] == 50
+
+
+@pytest.mark.parametrize(("precision", "calibrates"), [("w8a8", True), ("w16a16", False)])
 def test_quantization_calibrates_only_int8_activations(
-    load_script: Callable[[str], ModuleType], precision: str, calibrates: bool, per_token: bool
+    load_script: Callable[[str], ModuleType], precision: str, calibrates: bool
 ) -> None:
     recipe = load_script("compile")
 
-    recipe._quantization(precision)
+    recipe._quantization(precision, 2048 if calibrates else None)
 
     arguments = recipe.QuantizationParams.call_args.kwargs
-    calibration = recipe.CalibrationMethod.from_str.return_value if calibrates else recipe.SkipCalibration.return_value
+    calibration = recipe.HistogramMSEMethod.return_value if calibrates else recipe.SkipCalibration.return_value
     assert arguments["calibration_method"] is calibration
-    assert arguments.get("per_token_quant", False) is per_token
+    if calibrates:
+        recipe.HistogramMSEMethod.assert_called_once_with(2048)
+        assert arguments["biascorr_type"] is recipe.BiasCorrectionType.REGULAR
+    else:
+        assert "biascorr_type" not in arguments
 
 
-def test_bf16_builds_quantize_without_calibration_data(
+def test_quantization_rejects_an_undeclared_precision(load_script: Callable[[str], ModuleType]) -> None:
+    with pytest.raises(ValueError, match="unsupported precision 'w8a16'"):
+        load_script("compile")._quantization("w8a16", None)
+
+
+def _mpk_manifest(precision: str) -> dict:
+    """The plugin chain the compiler writes for each precision, as in the published VGG-11-BN MPKs."""
+    if precision == "w8a8":
+        stages = [("EV74", "quantization_transform", 150528), ("MLA", None, 1008)]
+        stages += [("EV74", "slice_transform", 1000), ("EV74", "dequantization_transform", 4000)]
+    else:
+        stages = [("EV74", "cast_transform", 301056), ("MLA", None, 2000), ("EV74", "cast_transform", 4000)]
+    return {
+        "input_nodes": [{"name": "pixel_values", "size": 1 * 3 * 224 * 224 * 4}],
+        "plugins": [
+            {
+                "sequence": sequence,
+                "processor": processor,
+                "config_params": {"kernel": kernel} if kernel else {},
+                "output_nodes": [{"size": size}],
+            }
+            for sequence, (processor, kernel, size) in enumerate(stages, start=1)
+        ],
+    }
+
+
+def _write_mpk(path: Path, manifest: dict) -> None:
+    _write_archive(path, {"model_stage1_mla.elf": b"elf", "model_mpk.json": json.dumps(manifest).encode()})
+
+
+@pytest.mark.parametrize("precision", ["w16a16", "w8a8"])
+@pytest.mark.parametrize("case", ["valid", "two_mla", "host", "shared_object", "input", "output"])
+def test_mpk_audit_requires_one_mla_segment_and_the_declared_interface(
+    tmp_path: Path,
+    load_script: Callable[[str], ModuleType],
+    precision: str,
+    case: str,
+) -> None:
+    recipe = load_script("compile")
+    manifest = _mpk_manifest(precision)
+    plugins = manifest["plugins"]
+    if case == "two_mla":
+        plugins.insert(2, {"sequence": 2, "processor": "MLA", "config_params": {}})
+    elif case == "host":
+        plugins.insert(2, {"sequence": 2, "processor": "A65", "config_params": {}})
+    elif case == "input":
+        manifest["input_nodes"][0]["size"] //= 2
+    elif case == "output":
+        plugins[-1]["output_nodes"][0]["size"] = 2000
+    archive = tmp_path / "model_mpk.tar.gz"
+    _write_mpk(archive, manifest)
+    if case == "shared_object":
+        _write_archive(
+            archive,
+            {"model_stage1_mla.elf": b"elf", "libcustom.so": b"so", "model_mpk.json": json.dumps(manifest).encode()},
+        )
+
+    if case == "valid":
+        recipe.audit_mpk(archive)
+    else:
+        with pytest.raises(RuntimeError):
+            recipe.audit_mpk(archive)
+
+
+@pytest.mark.parametrize("precision", ["w16a16", "w8a8"])
+def test_only_the_int8_build_quantizes_with_calibration_data(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     load_script: Callable[[str], ModuleType],
+    precision: str,
 ) -> None:
     recipe = load_script("compile")
+    parameters = {"precision": precision, "input_name": "pixel_values", "input_shape": [1, 3, 224, 224]}
+    if precision == "w8a8":
+        parameters |= {"calibration_bins": 2048, "calibration_samples": 2}
+    monkeypatch.setattr(recipe, "_parameters", lambda profile_id: parameters)
     monkeypatch.setattr(
-        recipe,
-        "_parameters",
-        lambda profile_id: {"precision": "w16a16", "input_name": "pixel_values", "input_shape": [1, 3, 224, 224]},
+        recipe, "calibration_samples", lambda dataset, count: np.zeros((count, 224, 224, 3), np.float32)
     )
 
-    with pytest.raises(RuntimeError, match="expected exactly one MPK archive"):
-        recipe.compile_model(tmp_path / "model.onnx", tmp_path / "model", "w16a16", None)
-    assert recipe.load_model.return_value.quantize.call_args.args[0] is None
+    with pytest.raises(RuntimeError, match="expected one MPK"):
+        recipe.compile_model(tmp_path / "model.onnx", tmp_path / "model", precision, tmp_path / "cal.tar.gz")
+
+    data = recipe.load_model.return_value.quantize.call_args.kwargs["calibration_data"]
+    if precision == "w8a8":
+        assert data is recipe.convert_data_generator_to_iterable.return_value
+    else:
+        assert data is None
+
+
+def test_the_int8_build_requires_a_calibration_dataset(
+    tmp_path: Path,
+    load_script: Callable[[str], ModuleType],
+) -> None:
+    recipe = load_script("compile")
+
+    with pytest.raises(ValueError, match="requires --dataset"):
+        recipe.compile_model(tmp_path / "model.onnx", tmp_path / "model", "w8a8", None)
+    assert not (tmp_path / "model").exists()
 
 
 def test_compile_rejects_an_undeclared_precision_before_compiling(
