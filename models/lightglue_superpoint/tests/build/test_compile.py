@@ -249,7 +249,6 @@ def test_audit_requires_one_mla_plugin_no_cpu_plugin_and_the_inputs(
     recipe = load_script("compile")
     inputs = [{"name": name, "size": int(np.prod(shape)) * 4} for name, shape in recipe.INPUT_SHAPES.items()]
     manifest = {
-        "model_sdk_version": recipe.COMPILER_VERSION,
         "input_nodes": inputs,
         "plugins": [{"processor": "EV74"}, {"processor": "MLA"}, {"processor": "EV74"}],
     }

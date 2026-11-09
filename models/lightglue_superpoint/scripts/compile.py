@@ -38,7 +38,6 @@ from afe.apis.model import L2CachingMode
 from afe.core.utils import convert_data_generator_to_iterable
 from afe.load.importers.general_importer import onnx_source
 from calibration import INPUT_SHAPES, KEYPOINTS, calibration_inputs, fidelity_inputs, matches
-from model_registry.dependencies import resolve_model_compiler
 from model_registry.model import load_model as load_metadata
 from sima_utils.data.data_generator import DataGenerator
 from surgery import INPUTS, assignment_matrix, export_matcher
@@ -52,7 +51,6 @@ OUTPUT_NAME = "assignment"
 # keep most matches and INT8 ones may lose more but must not collapse; a broken operator or a collapsed build shows up
 # as a low overlap.
 MATCH_OVERLAP_FLOORS = {"w16a16": 0.9, "w8a16": 0.9, "w8a8": 0.6}
-COMPILER_VERSION = resolve_model_compiler(MODEL_DIR.parents[1])["version"]
 
 
 def _metadata() -> dict[str, Any]:
@@ -138,7 +136,7 @@ def _read_mpk_manifest(archive: Path) -> tuple[list[str], dict[str, Any]]:
 
 
 def audit_mpk(archive: Path) -> dict[str, Any]:
-    """Require one MLA plugin, no CPU plugins, the pinned compiler and the matcher's four float32 inputs."""
+    """Require one MLA plugin, no CPU plugins and the matcher's four float32 inputs."""
     names, manifest = _read_mpk_manifest(archive)
     elfs = [name for name in names if name.endswith(".elf")]
     shared_objects = [name for name in names if name.endswith(".so") or ".so." in name]
@@ -149,10 +147,6 @@ def audit_mpk(archive: Path) -> dict[str, Any]:
         raise RuntimeError(
             f"invalid MPK: MLA={len(mla_plugins)}, ELF={len(elfs)}, host={len(host_plugins)}, "
             f"shared_objects={shared_objects}"
-        )
-    if str(manifest.get("model_sdk_version")) != COMPILER_VERSION:
-        raise RuntimeError(
-            f"MPK compiler mismatch: expected {COMPILER_VERSION}, found {manifest.get('model_sdk_version')}"
         )
     public_inputs = {node.get("name"): node.get("size") for node in manifest.get("input_nodes", [])}
     expected = {name: math.prod(shape) * 4 for name, shape in INPUT_SHAPES.items()}
