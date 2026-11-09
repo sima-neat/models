@@ -67,6 +67,11 @@ def test_performance_records_each_components_execution_plan(performance: dict[st
         assert plan["nodes"] and plan["edges"]
 
 
+def test_image_encoder_execution_plan_takes_the_benchmark_frame(performance: dict[str, Any]) -> None:
+    (frame,) = performance["components"]["image_encoder"]["execution_plan"]["edges"][0]["tensors"]
+    assert frame["shape"] == [1, 720, 1280, 3]
+
+
 def test_mla_stats_collected(performance: dict[str, Any]) -> None:
     for component_id, item in performance["components"].items():
         layer_stats, stage_stats = item["mla_layer_stats"], item["mla_stage_stats"]
