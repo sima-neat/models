@@ -314,7 +314,7 @@ To apply a changed test at once, dispatch **Vulcan Model Orchestrator** with
 builds, which runs the compile tests and remeasures every build. To run a changed
 conversion test, dispatch **Vulcan Model Convert**. If a selected package is
 already published in the current catalog revision, use a new Git commit;
-[forced rebuilds cannot replace immutable packages](../design-doc/model-registry-architecture.md#forced-rebuilds-of-published-packages).
+[forced rebuilds cannot replace immutable packages](https://github.com/sima-neat/models/blob/develop/design-doc/model-registry-architecture.md#forced-rebuilds-of-published-packages).
 
 ## 10. Write the model's tests
 

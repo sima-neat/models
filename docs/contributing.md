@@ -318,7 +318,7 @@ failure.
 
 Forced rebuilds of packages already published in the current catalog revision
 require a new Git commit. Initialization rejects the conflict before compilation;
-see [forced rebuilds](../design-doc/model-registry-architecture.md#forced-rebuilds-of-published-packages).
+see [forced rebuilds](https://github.com/sima-neat/models/blob/develop/design-doc/model-registry-architecture.md#forced-rebuilds-of-published-packages).
 
 Converted ONNX models resolve a validated registry output before compile reuse is
 checked. Deploy the Vulcan contract and publish matching conversions before
