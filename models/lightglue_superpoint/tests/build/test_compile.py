@@ -120,7 +120,7 @@ def test_only_the_int8_activation_build_calibrates_before_the_fidelity_pairs(
             assert binding["calibration"] == "yfcc100m-keypoints-cal"
             assert parameters["calibration_samples"] <= selection["offset"]
     assert metadata["numerical_fidelity"]["outputs"] == [recipe.OUTPUT_NAME]
-    assert set(recipe.MATCH_OVERLAP_FLOORS) == {profile["id"] for profile in metadata["build_profiles"]}
+    assert {profile["id"] for profile in metadata["build_profiles"]} <= set(recipe.MATCH_OVERLAP_FLOORS)
     with pytest.raises(ValueError, match="exactly one build profile named 'w32a32'"):
         recipe._parameters(metadata, "w32a32")
 
@@ -135,8 +135,10 @@ def test_bf16_activations_skip_calibration_and_int8_ones_calibrate_with_histogra
         monkeypatch.setattr(recipe, name, lambda *args, _name=name, **kwargs: (_name, args, kwargs))
     metadata = recipe._metadata()
 
-    (_, _, int8), (_, _, bf16), (_, _, int8_weights) = (
-        recipe._quantization_config(recipe._parameters(metadata, profile)) for profile in ("w8a8", "w16a16", "w8a16"))
+    (_, _, int8), (_, _, bf16) = (
+        recipe._quantization_config(recipe._parameters(metadata, profile)) for profile in ("w8a8", "w16a16"))
+    # model.yaml comments out the w8a16 profile until the simulator check passes, so its parameters are given here.
+    (_, _, int8_weights) = recipe._quantization_config({"precision": "w8a16"})
 
     assert int8 == {
         "calibration_method": ("HistogramMSEMethod", (2048,), {}),

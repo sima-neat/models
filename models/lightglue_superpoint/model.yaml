@@ -52,10 +52,13 @@ build_profiles:
       model:
         parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 32}
 
-  w8a16:
-    components:
-      model:
-        parameters: {precision: w8a16}
+  # W8A16 keeps 95.7% of the ONNX's matches, but Model Compiler 3.0.0's simulator check rejects it ("Check FAILED",
+  # no MPK) with per-token quantization on, and every push would retry the failing compile. compile.py keeps its
+  # recipe; uncomment the profile once the check passes.
+  # w8a16:
+  #   components:
+  #     model:
+  #       parameters: {precision: w8a16}
 
 numerical_fidelity:
   status: diagnostic

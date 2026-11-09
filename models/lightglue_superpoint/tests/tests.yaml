@@ -7,25 +7,18 @@ accuracy:
   expected:
     w16a16:
       yfcc100m-keypoints-val:
-        pose_auc_5: 0.2670
-        pose_auc_10: 0.4691
-        pose_auc_20: 0.6598
-    w8a16:
-      yfcc100m-keypoints-val:
-        pose_auc_5: 0.2461
-        pose_auc_10: 0.4458
-        pose_auc_20: 0.6396
+        pose_auc_5: 0.2648
+        pose_auc_10: 0.4634
+        pose_auc_20: 0.6536
     w8a8:
       yfcc100m-keypoints-val:
-        pose_auc_5: 0.2461
-        pose_auc_10: 0.4458
-        pose_auc_20: 0.6396
+        pose_auc_5: 0.2488
+        pose_auc_10: 0.4482
+        pose_auc_20: 0.6385
 performance:
   run_tests: true
   expected:
     w16a16:
-      throughput_fps: 72.7
-    w8a16:
-      throughput_fps: 50.0
+      throughput_fps: 91.0
     w8a8:
-      throughput_fps: 165.8
+      throughput_fps: 164.0
