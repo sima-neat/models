@@ -80,8 +80,8 @@ Promotion does not compile or copy these artifacts. Provisioning the role,
 finalizing a build and approving its Develop selection are separate milestones.
 
 See the [production acceptance record](evidence/production-promotion-2026-11-08.md)
-for the tested revision, candidate inventory, workflow outcome and remaining
-acceptance. Do not treat source tests or configuration deployment as a successful
+for the tested revisions, successful protected LLiMa promotion and selected
+download, and remaining live MPK acceptance. Do not treat source tests or configuration deployment as a successful
 protected promotion. Production automatic cleanup is still disabled: explicitly
 cancel/reject abandoned pending requests before expiry and arrange controlled
 cleanup of expired holds.
@@ -272,8 +272,7 @@ failure is visible as a failed notification step but does not block approval.
 
 ## Environment-local candidate selection
 
-Automatic model/profile discovery uses legacy build receipts, which are staging-only:
-candidate publication currently rejects other environments. Production dispatches
+Automatic model/profile discovery uses legacy build receipts and is staging-only. Production dispatches
 must provide an exact `deployment_id` from the production registry. They fail
 before searching GitHub artifacts when that ID is omitted. The UUID is also an
 optional override in staging, allowing selection of a specific validated build.
@@ -281,8 +280,10 @@ Find it in the build's `candidate.json` receipt, using `deployment_id`.
 
 Model ID and build profile remain required and are verified against the candidate
 returned by the selected registry. A staging UUID cannot be used to promote in
-production. This does not enable production candidate publication; that producer
-path still requires separate implementation and acceptance testing.
+production. Production candidate publication and promotion are separate operations. The
+production Whisper build and finalized candidate are recorded in the
+[acceptance evidence](evidence/production-promotion-2026-11-08.md); automatic
+staging receipt lookup never selects a production candidate.
 
 After the approval/decision job finishes, the report job sends a second Slack
 message to the same channel. It includes the model/profile, environment, promotion
