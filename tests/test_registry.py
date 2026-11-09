@@ -1284,6 +1284,141 @@ def test_package_run_retains_provenance_when_artifact_is_only_an_mpk(tmp_path):
     parameters = next(body["parameters"] for endpoint, body in calls if endpoint.endswith("/parameters"))
     assert parameters["provenance"] == result["manifest"]["provenance"]
     assert published["packages"][0]["artifact_sha256"] == assembled["sha256"]
+
+
+@pytest.mark.parametrize("continuing_revision", [False, True])
+@pytest.mark.parametrize("published_package", [False, True])
+def test_progress_publication_does_not_reimport_base_packages(
+    monkeypatch, tmp_path: Path, continuing_revision: bool, published_package: bool,
+) -> None:
+    """A sibling publisher must not fill a pending profile from a moving base."""
+    target_profile = {
+        "id": "resnet_50",
+        "builds": [{"build_profile_id": "w16a16", "component_id": "model",
+                    "compile_fingerprint": "old", "run_id": "target-build"}],
+        "packages": ([{"build_profile_id": "w16a16", "package_id": "default",
+                       "run_id": "target-package"}] if published_package else []),
+    }
+    base_profile = {
+        "id": "resnet_50",
+        "builds": [{"build_profile_id": "w16a16", "component_id": "model",
+                    "compile_fingerprint": "new", "run_id": "base-build"}],
+        "packages": [{"build_profile_id": "w16a16", "package_id": "default",
+                      "run_id": "base-package"}],
+    }
+    target = {"canonical_sha256": "c" * 64,
+              "catalog_revision": ("a" if continuing_revision else "b") * 40,
+              "document": {"models": [target_profile]}}
+    matrix = [{"model_id": "resnet_50", "build_profile_id": "w16a16",
+               "component_ids": ["model"], "compile_fingerprint": "new"}]
+    monkeypatch.setattr("model_registry.registry._head_matrix", lambda *args: matrix)
+    captured = {}
+
+    def build_snapshot(**kwargs):
+        captured.update(kwargs)
+        return kwargs["previous"]
+
+    monkeypatch.setattr("model_registry.registry.build_catalog_snapshot", build_snapshot)
+    selected = tmp_path / "selected.json"
+    result = publish_catalog(
+        repository=ROOT, api_url="https://registry.example.invalid",
+        read_api_url="https://models-registry.example.invalid", aws_region="us-west-2",
+        branch="feature", git_sha="a" * 40, base_branches=["develop"],
+        selected_matrix=selected,
+        request=lambda *args: {"stored": True},
+        read_request=lambda url: {"catalog": (
+            {"document": {"models": [base_profile]}} if url.endswith("develop") else target
+        )},
+    )
+    profile = result["catalog"]["models"][0]
+    expected = target_profile if continuing_revision else base_profile
+    assert profile["packages"] == expected["packages"]
+    assert profile["builds"] == expected["builds"]
+    # Retrying initialization must not drop packages already published this revision.
+    assert captured["selected_matrix"] == (None if continuing_revision else selected)
+
+
+@pytest.mark.parametrize("continuing_revision", [False, True])
+@pytest.mark.parametrize("has_previous", [False, True])
+def test_deferred_conversion_inheritance_respects_catalog_revision(monkeypatch, continuing_revision, has_previous):
+    """Unselected conversion entries keep their complete branch state during progress."""
+    prior = {"id": "deferred", "builds": [], "packages": [{"run_id": "target-package"}],
+             "build_requirements": {"unchanged": "requirements"}}
+    base = {**prior, "packages": [{"run_id": "base-package"}]}
+    pending = {"model_id": "deferred", "build_profile_id": "w16a16", "component_ids": ["model"],
+               "compile_fingerprint": "target-fingerprint"}
+    target_document = {"models": [prior] if has_previous else [],
+                       "pending_builds": [pending] if has_previous else []}
+    target = {"catalog_revision": ("a" if continuing_revision else "b") * 40,
+              "canonical_sha256": "c" * 64, "document": target_document}
+    monkeypatch.setattr("model_registry.registry.load_models", lambda root: {"deferred": object()})
+    monkeypatch.setattr("model_registry.registry._catalog_models", lambda models: {})
+    monkeypatch.setattr("model_registry.registry._head_matrix", lambda *args: [])
+    monkeypatch.setattr("model_registry.registry.build_catalog_snapshot", lambda **kwargs: kwargs["previous"])
+    result = publish_catalog(
+        repository=ROOT, api_url="https://registry.example.invalid",
+        read_api_url="https://registry.example.invalid", aws_region="us-west-2",
+        branch="feature", git_sha="a" * 40, base_branches=["develop"],
+        request=lambda *args: {"stored": True},
+        read_request=lambda url: {"catalog": (
+            {"document": {"models": [base], "pending_builds": []}} if url.endswith("develop") else target
+        )},
+    )["catalog"]
+    expected = [prior] if has_previous else ([] if continuing_revision else [base])
+    assert result["models"] == expected
+    assert result.get("pending_builds", []) == ([pending] if has_previous else [])
+
+
+@pytest.mark.parametrize("same_revision", [False, True])
+@pytest.mark.parametrize("force", [False, True])
+@pytest.mark.parametrize("published", [False, True])
+@pytest.mark.parametrize("on_demand", [False, True])
+def test_forced_rebuild_checks_revision_before_publication(
+    monkeypatch, tmp_path, same_revision, force, published, on_demand,
+):
+    selected = tmp_path / "selected.json"
+    selected.write_text(json.dumps({"include": [{
+        "model_id": "resnet_50", "build_profile_id": "w16a16",
+        "compile_invocation_id": "w16a16",
+    }]}))
+    target = {
+        "catalog_revision": ("a" if same_revision else "b") * 40,
+        "canonical_sha256": "c" * 64,
+        "document": {"models": [{
+            "id": "resnet_50", "builds": [], "build_on_demand": on_demand,
+            "packages": [{"build_profile_id": "w16a16", "package_id": "default"}] if published else [],
+        }]},
+    }
+    monkeypatch.setattr("model_registry.registry._head_matrix", lambda *args: [])
+    snapshots = []
+    writes = []
+
+    def build_snapshot(**kwargs):
+        snapshots.append(kwargs)
+        return kwargs["previous"]
+
+    monkeypatch.setattr("model_registry.registry.build_catalog_snapshot", build_snapshot)
+
+    def publish():
+        return publish_catalog(
+            repository=ROOT, api_url="https://registry.example.invalid",
+            read_api_url="https://models-registry.example.invalid", aws_region="us-west-2",
+            branch="feature", git_sha="a" * 40, selected_matrix=selected,
+            force_rebuild_all=force, read_request=lambda url: {"catalog": target},
+            request=lambda *args: writes.append(args) or {"stored": True},
+        )
+
+    if same_revision and force and published and not on_demand:
+        with pytest.raises(ValidationError, match="new Git revision"):
+            publish()
+        assert not snapshots
+        assert not writes
+    else:
+        publish()
+        assert len(writes) == 1
+        assert snapshots[0]["selected_matrix"] == (None if same_revision else selected)
+
+
 def test_iam_registry_reads_sign_only_the_configured_api(monkeypatch):
     import io
 
