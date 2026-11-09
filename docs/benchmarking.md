@@ -146,6 +146,9 @@ not the MPK alone:
    `pyneat.Tensor`. The Model uses the image route
    (`preprocess.kind = InputKind.Image`), so Neat's preprocessing resizes,
    normalizes, quantizes and tessellates the frame in every timed inference.
+   It sets `preprocess.input_max_width` and `input_max_height` to the frame
+   size. Otherwise Neat sizes its input buffers for 1920x1080, and the
+   execution plan shows that size as the model's input.
    YOLO26 resizes with `ResizeMode.Letterbox` and keeps Neat's default
    scaling of pixels to [0, 1]. ResNet-50 and RF-DETR's backbone resize with
    `ResizeMode.Stretch` and set `preprocess.preset =
