@@ -2,14 +2,16 @@
 
 The **Promote model** workflow selects an existing finalized candidate in
 the selected Vulcan environment's Develop catalog. It never compiles, copies binaries, or changes source
-provenance. Main/Hugging Face release is not supported. Production use still requires its own
-approver configuration and acceptance testing.
+provenance. Main/Hugging Face release is not supported. Production approval
+configuration is deployed; end-to-end acceptance remains tracked in
+[Models #574](https://github.com/sima-neat/models/issues/574).
 
 ## Enable the protected gate
 
 `VULCAN_ENV` selects `staging` or `production`. GitHub's repository variable
-overrides the organization variable; Models currently sets `staging`. There is
-no implicit default. The configuration job selects that GitHub environment and
+overrides the organization variable. Models has no repository override; verify
+the resolved value in the configure job rather than assuming an environment.
+There is no implicit default. The configuration job selects that GitHub environment and
 reads its `VULCAN_ARTIFACT_REGISTRY_API_URL` (authenticated writer origin) and
 `VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL` (public catalog reader). Candidate and
 promotion operations use the signed writer client; catalog snapshots are fetched
@@ -51,6 +53,37 @@ Before normal use, a repository administrator and Vulcan operator must:
 The workflow fails without its role configuration. GitHub may create a missing
 referenced environment automatically; that does not configure protection. Do not
 provision approver trust until the required environment rules are in place.
+
+## Production setup and acceptance
+
+`production-promote-develop` is configured with required `owners-models` review,
+self-review prevention, administrator bypass disabled, and only the `develop`
+deployment branch. Its `VULCAN_ARTIFACT_REGISTRY_PROMOTION_ROLE_ARN` points to
+`arn:aws:iam::069171140053:role/NeatProductionModelsRegistryPromotionRole`.
+Vulcan's validator, exact-environment role trust and Develop-only backend grant
+were deployed from [Vulcan #433](https://github.com/sima-neat/vulcan/pull/433).
+The publisher role and writer/public-reader URLs stay in the separate
+`production` environment.
+
+For production, supply `deployment_id` explicitly as well as `model_id`,
+`build_profile` and a nonempty reason with evidence links. Use that production
+build's finalized `candidate.json`; staging receipts cannot be reused. The
+candidate's model/profile must still be declared as build-on-demand on Develop,
+with matching `build_requirements`. A finalized candidate alone does not imply
+promotion eligibility. If the model becomes an automatic build or its requirements
+change, review the current target instead of changing policy to force approval.
+
+A single-file MPK package stays an MPK; bundled archives stay ZIPs. LLiMa packages
+are directory manifests whose runtime files must each be downloaded and verified.
+Promotion does not compile or copy these artifacts. Provisioning the role,
+finalizing a build and approving its Develop selection are separate milestones.
+
+See the [production acceptance record](evidence/production-promotion-2026-11-08.md)
+for the tested revision, candidate inventory, workflow outcome and remaining
+acceptance. Do not treat source tests or configuration deployment as a successful
+protected promotion. Production automatic cleanup is still disabled: explicitly
+cancel/reject abandoned pending requests before expiry and arrange controlled
+cleanup of expired holds.
 
 ## Build, request, review, consume
 
