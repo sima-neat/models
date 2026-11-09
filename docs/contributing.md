@@ -282,7 +282,13 @@ Publish job; models with multiple invocations join them in the orchestrator's
 `publish-candidates` job before publication.
 Each complete candidate publishes independently of failures in other models
 or profiles.
-Develop and Main still require separate approval and promotion.
+Develop and Main require separate approval and promotion. Use the manual
+[Promote model workflow](model-promotion.md) from Develop, choosing the target;
+Main is production-only, uses a separate protected gate and retains S3 storage.
+Use **Publish Main model metadata** from Develop to publish the Main source
+revision's model/profile metadata without compiling. Main requires a completed
+Develop approval of the same candidate before its separate review.
+Hugging Face publication is a separate release operation.
 
 ## Review and merge expectations
 

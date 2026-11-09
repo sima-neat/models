@@ -4,8 +4,9 @@ The performance stage measures each build profile's whole model on a Modalix
 DevKit: every compiled MPK and the CPU work between them. Each model's
 standalone `scripts/performance.py` contains its benchmark setup, including
 its input: one image from the model's accuracy dataset in a 1280x720 frame,
-which Neat preprocesses inside the measurement (see [Benchmark
-input](#benchmark-input)). Scripts of single-component models load the MPK
+which Neat preprocesses inside the measurement, or one sample as tensors for a
+model whose inputs are not images (see [Benchmark input](#benchmark-input)).
+Scripts of single-component models load the MPK
 with `pyneat.Model` and call Neat Core's benchmark API; RF-DETR, a
 multi-component model, times its pipeline itself in its script. Core owns
 warmup, latency and throughput measurement, board telemetry, and runner
@@ -130,8 +131,9 @@ The script runs once per benchmarked build profile, with every component's MPK.
 
 ### Benchmark input
 
-The benchmark repeats one real camera-sized frame, so its throughput is what
-an application gets from a 720p frame to decoded results, not the MPK alone:
+For an image model, the benchmark repeats one real camera-sized frame, so its
+throughput is what an application gets from a 720p frame to decoded results,
+not the MPK alone:
 
 1. The script picks one image from the dataset's validation split with
    `random.Random(0)`, so every run measures the same image. Pose models pick
@@ -144,6 +146,9 @@ an application gets from a 720p frame to decoded results, not the MPK alone:
    `pyneat.Tensor`. The Model uses the image route
    (`preprocess.kind = InputKind.Image`), so Neat's preprocessing resizes,
    normalizes, quantizes and tessellates the frame in every timed inference.
+   It sets `preprocess.input_max_width` and `input_max_height` to the frame
+   size. Otherwise Neat sizes its input buffers for 1920x1080, and the
+   execution plan shows that size as the model's input.
    YOLO26 resizes with `ResizeMode.Letterbox` and keeps Neat's default
    scaling of pixels to [0, 1]. ResNet-50 and RF-DETR's backbone resize with
    `ResizeMode.Stretch` and set `preprocess.preset =
@@ -276,7 +281,8 @@ threshold includes zero-time layers. Stage indices remain visible per layer.
 ## Workload and measurements
 
 The workload is the script's [benchmark input](#benchmark-input) on the image
-route, with the script's model and benchmark options; the report's `workload`
+route, or on the tensor route for a model whose inputs are not images, with the
+script's model and benchmark options; the report's `workload`
 states both. Results measured before scripts took a dataset image used Core's
 synthetic inputs without image preprocessing, and YOLO26 decoded up to 100
 detections at any score. Do not compare those results with current ones.
