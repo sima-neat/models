@@ -11,12 +11,12 @@ accuracy:
         top5_accuracy: 0.9035
     w8a8:
       imagenet-2012-val:
-        top1_accuracy: 0.7145
-        top5_accuracy: 0.9032
+        top1_accuracy: 0.7148
+        top5_accuracy: 0.9033
 performance:
   run_tests: true
   expected:
     w16a16:
       throughput_fps: 152.2
     w8a8:
-      throughput_fps: 275.3
+      throughput_fps: 371.6
