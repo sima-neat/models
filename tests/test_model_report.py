@@ -253,7 +253,7 @@ PYNEAT_ENUMS = {
     "NormalizePreset": ("ImageNet",),
     "PixelFormat": ("RGB",),
     "TensorMemory": ("EV74",),
-    "BoxDecodeType": ("YoloV8", "YoloV26", "YoloV26Pose", "YoloV26Seg", "SuperPoint"),
+    "BoxDecodeType": ("YoloV8", "YoloV26", "YoloV26Pose", "YoloV26Seg", "YoloV26Obb", "SuperPoint"),
     "SuperPointProfile": ("MagicLeapDemoV1", "LightGlueV1"),
 }
 SCRIPT_PYNEAT = {
@@ -282,8 +282,8 @@ def write_image(path, value, size=SOURCE_SIZE):
 
 def benchmark_dataset(root):
     """A dataset with the files each script samples from: COCO val2017, ImageNet's val2012 and ImageNet mini's val
-    split, an HPatches val sequence, and the Scene Flow test list. Only the second COCO image labels a person, so a
-    pose script must pick it."""
+    split, an HPatches val sequence, DOTA's val images, and the Scene Flow test list. Only the second COCO image labels
+    a person, so a pose script must pick it."""
     write_image(root / STEREO_PAIR.format(view="left"), STEREO_LEFT, STEREO_VIEW)
     write_image(root / STEREO_PAIR.format(view="right"), STEREO_RIGHT, STEREO_VIEW)
     disparity = STEREO_PAIR.replace("frames_finalpass", "disparity").format(view="left").replace(".png", ".pfm")
@@ -293,6 +293,7 @@ def benchmark_dataset(root):
     write_image(root / "val2017/000000000002.jpg", 200)
     write_image(root / "val2012/ILSVRC2012_val_00000001.JPEG", 200)
     write_image(root / "val/n01440764/ILSVRC2012_val_00000001.webp", 200)
+    write_image(root / "val/images/P0003.jpg", 200)
     write_image(root / "val/v_scene/1.ppm", 200)
     keypoints = {
         "images": [{"id": 1, "file_name": "000000000001.jpg"}, {"id": 2, "file_name": "000000000002.jpg"}],
@@ -402,8 +403,8 @@ def test_every_single_component_script_benchmarks_a_dataset_image(script, monkey
         if options.decode_type == "YoloV8":
             assert options.nms_iou_threshold == 0.7
             assert "NMS IoU 0.7" in report["workload"]
-        # Pose accuracy scores only images with a labelled person.
-        expected = "000000000002.jpg" if options.decode_type == "YoloV26Pose" else ".jpg"
+        # Pose accuracy scores only images with a labelled person; oriented boxes measure DOTA's aerial images.
+        expected = {"YoloV26Pose": "000000000002.jpg", "YoloV26Obb": "P0003.jpg"}.get(options.decode_type, ".jpg")
         assert expected in report["workload"]
     elif getattr(options, "decode_type", "") == "SuperPoint":
         # SuperPoint takes the frame stretched to its input, converted to GRAY8, scaled to [0, 1] without a preset,
