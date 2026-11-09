@@ -300,9 +300,9 @@ def test_preview_resolves_each_benchmark_fingerprint_to_a_model_report(tmp_path:
         assert (test["suite"], test["name"], test["status"]) == (stage, "model", "passed")
         validator.validate(test["summary"])
         assert test["summary"]["stage"] == stage
-    metrics = accuracy["tests"][0]["summary"]["datasets"]["imagenet-2012-mini"]["metrics"]
+    metrics = accuracy["tests"][0]["summary"]["datasets"]["imagenet-2012-val"]["metrics"]
     assert set(metrics) == {"top1_accuracy", "top5_accuracy"}
-    assert accuracy["parameters"]["accuracy"]["datasets"]["imagenet-2012-mini"]["id"] == "imagenet-2012"
+    assert accuracy["parameters"]["accuracy"]["datasets"]["imagenet-2012-val"]["id"] == "imagenet-2012"
     assert list(performance["tests"][0]["summary"]["components"]) == ["model"]
     assert wrong_type == 404
 
@@ -313,8 +313,8 @@ def test_preview_measures_a_multi_component_model_as_one_report(tmp_path: Path) 
 
     report = measured["tests"][0]["summary"]
     builds = [build for build in measured["model"]["builds"] if build["build_profile_id"] == "w8a8_w16a16"]
-    # One report for the whole model, with each component's layers in the order the pipeline runs them.
-    assert list(report["components"]) == ["backbone", "decoder"]
+    # One report for the whole model, its components in the jsonb key order the registry returns.
+    assert list(report["components"]) == ["decoder", "backbone"]
     assert all(component["mla_layer_stats"]["layers"] and component["mla_stage_stats"]["stages"]
                for component in report["components"].values())
     assert report["workload"] == "Backbone, Top 300 proposals on the CPU, decoder"
@@ -1388,7 +1388,7 @@ def test_performance_rendering_reads_the_model_report_and_is_charted() -> None:
 def test_preview_accuracy_uses_the_regression_metrics_without_an_authored_inventory() -> None:
     preview = runpy.run_path(str(BROWSER / "preview.py"))
     report = preview["_accuracy_report"](load_models(ROOT)["resnet_50"], "w8a8")
-    assert set(report["datasets"]["imagenet-2012-mini"]["metrics"]) == {"top1_accuracy", "top5_accuracy"}
+    assert set(report["datasets"]["imagenet-2012-val"]["metrics"]) == {"top1_accuracy", "top5_accuracy"}
 
 
 def test_accuracy_result_is_rendered_with_coverage_and_reference_comparison() -> None:
@@ -1439,10 +1439,12 @@ def test_benchmark_runs_are_resolved_from_catalog_fingerprints_and_accuracy_is_r
     # Results with more metrics than tiles list the rest in a table; each shows the reference score.
     assert ".slice(0, ACCURACY_SUMMARY_TILES)" in script
     assert ".slice(ACCURACY_SUMMARY_TILES)" in script
-    assert "Published ${published}" in script
-    assert '<th scope="col">Published</th>' in script
-    # Reference scores sit beside a measurement of the same dataset only; the headline is the first dataset's.
-    assert "referenceScores(reference, entry.dataset.id)" in script
+    assert "`${label} ${score}`" in script
+    assert '<th scope="col">${escapeHtml(REFERENCE_ORIGINS[origin].label)}</th>' in script
+    # Reference scores sit beside a measurement of the same dataset only, each origin apart; the headline is the
+    # first dataset's published score.
+    assert "scoresByOrigin(reference, entry.dataset.id)" in script
+    assert "referenceScores(reference, datasetId, origin)" in script
     assert "const { metrics, dataset } = result.value.datasets[0];" in script
     assert "metric.reference" not in script
     assert "<strong>${escapeHtml(formatAccuracy(name, value))}</strong>" in script

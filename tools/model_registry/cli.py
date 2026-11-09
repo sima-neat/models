@@ -121,7 +121,7 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     pipelines.add_argument("--output", type=Path, required=True)
 
     reference = subcommands.add_parser(
-        "reference-metrics", help="write the scores each source model's authors published, for the model browser"
+        "reference-metrics", help="write each model's published and FP32 baseline scores, for the model browser"
     )
     reference.add_argument("--repository", type=Path, default=Path.cwd())
     reference.add_argument("--output", type=Path, required=True)
