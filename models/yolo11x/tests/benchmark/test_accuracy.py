@@ -100,6 +100,9 @@ def _reference_rows(accuracy: ModuleType, outputs: list[np.ndarray], categories:
         same_class = [other for other in kept if label[other] == label[index]]
         if all(accuracy.iou(corners[anchor[index]], corners[anchor[[other]]])[0] <= 0.7 for other in same_class):
             kept.append(index)
+            # Candidates are score-sorted; later ones cannot change the first 300 survivors.
+            if len(kept) == accuracy.MAX_DETECTIONS_PER_IMAGE:
+                break
     kept = sorted(kept, key=lambda index: -pair_scores[index])[:300]
     x1, y1, x2, y2 = accuracy.image_boxes(corners[anchor[kept]], 640, 427).T
     return np.stack(

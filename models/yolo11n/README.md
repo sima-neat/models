@@ -15,9 +15,9 @@ suppression.
 
 **Input.** Letterbox the image to 640×640: resize it with bilinear resampling so
 its longer side is 640, center it, and fill the rest with gray (114, 114, 114).
-Scale the RGB values to 0–1. The reference scripts pass this image as a
-640×640×3 (height, width, channel) float tensor, with Neat's resize, color
-conversion, and normalization turned off.
+Scale RGB values to 0–1. For tensor input, use a 640×640×3 float32 tensor and
+disable Neat's resize, color conversion, and normalization. For image input,
+let Neat perform these steps.
 
 **Outputs.** Each tensor is in height, width, channel order, at stride 8, 16, or
 32 (grids of 80, 40, and 20 cells):
@@ -33,8 +33,8 @@ conversion, and normalization turned off.
 6. Remove the letterbox padding, divide by the letterbox scale, and clip to the image.
 
 Class index i is the i-th COCO category ID in ascending order. Neat's `YoloV8`
-box decoder decodes these outputs: it reads the `class_logit` outputs as logits
-and applies the sigmoid itself, so give its score threshold as a probability.
+box decoder handles these outputs. For example, set `score_threshold = 0.25`
+to keep detections scoring above 25%.
 
 ## Building applications
 

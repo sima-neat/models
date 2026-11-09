@@ -14,6 +14,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
+import pytest
 import yaml
 from jsonschema import Draft202012Validator
 from model_registry.fingerprints import BENCHMARK_RUN_TYPES
@@ -1574,12 +1575,13 @@ def test_compare_bolds_the_best_whole_model_value() -> None:
     assert best_value([build(8.4), build(None)], "latency_avg_ms") is None
 
 
-def test_catalog_orders_a_family_from_smallest_to_largest() -> None:
+@pytest.mark.parametrize("family", ["YOLO26", "YOLO11"])
+def test_catalog_orders_a_family_from_smallest_to_largest(family: str) -> None:
     script = _browser_source("catalog-view.js")
     ordering = script[script.index("// Size words order a family"):script.index("function modelCardImage(")]
     names = [
-        "YOLO26x-det", "RF-DETR Large", "YOLO26l-det", "YOLO26n-det", "RF-DETR Nano",
-        "YOLO26s-det", "ResNet-50", "YOLO26m-det", "RF-DETR Medium", "RF-DETR Small",
+        f"{family}x-det", "RF-DETR Large", f"{family}l-det", f"{family}n-det", "RF-DETR Nano",
+        f"{family}s-det", "ResNet-50", f"{family}m-det", "RF-DETR Medium", "RF-DETR Small",
     ]
     models = [{"display_name": name} for name in names]
     probe = (
@@ -1591,7 +1593,7 @@ def test_catalog_orders_a_family_from_smallest_to_largest() -> None:
     )
     assert json.loads(result.stdout) == [
         "ResNet-50", "RF-DETR Nano", "RF-DETR Small", "RF-DETR Medium", "RF-DETR Large",
-        "YOLO26n-det", "YOLO26s-det", "YOLO26m-det", "YOLO26l-det", "YOLO26x-det",
+        f"{family}n-det", f"{family}s-det", f"{family}m-det", f"{family}l-det", f"{family}x-det",
     ]
 
 

@@ -98,7 +98,7 @@ def _source_graph(load_script: Callable[[str], ModuleType], constant_weight: boo
         [helper.make_tensor_value_info("output0", onnx.TensorProto.FLOAT, [1, 84, anchors])],
         initializers,
     )
-    return helper.make_model(graph, opset_imports=[helper.make_opsetid("", 12)])
+    return helper.make_model(graph, opset_imports=[helper.make_opsetid("", 12)], ir_version=10)
 
 
 def test_surgery_cuts_at_the_six_raw_heads_in_order(tmp_path: Path, load_script: Callable[[str], ModuleType]) -> None:
@@ -115,13 +115,15 @@ def test_surgery_cuts_at_the_six_raw_heads_in_order(tmp_path: Path, load_script:
     assert [node.op_type for node in cut.graph.node] == ["Conv"] * 6
 
 
-def test_surgery_requires_a_folded_source(tmp_path: Path, load_script: Callable[[str], ModuleType]) -> None:
+def test_surgery_folds_static_computation(tmp_path: Path, load_script: Callable[[str], ModuleType]) -> None:
     surgery = load_script("surgery")
     source = tmp_path / "source.onnx"
     onnx.save(_source_graph(load_script, constant_weight=True), source)
 
-    with pytest.raises(ValueError, match="fold the source with onnxsim first"):
-        surgery.prepare_model(source, tmp_path / "out")
+    cut = onnx.load(surgery.prepare_model(source, tmp_path / "out"))
+
+    onnx.checker.check_model(cut, full_check=True)
+    assert [node.op_type for node in cut.graph.node] == ["Conv"] * 6
 
 
 def _mpk_manifest(compile_module: ModuleType) -> dict:
@@ -175,23 +177,25 @@ def test_mpk_audit_requires_one_mla_segment_and_the_declared_interface(
             compile_module.audit_mpk(archive)
 
 
-def test_compile_reads_the_declared_build_parameters(load_script: Callable[[str], ModuleType]) -> None:
-    compile_module = load_script("compile")
+@pytest.mark.parametrize("profile_id", ["w16a16", "w8a8", "w8a16"])
+def test_compile_reads_the_declared_build_parameters(load_script: Callable[[str], ModuleType], profile_id: str) -> None:
+    expected = {"precision": profile_id}
+    if profile_id == "w8a8":
+        expected |= {"calibration_bins": 2048, "calibration_samples": 50}
 
-    assert compile_module._parameters("w16a16") == {"precision": "w16a16"}
-    assert compile_module._parameters("w8a16") == {"precision": "w8a16"}
-    assert compile_module._parameters("w8a8") == {
-        "precision": "w8a8",
-        "calibration_bins": 2048,
-        "calibration_samples": 50,
-    }
+    assert load_script("compile")._parameters(profile_id) == expected
+
+
+def test_compile_rejects_an_undeclared_build_profile(load_script: Callable[[str], ModuleType]) -> None:
     with pytest.raises(ValueError, match="no build profile"):
-        compile_module._parameters("w32a32")
+        load_script("compile")._parameters("w32a32")
 
 
 def test_model_preserves_compilation_and_quality_settings() -> None:
     model = load_metadata(MODEL_DIR)
     assert model["components"][0]["interface"]["format"] == "onnx"
+    assert model["components"][0]["source"]["type"] == "conversion"
+    assert model["architecture"]["id"] == "yolo11_det"
     assert [profile["id"] for profile in model["build_profiles"]] == ["w16a16", "w8a8", "w8a16"]
     assert model["license"] == {
         "spdx": "AGPL-3.0-only",
