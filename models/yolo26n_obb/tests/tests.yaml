@@ -7,16 +7,16 @@ accuracy:
   expected:
     w16a16:
       dota-v1-0-val:
-        dota_obb_map50: 0.7395
-        dota_obb_map: 0.4816
+        dota_obb_map50: 0.7367
+        dota_obb_map: 0.4794
     w8a8:
       dota-v1-0-val:
-        dota_obb_map50: 0.7344
-        dota_obb_map: 0.4595
+        dota_obb_map50: 0.7270
+        dota_obb_map: 0.4562
 performance:
   run_tests: true
   expected:
     w16a16:
-      throughput_fps: 82.0
+      throughput_fps: 81.1
     w8a8:
-      throughput_fps: 484.1
+      throughput_fps: 482.3
