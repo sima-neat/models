@@ -15,11 +15,16 @@ ROOT = "/v1/repositories/sima-neat/models"
 TARGET = "refs/heads/develop"
 
 
-def configuration() -> dict:
+def configuration(target_branch: str | None = None) -> dict:
     environment = os.environ.get("VULCAN_ENV", "")
     if environment not in {"staging", "production"}:
         raise ValidationError("VULCAN_ENV must be staging or production")
-    config = {"vulcan_environment": environment}
+    target_branch = target_branch or os.environ.get("PROMOTION_TARGET_BRANCH", "develop")
+    if target_branch not in {"develop", "main"}:
+        raise ValidationError("Promotion target must be develop or main")
+    if target_branch == "main" and environment != "production":
+        raise ValidationError("Main promotion is available only in production")
+    config = {"vulcan_environment": environment, "target_branch": target_branch}
     for key, variable in (("api_url", "VULCAN_ARTIFACT_REGISTRY_API_URL"),
                           ("read_api_url", "VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL")):
         url = os.environ.get(variable, "").rstrip("/")
@@ -32,8 +37,14 @@ def configuration() -> dict:
 
 
 def check_configuration(record: dict, config: dict) -> None:
-    if any(record.get(key) != value for key, value in config.items()):
-        raise ValidationError("Saved promotion environment/URL differs; use its original configuration")
+    # Legacy plans had only Develop as a target. Never reinterpret one as Main.
+    saved = dict(record)
+    if "target_branch" not in saved:
+        ref = (record.get("target_git_ref") or record.get("body", {}).get("target_git_ref")
+               or record.get("record", {}).get("target_git_ref") or TARGET)
+        saved["target_branch"] = ref.removeprefix("refs/heads/")
+    if any(saved.get(key) != value for key, value in config.items()):
+        raise ValidationError("Saved promotion environment/URL/target differs; use its original configuration")
 
 
 def save(path: Path, value: dict) -> None:
@@ -60,16 +71,19 @@ def identifier(value: str) -> str:
         raise ValidationError("A valid candidate/promotion UUID is required") from exc
 
 
-def inspect(client, promotion_id: str) -> dict:
+def inspect(client, promotion_id: str, *, target_branch: str | None = None) -> dict:
+    target = "refs/heads/" + configuration(target_branch)["target_branch"]
     result = client.request("GET", f"{ROOT}/promotions/{identifier(promotion_id)}", None, "inspect")
-    if result.get("target_git_ref") != TARGET:
-        raise ValidationError("Only Develop promotion is supported")
+    if result.get("target_git_ref") != target:
+        raise ValidationError("Promotion target differs from the selected target")
     return result
 
 
 def prepare(client, *, deployment_id: str, reason: str, workflow: dict, identity: str,
             read_api_url: str, read_request: ReadRequest | None = None,
-            expected_model_id: str | None = None, expected_profile_id: str | None = None) -> dict:
+            expected_model_id: str | None = None, expected_profile_id: str | None = None,
+            target_branch: str | None = None) -> dict:
+    target_ref = "refs/heads/" + configuration(target_branch)["target_branch"]
     if not reason.strip() or len(reason) > 2000:
         raise ValidationError("Promotion reason must contain 1–2000 characters")
     candidate = client.request("GET", f"{ROOT}/deployments/{identifier(deployment_id)}", None, "inspect")
@@ -81,11 +95,11 @@ def prepare(client, *, deployment_id: str, reason: str, workflow: dict, identity
         raise ValidationError("Vulcan candidate does not match the requested model/profile")
     # Catalogs are public-reader routes, not publisher IAM routes. Never send AWS credentials here.
     target = (read_request or _public_registry_json)(
-        f"{read_api_url.rstrip('/')}{ROOT}/catalogs/current?git_ref=refs%2Fheads%2Fdevelop"
+        f"{read_api_url.rstrip('/')}{ROOT}/catalogs/current?git_ref=refs%2Fheads%2F{target_ref.rsplit('/', 1)[-1]}"
     )
     body = {
         "deployment_id": identifier(deployment_id), "manifest_digest": candidate["manifest_digest"],
-        "target_git_ref": TARGET, "expected_target_snapshot": target["catalog"]["canonical_sha256"],
+        "target_git_ref": target_ref, "expected_target_snapshot": target["catalog"]["canonical_sha256"],
         "reason": reason, "workflow": workflow,
     }
     return {"body": body, "key": "promotion-request-" + canonical_sha256([identity, body])}
@@ -98,13 +112,14 @@ def check_request(record: dict, body: dict) -> None:
             raise ValidationError(f"Stored promotion differs from the saved request: {field}")
 
 
-def request(client, plan: dict) -> dict:
+def request(client, plan: dict, *, target_branch: str | None = None) -> dict:
     body = plan["body"]
-    if body.get("target_git_ref") != TARGET:
-        raise ValidationError("Only Develop promotion is supported")
+    target = "refs/heads/" + configuration(target_branch)["target_branch"]
+    if body.get("target_git_ref") != target:
+        raise ValidationError("Saved promotion target differs from the selected target")
     receipt = client.request("POST", f"{ROOT}/promotions", body, plan["key"])
     # Idempotent POST receipts are historical; inspect authoritative current state.
-    record = inspect(client, receipt["promotion_id"])
+    record = inspect(client, receipt["promotion_id"], target_branch=target_branch)
     check_request(record, body)
     if record["state"] not in {"pending", "promoted"}:
         raise ValidationError(
@@ -115,15 +130,16 @@ def request(client, plan: dict) -> dict:
     return record
 
 
-def decide(client, record: dict, *, operation: str, reason: str, identity: str) -> dict:
+def decide(client, record: dict, *, operation: str, reason: str, identity: str,
+           target_branch: str | None = None) -> dict:
     if operation not in {"approve", "reject", "cancel"}:
         raise ValidationError("Unknown promotion decision")
     if not reason.strip() or len(reason) > 2000:
         raise ValidationError("Decision reason must contain 1–2000 characters")
     promotion_id = identifier(record["promotion_id"])
-    current = inspect(client, promotion_id)
+    current = inspect(client, promotion_id, target_branch=target_branch)
     check_request(current, record)
-    for field in ("selection", "previous_selection", "source"):
+    for field in ("selection", "previous_selection", "source", "source_promotion_id", "source_approval"):
         if current.get(field) != record.get(field):
             raise ValidationError(f"Promotion review content changed: {field}")
     expected = {"approve": "promoted", "reject": "rejected", "cancel": "cancelled"}[operation]
@@ -145,7 +161,9 @@ def decide(client, record: dict, *, operation: str, reason: str, identity: str) 
 def summary(record: dict) -> str:
     # Fenced JSON prevents candidate/user strings from forging review headings or links.
     payload = json.dumps(record, indent=2, sort_keys=True).replace("`", "\\u0060").replace("<", "\\u003c")
-    return (f"## Develop promotion (Vulcan {record.get('vulcan_environment', 'unspecified')})\n\n"
+    is_main = record.get("target_branch") == "main" or record.get("target_git_ref") == "refs/heads/main"
+    label = "Main" if is_main else "Develop"
+    return (f"## {label} promotion (Vulcan {record.get('vulcan_environment', 'unspecified')})\n\n"
             "Review the exact candidate, source, previous/proposed selections, reason, evidence, and expiry below. "
             "GitHub approval alone does not publish a selection.\n\n```json\n" + payload + "\n```\n\n"
             "If a GitHub job is rejected or cancelled, the backend may remain pending until explicit cancellation "
@@ -153,10 +171,13 @@ def summary(record: dict) -> str:
 
 
 def add_parser(subcommands) -> None:
-    parser = subcommands.add_parser("promotion", help="manage pinned Develop promotion requests (CI only)")
+    parser = subcommands.add_parser(
+        "promotion", help="manage pinned Develop or production Main promotion requests (CI only)")
     parser.add_argument("action", choices=("prepare", "request", "inspect", "approve", "reject", "cancel"))
     parser.add_argument("--record", type=Path, required=True, help="saved plan/request; inspect and prepare write it")
     parser.add_argument("--output", type=Path, help="write the API receipt separately from the immutable input")
+    parser.add_argument("--target-branch", choices=("develop", "main"),
+                        help="target catalog; defaults to PROMOTION_TARGET_BRANCH or develop; Main is production-only")
     parser.add_argument("--deployment-id")
     parser.add_argument("--promotion-id")
     parser.add_argument("--reason", default="")
@@ -168,12 +189,12 @@ def add_parser(subcommands) -> None:
 
 
 def run(args: argparse.Namespace) -> int:
-    config = configuration()
+    config = configuration(getattr(args, "target_branch", None))
     client = SigV4RegistryClient(config["api_url"], args.aws_region)
     if args.action not in {"prepare", "inspect"}:
         check_configuration(read(args.record), config)
     if args.action == "inspect":
-        result = inspect(client, args.promotion_id)
+        result = inspect(client, args.promotion_id, target_branch=config["target_branch"])
     elif args.action == "prepare":
         if not args.identity or not args.run_url:
             raise ValidationError("prepare requires --identity and --run-url")
@@ -183,13 +204,15 @@ def run(args: argparse.Namespace) -> int:
         if args.issue_url:
             workflow["issue_url"] = args.issue_url
         result = prepare(client, deployment_id=args.deployment_id, reason=args.reason,
-                         workflow=workflow, identity=args.identity, read_api_url=config["read_api_url"])
+                         workflow=workflow, identity=args.identity, read_api_url=config["read_api_url"],
+                         target_branch=config["target_branch"])
     elif args.action == "request":
-        result = request(client, read(args.record))
+        result = request(client, read(args.record), target_branch=config["target_branch"])
     else:
         if not args.identity:
             raise ValidationError("decisions require a stable --identity")
-        result = decide(client, read(args.record), operation=args.action, reason=args.reason, identity=args.identity)
+        result = decide(client, read(args.record), operation=args.action, reason=args.reason, identity=args.identity,
+                        target_branch=config["target_branch"])
     result = {**result, **config}
     if args.action in {"prepare", "inspect"}:
         save(args.record, result)

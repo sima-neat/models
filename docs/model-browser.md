@@ -66,7 +66,8 @@ chart shows all measured precisions together. Hover over a point to see the mode
 variant, throughput and accuracy. Accuracy is the vertical axis and throughput
 in inferences/s is the horizontal axis. The dataset, variant and split appear below
 the chart title. Accuracy is grouped by dataset and metric; when more than one
-group is available, choose it with **Dataset & metric**.
+group is available, choose it with **Dataset & metric**. The axis title gives the
+metric's unit and says "lower is better" for an error metric such as EPE.
 A multi-component model shows its [whole-model result](benchmarking.md#multi-component-models), with all its components running as one pipeline. Select up to three points or use the compact
 **Add model** selector to show detailed measurements, including power and memory.
 Remove a selected variant using the × in its table heading or its chart label.
@@ -213,16 +214,20 @@ in this order:
    components, and **Download CSV** lists each component's layer timings.
 3. **Accuracy.** For each dataset the run evaluated, in `model.yaml` order:
    the coverage (full when the run evaluated every sample of its split,
-   sampled otherwise), the first four metrics, the evaluated sample count, and
+   sampled otherwise), the first four metrics in their units (ratios as
+   percentages, EPE in pixels, D1-all in percent), the evaluated sample count, and
    the commit and GitHub workflow of the run that measured them. With more than
    one dataset, each result is titled by its dataset name. The catalog table
-   and **Compare** use the first dataset.
+   and **Compare** use the first dataset. Under each of the four metrics, both
+   views show its published score and its FP32 baseline when `reference_metrics`
+   records them for the measured dataset.
    In the developer UI, each dataset's **Evaluation details** explains the coverage and lists
-   the remaining metrics, each with its published score when
-   `reference_metrics` in `model.yaml` records one for the measured dataset.
-   Its **Published scores** row lists every reference entry with its dataset,
-   conditions, and source. A build with no accuracy result yet shows only the
-   published scores.
+   the remaining metrics, each with its published score and its FP32 baseline
+   when `reference_metrics` in `model.yaml` records them for the measured
+   dataset. The **Published scores** and **FP32 baseline** rows list each
+   origin's entries with their dataset, conditions, and source or script. A
+   build with no accuracy result yet shows only the reference scores, each
+   origin under its own explanation.
 4. **Details (developer UI only).** The package with its size, checksum, and download buttons.
    A single-component package downloads as its MPK. A multi-component package
    downloads as a ZIP of its MPKs and also offers **Download components**.

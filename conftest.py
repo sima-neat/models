@@ -26,7 +26,7 @@ from model_registry.model import MODEL_FILE, load_model
 from model_registry.model_tests import STAGE_GROUP, TESTS_FILE, load_model_tests, skip_reason
 
 STAGE_OUTPUTS = {
-    "converted": "converted ONNX model the conversion tests check",
+    "converted": "first conversion output the conversion tests check",
     "compiled": "one build's compile output directory, <root>/<model>/<build profile>",
     "accuracy": "model-report.json the accuracy tests check",
     "performance": "model-report.json the performance tests check",
@@ -40,6 +40,7 @@ COMPILER_AND_BOARD_MODULES = (
     "afe.apis.loaded_net",
     "afe.apis.model",
     "afe.core",
+    "afe.core.configs",
     "afe.core.utils",
     "afe.ir",
     "afe.ir.tensor_type",
@@ -177,7 +178,7 @@ def load_script(model_dir: Path, monkeypatch: pytest.MonkeyPatch) -> Callable[[s
 
 @pytest.fixture
 def converted(request: pytest.FixtureRequest) -> Path:
-    """The converted ONNX model."""
+    """The first conversion output, with the others beside it."""
     return _given(request, "converted")
 
 
