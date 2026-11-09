@@ -225,7 +225,8 @@ stage's `run_tests` is `false`); a plain `pytest` deselects every test that
 takes stage output. Editing `models/<id>/tests/` or `run_model_tests.sh` reruns nothing,
 because no fingerprint includes them. The changed test runs the next time its stage runs. To run it now, dispatch `Vulcan Model Orchestrator`
 with `models` set to the model and `force_rebuild_all`, which recompiles and
-remeasures it.
+remeasures it. If its package is already published in the current catalog
+revision, use a new Git commit; published packages are immutable within a revision.
 
 ## Keep the structure consistent
 

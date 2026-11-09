@@ -316,6 +316,10 @@ manifest with reproducible evidence and tests. Use `status: unsupported` only
 after a combination is proven unusable, not as a shortcut around an unresolved
 failure.
 
+Forced rebuilds of packages already published in the current catalog revision
+require a new Git commit. Initialization rejects the conflict before compilation;
+see [forced rebuilds](../design-doc/model-registry-architecture.md#forced-rebuilds-of-published-packages).
+
 Converted ONNX models resolve a validated registry output before compile reuse is
 checked. Deploy the Vulcan contract and publish matching conversions before
 switching existing source declarations; see [conversion artifacts](conversion-artifacts.md).
