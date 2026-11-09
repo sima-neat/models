@@ -1,5 +1,5 @@
 display_name: SuperGlue Outdoor
-description: Matches SuperPoint keypoints between two outdoor images.
+description: Matches keypoints between two outdoor images, taking SuperPoint keypoints and descriptors as input.
 model_type: vision
 tasks: [feature_matching]
 

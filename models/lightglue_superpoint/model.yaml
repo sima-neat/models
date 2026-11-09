@@ -1,5 +1,5 @@
-display_name: LightGlue (SuperPoint)
-description: Matches SuperPoint keypoints between two images.
+display_name: LightGlue
+description: Matches keypoints between two images, taking SuperPoint keypoints and descriptors as input.
 model_type: vision
 tasks: [feature_matching]
 

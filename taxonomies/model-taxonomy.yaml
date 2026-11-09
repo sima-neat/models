@@ -42,8 +42,8 @@ architecture_paradigms:
   transformer:
     display_name: Transformer
 
-# A family is the upstream model line, named without generation or size
-# (YOLO, not YOLO26n). The model's id and display_name carry those.
+# A family is the upstream model line, named without size (YOLO26-det, not
+# YOLO26n-det). The model's id and display_name carry the size.
 architectures:
   clip:
     display_name: CLIP
@@ -89,6 +89,10 @@ architectures:
     display_name: ResNet
     paradigm: cnn
     allowed_model_types: [vision]
+  resnext:
+    display_name: ResNeXt
+    paradigm: cnn
+    allowed_model_types: [vision]
   rf_detr:
     display_name: RF-DETR
     paradigm: transformer
@@ -105,8 +109,20 @@ architectures:
     display_name: Whisper
     paradigm: transformer
     allowed_model_types: [audio]
-  yolo:
-    display_name: YOLO
+  wide_resnet:
+    display_name: Wide ResNet
+    paradigm: cnn
+    allowed_model_types: [vision]
+  yolo26_det:
+    display_name: YOLO26-det
+    paradigm: cnn
+    allowed_model_types: [vision]
+  yolo26_pose:
+    display_name: YOLO26-pose
+    paradigm: cnn
+    allowed_model_types: [vision]
+  yolo26_seg:
+    display_name: YOLO26-seg
     paradigm: cnn
     allowed_model_types: [vision]
 

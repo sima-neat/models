@@ -1,6 +1,6 @@
-# LightGlue (SuperPoint)
+# LightGlue
 
-![LightGlue (SuperPoint) model hero](hero.png)
+![LightGlue model hero](hero.png)
 
 ## Overview
 
