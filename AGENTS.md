@@ -40,7 +40,9 @@ when no completed run carries the current fingerprint. A change therefore
 reruns exactly the stages whose inputs it touches.
 
 A tooling change reruns a stage only when the changed file is in that stage's
-tooling list in `fingerprints.py`.
+tooling list in `fingerprints.py`. A file in `CONVERSION_TOOLING` in
+`conversion.py` also invalidates every conversion, and planning then fails
+until Vulcan Model Convert reruns.
 
 | Stage | Venue | Model entry point | Runner script |
 |---|---|---|---|
@@ -59,6 +61,11 @@ ONNX consumed as either a pinned source or `compilation.source: conversion`.
 It writes `model.onnx` unless `conversion.outputs` lists other files: several
 ONNX models, or a `.pt`/`.pth` checkpoint that `surgery.py` exports to ONNX.
 `compile.py` receives the first as `--model`, with the rest beside it.
+`convert.py` exports the upstream forward pass at the shipped input shape, from
+its input to the final outputs the package keeps. Every other change for the
+compiler, even an exact one, belongs in `surgery.py`. That includes a cut: an
+export that ends at an inner tensor, such as raw heads before the upstream
+decode, or starts after an upstream step.
 Registry sources resolve during planning; only resolved content enters the compile
 fingerprint. See [conversion artifacts](docs/conversion-artifacts.md).
 
@@ -96,7 +103,11 @@ or YAML configuration. Keep its `--mpk` and `--output` CLI. A model with accurac
 also takes `--dataset <source id>=<directory>`, as `accuracy.py` does, and benchmarks one
 `random.Random(0)` image from it, letterboxed into a 1280x720 RGB frame by code inside the
 script and passed in `BenchmarkOptions.inputs` on the image route, so Neat preprocessing is
-timed. A stereo model benchmarks one dataset pair as a side-by-side frame instead.
+timed. Set `preprocess.input_max_width` and `input_max_height` to the frame size, or the
+execution plan reports Neat's 1920x1080 default as the input. A stereo model benchmarks one
+dataset pair as a side-by-side frame instead. A model whose
+inputs are not images benchmarks one `random.Random(0)` validation sample as tensors on the
+tensor route, and each timed sample runs the CPU steps that produce the model's result.
 `run_model_performance.sh` passes only the first dataset, and only for a profile
 accuracy measures. A model without an accuracy dataset builds a fixed input in its script;
 do not benchmark Core's synthetic inputs ([Benchmark
@@ -108,6 +119,13 @@ contract, and `tools/model_report/metrics.json` names every metric a report may
 hold. Each benchmarked profile needs finite `tests.yaml` expectations covering its
 required metrics (performance: `throughput_fps`); optional expectations and
 the shared regression thresholds remain gates.
+
+When no published score matches a package's setup, the model may add a standalone
+`scripts/fp32_baseline_accuracy.py`, as `models/superglue_outdoor` does. It scores the
+FP32 ONNX the model compiles on a host with the model's own `accuracy.py` scoring, without
+`model_registry` imports, credentials or YAML. Its output becomes the
+`reference_metrics` entry with `origin: fp32_baseline`. No stage runs it and no
+fingerprint includes it ([FP32 baseline](docs/local-accuracy-development.md#fp32-baseline)).
 
 ## LLiMa models
 
@@ -217,7 +235,7 @@ in the same commit.
 | When you change | Also change |
 |---|---|
 | what a stage depends on: a `model.yaml` field its fingerprint reads, or a shared file it runs | the fingerprint function or the `COMPILE_TOOLING`/`BOARD_STAGE_TOOLING`/`PERFORMANCE_TOOLING`/`ACCURACY_TOOLING` list in `fingerprints.py`, the tables in [what a change reruns](docs/adding-a-model.md#9-know-what-a-change-reruns), and a test in `tests/test_compile_matrix.py` or `tests/test_stage_plan.py` |
-| the set of model scripts a benchmark or conversion runs | `SCRIPTS` in `benchmark_declarations.py` or `CONVERSION_FILES` in `model.py`, which make up `NON_COMPILE_SCRIPTS` in `fingerprints.py`; every other `.py`/`.sh` under `scripts/` is an ONNX compile input |
+| the set of model scripts a benchmark or conversion runs | `SCRIPTS` in `benchmark_declarations.py` or `CONVERSION_FILES` in `model.py`, which make up `NON_COMPILE_SCRIPTS` in `fingerprints.py` with `FP32_BASELINE_SCRIPT`; every other `.py`/`.sh` under `scripts/` is an ONNX compile input |
 | board-only code | keep it inside `performance.py` or `accuracy.py`; a helper module under `scripts/` is an ONNX compile input, so editing it recompiles and then remeasures the model |
 | how `performance.py` gets its input | `scripts/run_model_performance.sh`, the dataset steps in `vulcan-model-benchmarking.yml`, [Benchmark input](docs/benchmarking.md#benchmark-input), and `tests/test_model_report.py` and `tests/test_benchmark_workflow.py` |
 | a custom `performance.py` | start from the [canonical script](docs/benchmarking.md#the-performance-script), and for a multi-component model the [multi-component script](docs/benchmarking.md#multi-component-models): hand Core's `BenchmarkReport`, board telemetry, and each component's Model to `model_report.from_performance()` |
@@ -250,25 +268,30 @@ in the same commit.
   branch; see `design-doc/model-registry-architecture.md`) and resolves each
   fingerprint against the registry. `compile` calls
   `.github/workflows/vulcan-model-compile.yml` once per build to compile,
-  run the model's compile tests, publish, and start the build's
-  benchmarks. `benchmark` starts the benchmarks a reused build still lacks
+  run the model's compile tests, publish, and benchmark the build.
+  `benchmark` benchmarks each reused build that still lacks a benchmark
   once `initialize-catalog` marks the selected builds pending, or after
   `publish-catalog` writes the final catalog snapshot when nothing compiles.
+  Every benchmark is a job of the orchestrator run, grouped under its build's
+  name: both paths call `vulcan-model-benchmarking.yml` with the Vulcan config
+  and the DevKit runner the orchestrator resolves once per run.
 - **Benchmarks.** `vulcan-model-benchmarking.yml` runs the requested
   `stages` of one build profile on a DevKit, runs the model's benchmark tests on
   each `model-report.json`, and publishes performance (`model_performance` runs)
   and accuracy (`model_accuracy` runs) separately with `model-registry
   publish-report`, each under the profile's `model_package` run with its test
-  outcome. A failed test fails the run after publication; the completed run is
-  not benchmarked again. On-demand builds are not benchmarked.
+  outcome. A failed test fails its check job after publication; the completed
+  run is not benchmarked again. On-demand builds are not benchmarked.
+  A manual dispatch of the same workflow resolves its own config and runner.
 - Workflow YAML only orchestrates: triggers, jobs, permissions, inputs, and
   the order of steps. A step that needs more than one command calls a named,
   executable script with a usage header: under `scripts/`, or beside the code
   it serves, as `packaging/model-registry/build.sh` does. Registry logic
   belongs in a `model-registry` command. A new script under `scripts/` is not
   a fingerprint input unless `fingerprints.py` lists it.
-- A newer push cancels the branch's running orchestrator; builds that
-  already published stay and are reused. How branch catalogs, merges, and the
+- A newer push cancels the branch's running orchestrator, its compiles and its
+  benchmarks; builds and benchmark runs that already published stay and are
+  reused. How branch catalogs, merges, and the
   model browser interact is in
   [branches and merges](design-doc/model-registry-architecture.md#branches-merges-and-concurrent-pushes).
 
