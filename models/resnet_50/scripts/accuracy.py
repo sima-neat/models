@@ -14,21 +14,11 @@ from pathlib import Path
 import model_report
 import numpy as np
 import pyneat
-from calibration import VALIDATION_SPLIT, preprocess_image, split_names, validation_labels
+from calibration import VALIDATION_SPLIT, preprocess_image, validation_labels
 
 # Images decode on worker threads while the MPK runs; Pillow releases the GIL while it decodes and resizes.
 WORKERS = 4
 PREFETCH = 8
-
-
-def tensor_options() -> pyneat.ModelOptions:
-    options = pyneat.ModelOptions()
-    options.preprocess.kind = pyneat.InputKind.Tensor
-    # The script already resized and normalized the image; Neat still quantizes and tessellates.
-    options.preprocess.resize.enable = pyneat.AutoFlag.Off
-    options.preprocess.color_convert.enable = pyneat.AutoFlag.Off
-    options.preprocess.normalize.enable = pyneat.AutoFlag.Off
-    return options
 
 
 def prefetched(load: Callable, items: Sequence) -> Iterator:
@@ -56,18 +46,18 @@ def log(*values: object) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mpk", action="append", required=True, help="model=<path>")
-    parser.add_argument("--dataset", required=True, help="imagenet-2012-mini=<extracted directory>")
+    parser.add_argument("--dataset", required=True, help="imagenet-2012-val=<extracted directory>")
     parser.add_argument("--output", type=Path, required=True, help="directory for model-report.json")
     parser.add_argument("--limit", type=int, help="measure the first images only (local runs only)")
     args = parser.parse_args(argv)
     dataset_id, dataset_dir = args.dataset.split("=", 1)
     dataset = Path(dataset_dir)
 
-    available = split_names(dataset, VALIDATION_SPLIT)
-    labels = validation_labels(available)
+    labels = validation_labels(dataset)
+    available = sorted(labels)
     names = available[: args.limit] if args.limit else available
 
-    model = pyneat.Model(str(parse_mpks(args.mpk)), tensor_options())
+    model = pyneat.Model(str(parse_mpks(args.mpk)))
     runner = None
     top1 = top5 = 0
     started = time.monotonic()

@@ -30,6 +30,10 @@ modalities:
     display_name: Embeddings
   landmarks:
     display_name: Landmarks
+  keypoints:
+    display_name: Keypoints
+  keypoint_matches:
+    display_name: Keypoint Matches
 
 # An architecture is the network design a family is built on. Keep it coarse.
 architecture_paradigms:
@@ -38,8 +42,8 @@ architecture_paradigms:
   transformer:
     display_name: Transformer
 
-# A family is the upstream model line, named without generation or size
-# (YOLO, not YOLO26n). The model's id and display_name carry those.
+# A family is the upstream model line, named without size (YOLO26-det, not
+# YOLO26n-det). The model's id and display_name carry the size.
 architectures:
   clip:
     display_name: CLIP
@@ -57,6 +61,10 @@ architectures:
     display_name: LFM
     paradigm: transformer
     allowed_model_types: [llm]
+  lightglue:
+    display_name: LightGlue
+    paradigm: transformer
+    allowed_model_types: [vision]
   llama:
     display_name: Llama
     paradigm: transformer
@@ -81,16 +89,44 @@ architectures:
     display_name: ResNet
     paradigm: cnn
     allowed_model_types: [vision]
+  resnext:
+    display_name: ResNeXt
+    paradigm: cnn
+    allowed_model_types: [vision]
   rf_detr:
     display_name: RF-DETR
+    paradigm: transformer
+    allowed_model_types: [vision]
+  superpoint:
+    display_name: SuperPoint
+    paradigm: cnn
+    allowed_model_types: [vision]
+  superglue:
+    display_name: SuperGlue
     paradigm: transformer
     allowed_model_types: [vision]
   whisper:
     display_name: Whisper
     paradigm: transformer
     allowed_model_types: [audio]
-  yolo:
-    display_name: YOLO
+  wide_resnet:
+    display_name: Wide ResNet
+    paradigm: cnn
+    allowed_model_types: [vision]
+  yolo11_det:
+    display_name: YOLO11-det
+    paradigm: cnn
+    allowed_model_types: [vision]
+  yolo26_det:
+    display_name: YOLO26-det
+    paradigm: cnn
+    allowed_model_types: [vision]
+  yolo26_pose:
+    display_name: YOLO26-pose
+    paradigm: cnn
+    allowed_model_types: [vision]
+  yolo26_seg:
+    display_name: YOLO26-seg
     paradigm: cnn
     allowed_model_types: [vision]
 
@@ -113,6 +149,12 @@ tasks:
   face_landmark_detection:
     display_name: Face Landmark Detection
     allowed_model_types: [vision]
+  feature_point_detection:
+    display_name: Feature Point Detection
+    allowed_model_types: [vision]
+  feature_matching:
+    display_name: Feature Matching
+    allowed_model_types: [vision]
   grasping:
     display_name: Grasping
     allowed_model_types: [vision, vlm]
@@ -131,6 +173,9 @@ tasks:
   license_plate_recognition:
     display_name: License Plate Recognition
     allowed_model_types: [vision, vlm]
+  loop_closure:
+    display_name: Loop Closure
+    allowed_model_types: [vision]
   object_detection:
     display_name: Object Detection
     allowed_model_types: [vision, vlm]
