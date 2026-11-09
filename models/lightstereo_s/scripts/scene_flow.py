@@ -1,5 +1,5 @@
-"""Pad and normalize Scene Flow pairs the way OpenStereo evaluates LightStereo, join them side by side, and select
-fidelity pairs."""
+"""Read Scene Flow pairs as LightStereo-S's side-by-side input, select the calibration and fidelity pairs, and score
+disparities as OpenStereo's Scene Flow evaluation does."""
 
 from __future__ import annotations
 
@@ -11,8 +11,9 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-# cfgs/lightstereo/lightstereo_s_sceneflow.yaml: RightTopPad each view to 544x960, then ImageNet normalization.
-HEIGHT, WIDTH = 544, 960
+# Scene Flow views are 960x540, the size the model takes; the graph pads them to 544x960 itself.
+HEIGHT, WIDTH = 540, 960
+# cfgs/lightstereo/lightstereo_s_sceneflow.yaml normalizes RGB scaled to [0, 1] with the ImageNet mean and std.
 MEAN = np.asarray([0.485, 0.456, 0.406], dtype=np.float32)
 STD = np.asarray([0.229, 0.224, 0.225], dtype=np.float32)
 # The model takes one side-by-side frame: the left view in the first WIDTH columns, the right view after it.
@@ -20,47 +21,56 @@ INPUT = "stereo"
 # The scene-flow cal archive holds scene_flow/cal.txt (left, right, disparity per line) and the listed files.
 ROOT = "scene_flow"
 CAL_LIST = "cal.txt"
+# The config's EVALUATOR MAX_DISP: OpenStereo scores the pixels whose true disparity is above 0 and under 192.
+MAX_DISPARITY = 192
 
-
-def pad_geometry(height: int, width: int) -> tuple[int, int]:
-    """Return the rows added above and the columns added to the right of a height x width image."""
-    if height > HEIGHT or width > WIDTH:
-        raise ValueError(f"a {height}x{width} image exceeds the {HEIGHT}x{WIDTH} input")
-    return HEIGHT - height, WIDTH - width
+Pair = tuple[str, str, str]
 
 
 def preprocess_image(content: bytes) -> np.ndarray:
-    """Return one view as model input: RGB, edge-padded at the top and right, normalized, HWC float32."""
+    """Return one view as model input: RGB scaled to [0, 1] and ImageNet-normalized, HWC float32."""
     with Image.open(io.BytesIO(content)) as source:
         image = np.asarray(source.convert("RGB"), dtype=np.float32)
-    top, right = pad_geometry(*image.shape[:2])
-    padded = np.pad(image, ((top, 0), (0, right), (0, 0)), mode="edge")
-    return (padded / np.float32(255) - MEAN) / STD
+    if image.shape[:2] != (HEIGHT, WIDTH):
+        raise ValueError(f"expected a {WIDTH}x{HEIGHT} view, found {image.shape[1]}x{image.shape[0]}")
+    return (image / np.float32(255) - MEAN) / STD
 
 
-def _lines(dataset: Path) -> list[tuple[str, str]]:
-    """The (left, right) image paths cal.txt lists, in list order."""
+def read_pfm(content: bytes) -> np.ndarray:
+    """Return a one-channel PFM, such as a Scene Flow disparity map, as float32 rows from the top."""
+    stream = io.BytesIO(content)
+    if stream.readline().strip() != b"Pf":
+        raise ValueError("expected a one-channel PFM")
+    width, height = (int(value) for value in stream.readline().split())
+    scale = float(stream.readline())
+    data = np.frombuffer(stream.read(4 * width * height), "<f4" if scale < 0 else ">f4")
+    return np.flipud(data.reshape(height, width)).astype(np.float32)
+
+
+def _lines(dataset: Path) -> list[Pair]:
+    """The (left, right, disparity) paths cal.txt lists, in list order."""
     with tarfile.open(dataset, "r:gz") as archive:
         stream = archive.extractfile(f"{ROOT}/{CAL_LIST}")
         if stream is None:
             raise ValueError(f"{dataset} has no {ROOT}/{CAL_LIST}")
-        lines = [tuple(line.split()[:2]) for line in stream.read().decode().splitlines() if line.strip()]
-    if not lines:
-        raise ValueError(f"{dataset} lists no stereo pairs in {CAL_LIST}")
+        lines = [tuple(line.split()) for line in stream.read().decode().splitlines() if line.strip()]
+    if not lines or any(len(line) != 3 for line in lines):
+        raise ValueError(f"{dataset} must list a left image, a right image and a disparity per line of {CAL_LIST}")
     return lines
 
 
-def fidelity_pairs(dataset: Path, seed: int, offset: int, samples: int) -> list[tuple[str, str]]:
-    """Return the cal.txt pairs the fidelity comparison uses, selected as model.yaml declares."""
+def selected_pairs(dataset: Path, seed: int, offset: int, samples: int) -> list[Pair]:
+    """Return a span of the cal.txt pairs in one seeded order: calibration takes the first, fidelity a later span."""
     pairs = _lines(dataset)
     if offset + samples > len(pairs):
-        raise ValueError(f"fidelity selection needs {offset + samples} pairs, but {dataset} has {len(pairs)}")
+        raise ValueError(f"the selection needs {offset + samples} pairs, but {dataset} has {len(pairs)}")
     random.Random(seed).shuffle(pairs)
     return pairs[offset : offset + samples]
 
 
-def read_pairs(dataset: Path, pairs: list[tuple[str, str]]) -> np.ndarray:
-    """Return the pairs as one NHWC batch of side-by-side frames, [left | right] views preprocessed, in order."""
+def read_pairs(dataset: Path, pairs: list[Pair]) -> tuple[np.ndarray, np.ndarray]:
+    """Return the pairs as one NHWC batch of side-by-side frames, [left | right] views preprocessed, and their left
+    views' true disparities, in order."""
     wanted = {path for pair in pairs for path in pair}
     found: dict[str, bytes] = {}
     with tarfile.open(dataset, "r|gz") as archive:
@@ -70,5 +80,20 @@ def read_pairs(dataset: Path, pairs: list[tuple[str, str]]) -> np.ndarray:
                 found[name] = archive.extractfile(member).read()
     missing = sorted(wanted - set(found))
     if missing:
-        raise ValueError(f"{dataset} lacks {len(missing)} listed images, e.g. {missing[:2]}")
-    return np.stack([np.concatenate([preprocess_image(found[view]) for view in pair], axis=1) for pair in pairs])
+        raise ValueError(f"{dataset} lacks {len(missing)} listed files, e.g. {missing[:2]}")
+    frames = np.stack(
+        [
+            np.concatenate([preprocess_image(found[left]), preprocess_image(found[right])], axis=1)
+            for left, right, _ in pairs
+        ]
+    )
+    return frames, np.stack([read_pfm(found[disparity]) for _, _, disparity in pairs])
+
+
+def end_point_error(disparity: np.ndarray, truth: np.ndarray) -> float:
+    """OpenStereo's per-image EPE: the mean absolute error over pixels whose true disparity is above 0 and under 192,
+    and 0 for an image with no such pixel."""
+    valid = (truth > 0) & (truth < MAX_DISPARITY)
+    if not valid.any():
+        return 0.0
+    return float(np.mean(np.abs(disparity.reshape(truth.shape) - truth)[valid]))

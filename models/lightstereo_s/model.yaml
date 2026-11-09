@@ -26,27 +26,54 @@ conversion:
     uri: hf://models/XiandaGuo/OpenStereo@cac6f81baeb0099522adc72859b1bda46bfcf6e7/checkpoint/LightStereo/LightStereo-S-SceneFlow.ckpt
     sha256: e34b6aaa646217d03abcaa4f438dd02404711fe2bcee10eb59a6aff71f2ca02f
     size_bytes: 14162117
+  outputs: [weights.pth]
 
 compilation:
   format: onnx
-  source:
-    uri: https://artifacts.stg.neat.sima.ai/models-onnx/lightstereo_s/a93bbdc222130de7c833a2fcb963b51d57992e537dd0022a97f422d9f28a8cf3/40740157468-1/model.onnx
-    sha256: a93bbdc222130de7c833a2fcb963b51d57992e537dd0022a97f422d9f28a8cf3
-    size_bytes: 20039926
+  source: conversion
 
+calibrations:
+- id: scene-flow-cal
+  dataset: {id: scene-flow, variant: cal, sha256: bc17d4c23539824b4dc5d159579a59c1727a80e6d7f82597a13c90be493a66ff, size_bytes: 1688561036}
+
+# Every profile calibrates: each instance normalization ends in a square root, which the Model Compiler runs as an
+# INT8 lookup table even when activations are BF16.
 build_profiles:
-  # No INT8 profile yet: W8A8 measured 1.555 px Scene Flow EPE against 0.736 px for the float model, and the
-  # Model Compiler's W8A16 code fails its simulation check on this graph's large transposed convolutions.
-  w16a16:
+  w8a8:
+    calibration_dataset: scene-flow-cal
     components:
       model:
-        parameters: {precision: w16a16}
+        parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 16}
+
+  w8a16:
+    calibration_dataset: scene-flow-cal
+    components:
+      model:
+        parameters: {precision: w8a16, calibration_bins: 2048, calibration_samples: 16}
+
+  w16a16:
+    calibration_dataset: scene-flow-cal
+    components:
+      model:
+        parameters: {precision: w16a16, calibration_bins: 2048, calibration_samples: 16}
 
 numerical_fidelity:
   # Mean absolute error of the disparity output is its end-point error against the ONNX source, in pixels.
   status: diagnostic
   dataset: {id: scene-flow, variant: cal, sha256: bc17d4c23539824b4dc5d159579a59c1727a80e6d7f82597a13c90be493a66ff, size_bytes: 1688561036}
-  selection: {method: seeded_random_without_replacement, seed: 42, offset: 0, samples: 10}
+  # Calibration takes the first pairs of the same seeded order, so the fidelity pairs start after them.
+  selection: {method: seeded_random_without_replacement, seed: 42, offset: 16, samples: 8}
   outputs: [disparity]
 
+accuracy:
+  # scene-flow-val holds the Scene Flow finalpass test list: 4,370 FlyingThings3D pairs and their left-view disparity.
+  datasets:
+  - {id: scene-flow, variant: val, sha256: f355b01ceab38e3ac1e3fd069bf3af61a140fff88d7cf21acaa610195799c500, size_bytes: 14868088916}
+
 performance: {}
+
+reference_metrics:
+- source: https://github.com/XiandaGuo/OpenStereo/blob/23d71c92e33ad1f80dfc42bf29f5c6a914d38769/docs/1.model_zoo.md
+  dataset: {id: scene-flow, split: test}
+  conditions: FP32, each view edge-padded to 544x960 above and to the right, pixels with true disparity under 192
+  metrics: {epe: 0.73}

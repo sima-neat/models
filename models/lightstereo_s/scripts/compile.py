@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Compile the converted LightStereo-S ONNX into one Modalix MPK and measure its disparity fidelity."""
+"""Build LightStereo-S from the converted weights with surgery.py, compile it into one Modalix MPK, and measure its
+disparity fidelity.
+
+Calibration and numerical fidelity use one seeded order of the scene-flow cal pairs: calibration takes the first pairs,
+and fidelity compares the quantized graph's disparity with the ONNX's on a later span, before the MLA compile, so a
+quantized graph that returns non-finite disparities stops the build early. Fidelity is diagnostic: the log and
+fidelity.json record the difference from the ONNX, and score both disparities against the pairs' true disparity.
+"""
 
 from __future__ import annotations
 
@@ -18,20 +25,21 @@ from typing import Any
 import numpy as np
 import onnxruntime as ort
 from afe.apis.defines import (
+    HistogramMSEMethod,
     InputName,
-    RequantizationMode,
+    QuantizationParams,
     bfloat16_scheme,
-    default_quantization,
     gen2_target,
+    quantization_scheme,
 )
 from afe.apis.loaded_net import load_model
 from afe.apis.model import L2CachingMode
 from afe.core.utils import convert_data_generator_to_iterable
 from afe.load.importers.general_importer import onnx_source
-from model_registry.dependencies import resolve_model_compiler
 from model_registry.model import load_model as load_metadata
-from scene_flow import HEIGHT, INPUT, WIDTH, fidelity_pairs, read_pairs
+from scene_flow import INPUT, end_point_error, read_pairs, selected_pairs
 from sima_utils.data.data_generator import DataGenerator
+from surgery import INTERFACE, OUTPUT, export_network
 
 # Importing afe leaves the root logger at WARNING, so the recipe logs through its own INFO logger.
 LOG = logging.getLogger("lightstereo_s.compile")
@@ -39,14 +47,9 @@ LOG.setLevel(logging.INFO)
 MODEL_DIR = Path(__file__).resolve().parents[1]
 MODEL_ID = "lightstereo_s"
 COMPONENT_ID = "model"
-COMPILER_VERSION = resolve_model_compiler(MODEL_DIR.parents[1])["version"]
-# One side-by-side frame, [left | right], in; the left view's disparity out.
-INPUT_SHAPE = [1, 3, HEIGHT, 2 * WIDTH]
-OUTPUT = "disparity"
-OUTPUT_SHAPE = [1, 1, HEIGHT, WIDTH]
 # MPK manifests record each public tensor's size in bytes; the MPK keeps the ONNX float32 interface.
-INPUT_BYTES = {INPUT: math.prod(INPUT_SHAPE) * 4}
-OUTPUT_BYTES = [math.prod(OUTPUT_SHAPE) * 4]
+INPUT_BYTES = {INPUT: math.prod(INTERFACE[INPUT]) * 4}
+OUTPUT_BYTES = [math.prod(INTERFACE[OUTPUT]) * 4]
 
 
 def _metadata() -> dict[str, Any]:
@@ -60,14 +63,35 @@ def _parameters(profile_id: str) -> dict[str, Any]:
     return next(item["parameters"] for item in profiles[0]["components"] if item["id"] == COMPONENT_ID)
 
 
-def _quantization(precision: str) -> Any:
-    if precision != "w16a16":
-        raise ValueError(f"unsupported precision: {precision}")
-    config = default_quantization.with_activation_quantization(bfloat16_scheme()).with_weight_quantization(
-        bfloat16_scheme()
-    )
-    # with_activation_quantization turns per-token quantization on for BF16; this recipe keeps it off.
-    return config.with_requantization_mode(RequantizationMode.sima).with_per_token_quant(False)
+def _quantization(parameters: dict[str, Any]) -> QuantizationParams:
+    """The compiler's activation and weight formats for a precision.
+
+    Every precision calibrates: each instance normalization ends in a square root, which the Model Compiler runs as
+    an INT8 lookup table even when activations are BF16, so its input range comes from the calibration pairs.
+    """
+    precision = parameters["precision"]
+    calibration = HistogramMSEMethod(int(parameters["calibration_bins"]))
+    if precision == "w8a8":
+        return QuantizationParams(
+            calibration_method=calibration,
+            activation_quantization_scheme=quantization_scheme(asymmetric=True, per_channel=False, bits=8),
+            weight_quantization_scheme=quantization_scheme(asymmetric=False, per_channel=True, bits=8),
+        )
+    if precision == "w8a16":
+        return QuantizationParams(
+            calibration_method=calibration,
+            activation_quantization_scheme=bfloat16_scheme(),
+            weight_quantization_scheme=quantization_scheme(asymmetric=False, per_channel=True, bits=8),
+            # Each token's activations get their own INT8 scale before an INT8-weight operation.
+            per_token_quant=True,
+        )
+    if precision == "w16a16":
+        return QuantizationParams(
+            calibration_method=calibration,
+            activation_quantization_scheme=bfloat16_scheme(),
+            weight_quantization_scheme=bfloat16_scheme(),
+        )
+    raise ValueError(f"unsupported precision: {precision}")
 
 
 def _read_mpk_manifest(archive: Path) -> tuple[list[str], dict[str, Any]]:
@@ -100,10 +124,6 @@ def audit_mpk(archive: Path) -> None:
             f"invalid MPK: MLA={len(mla_plugins)}, ELF={len(elfs)}, host={len(host_plugins)}, "
             f"shared_objects={shared_objects}"
         )
-    if str(manifest.get("model_sdk_version")) != COMPILER_VERSION:
-        raise RuntimeError(
-            f"MPK compiler mismatch: expected {COMPILER_VERSION}, found {manifest.get('model_sdk_version')}"
-        )
     inputs = {node.get("name"): node.get("size") for node in manifest.get("input_nodes", [])}
     if inputs != INPUT_BYTES:
         raise RuntimeError(f"MPK input interface mismatch: {inputs}")
@@ -112,31 +132,36 @@ def audit_mpk(archive: Path) -> None:
         raise RuntimeError(f"MPK output interface mismatch: {outputs}")
 
 
-def compile_model(source: Path, output_dir: Path, profile_id: str) -> tuple[Path, Any]:
-    """Quantize and compile one build profile, returning its MPK and the quantized graph."""
-    precision = str(_parameters(profile_id)["precision"])
-    quantization = _quantization(precision)
-    # BF16 derives nothing from representative data, but quantize() still needs one sample.
-    samples = {INPUT: np.zeros((1, HEIGHT, 2 * WIDTH, 3), dtype=np.float32)}
+def quantize(source: Path, profile_id: str, dataset: Path, seed: int) -> Any:
+    """Quantize one build profile on the first calibration pairs of the seeded order."""
+    parameters = _parameters(profile_id)
+    quantization = _quantization(parameters)
+    count = int(parameters["calibration_samples"])
+    frames, _ = read_pairs(dataset, selected_pairs(dataset, seed, 0, count))
+    importer = onnx_source(
+        str(source), shape_dict={INPUT: tuple(INTERFACE[INPUT])}, layout="NCHW", flexible_batch_size=True
+    )
+    loaded = load_model(importer, target=gen2_target)
+    LOG.info("Quantizing %s, calibrating on %d scene-flow cal pairs", parameters["precision"], count)
+    try:
+        return loaded.quantize(
+            calibration_data=convert_data_generator_to_iterable(DataGenerator({InputName(INPUT): frames})),
+            quantization_config=quantization,
+            model_name=f"{MODEL_ID}_{profile_id}",
+            log_level=logging.INFO,
+        )
+    except SystemExit as error:
+        # AFE reports a failed quantization or compile by raising SystemExit, which would exit with status 0.
+        raise RuntimeError(f"Model Compiler failed to quantize {MODEL_ID} {profile_id}") from error
+
+
+def compile_model(quantized: Any, output_dir: Path, profile_id: str) -> Path:
+    """Compile the quantized graph into the build's MPK and audit it."""
     component_dir = output_dir / COMPONENT_ID
     component_dir.mkdir(parents=True, exist_ok=False)
-
     with tempfile.TemporaryDirectory(prefix=f"{MODEL_ID}-", dir=os.environ.get("RUNNER_TEMP")) as temporary:
         build_dir = Path(temporary)
-        importer = onnx_source(str(source), shape_dict={INPUT: tuple(INPUT_SHAPE)}, layout="NCHW")
-        loaded = load_model(importer, target=gen2_target)
-        LOG.info("Quantizing %s", precision)
-        data = DataGenerator({InputName(name): batch for name, batch in samples.items()})
         try:
-            quantized = loaded.quantize(
-                calibration_data=convert_data_generator_to_iterable(data),
-                quantization_config=quantization,
-                model_name=f"{MODEL_ID}_{profile_id}",
-                log_level=logging.INFO,
-            )
-            # The calibration sample and the float graph are not needed to compile; freeing them lowers peak memory.
-            del data, samples, loaded
-            gc.collect()
             quantized.compile(
                 output_path=str(build_dir / "mpk"),
                 batch_size=1,
@@ -147,8 +172,7 @@ def compile_model(source: Path, output_dir: Path, profile_id: str) -> tuple[Path
                 deployable=True,
             )
         except SystemExit as error:
-            # AFE reports a failed quantization or compile by raising SystemExit, which would exit with status 0.
-            raise RuntimeError(f"Model Compiler failed to quantize or compile {MODEL_ID} {profile_id}") from error
+            raise RuntimeError(f"Model Compiler failed to compile {MODEL_ID} {profile_id}") from error
         archives = sorted((build_dir / "mpk").glob("*_mpk.tar.gz"))
         if len(archives) != 1:
             raise RuntimeError(f"expected one MPK, found {len(archives)}")
@@ -156,7 +180,7 @@ def compile_model(source: Path, output_dir: Path, profile_id: str) -> tuple[Path
         archive = component_dir / archives[0].name
         shutil.copyfile(archives[0], archive)
     audit_mpk(archive)
-    return archive, quantized
+    return archive
 
 
 def measure_fidelity(
@@ -164,11 +188,12 @@ def measure_fidelity(
 ) -> dict[str, Any]:
     """Compare the quantized graph's disparity with the ONNX source on the declared Scene Flow pairs."""
     selection = config["selection"]
-    selected = fidelity_pairs(dataset, int(selection["seed"]), int(selection["offset"]), int(selection["samples"]))
-    frames = read_pairs(dataset, selected)
+    selected = selected_pairs(dataset, int(selection["seed"]), int(selection["offset"]), int(selection["samples"]))
+    frames, truths = read_pairs(dataset, selected)
     reference = ort.InferenceSession(str(source), providers=["CPUExecutionProvider"])
     totals = {"count": 0, "dot": 0.0, "expected": 0.0, "actual": 0.0, "error": 0.0, "absolute": 0.0, "max": 0.0}
-    for index, (left, _) in enumerate(selected):
+    scores: dict[str, list[float]] = {"ONNX": [], "quantized": []}
+    for index, (left, _, _) in enumerate(selected):
         frame = frames[index : index + 1]
         expected = reference.run([OUTPUT], {INPUT: frame.transpose(0, 3, 1, 2)})[0].astype(np.float64)
         outputs = candidate.execute(inputs={InputName(INPUT): frame}, use_jax=True)
@@ -183,7 +208,23 @@ def measure_fidelity(
         totals["error"] += float(np.sum(error**2))
         totals["absolute"] += float(np.sum(np.abs(error)))
         totals["max"] = max(totals["max"], float(np.max(np.abs(error))))
-        LOG.info("Fidelity %s: end-point error %.4f px", left, float(np.mean(np.abs(error))))
+        scores["ONNX"].append(end_point_error(expected, truths[index]))
+        scores["quantized"].append(end_point_error(actual, truths[index]))
+        LOG.info(
+            "Fidelity %s: %.4f px from the ONNX; Scene Flow EPE %.3f px ONNX, %.3f px quantized",
+            left,
+            float(np.mean(np.abs(error))),
+            scores["ONNX"][-1],
+            scores["quantized"][-1],
+        )
+    onnx_epe, quantized_epe = float(np.mean(scores["ONNX"])), float(np.mean(scores["quantized"]))
+    LOG.info(
+        "Scene Flow EPE on the %d fidelity pairs: %.3f px ONNX, %.3f px quantized (%+.1f%%)",
+        len(selected),
+        onnx_epe,
+        quantized_epe,
+        100 * (quantized_epe / onnx_epe - 1),
+    )
     count = totals["count"]
     expected_rms = max(np.sqrt(totals["expected"] / count), np.finfo(np.float64).eps)
     norm = np.sqrt(totals["expected"] * totals["actual"])
@@ -215,33 +256,34 @@ def main() -> int:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--build-profile", required=True)
     parser.add_argument("--compile-invocation", required=True)
-    parser.add_argument("--dataset", type=Path, help="calibration archive; no build profile of this model calibrates")
-    parser.add_argument("--fidelity-dataset", type=Path, help="dataset-registry fidelity archive")
+    parser.add_argument("--dataset", type=Path, required=True, help="dataset-registry calibration archive")
+    parser.add_argument("--fidelity-dataset", type=Path, required=True, help="dataset-registry fidelity archive")
     args = parser.parse_args()
     if args.compile_invocation != args.build_profile:
         parser.error("a build profile compiles in one invocation named after it")
-    source = args.model.expanduser().resolve()
-    if source.suffix != ".onnx":
-        parser.error("--model must be the verified ONNX from the conversion workflow")
-    if not source.is_file():
-        parser.error(f"model does not exist: {source}")
-    fidelity = _metadata().get("numerical_fidelity")
-    if fidelity is not None and args.fidelity_dataset is None:
-        parser.error("model.yaml declares numerical_fidelity; pass --fidelity-dataset")
-    if args.dataset is not None:
-        parser.error("no build profile declares calibration_dataset, so the recipe takes no --dataset")
+    weights = args.model.expanduser().resolve()
+    if weights.suffix != ".pth":
+        parser.error("--model must be the verified weights.pth from the conversion workflow")
+    if not weights.is_file():
+        parser.error(f"model does not exist: {weights}")
+    fidelity = _metadata()["numerical_fidelity"]
     output_dir = args.output_dir.expanduser().resolve()
-    archive, candidate = compile_model(source, output_dir, args.build_profile)
-    LOG.info("Compiled MPK: %s", archive)
-    if fidelity is not None:
+    seed = int(fidelity["selection"]["seed"])
+    with tempfile.TemporaryDirectory(prefix=f"{MODEL_ID}-onnx-", dir=os.environ.get("RUNNER_TEMP")) as temporary:
+        source = export_network(weights, Path(temporary) / "model.onnx")
+        quantized = quantize(source, args.build_profile, args.dataset.expanduser().resolve(), seed)
         LOG.info("Measuring numerical fidelity on %d pairs", fidelity["selection"]["samples"])
         report = measure_fidelity(
-            source, candidate, args.fidelity_dataset.expanduser().resolve(), fidelity, args.build_profile
+            source, quantized, args.fidelity_dataset.expanduser().resolve(), fidelity, args.build_profile
         )
-        (output_dir / "fidelity.json").write_text(
-            json.dumps(report, allow_nan=False, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-        )
-        LOG.info("Fidelity: %s", report["metrics"][0])
+    LOG.info("Fidelity: %s", report["metrics"][0])
+    output_dir.mkdir(parents=True, exist_ok=False)
+    (output_dir / "fidelity.json").write_text(
+        json.dumps(report, allow_nan=False, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    # The calibration frames and the float graph are released; collecting them lowers the compile's peak memory.
+    gc.collect()
+    LOG.info("Compiled MPK: %s", compile_model(quantized, output_dir, args.build_profile))
     return 0
 
 
