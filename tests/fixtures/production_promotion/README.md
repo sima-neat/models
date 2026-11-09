@@ -19,3 +19,9 @@ preserve the promotion history, audit the withdrawal, and release only the match
 `approved_selection` hold. Then restore the captured policy through the CAS snapshot
 API. Do not delete candidates, runs or artifact objects. If the required operator
 cleanup path or reviewer is unavailable, prepare the fixture without activating it.
+
+The same-revision snapshot API rejects this metadata patch with
+`catalog_plan_conflict: Model metadata cannot change within a revision`.
+Activation requires a separate reviewed fixture Git revision and documentation
+runs bound to that revision. Do not bypass that guard with a direct catalog
+edit. The manifest is prepared; it has not activated an on-demand target.

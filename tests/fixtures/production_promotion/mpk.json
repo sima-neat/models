@@ -39,6 +39,7 @@
     "Capture the latest complete production Develop document and canonical snapshot before mutation.",
     "Require no pre-existing approved selection for this model/profile.",
     "Preserve every existing build, package, other profile and other model.",
+    "Model metadata changes require a separate reviewed Git revision and documentation provenance for that revision; the current revision progress API deliberately rejects this patch.",
     "Publish through the snapshot API with compare-and-swap; stop on conflicts.",
     "Run the existing protected workflow from develop; do not bypass review.",
     "Verify promoted receipt and exact MPK checksum and size before cleanup.",
@@ -46,5 +47,6 @@
     "Restore only the captured model policy/requirements using the current snapshot API, preserving unrelated concurrent catalog progress.",
     "Never delete compile/package runs, candidate records, source objects, or approval history."
   ],
-  "cleanup_constraint": "There is no withdrawal API. Successful fixture cleanup requires a guarded operator database transaction before ordinary catalog restoration; a source-only policy revert is insufficient."
+  "cleanup_constraint": "There is no withdrawal API. Successful fixture cleanup requires a guarded operator database transaction before ordinary catalog restoration; a source-only policy revert is insufficient.",
+  "activation_status": "prepared, not activated: same-revision CAS rejected with catalog_plan_conflict; no production metadata change"
 }

@@ -36,6 +36,11 @@ the old ZIP-validation failure. Do not change its permanent source policy merely
 to pass acceptance. The scoped operator fixture in
 [`tests/fixtures/production_promotion`](https://github.com/sima-neat/models/tree/develop/tests/fixtures/production_promotion)
 retains the candidate's genuine compile identities and requires guarded restoration.
+A same-revision CAS attempt to stage that metadata was rejected with HTTP 409
+`catalog_plan_conflict: Model metadata cannot change within a revision`.
+No target metadata changed and no fixture approval exists. Activation needs a
+separate reviewed fixture revision with matching documentation provenance;
+ordinary progress publication cannot alter source metadata.
 
 ## LLiMa acceptance
 
