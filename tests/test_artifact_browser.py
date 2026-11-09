@@ -14,6 +14,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
+import pytest
 import yaml
 from jsonschema import Draft202012Validator
 from model_registry.fingerprints import BENCHMARK_RUN_TYPES
@@ -300,9 +301,9 @@ def test_preview_resolves_each_benchmark_fingerprint_to_a_model_report(tmp_path:
         assert (test["suite"], test["name"], test["status"]) == (stage, "model", "passed")
         validator.validate(test["summary"])
         assert test["summary"]["stage"] == stage
-    metrics = accuracy["tests"][0]["summary"]["datasets"]["imagenet-2012-mini"]["metrics"]
+    metrics = accuracy["tests"][0]["summary"]["datasets"]["imagenet-2012-val"]["metrics"]
     assert set(metrics) == {"top1_accuracy", "top5_accuracy"}
-    assert accuracy["parameters"]["accuracy"]["datasets"]["imagenet-2012-mini"]["id"] == "imagenet-2012"
+    assert accuracy["parameters"]["accuracy"]["datasets"]["imagenet-2012-val"]["id"] == "imagenet-2012"
     assert list(performance["tests"][0]["summary"]["components"]) == ["model"]
     assert wrong_type == 404
 
@@ -313,8 +314,8 @@ def test_preview_measures_a_multi_component_model_as_one_report(tmp_path: Path) 
 
     report = measured["tests"][0]["summary"]
     builds = [build for build in measured["model"]["builds"] if build["build_profile_id"] == "w8a8_w16a16"]
-    # One report for the whole model, with each component's layers in the order the pipeline runs them.
-    assert list(report["components"]) == ["backbone", "decoder"]
+    # One report for the whole model, its components in the jsonb key order the registry returns.
+    assert list(report["components"]) == ["decoder", "backbone"]
     assert all(component["mla_layer_stats"]["layers"] and component["mla_stage_stats"]["stages"]
                for component in report["components"].values())
     assert report["workload"] == "Backbone, Top 300 proposals on the CPU, decoder"
@@ -475,6 +476,24 @@ def test_browser_accuracy_labels_match_the_model_report_metrics() -> None:
     assert table is not None
     labels = re.findall(r'^\s*(\w+): "([^"]*)",$', table.group(1), re.M)
     assert labels == [(name, metric["label"]) for name, metric in _report_metrics("accuracy").items()]
+
+
+def test_browser_accuracy_scales_match_the_model_report_metrics() -> None:
+    # Accuracy metrics that are not 0-1 ratios with higher better show in their own unit and rank by their direction.
+    scales = subprocess.run(
+        [
+            "node", "--input-type=module", "--eval",
+            "const {ACCURACY_METRIC_SCALES} = await import('./artifact-browser/accuracy-metrics.js');"
+            "console.log(JSON.stringify(ACCURACY_METRIC_SCALES));",
+        ],
+        cwd=ROOT, check=True, capture_output=True, text=True,
+    )  # fmt: skip
+    expected = {
+        name: {"unit": metric["unit"], "direction": metric["direction"]}
+        for name, metric in _report_metrics("accuracy").items()
+        if (metric["unit"], metric["direction"]) != ("ratio", "higher")
+    }
+    assert json.loads(scales.stdout) == expected
 
 
 def test_browser_performance_metrics_match_the_model_report_metrics() -> None:
@@ -1370,7 +1389,7 @@ def test_performance_rendering_reads_the_model_report_and_is_charted() -> None:
 def test_preview_accuracy_uses_the_regression_metrics_without_an_authored_inventory() -> None:
     preview = runpy.run_path(str(BROWSER / "preview.py"))
     report = preview["_accuracy_report"](load_models(ROOT)["resnet_50"], "w8a8")
-    assert set(report["datasets"]["imagenet-2012-mini"]["metrics"]) == {"top1_accuracy", "top5_accuracy"}
+    assert set(report["datasets"]["imagenet-2012-val"]["metrics"]) == {"top1_accuracy", "top5_accuracy"}
 
 
 def test_accuracy_result_is_rendered_with_coverage_and_reference_comparison() -> None:
@@ -1421,13 +1440,15 @@ def test_benchmark_runs_are_resolved_from_catalog_fingerprints_and_accuracy_is_r
     # Results with more metrics than tiles list the rest in a table; each shows the reference score.
     assert ".slice(0, ACCURACY_SUMMARY_TILES)" in script
     assert ".slice(ACCURACY_SUMMARY_TILES)" in script
-    assert "Published ${published}" in script
-    assert '<th scope="col">Published</th>' in script
-    # Reference scores sit beside a measurement of the same dataset only; the headline is the first dataset's.
-    assert "referenceScores(reference, entry.dataset.id)" in script
+    assert "`${label} ${score}`" in script
+    assert '<th scope="col">${escapeHtml(REFERENCE_ORIGINS[origin].label)}</th>' in script
+    # Reference scores sit beside a measurement of the same dataset only, each origin apart; the headline is the
+    # first dataset's published score.
+    assert "scoresByOrigin(reference, entry.dataset.id)" in script
+    assert "referenceScores(reference, datasetId, origin)" in script
     assert "const { metrics, dataset } = result.value.datasets[0];" in script
     assert "metric.reference" not in script
-    assert "<strong>${escapeHtml(percentage(value))}</strong>" in script
+    assert "<strong>${escapeHtml(formatAccuracy(name, value))}</strong>" in script
 
 
 def test_numerical_fidelity_is_rendered_from_correctness_results() -> None:
@@ -1554,12 +1575,13 @@ def test_compare_bolds_the_best_whole_model_value() -> None:
     assert best_value([build(8.4), build(None)], "latency_avg_ms") is None
 
 
-def test_catalog_orders_a_family_from_smallest_to_largest() -> None:
+@pytest.mark.parametrize("family", ["YOLO26", "YOLO11"])
+def test_catalog_orders_a_family_from_smallest_to_largest(family: str) -> None:
     script = _browser_source("catalog-view.js")
     ordering = script[script.index("// Size words order a family"):script.index("function modelCardImage(")]
     names = [
-        "YOLO26x-det", "RF-DETR Large", "YOLO26l-det", "YOLO26n-det", "RF-DETR Nano",
-        "YOLO26s-det", "ResNet-50", "YOLO26m-det", "RF-DETR Medium", "RF-DETR Small",
+        f"{family}x-det", "RF-DETR Large", f"{family}l-det", f"{family}n-det", "RF-DETR Nano",
+        f"{family}s-det", "ResNet-50", f"{family}m-det", "RF-DETR Medium", "RF-DETR Small",
     ]
     models = [{"display_name": name} for name in names]
     probe = (
@@ -1571,7 +1593,7 @@ def test_catalog_orders_a_family_from_smallest_to_largest() -> None:
     )
     assert json.loads(result.stdout) == [
         "ResNet-50", "RF-DETR Nano", "RF-DETR Small", "RF-DETR Medium", "RF-DETR Large",
-        "YOLO26n-det", "YOLO26s-det", "YOLO26m-det", "YOLO26l-det", "YOLO26x-det",
+        f"{family}n-det", f"{family}s-det", f"{family}m-det", f"{family}l-det", f"{family}x-det",
     ]
 
 

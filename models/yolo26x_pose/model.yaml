@@ -7,7 +7,7 @@ modalities:
   inputs: [image]
   outputs: [bounding_boxes, class_scores, landmarks]
 
-architecture: yolo
+architecture: yolo26_pose
 
 license:
   spdx: AGPL-3.0-only
@@ -27,10 +27,7 @@ conversion:
 
 compilation:
   format: onnx
-  source:
-    uri: https://artifacts.stg.neat.sima.ai/models-onnx/yolo26x_pose/8f1f05817bf63042dd10079033eb603db0af69e0d8ee86e987100a3d904a6673/38162930107-1/model.onnx
-    sha256: 8f1f05817bf63042dd10079033eb603db0af69e0d8ee86e987100a3d904a6673
-    size_bytes: 230687200
+  source: conversion
 
 calibrations:
 - id: coco-2017-cal
@@ -49,6 +46,9 @@ build_profiles:
         parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 50}
 
   w8a16:
+    # Measured x86 peak: 47.04 GiB; retry on moderate (64 GiB), with ARM64 still unverified.
+    runner_class: moderate
+    runner_market: on-demand
     components:
       model:
         parameters: {precision: w8a16}

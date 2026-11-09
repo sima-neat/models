@@ -277,3 +277,28 @@ def _resolve_with_dataset_registry(dataset: dict[str, Any], cache_dir: Path | No
         detail = getattr(exc, "stderr", "") or str(exc)
         raise FetchError(f"dataset-registry resolution failed: {detail.strip()}") from exc
     return path
+
+
+def read_registry_json(url: str) -> dict[str, Any]:
+    try:
+        with urlopen(Request(url, headers={"User-Agent": "sima-neat-model-registry/0.1"}), timeout=30) as response:
+            value = json.load(response)
+    except HTTPError as exc:
+        code = "unknown_error"
+        message = str(exc)
+        try:
+            payload = json.loads(exc.read())
+            error = payload.get("error", {}) if isinstance(payload, dict) else {}
+            if isinstance(error, dict):
+                code = str(error.get("code", code))
+                message = str(error.get("message", message))
+        except (OSError, json.JSONDecodeError):
+            pass
+        raise FetchError(
+            f"public artifact registry HTTP {exc.code} {code}: {message}"
+        ) from exc
+    except (OSError, json.JSONDecodeError) as exc:
+        raise FetchError(f"could not read public artifact registry endpoint {url}: {exc}") from exc
+    if not isinstance(value, dict):
+        raise FetchError(f"artifact registry endpoint did not return an object: {url}")
+    return value

@@ -160,6 +160,15 @@ def test_accuracy_report_validates_against_the_schema(tmp_path):
                                              "details": {}}
 
 
+def test_accuracy_report_keeps_disparity_errors_in_their_units(tmp_path):
+    # OpenStereo reports EPE in pixels and D1-all as a percentage, both lower is better; neither is a 0-1 ratio.
+    scene_flow = {"split": "test", "evaluated_samples": 4370, "available_samples": 4370}
+    result = {**scene_flow, "metrics": {"epe": 1.25, "d1_all": 2.82}}
+    model_report.from_accuracy({"scene-flow-val": result}).save(tmp_path)
+
+    assert saved_report(tmp_path)["datasets"]["scene-flow-val"]["metrics"] == {"epe": 1.25, "d1_all": 2.82}
+
+
 SAMPLES = {"split": "val", "evaluated_samples": 1, "available_samples": 1}
 
 
@@ -170,6 +179,9 @@ SAMPLES = {"split": "val", "evaluated_samples": 1, "available_samples": 1}
         ({"validation": {**SAMPLES, "metrics": {"made_up_metric": 0.1}}}, "validation: unknown"),
         ({"validation": {**SAMPLES, "metrics": {"latency_avg_ms": 0.1}}}, "validation: unknown"),
         ({"validation": {**SAMPLES, "metrics": {"coco_map": 1.5}}}, "ratio"),
+        ({"validation": {**SAMPLES, "metrics": {"d1_all": 101.0}}}, "d1_all must be a percentage from 0 to 100"),
+        ({"validation": {**SAMPLES, "metrics": {"epe": -0.1}}}, "epe must be at least 0 px"),
+        ({"validation": {**SAMPLES, "metrics": {"epe": float("inf")}}}, "epe must be at least 0 px"),
         ({"validation": {**SAMPLES, "evaluated_samples": 2, "metrics": {"coco_map": 0.5}}}, "evaluated_samples"),
         ({"validation": {"metrics": {"coco_map": 0.5}}}, "validation must give metrics, split"),
         ({"validation": {**SAMPLES, "metrics": {"coco_map": 0.5}, "notes": "x"}}, "validation must give"),
@@ -216,7 +228,10 @@ class ModelOptions:
     """PyNeat's ModelOptions, with the preprocessing fields the scripts set."""
 
     def __init__(self):
-        self.preprocess = types.SimpleNamespace(resize=types.SimpleNamespace(), normalize=types.SimpleNamespace())
+        self.preprocess = types.SimpleNamespace(
+            resize=types.SimpleNamespace(), normalize=types.SimpleNamespace(), color_convert=types.SimpleNamespace()
+        )
+        self.superpoint = types.SimpleNamespace()
 
 
 class Tensor:
@@ -238,30 +253,48 @@ PYNEAT_ENUMS = {
     "NormalizePreset": ("ImageNet",),
     "PixelFormat": ("RGB",),
     "TensorMemory": ("EV74",),
-    "BoxDecodeType": ("YoloV26", "YoloV26Pose", "YoloV26Seg", "YoloV26Obb", "YoloV8Obb"),
+    "BoxDecodeType": ("YoloV8", "YoloV26", "YoloV26Pose", "YoloV26Seg", "YoloV8Obb", "SuperPoint"),
+    "SuperPointProfile": ("MagicLeapDemoV1", "LightGlueV1"),
 }
 SCRIPT_PYNEAT = {
     enum: types.SimpleNamespace(**{value: value for value in values}) for enum, values in PYNEAT_ENUMS.items()
 }
+# Color conversion takes its own enum, not PixelFormat; distinct values catch a script passing the wrong one.
+SCRIPT_PYNEAT["PreprocessColorFormat"] = types.SimpleNamespace(
+    **{value: f"PreprocessColorFormat.{value}" for value in ("RGB", "BGR", "GRAY8")}
+)
 # A 4:3 COCO image letterboxes to 960x720 in the 1280x720 frame, with 160 grey columns on each side.
 SOURCE_SIZE, IMAGE_COLUMNS, FILL = (480, 640), slice(160, 1120), 114
+# The ImageNet image a classifier benchmarks, by the variant of its accuracy dataset, as its workload names it.
+IMAGENET_SAMPLES = {"mini": "n01440764/ILSVRC2012_val_00000001.webp", "val": "val2012/ILSVRC2012_val_00000001.JPEG"}
+# A Scene Flow view is 960x540; a stereo script joins the pair side by side, left then right, unletterboxed.
+STEREO_VIEW, STEREO_LEFT, STEREO_RIGHT = (540, 960), 60, 90
+STEREO_PAIR = "FlyingThings3D/frames_finalpass/TEST/A/0000/{view}/0006.png"
 
 
-def write_image(path, value):
+def write_image(path, value, size=SOURCE_SIZE):
     import cv2
     import numpy as np
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    assert cv2.imwrite(str(path), np.full((*SOURCE_SIZE, 3), value, np.uint8))
+    assert cv2.imwrite(str(path), np.full((*size, 3), value, np.uint8))
 
 
 def benchmark_dataset(root):
-    """A dataset with the files each script samples from: COCO val2017, ImageNet's val split and DOTA's val images.
-    Only the second COCO image labels a person, so a pose script must pick it."""
+    """A dataset with the files each script samples from: COCO val2017, ImageNet's val2012 and ImageNet mini's val
+    split, DOTA val images, an HPatches val sequence, and the Scene Flow test list. Only the second COCO image labels a person, so a
+    pose script must pick it."""
+    write_image(root / STEREO_PAIR.format(view="left"), STEREO_LEFT, STEREO_VIEW)
+    write_image(root / STEREO_PAIR.format(view="right"), STEREO_RIGHT, STEREO_VIEW)
+    disparity = STEREO_PAIR.replace("frames_finalpass", "disparity").format(view="left").replace(".png", ".pfm")
+    pair = f"{STEREO_PAIR.format(view='left')} {STEREO_PAIR.format(view='right')} {disparity}\n"
+    (root / "sceneflow_finalpass_test.txt").write_text(pair, encoding="utf-8")
     write_image(root / "val2017/000000000001.jpg", 200)
     write_image(root / "val2017/000000000002.jpg", 200)
-    write_image(root / "val/n01440764/ILSVRC2012_val_00000001.webp", 200)
     write_image(root / "val/images/P0003.jpg", 200)
+    write_image(root / "val2012/ILSVRC2012_val_00000001.JPEG", 200)
+    write_image(root / "val/n01440764/ILSVRC2012_val_00000001.webp", 200)
+    write_image(root / "val/v_scene/1.ppm", 200)
     keypoints = {
         "images": [{"id": 1, "file_name": "000000000001.jpg"}, {"id": 2, "file_name": "000000000002.jpg"}],
         "annotations": [{"image_id": 1, "num_keypoints": 0}, {"image_id": 2, "num_keypoints": 17}],
@@ -279,6 +312,20 @@ def assert_letterboxed_frame(tensor):
     assert (frame[:, IMAGE_COLUMNS] == 200).all()
 
 
+def assert_side_by_side_frame(tensor):
+    """One unletterboxed RGB frame holding the stereo pair: the left view, then the right view."""
+    frame = tensor.array
+    assert (frame.shape, str(frame.dtype)) == ((STEREO_VIEW[0], 2 * STEREO_VIEW[1], 3), "uint8")
+    assert tensor.options["image_format"] == "RGB"
+    assert (frame[:, : STEREO_VIEW[1]] == STEREO_LEFT).all() and (frame[:, STEREO_VIEW[1] :] == STEREO_RIGHT).all()
+
+
+def first_accuracy_dataset(script: Path) -> str | None:
+    model = yaml.safe_load((script.parents[1] / "model.yaml").read_text(encoding="utf-8"))
+    datasets = model.get("accuracy", {}).get("datasets", [])
+    return datasets[0]["id"] if datasets else None
+
+
 def performance_scripts(*, components: bool) -> list[Path]:
     """Benchmarked models' scripts: single-component ones run Model.benchmark, multi-component ones time their
     pipeline and take each component's MLA stats from its own Model.benchmark."""
@@ -291,7 +338,18 @@ def performance_scripts(*, components: bool) -> list[Path]:
     return scripts
 
 
-@pytest.mark.parametrize("script", performance_scripts(components=False), ids=lambda path: path.parents[1].name)
+def takes_images(script: Path) -> bool:
+    """Whether the model a performance script measures declares an image input."""
+    model = yaml.safe_load((script.parents[1] / "model.yaml").read_text(encoding="utf-8"))
+    return "image" in model["modalities"]["inputs"]
+
+
+# A model whose inputs are not images, such as a keypoint matcher, benchmarks tensors its own tests cover.
+@pytest.mark.parametrize(
+    "script",
+    [path for path in performance_scripts(components=False) if takes_images(path)],
+    ids=lambda path: path.parents[1].name,
+)
 def test_every_single_component_script_benchmarks_a_dataset_image(script, monkeypatch, tmp_path):
     loaded, requests = [], []
 
@@ -329,18 +387,48 @@ def test_every_single_component_script_benchmarks_a_dataset_image(script, monkey
         "On", "On", "On"
     )
     (frame,) = requests[0].inputs
-    assert_letterboxed_frame(frame)
+    # Neat sizes its input buffers, which the execution plan shows as its input, for the benchmark frame.
+    height, width = frame.array.shape[:2]
+    assert (options.preprocess.input_max_width, options.preprocess.input_max_height) == (width, height)
     report = saved_report(output)
-    if getattr(options, "decode_type", "").startswith(("YoloV26", "YoloV8Obb")):
-        assert (options.preprocess.resize.mode, options.top_k, options.score_threshold) == ("Letterbox", 10, 0.25)
-        # Pose accuracy scores only images with a labelled person; oriented boxes measure DOTA's aerial images.
-        expected = {"YoloV26Pose": "000000000002.jpg", "YoloV26Obb": "P0003.jpg", "YoloV8Obb": "P0003.jpg"}.get(
-            options.decode_type, ".jpg"
-        )
-        assert expected in report["workload"]
-    else:
+    if first_accuracy_dataset(script) == "scene-flow":
+        # A stereo model benchmarks a Scene Flow test pair as its side-by-side frame, stretched to the model input.
+        assert_side_by_side_frame(frame)
         assert (options.preprocess.resize.mode, options.preprocess.preset) == ("Stretch", "ImageNet")
-        assert "ILSVRC2012_val_00000001.webp" in report["workload"]
+        assert STEREO_PAIR.format(view="left") in report["workload"]
+    elif getattr(options, "decode_type", "").startswith(("YoloV26", "YoloV8")):
+        assert_letterboxed_frame(frame)
+        assert (options.preprocess.resize.mode, options.top_k, options.score_threshold) == ("Letterbox", 10, 0.25)
+        if options.decode_type in {"YoloV8", "YoloV8Obb"}:
+            assert options.nms_iou_threshold == 0.7
+            assert "NMS IoU 0.7" in report["workload"]
+        # Pose accuracy scores only images with a labelled person.
+        expected = {"YoloV26Pose": "000000000002.jpg", "YoloV8Obb": "P0003.jpg"}.get(options.decode_type, ".jpg")
+        assert expected in report["workload"]
+    elif getattr(options, "decode_type", "") == "SuperPoint":
+        # SuperPoint takes the frame stretched to its input, converted to GRAY8, scaled to [0, 1] without a preset,
+        # and decodes it with Magic Leap's demo settings, as the accuracy stage does.
+        assert_letterboxed_frame(frame)
+        color = options.preprocess.color_convert
+        assert (options.preprocess.resize.mode, color.enable, color.input_format, color.output_format) == (
+            "Stretch", "On", "PreprocessColorFormat.RGB", "PreprocessColorFormat.GRAY8"
+        )
+        assert not hasattr(options.preprocess, "preset")
+        assert (options.superpoint.profile, options.top_k) == ("MagicLeapDemoV1", 1000)
+        assert "v_scene/1.ppm" in report["workload"]
+    else:
+        assert_letterboxed_frame(frame)
+        assert options.preprocess.resize.mode == "Stretch"
+        # A classifier normalizes with the ImageNet preset, or with the mean and std of its own preprocessing.
+        normalize = options.preprocess.normalize
+        if getattr(normalize, "has_explicit_stats", False):
+            calibration = runpy.run_path(str(script.parent / "calibration.py"))
+            assert list(normalize.mean) == pytest.approx(calibration["MEAN"].tolist())
+            assert list(normalize.stddev) == pytest.approx(calibration["STD"].tolist())
+        else:
+            assert options.preprocess.preset == "ImageNet"
+        metadata = yaml.safe_load((script.parents[1] / "model.yaml").read_text(encoding="utf-8"))
+        assert IMAGENET_SAMPLES[metadata["accuracy"]["datasets"][0]["variant"]] in report["workload"]
     assert list(report["components"]) == ["model"]
     assert report["components"]["model"]["mla_layer_stats"] == CORE_REPORT["mla_layer_stats"]
     assert report["components"]["model"]["mla_stage_stats"] == CORE_REPORT["mla_stage_stats"]
@@ -392,6 +480,8 @@ def test_every_multi_component_script_feeds_its_backbone_a_dataset_frame(script,
     assert (options.preprocess.kind, options.preprocess.resize.mode, options.preprocess.preset) == (
         "Image", "Stretch", "ImageNet"
     )
+    height, width = frame.array.shape[:2]
+    assert (options.preprocess.input_max_width, options.preprocess.input_max_height) == (width, height)
 
 
 def test_model_code_uses_cores_mla_stats_names():

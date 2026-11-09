@@ -1,11 +1,15 @@
 name: Vulcan Model Compile
 
-# Compile and publish one authorized invocation, update approved builds, and start its benchmarks.
+# Compile and publish one authorized invocation, update approved builds, and benchmark it.
 # vulcan-model-orchestrator.yml calls this once per selected invocation, so one build never waits on another.
 
 on:
   workflow_call:
     inputs:
+      conversion_sources:
+        type: string
+        default: "{}"
+        required: false
       entry:
         description: Authorized compile-matrix entry as JSON
         required: true
@@ -43,6 +47,17 @@ on:
       artifact_kms_key_id:
         required: true
         type: string
+      vulcan_config:
+        description: JSON outputs of vulcan-resolve-config.yml, for the benchmarks
+        required: true
+        type: string
+      devkit_runner:
+        description: JSON outputs of vulcan-resolve-modalix-runner.yml, for the benchmarks
+        required: true
+        type: string
+
+env:
+  MODEL_REGISTRY_CONVERSIONS: ${{ inputs.conversion_sources }}
 
 permissions:
   contents: read
@@ -53,6 +68,7 @@ jobs:
     environment: ${{ inputs.vulcan_environment }}
     permissions:
       contents: read
+      id-token: write
     runs-on:
       - self-hosted
       - linux
@@ -69,6 +85,8 @@ jobs:
     # Large models compile for hours; the limit only stops a stalled compile.
     timeout-minutes: 360
     env:
+      MODEL_REGISTRY_IAM_READ_API_URL: ${{ inputs.vulcan_environment == 'production' && vars.VULCAN_ARTIFACT_REGISTRY_API_URL || '' }}
+      AWS_REGION: ${{ inputs.aws_region }}
       SIMA_DATASET_S3_URI: s3://${{ inputs.dataset_bucket }}
       MODEL_COMPILER_PYTHON: /mnt/model-compiler/bin/python
       MODEL_ID: ${{ fromJSON(inputs.entry).model_id }}
@@ -183,7 +201,25 @@ jobs:
           "$MODEL_COMPILER_PYTHON" -m pip install --disable-pip-version-check \
             --target "$RUNNER_TEMP/model-test-tools" 'pytest>=8,<9'
 
+      # Session policy removes every publisher capability except artifact metadata GET.
+      - name: Configure read-only conversion registry credentials
+        id: conversion-reader
+        if: ${{ inputs.vulcan_environment == 'production' && inputs.conversion_sources != '{}' }}
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-region: ${{ inputs.aws_region }}
+          role-to-assume: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLISHER_ROLE_ARN }}
+          role-session-name: models-conversion-reader-${{ github.run_id }}
+          output-env-credentials: false
+          output-credentials: true
+          inline-session-policy: >-
+            {"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"execute-api:Invoke","Resource":"arn:aws:execute-api:${{ inputs.aws_region }}:*:*/*/GET/v1/runs/*/artifacts/onnx"}]}
+
       - name: Compile the invocation with its model's compile script
+        env:
+          MODEL_REGISTRY_READ_AWS_ACCESS_KEY_ID: ${{ steps.conversion-reader.outputs.aws-access-key-id }}
+          MODEL_REGISTRY_READ_AWS_SECRET_ACCESS_KEY: ${{ steps.conversion-reader.outputs.aws-secret-access-key }}
+          MODEL_REGISTRY_READ_AWS_SESSION_TOKEN: ${{ steps.conversion-reader.outputs.aws-session-token }}
         run: |
           set -euo pipefail
           bash --noprofile --norc <<'BASH'
@@ -195,7 +231,25 @@ jobs:
           "$COMPILE_RUNNER" "$MODEL_DIR" "$BUILD_PROFILE_ID" "$COMPILE_INVOCATION_ID" "$ARTIFACT_ROOT"
           BASH
 
+      # Compilation may outlast the reader session; obtain a new one before cached metadata verification.
+      - name: Refresh read-only conversion registry credentials for verification
+        id: conversion-verification-reader
+        if: ${{ inputs.vulcan_environment == 'production' && inputs.conversion_sources != '{}' }}
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-region: ${{ inputs.aws_region }}
+          role-to-assume: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLISHER_ROLE_ARN }}
+          role-session-name: models-conversion-verifier-${{ github.run_id }}
+          output-env-credentials: false
+          output-credentials: true
+          inline-session-policy: >-
+            {"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"execute-api:Invoke","Resource":"arn:aws:execute-api:${{ inputs.aws_region }}:*:*/*/GET/v1/runs/*/artifacts/onnx"}]}
+
       - name: Verify every MPK and record its provenance
+        env:
+          MODEL_REGISTRY_READ_AWS_ACCESS_KEY_ID: ${{ steps.conversion-verification-reader.outputs.aws-access-key-id }}
+          MODEL_REGISTRY_READ_AWS_SECRET_ACCESS_KEY: ${{ steps.conversion-verification-reader.outputs.aws-secret-access-key }}
+          MODEL_REGISTRY_READ_AWS_SESSION_TOKEN: ${{ steps.conversion-verification-reader.outputs.aws-session-token }}
         run: |
           set -euo pipefail
           IFS=',' read -ra components <<< "$COMPONENT_IDS"
@@ -259,6 +313,8 @@ jobs:
       actions: write
       contents: read
       id-token: write
+    outputs:
+      package_count: ${{ steps.packages.outputs.count }}
     env:
       MODEL_ID: ${{ fromJSON(inputs.entry).model_id }}
       BUILD_PROFILE_ID: ${{ fromJSON(inputs.entry).build_profile_id }}
@@ -415,19 +471,6 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Start the benchmarks
-        if: >-
-          inputs.publishable && !fromJSON(inputs.entry).build_on_demand &&
-          steps.packages.outputs.count != '0' &&
-          fromJSON(inputs.entry).target == 'modalix' &&
-          join(fromJSON(inputs.entry).stages, '') != ''
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
-          VULCAN_ENV: ${{ inputs.vulcan_environment }}
-          ENTRY: ${{ inputs.entry }}
-        run: scripts/start_benchmarks.sh "$ENTRY" "$GITHUB_RUN_ID"
-
       - name: Publish this build in the catalog
         if: inputs.publishable && !fromJSON(inputs.entry).build_on_demand
         run: |
@@ -456,3 +499,30 @@ jobs:
             delay=$(( 2 ** attempt > 30 ? 30 : 2 ** attempt ))
             sleep "$(( delay + RANDOM % 5 ))"
           done
+
+  # The benchmarks start as soon as this build publishes, while other builds may still compile.
+  benchmark:
+    name: Benchmark
+    needs: publish
+    if: >-
+      inputs.publishable && !fromJSON(inputs.entry).build_on_demand &&
+      needs.publish.outputs.package_count != '0' &&
+      fromJSON(inputs.entry).target == 'modalix' &&
+      join(fromJSON(inputs.entry).stages, '') != ''
+    permissions:
+      actions: write
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/vulcan-model-benchmarking.yml
+    with:
+      environment: ${{ inputs.vulcan_environment }}
+      source_run_id: ${{ github.run_id }}
+      source_sha: ${{ github.sha }}
+      source_branch: ${{ github.ref_name }}
+      model_id: ${{ fromJSON(inputs.entry).model_id }}
+      build_profile_id: ${{ fromJSON(inputs.entry).build_profile_id }}
+      compile_invocation_id: ${{ fromJSON(inputs.entry).compile_invocation_id }}
+      stages: ${{ join(fromJSON(inputs.entry).stages, ',') }}
+      vulcan_config: ${{ inputs.vulcan_config }}
+      devkit_runner: ${{ inputs.devkit_runner }}
+    secrets: inherit

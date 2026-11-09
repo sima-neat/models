@@ -1,0 +1,64 @@
+display_name: YOLO11s-det
+description: A compact YOLO11 detector for COCO objects.
+model_type: vision
+tasks: [object_detection]
+
+modalities:
+  inputs: [image]
+  outputs: [bounding_boxes, class_scores]
+
+architecture: yolo11_det
+
+license:
+  spdx: AGPL-3.0-only
+  redistribution: restricted
+  attribution: YOLO11 is developed by Ultralytics and distributed under AGPL-3.0.
+
+upstream:
+  repository: https://huggingface.co/Ultralytics/YOLO11
+  revision: 8b8ac7d1fae7468f85dbf89670dd66f41f485aab
+  derived_from: https://github.com/ultralytics/ultralytics/tree/f2d3aed634a5b0e4828024718d4a61ab2f83fb19
+
+conversion:
+  source:
+    uri: hf://models/Ultralytics/YOLO11@8b8ac7d1fae7468f85dbf89670dd66f41f485aab/yolo11s.pt
+    sha256: 85a76fe86dd8afe384648546b56a7a78580c7cb7b404fc595f97969322d502d5
+    size_bytes: 19313732
+
+compilation:
+  format: onnx
+  source: conversion
+
+calibrations:
+- id: coco-2017-cal
+  dataset: {id: coco-2017, variant: cal, sha256: 54c64d84122eba371ac014d7b43849a461551c2e6c5c430b5ead90ec1dec12b1, size_bytes: 187510866}
+
+build_profiles:
+  w16a16:
+    components:
+      model:
+        parameters: {precision: w16a16}
+
+  w8a8:
+    calibration_dataset: coco-2017-cal
+    components:
+      model:
+        parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 50}
+
+  w8a16:
+    components:
+      model:
+        parameters: {precision: w8a16}
+
+accuracy:
+  # The reference uses padded rectangular batches; accuracy.py runs a square 640x640 input.
+  datasets:
+  - {id: coco-2017, variant: val, sha256: a40de1caf42b47c5a8976eb97efe3c83f3a41337c4d16d318eb15d65c293f2da, size_bytes: 898368520}
+
+performance: {}
+
+reference_metrics:
+- source: https://huggingface.co/Ultralytics/YOLO11/blob/8b8ac7d1fae7468f85dbf89670dd66f41f485aab/README.md
+  dataset: {id: coco-2017, split: val}
+  conditions: 640x640, NMS at IoU 0.7
+  metrics: {coco_map: 0.47}

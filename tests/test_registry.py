@@ -683,8 +683,30 @@ def test_publish_retry_reuses_idempotency_keys_across_run_attempts(tmp_path: Pat
     assert publish("1") == publish("2")
 
 
+def test_conversion_input_keeps_the_model_card_the_browser_links_to() -> None:
+    from model_registry.conversion import FIELDS
+    from model_registry.registry import _conversion_input
+
+    source = {
+        **dict.fromkeys(FIELDS, "value"),
+        "run_id": "conversion-run", "artifact_id": "artifact", "conversion_fingerprint": "f" * 64,
+    }
+    metadata = _conversion_input(source, {"model_card": "https://example.test/card"})["metadata"]
+
+    assert metadata["model_card"] == "https://example.test/card"
+    assert metadata["conversion_run_id"] == "conversion-run"
+
+
+def _direct_source_models() -> dict:
+    """The models whose catalog entries need no saved conversion selection."""
+    return {
+        model_id: model for model_id, model in load_models(ROOT).items()
+        if model["components"][0]["source"]["type"] != "conversion"
+    }
+
+
 def test_catalog_snapshot_reuses_unchanged_compile_runs() -> None:
-    models = load_models(ROOT)
+    models = _direct_source_models()
     compiler_version = resolve_model_compiler(ROOT)["identity"]
     first = build_catalog_snapshot(
         repository=ROOT,
@@ -724,7 +746,7 @@ def test_catalog_snapshot_reuses_unchanged_compile_runs() -> None:
 
 
 def test_catalog_records_benchmark_fingerprints_bound_to_their_compile_runs() -> None:
-    models = load_models(ROOT)
+    models = _direct_source_models()
     model = models["resnet_50"]
     matrix = build_matrix(
         models, sorted(models), repository=ROOT, compiler_version=COMPILER_IDENTITY,
@@ -1262,8 +1284,144 @@ def test_package_run_retains_provenance_when_artifact_is_only_an_mpk(tmp_path):
     parameters = next(body["parameters"] for endpoint, body in calls if endpoint.endswith("/parameters"))
     assert parameters["provenance"] == result["manifest"]["provenance"]
     assert published["packages"][0]["artifact_sha256"] == assembled["sha256"]
+
+
+@pytest.mark.parametrize("continuing_revision", [False, True])
+@pytest.mark.parametrize("published_package", [False, True])
+def test_progress_publication_does_not_reimport_base_packages(
+    monkeypatch, tmp_path: Path, continuing_revision: bool, published_package: bool,
+) -> None:
+    """A sibling publisher must not fill a pending profile from a moving base."""
+    target_profile = {
+        "id": "resnet_50",
+        "builds": [{"build_profile_id": "w16a16", "component_id": "model",
+                    "compile_fingerprint": "old", "run_id": "target-build"}],
+        "packages": ([{"build_profile_id": "w16a16", "package_id": "default",
+                       "run_id": "target-package"}] if published_package else []),
+    }
+    base_profile = {
+        "id": "resnet_50",
+        "builds": [{"build_profile_id": "w16a16", "component_id": "model",
+                    "compile_fingerprint": "new", "run_id": "base-build"}],
+        "packages": [{"build_profile_id": "w16a16", "package_id": "default",
+                      "run_id": "base-package"}],
+    }
+    target = {"canonical_sha256": "c" * 64,
+              "catalog_revision": ("a" if continuing_revision else "b") * 40,
+              "document": {"models": [target_profile]}}
+    matrix = [{"model_id": "resnet_50", "build_profile_id": "w16a16",
+               "component_ids": ["model"], "compile_fingerprint": "new"}]
+    monkeypatch.setattr("model_registry.registry._head_matrix", lambda *args: matrix)
+    captured = {}
+
+    def build_snapshot(**kwargs):
+        captured.update(kwargs)
+        return kwargs["previous"]
+
+    monkeypatch.setattr("model_registry.registry.build_catalog_snapshot", build_snapshot)
+    selected = tmp_path / "selected.json"
+    result = publish_catalog(
+        repository=ROOT, api_url="https://registry.example.invalid",
+        read_api_url="https://models-registry.example.invalid", aws_region="us-west-2",
+        branch="feature", git_sha="a" * 40, base_branches=["develop"],
+        selected_matrix=selected,
+        request=lambda *args: {"stored": True},
+        read_request=lambda url: {"catalog": (
+            {"document": {"models": [base_profile]}} if url.endswith("develop") else target
+        )},
+    )
+    profile = result["catalog"]["models"][0]
+    expected = target_profile if continuing_revision else base_profile
+    assert profile["packages"] == expected["packages"]
+    assert profile["builds"] == expected["builds"]
+    # Retrying initialization must not drop packages already published this revision.
+    assert captured["selected_matrix"] == (None if continuing_revision else selected)
+
+
+@pytest.mark.parametrize("continuing_revision", [False, True])
+@pytest.mark.parametrize("has_previous", [False, True])
+def test_deferred_conversion_inheritance_respects_catalog_revision(monkeypatch, continuing_revision, has_previous):
+    """Unselected conversion entries keep their complete branch state during progress."""
+    prior = {"id": "deferred", "builds": [], "packages": [{"run_id": "target-package"}],
+             "build_requirements": {"unchanged": "requirements"}}
+    base = {**prior, "packages": [{"run_id": "base-package"}]}
+    pending = {"model_id": "deferred", "build_profile_id": "w16a16", "component_ids": ["model"],
+               "compile_fingerprint": "target-fingerprint"}
+    target_document = {"models": [prior] if has_previous else [],
+                       "pending_builds": [pending] if has_previous else []}
+    target = {"catalog_revision": ("a" if continuing_revision else "b") * 40,
+              "canonical_sha256": "c" * 64, "document": target_document}
+    monkeypatch.setattr("model_registry.registry.load_models", lambda root: {"deferred": object()})
+    monkeypatch.setattr("model_registry.registry._catalog_models", lambda models: {})
+    monkeypatch.setattr("model_registry.registry._head_matrix", lambda *args: [])
+    monkeypatch.setattr("model_registry.registry.build_catalog_snapshot", lambda **kwargs: kwargs["previous"])
+    result = publish_catalog(
+        repository=ROOT, api_url="https://registry.example.invalid",
+        read_api_url="https://registry.example.invalid", aws_region="us-west-2",
+        branch="feature", git_sha="a" * 40, base_branches=["develop"],
+        request=lambda *args: {"stored": True},
+        read_request=lambda url: {"catalog": (
+            {"document": {"models": [base], "pending_builds": []}} if url.endswith("develop") else target
+        )},
+    )["catalog"]
+    expected = [prior] if has_previous else ([] if continuing_revision else [base])
+    assert result["models"] == expected
+    assert result.get("pending_builds", []) == ([pending] if has_previous else [])
+
+
+@pytest.mark.parametrize("same_revision", [False, True])
+@pytest.mark.parametrize("force", [False, True])
+@pytest.mark.parametrize("published", [False, True])
+@pytest.mark.parametrize("on_demand", [False, True])
+def test_forced_rebuild_checks_revision_before_publication(
+    monkeypatch, tmp_path, same_revision, force, published, on_demand,
+):
+    selected = tmp_path / "selected.json"
+    selected.write_text(json.dumps({"include": [{
+        "model_id": "resnet_50", "build_profile_id": "w16a16",
+        "compile_invocation_id": "w16a16",
+    }]}))
+    target = {
+        "catalog_revision": ("a" if same_revision else "b") * 40,
+        "canonical_sha256": "c" * 64,
+        "document": {"models": [{
+            "id": "resnet_50", "builds": [], "build_on_demand": on_demand,
+            "packages": [{"build_profile_id": "w16a16", "package_id": "default"}] if published else [],
+        }]},
+    }
+    monkeypatch.setattr("model_registry.registry._head_matrix", lambda *args: [])
+    snapshots = []
+    writes = []
+
+    def build_snapshot(**kwargs):
+        snapshots.append(kwargs)
+        return kwargs["previous"]
+
+    monkeypatch.setattr("model_registry.registry.build_catalog_snapshot", build_snapshot)
+
+    def publish():
+        return publish_catalog(
+            repository=ROOT, api_url="https://registry.example.invalid",
+            read_api_url="https://models-registry.example.invalid", aws_region="us-west-2",
+            branch="feature", git_sha="a" * 40, selected_matrix=selected,
+            force_rebuild_all=force, read_request=lambda url: {"catalog": target},
+            request=lambda *args: writes.append(args) or {"stored": True},
+        )
+
+    if same_revision and force and published and not on_demand:
+        with pytest.raises(ValidationError, match="new Git revision"):
+            publish()
+        assert not snapshots
+        assert not writes
+    else:
+        publish()
+        assert len(writes) == 1
+        assert snapshots[0]["selected_matrix"] == (None if same_revision else selected)
+
+
 def test_iam_registry_reads_sign_only_the_configured_api(monkeypatch):
     import io
+
     import model_registry.registry as registry
 
     base = "https://private.example.test"
@@ -1276,10 +1434,12 @@ def test_iam_registry_reads_sign_only_the_configured_api(monkeypatch):
         return {"authenticated": True}
 
     monkeypatch.setattr(registry.SigV4RegistryClient, "request", signed)
-    monkeypatch.setattr(registry, "urlopen", lambda request, timeout: io.BytesIO(b'{"public": true}'))
+    monkeypatch.setattr("model_registry.fetch.urlopen", lambda request, timeout: io.BytesIO(b'{"public": true}'))
     assert registry._public_registry_json(base + "/v1/repositories") == {"authenticated": True}
     assert calls == [(base, "us-west-2", "GET", "/v1/repositories")]
-    for url in ["https://private.example.test.attacker.test/v1/repositories", "https://s3.example.test/object", base + "/other"]:
+    for url in [
+        "https://private.example.test.attacker.test/v1/repositories", "https://s3.example.test/object", base + "/other",
+    ]:
         assert registry._public_registry_json(url) == {"public": True}
     assert len(calls) == 1
 
@@ -1292,3 +1452,71 @@ def test_iam_registry_reads_require_a_region(monkeypatch):
     monkeypatch.delenv("AWS_DEFAULT_REGION", raising=False)
     with pytest.raises(RegistryPublicationError, match="AWS_REGION is required"):
         registry._public_registry_json("https://private.example.test/v1/repositories")
+
+
+def test_private_conversion_reader_keeps_dataset_credentials_separate(monkeypatch):
+    import subprocess
+
+    import model_registry.registry as registry
+
+    base = "https://private.example.test"
+    monkeypatch.setenv("MODEL_REGISTRY_IAM_READ_API_URL", base)
+    monkeypatch.setenv("AWS_REGION", "us-west-2")
+    for name in ("ACCESS_KEY_ID", "SECRET_ACCESS_KEY", "SESSION_TOKEN"):
+        monkeypatch.setenv("AWS_" + name, "dataset-" + name)
+        monkeypatch.setenv("MODEL_REGISTRY_READ_AWS_" + name, "registry-" + name)
+    commands = []
+    def request(command, **kwargs):
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, '{"artifact": {}}\n200', '')
+    monkeypatch.setattr(registry.subprocess, "run", request)
+    assert registry._public_registry_json(base + "/v1/runs/run/artifacts/onnx") == {"artifact": {}}
+    assert "registry-ACCESS_KEY_ID:registry-SECRET_ACCESS_KEY" in commands[0]
+    assert "x-amz-security-token: registry-SESSION_TOKEN" in commands[0]
+    assert not any("dataset-" in argument for argument in commands[0])
+    import os
+    assert os.environ["AWS_ACCESS_KEY_ID"] == "dataset-ACCESS_KEY_ID"
+
+
+def fake_artifact_download(monkeypatch: pytest.MonkeyPatch, responses: list[Exception | bytes]) -> list[float]:
+    """Answer each artifact download with the next response, and record the backoff sleeps."""
+    import io
+
+    sleeps = []
+
+    def urlopen(request, timeout):
+        response = responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return io.BytesIO(response)
+
+    monkeypatch.setattr("model_registry.registry.urlopen", urlopen)
+    monkeypatch.setattr("model_registry.registry.time.sleep", sleeps.append)
+    monkeypatch.setattr("model_registry.registry.random.uniform", lambda low, high: 0.5)
+    return sleeps
+
+
+def test_dropped_artifact_download_is_retried(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from model_registry.registry import _download_registry_file
+
+    payload = b"compiled model"
+    artifact = {"sha256": hashlib.sha256(payload).hexdigest(), "size_bytes": len(payload)}
+    sleeps = fake_artifact_download(monkeypatch, [ConnectionResetError(104, "Connection reset by peer"), payload])
+
+    _download_registry_file("https://registry.example/model.tar.gz", tmp_path / "model.tar.gz", artifact)
+
+    assert (tmp_path / "model.tar.gz").read_bytes() == payload
+    assert sleeps == [1.5]
+
+
+def test_missing_artifact_download_is_not_retried(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from urllib.error import HTTPError
+
+    from model_registry.registry import _download_registry_file
+
+    url = "https://registry.example/model.tar.gz"
+    sleeps = fake_artifact_download(monkeypatch, [HTTPError(url, 404, "Not Found", {}, None)])
+
+    with pytest.raises(RegistryPublicationError, match="HTTP Error 404"):
+        _download_registry_file(url, tmp_path / "model.tar.gz", {"sha256": "0" * 64, "size_bytes": 1})
+    assert sleeps == []
