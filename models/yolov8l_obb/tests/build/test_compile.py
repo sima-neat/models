@@ -8,6 +8,7 @@ import tarfile
 from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
+from unittest.mock import MagicMock
 
 import numpy as np
 import onnx
@@ -304,9 +305,16 @@ def test_model_preserves_compilation_and_quality_settings(load_script: Callable[
     ("precision", "calibrates", "per_token"), [("w8a8", True, False), ("w8a16", False, True), ("w16a16", False, False)]
 )
 def test_quantization_calibrates_only_int8_activations(
-    load_script: Callable[[str], ModuleType], precision: str, calibrates: bool, per_token: bool
+    load_script: Callable[[str], ModuleType],
+    monkeypatch: pytest.MonkeyPatch,
+    precision: str,
+    calibrates: bool,
+    per_token: bool,
 ) -> None:
     recipe = load_script("compile")
+    # These unit tests inspect API calls even when the compiler is installed on the test host.
+    for name in ("QuantizationParams", "HistogramMSEMethod", "SkipCalibration"):
+        monkeypatch.setattr(recipe, name, MagicMock())
 
     recipe._quantization(precision, 2048 if calibrates else None)
 
@@ -329,6 +337,9 @@ def test_only_the_int8_build_quantizes_with_calibration_data(
     precision: str,
 ) -> None:
     recipe = load_script("compile")
+    # Keep calibration selection independent of the installed compiler and generated graphs.
+    for name in ("load_model", "onnx_source", "convert_data_generator_to_iterable", "DataGenerator"):
+        monkeypatch.setattr(recipe, name, MagicMock())
     parameters = {"precision": precision}
     if precision == "w8a8":
         parameters |= {"calibration_bins": 2048, "calibration_samples": 2}
