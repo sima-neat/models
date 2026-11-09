@@ -15,6 +15,7 @@ from afe.apis.defines import (
     CalibrationMethod,
     InputName,
     QuantizationParams,
+    SkipCalibration,
     bfloat16_scheme,
     gen2_target,
     quantization_scheme,
@@ -34,25 +35,45 @@ MODEL_ID = "vgg_11"
 COMPONENT_ID = "model"
 
 
-def _metadata() -> dict[str, Any]:
-    return load_metadata(MODEL_DIR)
+def _parameters(profile_id: str) -> dict[str, Any]:
+    model = load_metadata(MODEL_DIR)
+    profiles = [item for item in model["build_profiles"] if item["id"] == profile_id]
+    if len(profiles) != 1:
+        raise ValueError(f"expected exactly one build profile named {profile_id!r}")
+    return next(item["parameters"] for item in profiles[0]["components"] if item["id"] == COMPONENT_ID)
 
 
-def _variant(metadata: dict[str, Any], variant_id: str) -> dict[str, Any]:
-    matches = [item for item in metadata["build_profiles"] if item["id"] == variant_id]
-    if len(matches) != 1:
-        raise ValueError(f"expected exactly one build profile named {variant_id!r}")
-    profile = matches[0]
-    binding = next(item for item in profile["components"] if item["id"] == COMPONENT_ID)
-    return {**profile, "parameters": binding["parameters"]}
+def _quantization(precision: str) -> QuantizationParams:
+    """The compiler's activation and weight formats for a precision. Only INT8 activations need calibration."""
+    if precision == "w8a8":
+        return QuantizationParams(
+            # MSE picks each activation range from the calibration images.
+            calibration_method=CalibrationMethod.from_str("mse"),
+            activation_quantization_scheme=quantization_scheme(asymmetric=True, per_channel=False, bits=8),
+            weight_quantization_scheme=quantization_scheme(asymmetric=False, per_channel=True, bits=8),
+        )
+    if precision == "w8a16":
+        return QuantizationParams(
+            calibration_method=SkipCalibration(),
+            activation_quantization_scheme=bfloat16_scheme(),
+            weight_quantization_scheme=quantization_scheme(asymmetric=False, per_channel=True, bits=8),
+            # Each token's activations get their own INT8 scale before an INT8-weight operation.
+            per_token_quant=True,
+        )
+    if precision == "w16a16":
+        return QuantizationParams(
+            calibration_method=SkipCalibration(),
+            activation_quantization_scheme=bfloat16_scheme(),
+            weight_quantization_scheme=bfloat16_scheme(),
+        )
+    raise ValueError(f"unsupported precision {precision!r}")
 
 
-def compile_model(source: Path, component_dir: Path, variant_id: str, dataset: Path | None) -> AfeModel:
-    variant = _variant(_metadata(), variant_id)
-    parameters = variant["parameters"]
+def compile_model(source: Path, component_dir: Path, profile_id: str, dataset: Path | None) -> AfeModel:
+    parameters = _parameters(profile_id)
     precision = str(parameters.get("precision"))
-    if variant["target"] != "modalix" or precision not in {"w16a16", "w8a8", "w8a16"}:
-        raise ValueError("this recipe supports only the declared Modalix BF16 and INT8 variants")
+    if precision not in {"w16a16", "w8a8", "w8a16"}:
+        raise ValueError("this recipe supports only the declared BF16 and INT8 build profiles")
 
     input_name = str(parameters["input_name"])
     input_shape = tuple(int(value) for value in parameters["input_shape"])
@@ -63,38 +84,18 @@ def compile_model(source: Path, component_dir: Path, variant_id: str, dataset: P
     importer = onnx_source(str(source), {input_name: input_shape}, {input_name: ScalarType.float32})
     loaded = load_model(importer, target=gen2_target)
 
+    data = None
     if precision == "w8a8":
         if dataset is None:
-            raise ValueError("the INT8 variant requires --dataset from dataset-registry")
+            raise ValueError("the INT8 build requires --dataset from dataset-registry")
         sample_count = int(parameters["calibration_samples"])
         LOG.info("Loading %d representative calibration samples", sample_count)
-        samples = calibration_samples(dataset, sample_count)
-        activation_scheme = quantization_scheme(asymmetric=True, per_channel=False, bits=8)
-        weight_scheme = quantization_scheme(asymmetric=False, per_channel=True, bits=8)
-    else:
-        # BF16 does not derive quantization ranges from representative data.
-        # The API still requires an iterable, so provide one deterministic sample.
-        samples = np.zeros((1, 224, 224, 3), dtype=np.float32)
-        activation_scheme = bfloat16_scheme()
-        weight_scheme = (
-            quantization_scheme(asymmetric=False, per_channel=True, bits=8)
-            if precision == "w8a16"
-            else bfloat16_scheme()
+        data = convert_data_generator_to_iterable(
+            DataGenerator({input_name: calibration_samples(dataset, sample_count)})
         )
 
-    data = convert_data_generator_to_iterable(DataGenerator({input_name: samples}))
-    model_name = f"{MODEL_ID}_{variant_id}"
-    quantized = loaded.quantize(
-        data,
-        QuantizationParams(
-            calibration_method=CalibrationMethod.from_str("mse"),
-            activation_quantization_scheme=activation_scheme,
-            weight_quantization_scheme=weight_scheme,
-            # W8A16 scales each token's activations on its own before an INT8-weight operation.
-            per_token_quant=precision == "w8a16",
-        ),
-        model_name=model_name,
-    )
+    model_name = f"{MODEL_ID}_{profile_id}"
+    quantized = loaded.quantize(data, _quantization(precision), model_name=model_name)
     quantized.save(model_name=model_name, output_directory=str(component_dir))
     saved = AfeModel.load(model_name=f"{model_name}.sima", network_directory=str(component_dir))
     saved.compile(output_path=str(component_dir))
@@ -107,10 +108,10 @@ def compile_model(source: Path, component_dir: Path, variant_id: str, dataset: P
 
 
 def measure_fidelity(
-    source: Path, candidate: AfeModel, dataset: Path, config: dict[str, Any], variant_id: str
+    source: Path, candidate: AfeModel, dataset: Path, config: dict[str, Any], profile_id: str
 ) -> dict[str, Any]:
     """Compare the quantized graph's logits with the ONNX source on the declared calibration images."""
-    input_name = str(_variant(_metadata(), variant_id)["parameters"]["input_name"])
+    input_name = str(_parameters(profile_id)["input_name"])
     selection = config["selection"]
     names = fidelity_names(dataset, int(selection["seed"]), int(selection["offset"]), int(selection["samples"]))
     images = read_images(dataset, names)
@@ -137,7 +138,7 @@ def measure_fidelity(
     return {
         "schema_version": 1,
         "model_id": MODEL_ID,
-        "build_profile_id": variant_id,
+        "build_profile_id": profile_id,
         "status": config["status"],
         "reference": "ONNX source (ONNX Runtime)",
         "candidate": "Quantized AFE graph (JAX execute)",
@@ -172,7 +173,7 @@ def main() -> int:
     source = args.model.expanduser().resolve()
     if not source.is_file():
         parser.error(f"model does not exist: {source}")
-    fidelity = _metadata().get("numerical_fidelity")
+    fidelity = load_metadata(MODEL_DIR).get("numerical_fidelity")
     if fidelity is not None and args.fidelity_dataset is None:
         parser.error("model.yaml declares numerical_fidelity; pass --fidelity-dataset")
     output_dir = args.output_dir.expanduser().resolve()
