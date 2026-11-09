@@ -72,3 +72,11 @@ test('reads a multi-component report as one score with each component\'s layers 
   assert.equal(benchmark.components[1].executionGraph, null);
   assert.equal(benchmark.components[1].layerAnalysis, null);
 });
+
+test('orders components as the model runs them, though the registry stores the report keys reordered', () => {
+  const saved = report();
+  saved.components = {decoder: {execution_plan: plan}, backbone: {execution_plan: plan}, extra: {execution_plan: plan}};
+  const ids = (order) => readPerformance({report: saved}, order).value.components.map(({id}) => id);
+  assert.deepEqual(ids(['backbone', 'decoder']), ['backbone', 'decoder', 'extra']);
+  assert.deepEqual(ids(), ['decoder', 'backbone', 'extra']);
+});

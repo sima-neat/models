@@ -306,6 +306,42 @@ def test_compile_describes_the_pipeline_and_rejects_undeclared_settings(
         compile_module._quantization_config({"precision": "w8a8"})
 
 
+@pytest.mark.parametrize(
+    ("parameters", "calibrates", "per_token"),
+    [
+        ({"precision": "w8a8", "calibration_bins": 1024, "calibration_samples": 50}, True, False),
+        ({"precision": "w8a16", "per_token": True}, False, True),
+        # AFE runs the decoder's query sine embedding as an INT8 lookup table even at W16A16.
+        ({"precision": "w16a16", "calibration_bins": 2048, "calibration_samples": 50}, True, False),
+        ({"precision": "w16a16"}, False, False),
+    ],
+)
+def test_quantization_config_states_calibration_and_per_token_per_precision(
+    load_script: Callable[[str], ModuleType], parameters: dict, calibrates: bool, per_token: bool
+) -> None:
+    compile_module = load_script("compile")
+
+    compile_module._quantization_config(parameters)
+
+    arguments = compile_module.QuantizationParams.call_args.kwargs
+    if calibrates:
+        compile_module.HistogramMSEMethod.assert_called_once_with(parameters["calibration_bins"])
+        assert arguments["calibration_method"] is compile_module.HistogramMSEMethod.return_value
+    else:
+        assert arguments["calibration_method"] is compile_module.SkipCalibration.return_value
+    assert arguments.get("per_token_quant", False) is per_token
+
+
+@pytest.mark.parametrize("precision", ["w8a8", "w16a16"])
+def test_quantization_config_rejects_per_token_outside_w8a16(
+    load_script: Callable[[str], ModuleType], precision: str
+) -> None:
+    parameters = {"precision": precision, "per_token": True, "calibration_bins": 2048, "calibration_samples": 50}
+
+    with pytest.raises(ValueError, match="only a W8A16 component can declare per_token"):
+        load_script("compile")._quantization_config(parameters)
+
+
 def test_compile_main_rejects_an_invocation_not_named_after_the_build_profile(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -389,6 +425,26 @@ def test_bf16_activation_layer_norms_keep_fp32_intermediates(
     assert quantized.compile.call_args.kwargs["layer_norm_use_fp32_intermediates"] is fp32_intermediates
 
 
+@pytest.mark.parametrize("decoder_calibrates", [True, False])
+def test_backbone_outputs_survive_the_file_between_phases(
+    decoder_calibrates: bool, tmp_path: Path, load_script: Callable[[str], ModuleType]
+) -> None:
+    compile_module = load_script("compile")
+    arrays = [np.full((1, 2), index, dtype=np.float32) for index in range(5)]
+    outputs = compile_module._BackboneOutputs(*arrays[:3])
+    if decoder_calibrates:
+        outputs.calibration_features, outputs.calibration_proposals = arrays[3:]
+
+    outputs.save(tmp_path / "backbone_outputs.npz")
+    loaded = compile_module._BackboneOutputs.load(tmp_path / "backbone_outputs.npz")
+
+    for name, value in vars(outputs).items():
+        if value is None:
+            assert getattr(loaded, name) is None, name
+        else:
+            np.testing.assert_array_equal(getattr(loaded, name), value)
+
+
 def test_fidelity_error_sums_match_the_metrics_over_all_images(load_script: Callable[[str], ModuleType]) -> None:
     compile_module = load_script("compile")
     rng = np.random.RandomState(0)
@@ -438,12 +494,133 @@ def test_model_declares_onnx_and_whole_model_benchmarks() -> None:
 
     for profile in model["build_profiles"]:
         assert profile["compile_invocations"] == [{"id": profile["id"], "components": ["backbone", "decoder"]}]
-    assert model["components"][0]["source"]["type"] == "file"
-    assert model["components"][0]["source"]["uri"].endswith("/model.onnx")
+    assert model["components"][0]["source"]["type"] == "conversion"
     assert model["calibrations"][0]["dataset"]["id"] == "coco-2017"
     assert model["numerical_fidelity"]["outputs"] == ["dets", "labels"]
     assert list(model["accuracy"]["datasets"]) == ["coco-2017-val"]
     assert model["performance"] == {}
+
+
+def _gelu_mlp() -> onnx.ModelProto:
+    rng = np.random.RandomState(0)
+    prefix = "/model/model/backbone/backbone/encoder/layer.0/mlp"
+    constant = onnx.numpy_helper.from_array
+    return _model(
+        [
+            onnx.helper.make_node("MatMul", ["x", "w1"], ["fc1"], name=f"{prefix}/fc1/MatMul"),
+            onnx.helper.make_node("Add", ["b1", "fc1"], ["hidden"], name=f"{prefix}/fc1/Add"),
+            onnx.helper.make_node("Div", ["hidden", "root_two"], ["scaled"], name=f"{prefix}/activation/Div"),
+            onnx.helper.make_node("Erf", ["scaled"], ["erf"], name=f"{prefix}/activation/Erf"),
+            onnx.helper.make_node("Add", ["erf", "one"], ["shift"], name=f"{prefix}/activation/Add"),
+            onnx.helper.make_node("Mul", ["hidden", "shift"], ["gate"], name=f"{prefix}/activation/Mul"),
+            onnx.helper.make_node("Mul", ["gate", "half"], ["gelu"], name=f"{prefix}/activation/Mul_1"),
+            onnx.helper.make_node("MatMul", ["gelu", "w2"], ["y"], name=f"{prefix}/fc2/MatMul"),
+        ],
+        [_value("x", [1, 4, 8])],
+        [_value("y", [1, 4, 8])],
+        [
+            constant(rng.standard_normal((8, 16)).astype(np.float32), "w1"),
+            constant(rng.standard_normal(16).astype(np.float32), "b1"),
+            constant(rng.standard_normal((16, 8)).astype(np.float32), "w2"),
+            constant(np.array(np.sqrt(2), dtype=np.float32), "root_two"),
+            constant(np.array(1, dtype=np.float32), "one"),
+            constant(np.array(0.5, dtype=np.float32), "half"),
+        ],
+    )
+
+
+def test_surgery_folds_gelu_constants_into_the_mlp_weights(load_script: Callable[[str], ModuleType]) -> None:
+    from onnx.reference import ReferenceEvaluator
+
+    surgery = load_script("surgery")
+    model = _gelu_mlp()
+    x = np.random.RandomState(1).standard_normal((1, 4, 8)).astype(np.float32)
+    expected = ReferenceEvaluator(model).run(None, {"x": x})[0]
+
+    result = surgery._fold_gelu_constants(model, 1)
+
+    assert [node.op_type for node in result.graph.node] == ["MatMul", "Add", "Erf", "Add", "Mul", "MatMul"]
+    np.testing.assert_allclose(ReferenceEvaluator(result).run(None, {"x": x})[0], expected, rtol=1e-5, atol=1e-5)
+    with pytest.raises(ValueError, match="expected 2"):
+        surgery._fold_gelu_constants(_gelu_mlp(), 2)
+
+
+def _query_sine_embedding(width: int = 8) -> onnx.ModelProto:
+    prefix = "/model/model/decoder"
+    constant = onnx.numpy_helper.from_array
+    temperatures = 10000 ** (2 * (np.arange(width) // 2) / width)
+    nodes = [
+        onnx.helper.make_node("Split", ["coords", "ones"], [f"c{k}" for k in range(4)], name=f"{prefix}/Split", axis=-1)
+    ]
+    blocks = []
+    # The exporter embeds (y, x, w, h); the merge must keep that column order.
+    for block, k in enumerate((1, 0, 2, 3)):
+        names = {
+            part: f"{part}{block}"
+            for part in ("scaled", "angles", "even", "odd", "sin", "cos", "us", "uc", "pair", "flat")
+        }
+        nodes += [
+            onnx.helper.make_node("Mul", [f"c{k}", "scale"], [names["scaled"]], name=f"{prefix}/Mul_{block}"),
+            onnx.helper.make_node(
+                "Div", [names["scaled"], "temperatures"], [names["angles"]], name=f"{prefix}/Div_{block}"
+            ),
+            onnx.helper.make_node(
+                "Slice",
+                [names["angles"], "zero", "end", "last", "two"],
+                [names["even"]],
+                name=f"{prefix}/Slice_{block}a",
+            ),
+            onnx.helper.make_node(
+                "Slice", [names["angles"], "one", "end", "last", "two"], [names["odd"]], name=f"{prefix}/Slice_{block}b"
+            ),
+            onnx.helper.make_node("Sin", [names["even"]], [names["sin"]], name=f"{prefix}/Sin_{block}"),
+            onnx.helper.make_node("Cos", [names["odd"]], [names["cos"]], name=f"{prefix}/Cos_{block}"),
+            onnx.helper.make_node(
+                "Unsqueeze", [names["sin"], "axis"], [names["us"]], name=f"{prefix}/Unsqueeze_{block}a"
+            ),
+            onnx.helper.make_node(
+                "Unsqueeze", [names["cos"], "axis"], [names["uc"]], name=f"{prefix}/Unsqueeze_{block}b"
+            ),
+            onnx.helper.make_node(
+                "Concat", [names["us"], names["uc"]], [names["pair"]], name=f"{prefix}/Concat_{block}", axis=-1
+            ),
+            onnx.helper.make_node(
+                "Reshape", [names["pair"], "flat_shape"], [names["flat"]], name=f"{prefix}/Reshape_{block}"
+            ),
+        ]
+        blocks.append(names["flat"])
+    nodes.append(onnx.helper.make_node("Concat", blocks, ["embedding"], name=f"{prefix}/Concat_9", axis=-1))
+    return _model(
+        nodes,
+        [_value("coords", [1, 3, 4])],
+        [_value("embedding", [1, 3, 4 * width])],
+        [
+            constant(np.ones(4, dtype=np.int64), "ones"),
+            constant(np.array(2 * np.pi, dtype=np.float32), "scale"),
+            constant(temperatures.astype(np.float32), "temperatures"),
+            constant(np.array([0], dtype=np.int64), "zero"),
+            constant(np.array([1], dtype=np.int64), "one"),
+            constant(np.array([np.iinfo(np.int64).max], dtype=np.int64), "end"),
+            constant(np.array([-1], dtype=np.int64), "last"),
+            constant(np.array([2], dtype=np.int64), "two"),
+            constant(np.array([-1], dtype=np.int64), "axis"),
+            constant(np.array([1, 3, width], dtype=np.int64), "flat_shape"),
+        ],
+    )
+
+
+def test_surgery_merges_the_query_sine_embedding_into_one_sin(load_script: Callable[[str], ModuleType]) -> None:
+    from onnx.reference import ReferenceEvaluator
+
+    surgery = load_script("surgery")
+    model = _query_sine_embedding()
+    coords = np.random.RandomState(2).uniform(0, 1, (1, 3, 4)).astype(np.float32)
+    expected = ReferenceEvaluator(model).run(None, {"coords": coords})[0]
+
+    result = surgery._merge_query_sine_embedding(model)
+
+    assert [node.op_type for node in result.graph.node] == ["MatMul", "Add", "Sin"]
+    np.testing.assert_allclose(ReferenceEvaluator(result).run(None, {"coords": coords})[0], expected, atol=1e-5)
 
 
 def test_surgery_marks_bf16_operations_and_their_first_readers(load_script: Callable[[str], ModuleType]) -> None:
@@ -468,10 +645,11 @@ def test_surgery_marks_bf16_operations_and_their_first_readers(load_script: Call
         ],
     )
 
-    marks = surgery._annotate(model, {"norm", "relu"})
+    marks = surgery._precision_marks(model, {"norm", "relu"})
+    surgery._insert_precision_hints(model, marks)
 
     onnx.checker.check_model(model)
-    assert marks == {"bfloat16": 2, "int8": 1}
+    assert marks == {"norm": "bfloat16", "relu": "bfloat16", "projection": "int8"}
     assert [
         (node.name, *(onnx.helper.get_attribute_value(a).decode() for a in node.attribute if a.name == "precision"))
         for node in model.graph.node

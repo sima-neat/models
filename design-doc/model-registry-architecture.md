@@ -83,16 +83,16 @@ this table. Modules marked CI only are removed from the author package by
 | `stage_plan.py` | which builds compile and which benchmarks run on a push or explicit on-demand dispatch (`plan_stages`), the registry reads that decision needs, and base-branch resolution |
 | `registry_http.py` | HTTP transport and authenticated read-only access shared with the author package. |
 | `registry.py` | publishing compile runs, packages (with their MLA stage simulation), model documentation, and the branch catalog the browser reads (CI only) |
-| `promotions.py` | pinned environment-specific Develop requests, inspection, decisions, receipts and review summaries (CI only) |
+| `promotions.py` | pinned environment/target-specific Develop and production Main requests, inspection, decisions, receipts and review summaries (CI only) |
 | `candidates.py` | complete model/profile candidate contracts, run publication and binding, finalization, feature selection and retry receipts (CI only) |
 | `benchmark_declarations.py` | the `performance` and `accuracy` declarations: the profiles each benchmarks, their scripts and required metrics, and validating `reference_metrics`, which the portal ships |
 | `report_publication.py` | the MPKs a benchmark runs, checking a `model-report.json` against `model.yaml`, and publishing it as one whole-model run under the profile's package run (CI only) |
-| `artifact.py` | compile outputs, MPK/deployed LLiMa verification, and deployment file indexes |
+| `artifact.py` | compile outputs, MPK/deployed LLiMa verification, reproduction recipes, and deployment file indexes |
 | `mla_stage_simulation.py` | after an MPK compile, the Model Compiler simulator's operation counts and latency for each MLA stage (`simulate-mla-stages`) |
 | `package.py` | assembling a profile's `default` package from component MPKs or a complete native deployment folder, with its numerical fidelity report and MLA stage simulation |
 | `dependencies.py` | resolving the Model Compiler and DevKit runtime pins in `deps/` |
 | `fetch.py` | verified downloads, the cache, and dataset resolution |
-| `conversion.py` | conversion fingerprints, validated ONNX bundles, publication, durable plan selections and exact downloads; author CLI exposes only saved-selection fetching |
+| `conversion.py` | conversion fingerprints, declared outputs, validated bundles, publication, durable plan selections and exact downloads; author CLI exposes only saved-selection fetching |
 | `source.py` | source identity and URL redaction |
 | `taxonomy.py` | loading the taxonomy and validating model categories |
 | `documentation.py` | loading a model's README and hero image |
@@ -124,8 +124,14 @@ tooling and that stage's runner scripts, and the DevKit runtime pin. The
 catalog lists each profile's benchmark fingerprints under
 `benchmark_fingerprints`, and the model browser resolves the runs by those
 fingerprints. A recompiled build gets new benchmark fingerprints and is
-therefore benchmarked again. Compile and benchmark fingerprints do not read model tests; conversion
-fingerprints include validation files so a changed check requires revalidation. The contributor guide lists
+therefore benchmarked again. Performance fingerprints also include the profile's
+optional `benchmark_baseline`. Accuracy and compilation fingerprints do not.
+Editing a test reruns nothing, because no fingerprint includes tests. The changed
+test runs the next time its stage runs.
+
+The conversion fingerprint covers only files that can change the ONNX. Keep it
+that narrow: a fingerprint with no published conversion fails the plan for every
+model until someone reruns Convert. The contributor guide lists
 every input in [what a change
 reruns](../docs/adding-a-model.md#9-know-what-a-change-reruns).
 
@@ -163,10 +169,15 @@ Manual **Promote model** takes a model ID and build profile, resolves the newest
 GitHub candidate receipt, and verifies its identity with Vulcan. It runs independently of
 compilation: prepare and persist a request plan →
 create the protected backend request and issue summary → mention model owners and send
-a Slack approval reminder → protected `<VULCAN_ENV>-promote-develop`
+a Slack approval reminder → protected `<VULCAN_ENV>-promote-<target_branch>`
 review → approve the exact request → report backend state and notify Slack of the outcome. Only trusted Develop workflow code
 runs; a separate approver role decides requests. Status/cancel use publisher credentials; explicit
-reject uses the same protected gate. See [promotion operations](../docs/model-promotion.md) for
+reject uses the matching target's protected gate. Main is production-only, keeps
+S3 storage, and uses a separate Main-only approver identity. It pins a completed
+Develop approval for the exact candidate and digest before its own review. The target branch,
+environment, endpoints and canonical snapshot are pinned in the immutable plan;
+retries cannot reinterpret a Develop request as Main. Publish the target's own
+metadata before requesting selection. See [promotion operations](../docs/model-promotion.md) for
 configuration, retries, and the staging acceptance boundary.
 
 ```text
@@ -178,16 +189,19 @@ push (Vulcan Model Orchestrator, every push)
   -> plan (waits for select, portal and resolve-vulcan-config): resolve and retain converted ONNX inputs, then compare fingerprints with the branch catalog and registry runs; skip on-demand models on pushes
   -> authorize: check requested runner classes
   -> initialize the catalog: publish model requirements and mark automatic builds pending
-  -> benchmark: start the benchmarks that reused builds still lack (after the snapshot when nothing compiles)
+  -> resolve-benchmark-runner: resolve the DevKit runner once; every benchmark of the run gets it and the Vulcan config
+  -> benchmark: benchmark each reused build that still lacks a benchmark (after the snapshot when nothing compiles)
   -> compile (Vulcan Model Compile, per selected build)
        compile: backend runner, verify-artifact, the model's compile tests (self-hosted, read-only)
-       publish: compile runs, the package with its fidelity report, start the benchmarks, catalog entry
+       publish: compile runs, the package with its fidelity report, catalog entry
+       benchmark: the benchmark workflow for the new Modalix build, as soon as it publishes
        on-demand LLiMa: finalize the complete candidate, then select it in its feature catalog
   -> publish-candidates (other on-demand models): join all invocations, finalize and select in the feature catalog
-  -> publish the catalog snapshot
-benchmarks (Vulcan Model Benchmarking, per build profile)
+  -> publish the catalog snapshot, once every compile call ends, including each new build's benchmarks
+benchmarks (vulcan-model-benchmarking.yml, called per build profile inside the orchestrator run, or dispatched by hand)
+  -> stage the build, on a GitHub-hosted runner
   -> performance and accuracy on a DevKit, then the model's benchmark tests on each model report
-  -> publish each report under the profile's package run with its test outcome; a failed test then fails the run
+  -> publish each report under the profile's package run with its test outcome; a failed test then fails a check job
 ```
 
 Pushes and manual build dispatches both use `VULCAN_ENV` as the model build and
@@ -227,8 +241,8 @@ run on staging DevKits for either registry environment, only for Modalix targets
 package publishes. On-demand models compile only on the explicit manual
 selection described below, and their builds are not benchmarked.
 
-Benchmark dispatch passes the parent build's resolved `VULCAN_ENV` explicitly.
-Standalone benchmark dispatch defaults to repository `VULCAN_ENV`, with the same
+The orchestrator passes its resolved `VULCAN_ENV` to every benchmark it calls.
+A manual benchmark dispatch defaults to repository `VULCAN_ENV`, with the same
 staging fallback and per-run override. Registry reads, datasets, and report
 publication use that selection; DevKit discovery independently requests
 `vulcan-staging`, and execution consumes the resolver's labels. Production
@@ -247,7 +261,12 @@ benchmark fingerprints.
   fingerprints with the branch's prior catalog. The benchmark decision looks
   for a completed run with the benchmark fingerprint from any branch; that
   fingerprint names every component's compile run and MPK digest, so it
-  matches only a benchmark of the same build.
+  matches only a benchmark of the same build. A feature branch leaves to its
+  closest base branch every build profile that base branch's catalog lists as
+  pending at the head fingerprints, with its benchmarks, and every benchmark
+  whose fingerprint that catalog records, so the
+  work a merge started on `develop` is not repeated on branches that merge
+  `develop`. A forced rebuild still compiles.
 - **Base branches.** `develop`, `main`, `release-*` and `integration/*` are
   long-lived. `select` lists the long-lived branches that share history with
   the head, closest first, or only the dispatch base when one is given; Git does not record which branch another was cut from.
@@ -256,16 +275,20 @@ benchmark fingerprints.
   takes each model build profile from the first catalog whose builds carry
   every current compile fingerprint of that profile: its own, then its base branches
   in order. A feature branch that merged `develop` therefore reuses both its
-  own builds and the builds `develop` recompiled. A profile no catalog matches
-  compiles. A sibling feature branch is never a source.
+  own builds and the builds `develop` recompiled. A profile whose current
+  fingerprints a base branch is still compiling takes that base branch's entry,
+  so the branch shows the base branch's previous build until its next push. A
+  profile that no catalog holds and the closest base branch is not compiling
+  compiles on the branch. A sibling
+  feature branch is never a source.
 - **Merge.** A merge is a push to `develop`, which compares with its own
   catalog. Automatic builds changed by the merge compile again on `develop`,
   and their benchmarks run again; builds the branch compiled are not reused.
 - **Newer push.** It cancels the running orchestrator of the same ref
-  (manual dispatches run to completion). Builds that already published stay;
-  builds left pending are planned again. Dispatched DevKit runs continue. A
-  benchmark still running when the next plan runs has no completed run yet,
-  so it is dispatched again.
+  (manual dispatches run to completion), including its compiles and the
+  benchmarks running inside it. Builds and benchmark runs that already
+  published stay; builds left pending and benchmarks without a completed run
+  are planned again.
 - **Model browser.** A branch's view lists its catalog's builds: what the
   branch delivers (#181). A completed build compiled on the branch that is
   newer than the catalog entry for its model and build profile replaces that
@@ -369,25 +392,39 @@ Vulcan PRs #248, #250 and #253 provide the staging backend. The protected GitHub
 approval workflow is tracked separately in [#315](https://github.com/sima-neat/models/issues/315).
 Candidate finalization does not approve or promote a build. Approver roles and
 end-to-end producer acceptance are required before routine approval. Develop is
-the only implemented promotion target; Main/HF release remains follow-up work.
+supported in staging and production. Main is supported only in production through
+its own protected gate and branch-scoped approver role. Both select the same
+immutable production candidate in independently pinned target catalogs. Each
+selection holds its own retention reference, so replacing Develop cannot release
+Main's artifacts or the reverse. Main metadata comes from its chosen source
+revision, not from an implicit copy of Develop.
 
-Develop approval retains S3 storage. The future Develop → Main flow in
-[#315](https://github.com/sima-neat/models/issues/315) and
-[#293](https://github.com/sima-neat/models/issues/293) needs a separate release
-gate and backend. It must transfer the same approved deployment to Hugging Face,
-verify every file at an immutable revision, and only then update Main's selection
-and active download location. S3 cleanup must preserve other references,
-including Develop. Pushes never upload to Hugging Face. The backend resolves
-approved roots; the CLI downloads and verifies files.
+Production Main registry selection retains S3 storage and active S3 downloads.
+The earlier combined Main/Hugging Face plan is split: Hugging Face transfer,
+immutable revision verification and any later download-host switch remain a
+separate release operation under [#293](https://github.com/sima-neat/models/issues/293).
+This promotion workflow never uploads to Hugging Face. The backend resolves
+approved roots; the CLI downloads and verifies their files.
+
+Manual **Publish Main model metadata** executes trusted Develop workflow code,
+checks out Main's exact release revision, installs its matching producer, and
+runs `publish-catalog` against production Main with Main as the only base branch.
+It publishes metadata and documentation without compiling, benchmarking or
+approving artifacts. The job uses publisher credentials and saves the source SHA
+and receipt. Its independent metadata-only path supports Main's older source
+schema without copying newer Develop model definitions or requiring a build.
+Main still needs its own on-demand profile requirements before candidate approval.
 
 ## LLiMa builds
 
 The compile matrix selects `scripts/run_llima_compilation.sh` for a Hugging
 Face component. The shared downloader assembles its pinned, verified file
-set; the recipe calls `llima-compile` and records a standalone `compile.sh` with
-the complete arguments it used. The runner then runs
+set; the recipe only compiles. The runner writes a direct reproduction command
+in `compile.sh` with download instructions and the resolved graph arguments,
+defaulting to four processes, plus any adjacent
+`compile.py` or `config.py`. It then runs
 `llima-deploy` into `<model>/<profile>/<component>/deployment/`, containing
-`devkit/`, `elf_files/`, any `npy_files/`, and that script. `verify-artifact --write-manifest`
+`devkit/`, `elf_files/`, any `npy_files/`, and those reproduction files. `verify-artifact --write-manifest`
 writes `deployment-manifest.json` beside the folder. Compile outputs point to
 that index and its SHA-256. ONNX builds retain their runner and compile-fingerprint
 inputs.

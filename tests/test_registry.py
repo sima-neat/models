@@ -683,8 +683,30 @@ def test_publish_retry_reuses_idempotency_keys_across_run_attempts(tmp_path: Pat
     assert publish("1") == publish("2")
 
 
+def test_conversion_input_keeps_the_model_card_the_browser_links_to() -> None:
+    from model_registry.conversion import FIELDS
+    from model_registry.registry import _conversion_input
+
+    source = {
+        **dict.fromkeys(FIELDS, "value"),
+        "run_id": "conversion-run", "artifact_id": "artifact", "conversion_fingerprint": "f" * 64,
+    }
+    metadata = _conversion_input(source, {"model_card": "https://example.test/card"})["metadata"]
+
+    assert metadata["model_card"] == "https://example.test/card"
+    assert metadata["conversion_run_id"] == "conversion-run"
+
+
+def _direct_source_models() -> dict:
+    """The models whose catalog entries need no saved conversion selection."""
+    return {
+        model_id: model for model_id, model in load_models(ROOT).items()
+        if model["components"][0]["source"]["type"] != "conversion"
+    }
+
+
 def test_catalog_snapshot_reuses_unchanged_compile_runs() -> None:
-    models = load_models(ROOT)
+    models = _direct_source_models()
     compiler_version = resolve_model_compiler(ROOT)["identity"]
     first = build_catalog_snapshot(
         repository=ROOT,
@@ -724,7 +746,7 @@ def test_catalog_snapshot_reuses_unchanged_compile_runs() -> None:
 
 
 def test_catalog_records_benchmark_fingerprints_bound_to_their_compile_runs() -> None:
-    models = load_models(ROOT)
+    models = _direct_source_models()
     model = models["resnet_50"]
     matrix = build_matrix(
         models, sorted(models), repository=ROOT, compiler_version=COMPILER_IDENTITY,
@@ -1319,3 +1341,47 @@ def test_private_conversion_reader_keeps_dataset_credentials_separate(monkeypatc
     assert not any("dataset-" in argument for argument in commands[0])
     import os
     assert os.environ["AWS_ACCESS_KEY_ID"] == "dataset-ACCESS_KEY_ID"
+
+
+def fake_artifact_download(monkeypatch: pytest.MonkeyPatch, responses: list[Exception | bytes]) -> list[float]:
+    """Answer each artifact download with the next response, and record the backoff sleeps."""
+    import io
+
+    sleeps = []
+
+    def urlopen(request, timeout):
+        response = responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return io.BytesIO(response)
+
+    monkeypatch.setattr("model_registry.registry.urlopen", urlopen)
+    monkeypatch.setattr("model_registry.registry.time.sleep", sleeps.append)
+    monkeypatch.setattr("model_registry.registry.random.uniform", lambda low, high: 0.5)
+    return sleeps
+
+
+def test_dropped_artifact_download_is_retried(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from model_registry.registry import _download_registry_file
+
+    payload = b"compiled model"
+    artifact = {"sha256": hashlib.sha256(payload).hexdigest(), "size_bytes": len(payload)}
+    sleeps = fake_artifact_download(monkeypatch, [ConnectionResetError(104, "Connection reset by peer"), payload])
+
+    _download_registry_file("https://registry.example/model.tar.gz", tmp_path / "model.tar.gz", artifact)
+
+    assert (tmp_path / "model.tar.gz").read_bytes() == payload
+    assert sleeps == [1.5]
+
+
+def test_missing_artifact_download_is_not_retried(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from urllib.error import HTTPError
+
+    from model_registry.registry import _download_registry_file
+
+    url = "https://registry.example/model.tar.gz"
+    sleeps = fake_artifact_download(monkeypatch, [HTTPError(url, 404, "Not Found", {}, None)])
+
+    with pytest.raises(RegistryPublicationError, match="HTTP Error 404"):
+        _download_registry_file(url, tmp_path / "model.tar.gz", {"sha256": "0" * 64, "size_bytes": 1})
+    assert sleeps == []

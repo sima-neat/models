@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 import yaml
 from model_registry.compile_matrix import build_matrix
+from model_registry.conversion import conversion_fingerprint
 from model_registry.dependencies import resolve_model_compiler
 from model_registry.errors import ValidationError
 from model_registry.fingerprints import COMPILE_TOOLING, benchmark_fingerprint, compile_fingerprint
@@ -399,8 +400,14 @@ def test_fingerprints_ignore_the_models_tests(tmp_path: Path) -> None:
 
     def fingerprints() -> list[str]:
         model = load_and_validate_model(model_dir, repository / "schemas" / "model.schema.json")
+        selected = {"rf_detr_small": {
+            "sha256": "a" * 64, "conversion_fingerprint": conversion_fingerprint(repository, model),
+        }}
         return [
-            compile_fingerprint(repository, "rf_detr_small", "w8a8_w16a16", "w8a8_w16a16", COMPILER_VERSION),
+            compile_fingerprint(
+                repository, "rf_detr_small", "w8a8_w16a16", "w8a8_w16a16", COMPILER_VERSION,
+                conversion_sources=selected,
+            ),
             benchmark_fingerprint(repository, model, "w8a8_w16a16", RF_DETR_BUILDS, "performance"),
             benchmark_fingerprint(repository, model, "w8a8_w16a16", RF_DETR_BUILDS, "accuracy"),
         ]
@@ -508,6 +515,7 @@ def test_publish_fresh_branch_reuses_only_compatible_catalog_runs(model_reposito
     [
         "scripts/performance.py",
         "scripts/accuracy.py",
+        "scripts/fp32_baseline_accuracy.py",
         "scripts/requirements-accuracy.txt",
         "scripts/convert.py",
         "scripts/requirements-convert.txt",
@@ -650,6 +658,37 @@ def test_grouped_compile_rejects_conflicting_markets(model_repository):
     path.write_text(yaml.safe_dump(authored))
     with pytest.raises(ValidationError, match="conflicting runner_market"):
         load_and_validate_model(path.parent)
+
+
+def test_speculative_compile_fingerprint_tracks_weights_not_benchmark_baseline(tmp_path):
+    model_id = "gemma_4_e2b_it_textonly_mtp"
+    for folder in ("schemas", "taxonomies", f"models/{model_id}", "models/gemma_4_e2b_it_textonly"):
+        shutil.copytree(ROOT / folder, tmp_path / folder, ignore=shutil.ignore_patterns("__pycache__"))
+    manifest = tmp_path / "models" / model_id / "model.yaml"
+    model = yaml.safe_load(manifest.read_text())
+    compiler = "3.0.0+develop.000000000000"
+    before = compile_fingerprint(tmp_path, model_id, "w4a16", "w4a16", compiler)
+    model["build_profiles"]["w4a16"].pop("benchmark_baseline")
+    manifest.write_text(yaml.safe_dump(model, sort_keys=False))
+    assert compile_fingerprint(tmp_path, model_id, "w4a16", "w4a16", compiler) == before
+    draft = model["build_profiles"]["w4a16"]["components"]["model"]["parameters"]["draft_model_path"]
+    model["compilation"]["source"]["files"][f"{draft}/model.safetensors"]["sha256"] = "0" * 64
+    manifest.write_text(yaml.safe_dump(model, sort_keys=False))
+    assert compile_fingerprint(tmp_path, model_id, "w4a16", "w4a16", compiler) != before
+
+
+def test_benchmark_baseline_changes_only_its_profiles_performance_fingerprint():
+    model = load_and_validate_model(ROOT / "models/rf_detr_small")
+    builds = {name: {"run_id": name, "artifact_sha256": "a" * 64} for name in ("backbone", "decoder")}
+    before = benchmark_fingerprint(ROOT, model, "w8a8_w16a16", builds, "performance")
+    other = benchmark_fingerprint(ROOT, model, "w8a16_w16a16", builds, "performance")
+    accuracy = benchmark_fingerprint(ROOT, model, "w8a8_w16a16", builds, "accuracy")
+    model["build_profiles"][0]["benchmark_baseline"] = {"model_id": "resnet_50", "build_profile": "w16a16"}
+    assert benchmark_fingerprint(ROOT, model, "w8a8_w16a16", builds, "performance") != before
+    assert benchmark_fingerprint(ROOT, model, "w8a16_w16a16", builds, "performance") == other
+    assert benchmark_fingerprint(ROOT, model, "w8a8_w16a16", builds, "accuracy") == accuracy
+    model["build_profiles"][0].pop("benchmark_baseline")
+    assert benchmark_fingerprint(ROOT, model, "w8a8_w16a16", builds, "performance") == before
 
 
 def test_yolo26x_pose_requests_moderate_on_demand():

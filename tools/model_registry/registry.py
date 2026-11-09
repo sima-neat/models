@@ -4,21 +4,27 @@ import base64
 import hashlib
 import json
 import math
+import random
 import subprocess
 import tempfile
+import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from urllib.error import HTTPError
 from urllib.parse import quote
 from urllib.request import Request as UrlRequest
 from urllib.request import urlopen
 
 from jsonschema import Draft202012Validator
 
-from .artifact import compile_output_fields, deployment_files, validate_compile_outputs, verify_artifact, verify_llima
+from .artifact import (
+    compile_output_fields, deployment_files, llima_compiled_parameters,
+    validate_compile_outputs, verify_artifact, verify_llima,
+)
 from .compile_matrix import build_matrix
 from .dependencies import resolve_model_compiler
 from .documentation import load_model_documentation
@@ -861,6 +867,19 @@ def _revision_documentation_receipts(
 
 def _download_registry_file(url: str, destination: Path, artifact: JsonObject,
                             download: DownloadRequest | None = None) -> None:
+    # An orchestrator run stages every build's benchmark at once, so retry a dropped or throttled download.
+    for attempt in range(1, 6):
+        try:
+            return _download_registry_file_once(url, destination, artifact, download)
+        except RegistryPublicationError as exc:
+            cause = exc.__cause__
+            if isinstance(cause, HTTPError) and cause.code not in {429, 502, 503, 504} or attempt == 5:
+                raise
+        time.sleep(2 ** (attempt - 1) + random.uniform(0, 1))
+
+
+def _download_registry_file_once(url: str, destination: Path, artifact: JsonObject,
+                                 download: DownloadRequest | None = None) -> None:
     """Stream into a temporary file and install only after size and checksum verification."""
     destination.parent.mkdir(parents=True, exist_ok=True)
     digest = hashlib.sha256()
@@ -1385,23 +1404,9 @@ def _preflight_compilations(
             raise ValidationError(f"{result_path}: archive checksum or size does not match")
 
         compiled_parameters = {}
-        if native and any(name in binding["parameters"] for name in (
-            "max_num_tokens", "language_group_size", "input_height", "input_width"
-        )):
-            config = json.loads((archive.parent / "deployment/devkit/vlm_config.json").read_text(encoding="utf-8"))
-            compiled_parameters = {
-                name: config["pipeline_cfg"][field]
-                for name, field in (("max_num_tokens", "max_num_tokens"),
-                                    ("language_group_size", "input_token_group_size"))
-                if field in config["pipeline_cfg"]
-            }
-            image_size = (config.get("vm_cfg") or {}).get("image_size")
-            if type(image_size) is int and image_size > 0:
-                image_size = [image_size, image_size]
-            if (isinstance(image_size, list) and len(image_size) == 2
-                    and all(type(value) is int and value > 0 for value in image_size)):
-                compiled_parameters.update(input_height=image_size[0], input_width=image_size[1])
-            for name in ("max_num_tokens", "language_group_size", "input_height", "input_width"):
+        if native:
+            compiled_parameters = llima_compiled_parameters(archive.parent / "deployment")
+            for name in ("max_num_tokens", "language_group_size", "input_height", "input_width", "speculative_method"):
                 if name in binding["parameters"] and compiled_parameters.get(name) != binding["parameters"][name]:
                     raise ValidationError(f"{result_path}: compiled {name} does not match model.yaml")
 
@@ -1450,10 +1455,11 @@ def _preflight_compilations(
     return prepared
 
 
-def _conversion_input(source):
+def _conversion_input(source, source_metadata):
     from .conversion import input_record
 
-    return input_record(source)
+    record = input_record(source)
+    return {**record, "metadata": {**source_metadata, **record["metadata"]}}
 
 
 def publish_compilations(
@@ -1615,7 +1621,7 @@ def publish_compilations(
                 ),
                 "media_type": _component_source_media_type(source),
                 "metadata": source_metadata,
-                **(_conversion_input(source) if source["type"] == "conversion" else {}),
+                **(_conversion_input(source, source_metadata) if source["type"] == "conversion" else {}),
             },
             f"{stable_key}-input",
         )

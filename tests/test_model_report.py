@@ -228,7 +228,10 @@ class ModelOptions:
     """PyNeat's ModelOptions, with the preprocessing fields the scripts set."""
 
     def __init__(self):
-        self.preprocess = types.SimpleNamespace(resize=types.SimpleNamespace(), normalize=types.SimpleNamespace())
+        self.preprocess = types.SimpleNamespace(
+            resize=types.SimpleNamespace(), normalize=types.SimpleNamespace(), color_convert=types.SimpleNamespace()
+        )
+        self.superpoint = types.SimpleNamespace()
 
 
 class Tensor:
@@ -250,13 +253,20 @@ PYNEAT_ENUMS = {
     "NormalizePreset": ("ImageNet",),
     "PixelFormat": ("RGB",),
     "TensorMemory": ("EV74",),
-    "BoxDecodeType": ("YoloV26", "YoloV26Pose", "YoloV26Seg"),
+    "BoxDecodeType": ("YoloV26", "YoloV26Pose", "YoloV26Seg", "SuperPoint"),
+    "SuperPointProfile": ("MagicLeapDemoV1", "LightGlueV1"),
 }
 SCRIPT_PYNEAT = {
     enum: types.SimpleNamespace(**{value: value for value in values}) for enum, values in PYNEAT_ENUMS.items()
 }
+# Color conversion takes its own enum, not PixelFormat; distinct values catch a script passing the wrong one.
+SCRIPT_PYNEAT["PreprocessColorFormat"] = types.SimpleNamespace(
+    **{value: f"PreprocessColorFormat.{value}" for value in ("RGB", "BGR", "GRAY8")}
+)
 # A 4:3 COCO image letterboxes to 960x720 in the 1280x720 frame, with 160 grey columns on each side.
 SOURCE_SIZE, IMAGE_COLUMNS, FILL = (480, 640), slice(160, 1120), 114
+# The ImageNet image a classifier benchmarks, by the variant of its accuracy dataset, as its workload names it.
+IMAGENET_SAMPLES = {"mini": "n01440764/ILSVRC2012_val_00000001.webp", "val": "val2012/ILSVRC2012_val_00000001.JPEG"}
 # A Scene Flow view is 960x540; a stereo script joins the pair side by side, left then right, unletterboxed.
 STEREO_VIEW, STEREO_LEFT, STEREO_RIGHT = (540, 960), 60, 90
 STEREO_PAIR = "FlyingThings3D/frames_finalpass/TEST/A/0000/{view}/0006.png"
@@ -271,8 +281,9 @@ def write_image(path, value, size=SOURCE_SIZE):
 
 
 def benchmark_dataset(root):
-    """A dataset with the files each script samples from: COCO val2017, ImageNet's val split, Pittsburgh 30k and the
-    Scene Flow test list. Only the second COCO image labels a person, so a pose script must pick it."""
+    """A dataset with the files each script samples from: COCO val2017, ImageNet's val2012 and ImageNet mini's val
+    split, an HPatches val sequence, Pittsburgh 30k, and the Scene Flow test list. Only the second COCO image labels a
+    person, so a pose script must pick it."""
     write_image(root / STEREO_PAIR.format(view="left"), STEREO_LEFT, STEREO_VIEW)
     write_image(root / STEREO_PAIR.format(view="right"), STEREO_RIGHT, STEREO_VIEW)
     disparity = STEREO_PAIR.replace("frames_finalpass", "disparity").format(view="left").replace(".png", ".pfm")
@@ -280,7 +291,9 @@ def benchmark_dataset(root):
     (root / "sceneflow_finalpass_test.txt").write_text(pair, encoding="utf-8")
     write_image(root / "val2017/000000000001.jpg", 200)
     write_image(root / "val2017/000000000002.jpg", 200)
+    write_image(root / "val2012/ILSVRC2012_val_00000001.JPEG", 200)
     write_image(root / "val/n01440764/ILSVRC2012_val_00000001.webp", 200)
+    write_image(root / "val/v_scene/1.ppm", 200)
     write_image(root / "images/000/000000_pitch1_yaw1.jpg", 200)
     keypoints = {
         "images": [{"id": 1, "file_name": "000000000001.jpg"}, {"id": 2, "file_name": "000000000002.jpg"}],
@@ -325,7 +338,18 @@ def performance_scripts(*, components: bool) -> list[Path]:
     return scripts
 
 
-@pytest.mark.parametrize("script", performance_scripts(components=False), ids=lambda path: path.parents[1].name)
+def takes_images(script: Path) -> bool:
+    """Whether the model a performance script measures declares an image input."""
+    model = yaml.safe_load((script.parents[1] / "model.yaml").read_text(encoding="utf-8"))
+    return "image" in model["modalities"]["inputs"]
+
+
+# A model whose inputs are not images, such as a keypoint matcher, benchmarks tensors its own tests cover.
+@pytest.mark.parametrize(
+    "script",
+    [path for path in performance_scripts(components=False) if takes_images(path)],
+    ids=lambda path: path.parents[1].name,
+)
 def test_every_single_component_script_benchmarks_a_dataset_image(script, monkeypatch, tmp_path):
     loaded, requests = [], []
 
@@ -363,6 +387,9 @@ def test_every_single_component_script_benchmarks_a_dataset_image(script, monkey
         "On", "On", "On"
     )
     (frame,) = requests[0].inputs
+    # Neat sizes its input buffers, which the execution plan shows as its input, for the benchmark frame.
+    height, width = frame.array.shape[:2]
+    assert (options.preprocess.input_max_width, options.preprocess.input_max_height) == (width, height)
     report = saved_report(output)
     if first_accuracy_dataset(script) == "scene-flow":
         # A stereo model benchmarks a Scene Flow test pair as its side-by-side frame, stretched to the model input.
@@ -375,12 +402,35 @@ def test_every_single_component_script_benchmarks_a_dataset_image(script, monkey
         # Pose accuracy scores only images with a labelled person.
         expected = "000000000002.jpg" if options.decode_type == "YoloV26Pose" else ".jpg"
         assert expected in report["workload"]
-    else:
+    elif getattr(options, "decode_type", "") == "SuperPoint":
+        # SuperPoint takes the frame stretched to its input, converted to GRAY8, scaled to [0, 1] without a preset,
+        # and decodes it with Magic Leap's demo settings, as the accuracy stage does.
+        assert_letterboxed_frame(frame)
+        color = options.preprocess.color_convert
+        assert (options.preprocess.resize.mode, color.enable, color.input_format, color.output_format) == (
+            "Stretch", "On", "PreprocessColorFormat.RGB", "PreprocessColorFormat.GRAY8"
+        )
+        assert not hasattr(options.preprocess, "preset")
+        assert (options.superpoint.profile, options.top_k) == ("MagicLeapDemoV1", 1000)
+        assert "v_scene/1.ppm" in report["workload"]
+    elif first_accuracy_dataset(script) == "pitts30k":
+        # A place-recognition model benchmarks a Pittsburgh 30k image, stretched to its input with the ImageNet preset.
         assert_letterboxed_frame(frame)
         assert (options.preprocess.resize.mode, options.preprocess.preset) == ("Stretch", "ImageNet")
-        # NetVLAD samples a Pittsburgh image; the other classifiers an ImageNet one.
-        expected = "_pitch1_yaw1.jpg" if script.parents[1].name == "netvlad" else "ILSVRC2012_val_00000001.webp"
-        assert expected in report["workload"]
+        assert "_pitch1_yaw1.jpg" in report["workload"]
+    else:
+        assert_letterboxed_frame(frame)
+        assert options.preprocess.resize.mode == "Stretch"
+        # A classifier normalizes with the ImageNet preset, or with the mean and std of its own preprocessing.
+        normalize = options.preprocess.normalize
+        if getattr(normalize, "has_explicit_stats", False):
+            calibration = runpy.run_path(str(script.parent / "calibration.py"))
+            assert list(normalize.mean) == pytest.approx(calibration["MEAN"].tolist())
+            assert list(normalize.stddev) == pytest.approx(calibration["STD"].tolist())
+        else:
+            assert options.preprocess.preset == "ImageNet"
+        metadata = yaml.safe_load((script.parents[1] / "model.yaml").read_text(encoding="utf-8"))
+        assert IMAGENET_SAMPLES[metadata["accuracy"]["datasets"][0]["variant"]] in report["workload"]
     assert list(report["components"]) == ["model"]
     assert report["components"]["model"]["mla_layer_stats"] == CORE_REPORT["mla_layer_stats"]
     assert report["components"]["model"]["mla_stage_stats"] == CORE_REPORT["mla_stage_stats"]
@@ -432,6 +482,8 @@ def test_every_multi_component_script_feeds_its_backbone_a_dataset_frame(script,
     assert (options.preprocess.kind, options.preprocess.resize.mode, options.preprocess.preset) == (
         "Image", "Stretch", "ImageNet"
     )
+    height, width = frame.array.shape[:2]
+    assert (options.preprocess.input_max_width, options.preprocess.input_max_height) == (width, height)
 
 
 def test_model_code_uses_cores_mla_stats_names():
