@@ -42,6 +42,28 @@ No target metadata changed and no fixture approval exists. Activation needs a
 separate reviewed fixture revision with matching documentation provenance;
 ordinary progress publication cannot alter source metadata.
 
+## Positive MPK validator and artifact-download fixture
+
+The read-only `tests/fixtures/production_promotion/verify_mpk.py` fixture downloaded
+the deployed production writer ZIP and verified its AWS code hash:
+`Xv60uirpiRD7jcRTNMEHPDhxbSIpMk5WE4EzWD+Jfxo=`. It loaded the deployed Python
+validator source with local native dependencies, using the genuine frozen
+candidate and original target requirements against actual production S3 objects.
+No validation checks were mocked. Both compile and package roots selected as
+`layout: archive, format: mpk`; their exact registered S3 versions were verified.
+
+The production run-artifact API for package run
+`93d636bc-8c76-4e7e-98fc-c86c25484651` returned an exact-version download URL.
+The complete downloaded package matched **60,864,167 bytes** and SHA-256
+`680d659c6ef6776a26bd29ddbb4b823c901d9e4d823bab7dc97f2d3ca0ce9fa5`.
+The compile root on run `8a5f273f-ce64-4f11-9b33-c4f9ea4980a6` has the same
+content identity, as required for a single-MPK package.
+
+This is a local replay of verified deployed source and a real production artifact
+download. It did not invoke the writer handler, create a pending request, approve
+anything or change a catalog. Full protected MPK promotion remains distinct from
+this successful package-format regression check.
+
 ## LLiMa acceptance
 
 Production inventory initially contained two candidate upload prefixes: the

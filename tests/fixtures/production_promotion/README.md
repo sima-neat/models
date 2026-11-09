@@ -2,7 +2,7 @@
 
 `mpk.json` pins the genuine production YOLO26x Pose candidate from the original
 failed promotion. The artifact and compile provenance remain unchanged. The
-fixture temporarily restores only that profile's original on-demand target
+proposed target fixture would temporarily restore only that profile's original on-demand target
 requirements; it does not change model definitions, compile artifacts, or the
 source-controlled automatic-build policy.
 
@@ -25,3 +25,27 @@ The same-revision snapshot API rejects this metadata patch with
 Activation requires a separate reviewed fixture Git revision and documentation
 runs bound to that revision. Do not bypass that guard with a direct catalog
 edit. The manifest is prepared; it has not activated an on-demand target.
+
+## Read-only deployed-validator replay
+
+`verify_mpk.py` is the executed read-only fixture. It downloads the deployed
+writer package, verifies its AWS code hash, loads only its Python source with
+local native dependencies, and validates the frozen candidate against the real
+production S3 versions. It then downloads the package through the production
+run-artifact API and checks every byte against the registered hash and size.
+It neither invokes the writer handler nor accesses a database, changes a catalog,
+approves a selection, or recompiles a model.
+
+Use an operator Python environment with boto3, psycopg and Models' dependencies,
+export a valid production `saml2aws` session, and save the candidate JSON from a
+signed production candidate-inspection request. From the repository root:
+
+```sh
+AWS_REGION=us-west-2 ARTIFACT_BUCKET=sima-neat-artifacts-production PYTHONPATH=tools \
+  python tests/fixtures/production_promotion/verify_mpk.py \
+  --candidate /absolute/path/candidate.json --output-dir /absolute/path/verification
+```
+
+The JSON result explicitly records `live_protected_promotion: false`. Do not
+report this source replay and artifact download as a live handler invocation,
+protected approval or Develop catalog download acceptance.
