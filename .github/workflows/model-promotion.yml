@@ -3,8 +3,14 @@ name: Promote model
 on:
   workflow_dispatch:
     inputs:
+      target_branch:
+        description: Target catalog (Main is production-only; execute the workflow from develop)
+        type: choice
+        options: [develop, main]
+        default: develop
+        required: true
       operation:
-        description: Develop operation in VULCAN_ENV (Main release is not supported)
+        description: Promotion operation in VULCAN_ENV
         type: choice
         options: [promote, status, cancel, reject]
         default: promote
@@ -40,6 +46,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: ${{ vars.VULCAN_ENV }}
     outputs:
+      target_branch: ${{ steps.config.outputs.target_branch }}
       vulcan_environment: ${{ steps.config.outputs.vulcan_environment }}
       api_url: ${{ steps.config.outputs.api_url }}
       read_api_url: ${{ steps.config.outputs.read_api_url }}
@@ -55,6 +62,7 @@ jobs:
       - name: Resolve the selected environment's writer and reader APIs
         id: config
         env:
+          PROMOTION_TARGET_BRANCH: ${{ inputs.target_branch }}
           VULCAN_ENV: ${{ vars.VULCAN_ENV }}
           VULCAN_ARTIFACT_REGISTRY_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_API_URL }}
           VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL }}
@@ -63,6 +71,7 @@ jobs:
   prepare:
     needs: configure
     env:
+      PROMOTION_TARGET_BRANCH: ${{ needs.configure.outputs.target_branch }}
       VULCAN_ENV: ${{ needs.configure.outputs.vulcan_environment }}
       VULCAN_ARTIFACT_REGISTRY_API_URL: ${{ needs.configure.outputs.api_url }}
       VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL: ${{ needs.configure.outputs.read_api_url }}
@@ -112,6 +121,7 @@ jobs:
   request:
     needs: [configure, prepare]
     env:
+      PROMOTION_TARGET_BRANCH: ${{ needs.configure.outputs.target_branch }}
       VULCAN_ENV: ${{ needs.configure.outputs.vulcan_environment }}
       VULCAN_ARTIFACT_REGISTRY_API_URL: ${{ needs.configure.outputs.api_url }}
       VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL: ${{ needs.configure.outputs.read_api_url }}
@@ -168,12 +178,13 @@ jobs:
     needs: [configure, prepare, request]
     if: needs.prepare.outputs.operation == 'promote' || needs.prepare.outputs.operation == 'reject'
     env:
+      PROMOTION_TARGET_BRANCH: ${{ needs.configure.outputs.target_branch }}
       VULCAN_ENV: ${{ needs.configure.outputs.vulcan_environment }}
       VULCAN_ARTIFACT_REGISTRY_API_URL: ${{ needs.configure.outputs.api_url }}
       VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL: ${{ needs.configure.outputs.read_api_url }}
     runs-on: ubuntu-latest
     environment:
-      name: ${{ format('{0}-promote-develop', needs.configure.outputs.vulcan_environment) }}
+      name: ${{ format('{0}-promote-{1}', needs.configure.outputs.vulcan_environment, needs.configure.outputs.target_branch) }}
       url: https://github.com/sima-neat/models/actions/runs/${{ github.run_id }}
     permissions:
       contents: read
@@ -215,6 +226,7 @@ jobs:
     needs: [configure, request, approve]
     if: always() && needs.request.result == 'success'
     env:
+      PROMOTION_TARGET_BRANCH: ${{ needs.configure.outputs.target_branch }}
       VULCAN_ENV: ${{ needs.configure.outputs.vulcan_environment }}
       VULCAN_ARTIFACT_REGISTRY_API_URL: ${{ needs.configure.outputs.api_url }}
       VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL: ${{ needs.configure.outputs.read_api_url }}

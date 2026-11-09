@@ -1,0 +1,24 @@
+conversion:
+  run_tests: true
+compile:
+  run_tests: true
+accuracy:
+  run_tests: true
+  expected:
+    w16a16:
+      yfcc100m-keypoints-val:
+        pose_auc_5: 0.2648
+        pose_auc_10: 0.4634
+        pose_auc_20: 0.6536
+    w8a8:
+      yfcc100m-keypoints-val:
+        pose_auc_5: 0.2488
+        pose_auc_10: 0.4482
+        pose_auc_20: 0.6385
+performance:
+  run_tests: true
+  expected:
+    w16a16:
+      throughput_fps: 91.0
+    w8a8:
+      throughput_fps: 164.0

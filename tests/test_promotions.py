@@ -205,7 +205,7 @@ def test_configuration_uses_selected_environment_endpoint(monkeypatch, environme
     monkeypatch.setenv("VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL", "https://reader.example.com")
     monkeypatch.setenv("VULCAN_ENV", environment)
     monkeypatch.setenv("VULCAN_ARTIFACT_REGISTRY_API_URL", f"https://writer.{environment}.example.com/")
-    assert p.configuration() == {"vulcan_environment": environment,
+    assert p.configuration() == {"vulcan_environment": environment, "target_branch": "develop",
                                  "api_url": f"https://writer.{environment}.example.com",
                                  "read_api_url": "https://reader.example.com"}
 
@@ -267,3 +267,68 @@ def test_prepare_checks_resolved_candidate_identity_with_backend():
                   read_api_url='https://reader.example.com',
                   expected_model_id='qwen3_5_0_8b', expected_profile_id='w4a16')
     assert len(backend.calls) == 1
+
+
+
+def test_production_main_pins_target_catalog_and_decision(monkeypatch):
+    monkeypatch.setenv("VULCAN_ENV", "production")
+    monkeypatch.setenv("PROMOTION_TARGET_BRANCH", "main")
+    backend = Backend()
+    urls = []
+    saved = p.prepare(backend, deployment_id=CANDIDATE, reason="Reviewed Main release evidence",
+                      workflow={}, identity="main-123", read_api_url="https://reader.example.com",
+                      read_request=lambda url: (urls.append(url) or {"catalog": {"canonical_sha256": "a" * 64}}))
+    assert saved["body"]["target_git_ref"] == "refs/heads/main"
+    assert urls == ["https://reader.example.com/v1/repositories/sima-neat/models/catalogs/current?git_ref=refs%2Fheads%2Fmain"]
+    pending = p.request(backend, saved)
+    promoted = p.decide(backend, pending, operation="approve", reason="Reviewed", identity="main-decision")
+    assert promoted["state"] == "promoted"
+    assert promoted["target_git_ref"] == "refs/heads/main"
+    assert "## Main promotion" in p.summary(promoted)
+
+
+@pytest.mark.parametrize("target", ["main", "release", "refs/heads/main", ""])
+def test_unavailable_or_invalid_targets_fail_before_registry_calls(monkeypatch, target):
+    monkeypatch.setenv("PROMOTION_TARGET_BRANCH", target)
+    backend = Backend()
+    with pytest.raises(ValidationError):
+        plan(backend)
+    assert backend.calls == []
+
+
+def test_retry_cannot_retarget_main_or_reinterpret_legacy_develop_plan(monkeypatch):
+    monkeypatch.setenv("VULCAN_ENV", "production")
+    backend = Backend()
+    legacy = {**p.configuration(), **plan(backend)}
+    legacy.pop("target_branch")
+    p.check_configuration(legacy, p.configuration())
+    monkeypatch.setenv("PROMOTION_TARGET_BRANCH", "main")
+    with pytest.raises(ValidationError, match="target"):
+        p.check_configuration(legacy, p.configuration())
+    with pytest.raises(ValidationError, match="target"):
+        p.request(backend, legacy)
+    assert all(call[0] == "GET" for call in backend.calls)
+
+
+def test_explicit_main_cli_target_is_persisted(monkeypatch, tmp_path):
+    from model_registry.cli import main
+    monkeypatch.setenv("VULCAN_ENV", "production")
+    backend = Backend()
+    backend.record = {"target_git_ref": "refs/heads/main", "promotion_id": PROMOTION, "state": "pending"}
+    monkeypatch.setattr(p, "SigV4RegistryClient", lambda *args: backend)
+    destination = tmp_path / "main.json"
+    assert main(["promotion", "inspect", "--record", str(destination), "--promotion-id", PROMOTION,
+                 "--target-branch", "main"]) == 0
+    assert p.read(destination)["target_branch"] == "main"
+
+
+
+def test_main_decision_rejects_changed_develop_approval_proof(monkeypatch):
+    monkeypatch.setenv("VULCAN_ENV", "production")
+    monkeypatch.setenv("PROMOTION_TARGET_BRANCH", "main")
+    backend = Backend()
+    pending = p.request(backend, plan(backend))
+    backend.record["source_promotion_id"] = "33333333-3333-4333-8333-333333333333"
+    with pytest.raises(ValidationError, match="source_promotion_id"):
+        p.decide(backend, pending, operation="approve", reason="Reviewed", identity="main-123")
+    assert not any(call[1].endswith("/approve") for call in backend.calls)

@@ -271,11 +271,12 @@ builds](#on-demand-builds).
 | accuracy | the compile run and MPK digest of every component, each `accuracy` dataset's name, pin, and the metrics its `datasets/<id>.yaml` requires for the model's tasks, `accuracy.py` and `requirements-accuracy.txt`, the shared benchmark tooling, `scripts/run_model_accuracy.sh`, `scripts/cache_accuracy_dataset.sh` and `scripts/install_dataset_registry.sh`, and the DevKit runtime pin |
 
 ONNX compile code includes every `.py` and `.sh` under `scripts/` except
-`performance.py`, `accuracy.py`, `convert.py` and `requirements-convert.txt`.
+`performance.py`, `accuracy.py`, `fp32_baseline_accuracy.py`, `convert.py` and
+`requirements-convert.txt`.
 The shared model loader is an input to every ONNX compile fingerprint;
 descriptive preprocessing and surgery declarations are not. The shared
-benchmark tooling is `BOARD_STAGE_TOOLING`: the benchmarking workflow, `tools/model_report`
-(`__init__.py` and `metrics.json`), `schemas/model-report.schema.json`, and
+benchmark tooling is `BOARD_STAGE_TOOLING`: the benchmarking workflow,
+`tools/model_report/__init__.py`, `schemas/model-report.schema.json`, and
 `tools/model_registry/report_publication.py`.
 
 A new compile run changes the benchmark fingerprints too, so a recompiled build
@@ -283,10 +284,11 @@ is always benchmarked again.
 
 | Change | Reruns |
 | --- | --- |
-| README, display metadata, `pipeline`, `reference_metrics`, `runner_class`, `runner_market`, registry tooling outside a stage's tooling | nothing |
+| README, display metadata, `pipeline`, `reference_metrics`, `runner_class`, `runner_market`, `tools/model_report/metrics.json`, registry tooling outside a stage's tooling | nothing |
 | `build-on-demand` | nothing; changes scheduling and catalog metadata only |
 | the upstream checkpoint, `conversion.outputs`, `convert.py` and the files it uses, or the shared export code | with `source: conversion`, planning fails until you run Vulcan Model Convert again. The model recompiles only if the ONNX changes. |
 | a model's tests, or `scripts/run_model_tests.sh` | nothing. The changed test runs the next time its stage runs. |
+| a model's `fp32_baseline_accuracy.py` | nothing; no stage runs it |
 | a model's `performance.py` or `performance` declaration | that model's performance stages |
 | a profile's `benchmark_baseline` | that profile's performance; no compilation |
 | `accuracy.py`, its requirements, the `accuracy` datasets, or one of their pins | that model's accuracy stages |
@@ -294,7 +296,7 @@ is always benchmarked again.
 | `accuracy.build_profiles`, a new `datasets/` file, or an entry for a task no such model has | nothing; a newly benchmarked profile runs because it has no run yet |
 | `scripts/run_model_performance.sh` | every performance stage |
 | `scripts/run_model_accuracy.sh`, `scripts/cache_accuracy_dataset.sh`, or `scripts/install_dataset_registry.sh` | every accuracy stage |
-| the DevKit runtime pin, the benchmarking workflow, `tools/model_report`, `schemas/model-report.schema.json`, or `report_publication.py` | every performance and accuracy stage |
+| the DevKit runtime pin, the benchmarking workflow, `tools/model_report/__init__.py`, `schemas/model-report.schema.json`, or `report_publication.py` | every performance and accuracy stage |
 | a source, a component's `parameters`, the profile's calibration, or `numerical_fidelity` | that model's affected builds, then their benchmarks |
 | an ONNX compile script or other ONNX compile input | that model's affected builds, then their benchmarks |
 | the Model Compiler pin | every build, then every benchmark |
@@ -310,7 +312,9 @@ The fingerprints are computed by `compile_fingerprint` and `benchmark_fingerprin
 To apply a changed test at once, dispatch **Vulcan Model Orchestrator** with
 `models` set to the model and `force_rebuild_all`: it recompiles the model's
 builds, which runs the compile tests and remeasures every build. To run a changed
-conversion test, dispatch **Vulcan Model Convert**.
+conversion test, dispatch **Vulcan Model Convert**. If a selected package is
+already published in the current catalog revision, use a new Git commit;
+[forced rebuilds cannot replace immutable packages](https://github.com/sima-neat/models/blob/develop/design-doc/model-registry-architecture.md#forced-rebuilds-of-published-packages).
 
 ## 10. Write the model's tests
 

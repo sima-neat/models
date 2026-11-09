@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 import random
 import sys
 import tarfile
@@ -24,7 +25,7 @@ def _png(width: int, height: int, colour: tuple[int, int, int] = (255, 0, 0)) ->
 def _write_archive(path: Path, files: dict[str, bytes]) -> Path:
     with tarfile.open(path, "w:gz") as archive:
         for name, content in files.items():
-            member = tarfile.TarInfo(f"./{name}")
+            member = tarfile.TarInfo(name)
             member.size = len(content)
             archive.addfile(member, io.BytesIO(content))
     return path
@@ -60,25 +61,26 @@ def test_preprocessing_resizes_the_shortest_edge_then_crops_the_centre(
     np.testing.assert_allclose(result[124, 112], blue, atol=1e-5)
 
 
-def test_calibration_stacks_every_cal_image_from_the_archive(
+def test_calibration_samples_the_requested_cal_images_from_the_archive(
     tmp_path: Path,
     load_script: Callable[[str], ModuleType],
 ) -> None:
     calibration = load_script("calibration")
     archive = _write_archive(
-        tmp_path / "mini.tar.gz",
+        tmp_path / "cal.tar.gz",
         {
-            "cal/b.webp": _png(300, 260),
-            "cal/a.webp.bak": _png(260, 300),
-            "cal/notes.txt": b"not an image",
-            "val/n01440764/c.webp": _png(256, 256),
+            "imagenet/cal2012/n01440764_1.JPEG": _png(300, 260),
+            "imagenet/cal2012/n01443537_1.JPEG": _png(260, 300),
+            "imagenet/cal2012.txt": b"n01440764_1.JPEG\nn01443537_1.JPEG\n",
+            "imagenet/val2012/ILSVRC2012_val_00000001.JPEG": _png(256, 256),
         },
     )
 
-    samples = calibration.calibration_samples(archive, 2)
+    samples = calibration.calibration_samples(archive, 1)
 
-    assert samples.shape == (2, 224, 224, 3)
+    assert samples.shape == (1, 224, 224, 3)
     assert samples.dtype == np.float32
+    np.testing.assert_array_equal(samples, calibration.calibration_samples(archive, 1))
     with pytest.raises(ValueError, match="calibration requires 3 images"):
         calibration.calibration_samples(archive, 3)
 
@@ -88,33 +90,45 @@ def test_split_names_read_an_extracted_directory_and_require_the_split(
     load_script: Callable[[str], ModuleType],
 ) -> None:
     calibration = load_script("calibration")
-    (tmp_path / "val" / "n01").mkdir(parents=True)
-    (tmp_path / "val" / "n01" / "x.webp").write_bytes(_png(256, 256))
+    (tmp_path / "val2012").mkdir()
+    (tmp_path / "val2012" / "x.JPEG").write_bytes(_png(256, 256))
 
-    assert calibration.split_names(tmp_path, "val") == ["val/n01/x.webp"]
-    with pytest.raises(ValueError, match="no images under cal/"):
-        calibration.split_names(tmp_path, "cal")
+    assert calibration.split_names(tmp_path, "val2012") == ["val2012/x.JPEG"]
+    with pytest.raises(ValueError, match="no images under cal2012/"):
+        calibration.split_names(tmp_path, "cal2012")
 
 
-def test_validation_labels_follow_the_sorted_synsets(load_script: Callable[[str], ModuleType]) -> None:
+def test_validation_labels_come_from_the_labels_file(tmp_path: Path, load_script: Callable[[str], ModuleType]) -> None:
     calibration = load_script("calibration")
-    names = [f"val/n{index:08d}/image.webp" for index in reversed(range(calibration.CLASSES))]
+    categories = [{"id": index, "wnid": f"n{index:08d}", "name": f"class {index}"} for index in range(1000)]
+    labels = {
+        "categories": categories,
+        "images": [
+            {"id": 7, "file_name": "ILSVRC2012_val_00000007.JPEG", "width": 500, "height": 375},
+            {"id": 2, "file_name": "ILSVRC2012_val_00000002.JPEG", "width": 500, "height": 375},
+        ],
+        "annotations": [{"id": 7, "image_id": 7, "category_id": 999}, {"id": 2, "image_id": 2, "category_id": 0}],
+    }
+    path = tmp_path / "annotations" / "labels_val2012.json"
+    path.parent.mkdir()
+    path.write_text(json.dumps(labels), encoding="utf-8")
 
-    labels = calibration.validation_labels(names)
-
-    assert labels["val/n00000000/image.webp"] == 0
-    assert labels[f"val/n{calibration.CLASSES - 1:08d}/image.webp"] == calibration.CLASSES - 1
+    assert calibration.validation_labels(tmp_path) == {
+        "val2012/ILSVRC2012_val_00000002.JPEG": 0,
+        "val2012/ILSVRC2012_val_00000007.JPEG": 999,
+    }
+    path.write_text(json.dumps({**labels, "categories": categories[1:]}), encoding="utf-8")
     with pytest.raises(ValueError, match="expected 1000 validation classes, found 999"):
-        calibration.validation_labels(names[1:])
+        calibration.validation_labels(tmp_path)
 
 
 def test_read_images_reports_a_missing_image(tmp_path: Path, load_script: Callable[[str], ModuleType]) -> None:
     calibration = load_script("calibration")
-    archive = _write_archive(tmp_path / "mini.tar.gz", {"val/n01/a.webp": b"a"})
+    archive = _write_archive(tmp_path / "cal.tar.gz", {"imagenet/cal2012/a.JPEG": b"a"})
 
-    assert calibration.read_images(archive, ["val/n01/a.webp"]) == {"val/n01/a.webp": b"a"}
+    assert calibration.read_images(archive, ["imagenet/cal2012/a.JPEG"]) == {"imagenet/cal2012/a.JPEG": b"a"}
     with pytest.raises(ValueError, match="missing 1 requested images"):
-        calibration.read_images(archive, ["val/n01/a.webp", "val/n01/b.webp"])
+        calibration.read_images(archive, ["imagenet/cal2012/a.JPEG", "imagenet/cal2012/b.JPEG"])
 
 
 def test_fidelity_selection_is_the_declared_seeded_sample(
@@ -122,7 +136,7 @@ def test_fidelity_selection_is_the_declared_seeded_sample(
     load_script: Callable[[str], ModuleType],
 ) -> None:
     calibration = load_script("calibration")
-    names = [f"val/n01/{index:02d}.webp" for index in range(10)]
+    names = [f"cal2012/n01440764_{index:02d}.JPEG" for index in range(10)]
     for name in names:
         (tmp_path / name).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / name).write_bytes(b"")
@@ -137,20 +151,52 @@ def test_fidelity_selection_is_the_declared_seeded_sample(
 @pytest.mark.parametrize("profile_id", ["w16a16", "w8a8", "w8a16"])
 def test_compile_reads_each_declared_build_profile(load_script: Callable[[str], ModuleType], profile_id: str) -> None:
     recipe = load_script("compile")
-    parameters = recipe._variant(recipe._metadata(), profile_id)["parameters"]
+    parameters = recipe._parameters(profile_id)
 
     assert parameters["precision"] == profile_id
     if profile_id == "w8a8":
-        assert parameters["calibration_samples"] == 500
+        assert parameters["calibration_samples"] == 50
 
 
 def test_compile_rejects_an_undeclared_build_profile(load_script: Callable[[str], ModuleType]) -> None:
     recipe = load_script("compile")
-    metadata = recipe._metadata()
 
-    assert metadata["numerical_fidelity"]["outputs"] == ["logits"]
+    assert recipe.load_metadata(recipe.MODEL_DIR)["numerical_fidelity"]["outputs"] == ["logits"]
     with pytest.raises(ValueError, match="exactly one build profile named 'w32a32'"):
-        recipe._variant(metadata, "w32a32")
+        recipe._parameters("w32a32")
+
+
+@pytest.mark.parametrize(
+    ("precision", "calibrates", "per_token"), [("w8a8", True, False), ("w8a16", False, True), ("w16a16", False, False)]
+)
+def test_quantization_calibrates_only_int8_activations(
+    load_script: Callable[[str], ModuleType], precision: str, calibrates: bool, per_token: bool
+) -> None:
+    recipe = load_script("compile")
+
+    recipe._quantization(precision)
+
+    arguments = recipe.QuantizationParams.call_args.kwargs
+    calibration = recipe.CalibrationMethod.from_str.return_value if calibrates else recipe.SkipCalibration.return_value
+    assert arguments["calibration_method"] is calibration
+    assert arguments.get("per_token_quant", False) is per_token
+
+
+def test_bf16_builds_quantize_without_calibration_data(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    load_script: Callable[[str], ModuleType],
+) -> None:
+    recipe = load_script("compile")
+    monkeypatch.setattr(
+        recipe,
+        "_parameters",
+        lambda profile_id: {"precision": "w16a16", "input_name": "pixel_values", "input_shape": [1, 3, 224, 224]},
+    )
+
+    with pytest.raises(RuntimeError, match="expected exactly one MPK archive"):
+        recipe.compile_model(tmp_path / "model.onnx", tmp_path / "model", "w16a16", None)
+    assert recipe.load_model.return_value.quantize.call_args.args[0] is None
 
 
 def test_compile_rejects_an_undeclared_precision_before_compiling(
@@ -159,13 +205,10 @@ def test_compile_rejects_an_undeclared_precision_before_compiling(
     load_script: Callable[[str], ModuleType],
 ) -> None:
     recipe = load_script("compile")
-    metadata = recipe._metadata()
-    profile = metadata["build_profiles"][0]
-    profile["components"][0]["parameters"]["precision"] = "fp32"
-    monkeypatch.setattr(recipe, "_metadata", lambda: metadata)
+    monkeypatch.setattr(recipe, "_parameters", lambda profile_id: {"precision": "fp32"})
 
-    with pytest.raises(ValueError, match="only the declared Modalix BF16 and INT8 variants"):
-        recipe.compile_model(tmp_path / "model.onnx", tmp_path / "model", profile["id"], None)
+    with pytest.raises(ValueError, match="only the declared BF16 and INT8 build profiles"):
+        recipe.compile_model(tmp_path / "model.onnx", tmp_path / "model", "w16a16", None)
     assert not (tmp_path / "model").exists()
 
 
