@@ -45,3 +45,10 @@ def test_boxes_scale_from_fractions_of_the_input_to_image_pixels(scorer: ModuleT
 def test_decode_rejects_other_output_shapes(scorer: ModuleType, shape: tuple[int, ...]) -> None:
     with pytest.raises(ValueError, match="unexpected MPK outputs"):
         scorer.decode(np.zeros(shape, np.float32), np.zeros((1, shape[1], 4), np.float32), 1, 10, 10)
+
+
+def test_mpk_argument_names_the_model_component(scorer: ModuleType) -> None:
+    # run_model_accuracy.sh passes every MPK as <component>=<path>.
+    assert scorer.parse_mpks(["model=/compiled/model_mpk.tar.gz"]) == Path("/compiled/model_mpk.tar.gz")
+    with pytest.raises(SystemExit, match="model=<path>"):
+        scorer.parse_mpks(["backbone=/compiled/model_mpk.tar.gz"])
