@@ -47,8 +47,49 @@ See [Model taxonomy](model-taxonomy.md) for sanctioned taxonomy values.
 `upstream` records human-reviewable provenance. It defaults to the checkpoint's
 Hugging Face repository and revision; `model_card` defaults to its repository
 URL. Keep an explicit `upstream` when it identifies a different original model.
+A model whose source is not on Hugging Face has no default and declares
+`upstream` itself. Its `model_card` is the page the model browser links as the
+original model:
+
+```yaml
+upstream:
+  repository: https://github.com/owner/repo
+  revision: 0123456789abcdef0123456789abcdef01234567
+  model_card: https://github.com/owner/repo/releases/tag/v1.0.0
+```
+
 Downloadable inputs belong in a `conversion` or `compilation` `source`, where
 exact bytes are pinned.
+
+### License
+
+`license` records the license of the source model:
+
+```yaml
+license:
+  spdx: Apache-2.0
+  redistribution: allowed
+  attribution: Derived from microsoft/resnet-50 and distributed under Apache-2.0.
+```
+
+- `spdx` is an ID listed in [`artifact-browser/licenses.json`](../artifact-browser/licenses.json): an SPDX
+  identifier, or a `LicenseRef-` ID for a license SPDX does not list.
+- `redistribution` is `allowed`, `restricted`, `prohibited`, or `unknown`.
+  Publication refuses a package marked `prohibited` or `unknown`.
+- `attribution` is the credit line the model page shows.
+
+Each entry there holds the license's `name`, a `summary` of what it
+asks from someone who redistributes the model, and `downloadable`. The model
+page shows the name and summary in its License section and offers the model's
+downloads only when `downloadable` is `true`. A model whose license forbids
+redistribution still compiles and benchmarks in CI, and its page shows **Not
+available for download**.
+
+Read the license at the source model's repository before declaring it. When it
+is not listed, add an entry, validated by
+`schemas/licenses.schema.json`. `python -m pytest tests/test_licenses.py` fails
+when a model declares an unlisted license. No fingerprint includes the license
+or the license list, so a correction reruns nothing.
 
 Optional top-level `build-on-demand` is a boolean, default `false`, for any
 model requiring explicit build selection. When `true`, pushes validate the
@@ -69,6 +110,10 @@ conversion:
     sha256: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
     size_bytes: 123456
 ```
+
+The checkpoint is a pinned Hugging Face file or a release file of a public
+GitHub repository. [Pin every input](adding-a-model.md#3-pin-every-input) lists
+the approved forms.
 
 A model that declares `conversion` must also provide `scripts/convert.py` and
 `scripts/requirements-convert.txt`, which the **Vulcan Model Convert** workflow
@@ -307,16 +352,27 @@ feeds the fingerprints.
 
 ## Reference metrics
 
-`reference_metrics` lists the scores the source model's authors published for
-these weights, copied by hand from a pinned page. The model page shows them
-beside the measured scores, and on their own when no build has an accuracy
-report yet. Each entry has:
+`reference_metrics` lists reference scores for these weights. Each entry has an
+`origin`:
+
+- `published` (the default): scores the source model's authors published,
+  copied by hand from a pinned page.
+- `fp32_baseline`: what the FP32 source model scores on the package's own
+  inputs and protocol, measured on a host by the model's
+  `scripts/fp32_baseline_accuracy.py`. Use it when no published score matches
+  the package's setup. No stage runs the script, and it is not a compile input.
+
+The model page shows each origin beside the measured scores under its own label,
+**Published** or **FP32 baseline**, and on their own when no build has an
+accuracy report yet. Each entry has:
 
 | Field | Meaning |
 | --- | --- |
-| `source` | HTTPS URL of the page that prints the scores, pinned to a commit or revision. |
+| `origin` | `published` or `fp32_baseline`; `published` when left out. |
+| `source` | For a published entry: HTTPS URL of the page that prints the scores, pinned to a commit or revision. |
+| `script` | For an FP32 baseline: `scripts/fp32_baseline_accuracy.py`, which measured it. |
 | `dataset` | `id` and `split` of the evaluation set, such as `{id: coco-2017, split: val}`. |
-| `conditions` | How the authors measured, such as input size, preprocessing, and precision. |
+| `conditions` | How the scores were measured, such as input size, preprocessing, and precision. |
 | `note` | Optional caveat a reader needs, such as a split the source does not name. |
 | `metrics` | A map from accuracy metric names to values, in each metric's unit from `tools/model_report/metrics.json`. |
 
@@ -326,12 +382,18 @@ reference_metrics:
   dataset: {id: coco-2017, split: val}
   conditions: 640x640, NMS-free one-to-one head
   metrics: {coco_keypoint_map: 0.572, coco_keypoint_ap50: 0.833}
+- origin: fp32_baseline
+  script: scripts/fp32_baseline_accuracy.py
+  dataset: {id: yfcc100m-keypoints, split: val}
+  conditions: FP32 ONNX on ONNX Runtime CPU, 512 keypoints from a 640x480 image
+  metrics: {pose_auc_5: 0.2865}
 ```
 
 Metric names are accuracy metrics from `tools/model_report/metrics.json`, the
 names `accuracy.py` reports, and every value is in its metric's unit. Record
-only numbers the source prints, not values derived from them. Two entries may
-not give the same metric for the same dataset. A reference score appears
+only numbers the source or the script prints, not values derived from them. Two
+entries of one origin may not give the same metric for the same dataset. An FP32
+baseline names one of the model's `accuracy` datasets. A reference score appears
 beside a measured one only when both name the same dataset `id`. The field
 feeds no fingerprint, so editing it reruns nothing.
 

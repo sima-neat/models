@@ -56,7 +56,8 @@ def issue(body):
             break
         page += 1
     record = gh('api', '--method', 'POST', f'repos/{repository}/issues', body={
-        'title': f'Develop promotion request (workflow {run_id})', 'body': marker + '\n\n' + body,
+        'title': f"{p.configuration()['target_branch'].capitalize()} promotion request (workflow {run_id})",
+        'body': marker + '\n\n' + body,
     })
     return record['html_url']
 
