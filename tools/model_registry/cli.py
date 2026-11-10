@@ -181,6 +181,13 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     inputs.add_argument("--model", required=True)
     inputs.add_argument("--build-profile", required=True)
 
+    resources = subcommands.add_parser(
+        "model-runtime-directory", help="print the verified supporting-file root, or nothing when no files are declared"
+    )
+    resources.add_argument("compiled_dir", type=Path)
+    resources.add_argument("--model", required=True)
+    resources.add_argument("--build-profile", required=True)
+
     check = subcommands.add_parser(
         "check-report", help="check a model report against model.yaml and record the DevKit it ran on"
     )
@@ -977,6 +984,13 @@ def _main(argv: Sequence[str] | None, *, author_safe: bool) -> int:
             from .report_publication import model_component_mpks
 
             print("\n".join(model_component_mpks(args.compiled_dir, args.repository, args.model, args.build_profile)))
+            return 0
+        if args.command == "model-runtime-directory":
+            from .artifact import read_runtime_files
+
+            profile_dir = args.compiled_dir.resolve() / args.model / args.build_profile
+            if read_runtime_files(profile_dir):
+                print(profile_dir)
             return 0
         if args.command == "check-report":
             return _check_report(args)

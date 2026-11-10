@@ -3,8 +3,8 @@
 At evaluation startup, encode the upstream ImageNet class prompts with the compiled text encoder.
 Normalize each prompt embedding, average within each class and normalize again. Keep the resulting
 1,000 class vectors in memory and rank their cosine similarities to each compiled image embedding.
-Text tokenization and embedding-table lookup run on CPU. Source assets are fetched from the pinned
-upstream checkpoint, or read from --checkpoint-dir; generated class vectors are never persisted.
+Text tokenization and embedding-table lookup run on CPU using the packaged tokenizer and lookup weights.
+Generated class vectors are never persisted.
 """
 
 from __future__ import annotations
@@ -28,10 +28,6 @@ from calibration import CLASS_NAMES, TEMPLATES, VALIDATION_SPLIT, preprocess_ima
 COMPONENTS = {"image_encoder", "text_encoder"}
 EMBED_DIM = 512
 TEXT_SHAPE = (1, 77, EMBED_DIM)
-SOURCE_REPOSITORY = "openai/clip-vit-base-patch16"
-SOURCE_REVISION = "57c216476eefef5ab752ec549e440a49ae4ae5f3"
-WEIGHTS_FILE = "pytorch_model.bin"
-TOKEN_EMBEDDING = "text_model.embeddings.token_embedding.weight"
 TEXT_LENGTH = 77
 
 # The accuracy fingerprint hashes this script but not the file beside it, so the script pins the file's checksum.
@@ -90,25 +86,15 @@ def class_scores(outputs: list[pyneat.Tensor], classes: np.ndarray) -> np.ndarra
     return classes @ normalize(embedding)
 
 
-def load_text_inputs(checkpoint_dir: Path | None = None):
-    """Load the tokenizer and CPU lookup table, without loading a CPU transformer."""
-    from huggingface_hub import hf_hub_download
+def load_text_inputs(resources: Path):
+    """Read the CPU tokenizer and lookup weights shipped with the compiled encoders."""
     from tokenizers import Tokenizer
 
-    def asset(name):
-        return (
-            checkpoint_dir / name
-            if checkpoint_dir is not None
-            else Path(hf_hub_download(SOURCE_REPOSITORY, name, revision=SOURCE_REVISION))
-        )
-
-    tokenizer = Tokenizer.from_file(str(asset("tokenizer.json")))
+    directory = resources / "text_encoder"
+    tokenizer = Tokenizer.from_file(str(directory / "tokenizer.json"))
     tokenizer.enable_truncation(max_length=TEXT_LENGTH)
     tokenizer.enable_padding(length=TEXT_LENGTH, pad_id=49407, pad_token="<|endoftext|>")
-    import torch
-
-    weights = torch.load(asset(WEIGHTS_FILE), map_location="cpu", weights_only=True)
-    table = weights[TOKEN_EMBEDDING].numpy()
+    table = np.load(directory / "token_embeddings.npy", mmap_mode="r", allow_pickle=False)
     if table.shape != (49408, EMBED_DIM) or table.dtype != np.float32:
         raise ValueError(f"unexpected token embedding table: {table.shape}, {table.dtype}")
     return tokenizer, table
@@ -199,7 +185,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dataset", required=True, help="imagenet-2012-val=<extracted directory>")
     parser.add_argument("--output", type=Path, required=True, help="directory for model-report.json")
     parser.add_argument(
-        "--checkpoint-dir", type=Path, help="local pinned tokenizer.json and checkpoint; default: HF cache/download"
+        "--resources",
+        type=Path,
+        required=True,
+        help="package root containing text_encoder/tokenizer.json and token_embeddings.npy",
     )
     parser.add_argument("--limit", type=int, help="measure the first images only (local runs only)")
     args = parser.parse_args(argv)
@@ -212,7 +201,7 @@ def main(argv: list[str] | None = None) -> int:
 
     mpks = parse_mpks(args.mpk)
     check_text_encoder(mpks["text_encoder"], load_text_probe())
-    tokenizer, table = load_text_inputs(args.checkpoint_dir)
+    tokenizer, table = load_text_inputs(args.resources)
     classes = build_class_embeddings(mpks["text_encoder"], tokenizer, table)
     del tokenizer, table
     model = pyneat.Model(str(mpks["image_encoder"]), tensor_options())

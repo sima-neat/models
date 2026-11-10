@@ -63,12 +63,20 @@ def validate_config(directory):
         raise ValueError(f"config.json names model_type {model_type!r}, expected 'siglip'")
 
 
-def load_siglip(source):
+def load_siglip(source, runtime_dir=None):
     """Restore the checkpoint and processor from the verified conversion bundle."""
     import torch
     from transformers import AutoProcessor, SiglipConfig, SiglipModel
 
     bundle = torch.load(source, map_location="cpu", weights_only=True)
+    if runtime_dir is not None:
+        runtime_dir.mkdir(parents=True, exist_ok=True)
+        tokenizer = bundle["assets"]["tokenizer.json"]
+        (runtime_dir / "tokenizer.json").write_bytes(
+            tokenizer.encode("utf-8") if isinstance(tokenizer, str) else tokenizer
+        )
+        table = bundle["state_dict"]["text_model.embeddings.token_embedding.weight"].detach().numpy()
+        np.save(runtime_dir / "token_embeddings.npy", table, allow_pickle=False)
     with tempfile.TemporaryDirectory(prefix="siglip2-processor-") as directory:
         directory = Path(directory)
         for name, content in bundle["assets"].items():
@@ -245,7 +253,7 @@ def export_model(source, output_dir):
     output_dir.mkdir(parents=True, exist_ok=False)
     output = output_dir / "model.onnx"
     torch.set_num_threads(4)
-    siglip, processor = load_siglip(source)
+    siglip, processor = load_siglip(source, runtime_dir=output_dir / "text_encoder")
     prompt_ids = tokenize(processor.tokenizer, fidelity_prompts())
     with torch.inference_mode():
         prompt_embeds = siglip.text_model.embeddings.token_embedding(prompt_ids)

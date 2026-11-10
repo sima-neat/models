@@ -39,6 +39,13 @@ Each stage's registry run carries its fingerprint, and CI runs a stage only
 when no completed run carries the current fingerprint. A change therefore
 reruns exactly the stages whose inputs it touches.
 
+When an application needs supporting files derived from the converted source,
+write them under the profile output and declare their relative `path` and
+`sha256` in `compile-outputs.json`'s optional `runtime_files` list. The shared
+packager includes them beside the component MPKs, and retained-build restoration
+restores them too. Accuracy scripts receive the verified profile root as
+`--resources`; they must use those local files instead of downloading checkpoints.
+
 A tooling change reruns a stage only when the changed file is in that stage's
 tooling list in `fingerprints.py`. No shared file is a conversion input: a
 conversion reruns only when the model's checkpoint, `convert.py` and the

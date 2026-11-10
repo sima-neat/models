@@ -170,12 +170,20 @@ def build_image_encoder(clip):
     return ImageEncoder().float().eval()
 
 
-def load_clip(source):
+def load_clip(source, runtime_dir=None):
     """Restore the upstream checkpoint and its processor from the conversion bundle."""
     import torch
     from transformers import CLIPConfig, CLIPModel, CLIPProcessor
 
     checkpoint = torch.load(source, map_location="cpu", weights_only=True)
+    if runtime_dir is not None:
+        runtime_dir.mkdir(parents=True, exist_ok=True)
+        tokenizer = checkpoint["assets"]["tokenizer.json"]
+        (runtime_dir / "tokenizer.json").write_bytes(
+            tokenizer.encode("utf-8") if isinstance(tokenizer, str) else tokenizer
+        )
+        table = checkpoint["state_dict"]["text_model.embeddings.token_embedding.weight"].detach().numpy()
+        np.save(runtime_dir / "token_embeddings.npy", table, allow_pickle=False)
     assets = checkpoint["assets"]
     with tempfile.TemporaryDirectory(prefix="clip-processor-") as directory:
         for name, content in assets.items():
@@ -292,7 +300,7 @@ def export_model(source, output_dir):
     output_dir.mkdir(parents=True, exist_ok=False)
     output = output_dir / "model.onnx"
     torch.set_num_threads(4)
-    clip, processor = load_clip(source)
+    clip, processor = load_clip(source, runtime_dir=output_dir / "text_encoder")
     prompt_ids, prompt_embeds = prepare_prompts(clip, processor.tokenizer)
     model = build_model(clip)
     rng = np.random.RandomState(0)

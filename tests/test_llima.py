@@ -465,7 +465,8 @@ shutil.copytree(os.environ["DEPLOYMENT_SOURCE"], sys.argv[2])
     executable = tools / "llima-compile"
     executable.write_text(f"#!{sys.executable}\nimport json, os, runpy, sys\n"
                           'if "-c" in sys.argv:\n'
-                          '    configure = runpy.run_path(sys.argv[sys.argv.index("-c") + 1])["get_layer_configuration"]\n'
+                          '    configure = runpy.run_path(sys.argv[sys.argv.index("-c") + 1])'
+                          '["get_layer_configuration"]\n'
                           '    assert configure({"is_draft_model": True}, {}) == {"precision": "A_BF16_W_INT8"}\n'
                           'open(os.environ["COMPILE_ARGUMENTS"], "w").write(json.dumps(sys.argv[1:]))\n')
     subprocess.run(["bash", str(replay)], cwd=tmp_path, check=True, env={
@@ -649,9 +650,14 @@ def test_mpk_candidate_binds_every_component_before_finalizing(tmp_path, monkeyp
         outputs.append({"component_id": component, "mpk_path": f"{component}/{archive.name}",
                         "mpk_sha256": hashlib.sha256(archive.read_bytes()).hexdigest()})
     (invocation / "compile-timing.json").write_text(COMPILE_TIMING)
+    runtime_files = []
+    for name in ("backbone/tokenizer.json", "vocabulary.txt"):
+        path = invocation / name
+        path.write_bytes(b"supporting-file")
+        runtime_files.append({"path": name, "sha256": hashlib.sha256(path.read_bytes()).hexdigest()})
     (invocation / "compile-outputs.json").write_text(json.dumps({
         "model_id": "fixture_model", "build_profile_id": "fixture", "compile_invocation_id": "fixture",
-        "outputs": outputs,
+        "outputs": outputs, "runtime_files": runtime_files,
         "derived_graphs": [{"component_id": component, "sha256": "a" * 64} for component in ("backbone", "decoder")],
     }))
     from model_registry import stage_plan
@@ -673,6 +679,15 @@ def test_mpk_candidate_binds_every_component_before_finalizing(tmp_path, monkeyp
     arguments = {**registry.args(), "environment": environment}
     result = publish_candidate(repository=root, dist_dir=tmp_path / "invocations", output_dir=tmp_path / "candidate",
                                model_id="fixture_model", build_profile_id="fixture", **arguments)
+    from model_registry.artifact import read_runtime_files
+
+    assert read_runtime_files(tmp_path / "candidate/compiled/fixture_model/fixture") == runtime_files
+    package = next((tmp_path / "candidate/packages").rglob("*.zip"))
+    import zipfile
+
+    with zipfile.ZipFile(package) as archive:
+        for item in runtime_files:
+            assert archive.read(item["path"]) == b"supporting-file"
     assert result["state"] == "finalized"
     assert set(registry.bindings) == {"compile-backbone", "compile-decoder", "package-default"}
     finalization = next(index for index, (method, path, _) in enumerate(registry.calls)

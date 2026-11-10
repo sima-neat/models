@@ -7,6 +7,7 @@ import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .artifact import read_runtime_files
 from .errors import ValidationError
 from .model import load_models
 from .package import PROFILE_RESULT_FILES, _link_or_copy, assemble_package
@@ -195,6 +196,17 @@ def publish_candidate(
             shutil.rmtree(destination)
         shutil.copytree(item["result_path"].parent, destination, copy_function=_link_or_copy)
     for source in sources:
+        source_profile = source / model_id / build_profile_id
+        runtime_files = read_runtime_files(source_profile)
+        if runtime_files:
+            target_profile = compiled / model_id / build_profile_id
+            shutil.copyfile(source_profile / "compile-outputs.json", target_profile / "compile-outputs.json")
+            for item in runtime_files:
+                destination = target_profile / item["path"]
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                if not destination.exists():
+                    _link_or_copy(str(source_profile / item["path"]), str(destination))
+            read_runtime_files(target_profile)
         for name in PROFILE_RESULT_FILES:
             result_file = source / model_id / build_profile_id / name
             if result_file.is_file():

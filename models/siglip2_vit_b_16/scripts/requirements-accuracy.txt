@@ -1,19 +1,3 @@
-# DevKit runner installs without dependency resolution; retain PyNeat's NumPy.
-anyio==4.15.1
-certifi==2026.10.23
-click==8.5.0
-filelock==4.2.4
-fsspec==2026.7.0
-h11==0.16.0
-hf-xet==1.7.0
-httpcore==1.0.9
-httpx==0.28.1
-huggingface-hub==1.33.0
-idna==3.20
-packaging==26.3
+# CPU tokenization and image loading; NumPy comes from PyNeat. No checkpoint loader is needed.
 pillow==12.3.0
-pyyaml==6.0.3
-safetensors==0.8.0
 tokenizers==0.23.3
-tqdm==4.70.1
-typing-extensions==4.16.0

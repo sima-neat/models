@@ -250,6 +250,15 @@ SHA-256 of each component's derived graph. For a single-component model,
 `scripts/run_model_compilation.sh` writes the file with `outputs` only when
 the recipe does not.
 
+An optional `runtime_files` list declares supporting files derived from the
+verified conversion bundle, such as a tokenizer and CPU token-lookup weights.
+Each entry has a `path` relative to the profile output and its `sha256`.
+The packager verifies and includes them in the ZIP alongside the component
+MPKs. Registry restoration restores the same files, and the accuracy runner
+passes their verified profile root as `--resources`. These files are model
+inputs for applications as well as accuracy; do not commit generated class
+embeddings or download original checkpoints during the board benchmark.
+
 The repository compiler version remains pinned centrally in
 [`deps/manifest.json`](https://github.com/sima-neat/models/blob/develop/deps/manifest.json).
 

@@ -22,10 +22,10 @@ standard deviation (0.26862954, 0.26130258, 0.27577711). Pass this image as a
 224×224×3 (height, width, channel) float tensor, with Neat's resize, color
 conversion, and normalization turned off.
 
-**Text input.** Tokenize the prompt with CLIP's tokenizer (`tokenizer.json` in
-the source checkpoint), padded to 77 tokens with the end-of-text token. On the
-CPU, replace each token ID with its 512-value row of the checkpoint's token
-embedding table, `text_model.embeddings.token_embedding.weight`. This gives the
+**Text input.** Tokenize the prompt with CLIP's tokenizer (`text_encoder/tokenizer.json` in
+the downloaded package), padded to 77 tokens with the end-of-text token. On the
+CPU, replace each token ID with its 512-value row of the packaged
+`text_encoder/token_embeddings.npy` lookup table. This gives the
 77×512 float tensor `token_embeds`; pass it as a 1×77×512 tensor with height,
 width, channel (HWC) axes.
 

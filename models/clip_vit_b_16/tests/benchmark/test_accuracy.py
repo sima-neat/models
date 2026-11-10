@@ -180,6 +180,8 @@ def test_a_stray_text_encoder_stops_the_stage_before_any_image(
         "text_encoder=text.tar.gz",
         "--dataset",
         f"imagenet-2012-val={tmp_path}",
+        "--resources",
+        str(tmp_path / "package"),
         "--output",
         str(tmp_path / "report"),
     ]
@@ -234,16 +236,8 @@ def test_class_vectors_are_generated_with_the_compiled_encoder_and_normalized_pe
     assert runner.closed
 
 
-def test_accuracy_checkpoint_matches_the_pinned_model_source(load_script):
-    from model_registry.model import load_model
-
+def test_accuracy_uses_all_imagenet_classes(load_script):
     script = load_script("accuracy")
-    metadata = load_model(Path(__file__).resolve().parents[2])
-    source = metadata["conversion"]["default"]["source"]
-    assert source["files"][0]["uri"] == (
-        f"hf://models/{script.SOURCE_REPOSITORY}@{script.SOURCE_REVISION}/{script.WEIGHTS_FILE}"
-    )
-    assert script.WEIGHTS_FILE == source["entrypoint"]
     assert len(script.CLASS_NAMES) == 1000
     assert script.CLASS_NAMES[0] == "tench" and script.CLASS_NAMES[-1] == "toilet paper"
 
@@ -252,3 +246,40 @@ def test_accuracy_uses_openais_80_imagenet_templates(load_script):
     script = load_script("accuracy")
     assert len(script.TEMPLATES) == 80
     assert "a photo of a American robin." in script.class_prompts("American robin")
+
+
+def test_text_inputs_use_packaged_weights_without_a_checkpoint(tmp_path, monkeypatch, load_script):
+    import sys
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    script = load_script("accuracy")
+    monkeypatch.setattr(script, "EMBED_DIM", 2)
+    directory = tmp_path / "text_encoder"
+    directory.mkdir()
+    (directory / "tokenizer.json").write_text("{}")
+    vocab = 49408
+    weights = np.arange(vocab * 2, dtype=np.float32).reshape(vocab, 2)
+    np.save(directory / "token_embeddings.npy", weights, allow_pickle=False)
+    tokenizer = MagicMock()
+
+    def from_file(path):
+        assert Path(path).read_text() == "{}"
+        return tokenizer
+
+    monkeypatch.setitem(sys.modules, "tokenizers", SimpleNamespace(Tokenizer=SimpleNamespace(from_file=from_file)))
+    for name in ("torch", "safetensors", "huggingface_hub"):
+        monkeypatch.setitem(sys.modules, name, None)
+    actual_tokenizer, table = script.load_text_inputs(tmp_path)
+    assert actual_tokenizer is tokenizer
+    assert isinstance(table, np.memmap)
+    np.testing.assert_array_equal(table, weights)
+    tokenizer.enable_truncation.assert_called_once_with(max_length=script.TEXT_LENGTH)
+    assert tokenizer.enable_padding.call_args.kwargs["length"] == script.TEXT_LENGTH
+    # A mismatched table must fail before an input can reach the compiled encoder.
+    np.save(directory / "token_embeddings.npy", weights[:2], allow_pickle=False)
+    with pytest.raises(ValueError, match="unexpected token embedding table"):
+        script.load_text_inputs(tmp_path)
+    np.save(directory / "token_embeddings.npy", np.zeros(weights.shape, np.float16), allow_pickle=False)
+    with pytest.raises(ValueError, match="unexpected token embedding table"):
+        script.load_text_inputs(tmp_path)

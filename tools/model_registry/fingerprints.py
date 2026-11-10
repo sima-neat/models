@@ -43,6 +43,7 @@ BOARD_STAGE_TOOLING = (
 PERFORMANCE_TOOLING = (*BOARD_STAGE_TOOLING, "scripts/run_model_performance.sh")
 ACCURACY_TOOLING = (
     *BOARD_STAGE_TOOLING,
+    "tools/model_registry/artifact.py",
     "scripts/install_dataset_registry.sh",
     "scripts/cache_accuracy_dataset.sh",
     "scripts/run_model_accuracy.sh",

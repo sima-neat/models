@@ -22,8 +22,13 @@ from urllib.request import urlopen
 from jsonschema import Draft202012Validator
 
 from .artifact import (
-    compile_output_fields, deployment_files, llima_compiled_parameters,
-    validate_compile_outputs, verify_artifact, verify_llima,
+    compile_output_fields,
+    deployment_files,
+    llima_compiled_parameters,
+    restore_runtime_files,
+    validate_compile_outputs,
+    verify_artifact,
+    verify_llima,
 )
 from .compile_matrix import build_matrix
 from .dependencies import resolve_model_compiler
@@ -1074,6 +1079,33 @@ def stage_catalog_build(
             }
         )
     profile_dir = output / model_id / build_profile_id
+    runtime_files = []
+    for package in catalog_model.get("packages", []):
+        if not isinstance(package, dict) or (package.get("build_profile_id"), package.get("package_id")) != (
+            build_profile_id, "default"
+        ):
+            continue
+        response = read(f"{base_url}/v1/runs/{package['run_id']}/artifacts/package")
+        artifact = response.get("artifact")
+        if not isinstance(artifact, dict):
+            raise ValidationError("artifact registry returned no package metadata")
+        metadata = artifact.get("metadata") or {}
+        if not isinstance(metadata, dict):
+            raise ValidationError("artifact registry returned invalid package metadata")
+        if "runtime_files" not in metadata:
+            continue
+        component_runs = {item["component_id"]: item["run_id"] for item in staged_outputs}
+        if (artifact.get("sha256") != package.get("artifact_sha256")
+                or artifact.get("size_bytes") != package.get("size_bytes")
+                or not isinstance(artifact.get("download_url"), str)
+                or metadata.get("component_run_ids") != component_runs
+                or package.get("component_run_ids") != component_runs):
+            raise ValidationError("runtime-file package does not match the current catalog build")
+        with tempfile.TemporaryDirectory(prefix="restore-package-", dir=profile_dir) as temporary:
+            archive = Path(temporary) / "package.zip"
+            _download_registry_file(artifact["download_url"], archive, artifact, download_request)
+            runtime_files = metadata["runtime_files"]
+            restore_runtime_files(archive, runtime_files, profile_dir)
     # The same manifest a compile writes, so later stages read restored and fresh builds alike.
     (profile_dir / "compile-outputs.json").write_text(
         json.dumps({
@@ -1083,6 +1115,7 @@ def stage_catalog_build(
             "outputs": [
                 {key: item[key] for key in ("component_id", *compile_output_fields(item))} for item in staged_outputs
             ],
+            **({"runtime_files": runtime_files} if runtime_files else {}),
         }, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
@@ -1924,6 +1957,14 @@ def publish_packages(
             "manifest_sha256": manifest_sha, "component_run_ids": component_runs,
             **({"build_on_demand": True} if on_demand else {}),
         }
+        if not native:
+            component_paths = {item["path"] for item in components}
+            runtime_files = [
+                {"path": item["path"], "sha256": item["sha256"]}
+                for item in manifest["files"] if item["path"] not in component_paths
+            ]
+            if runtime_files:
+                artifact_metadata["runtime_files"] = runtime_files
         if native:
             _publish_deployment_files(
                 client, store, run_id=run_id, stable_key=stable_key, bucket=bucket,

@@ -719,3 +719,63 @@ def test_report_command_publishes_both_stages_to_selected_registry(tmp_path, env
     assert len(calls) == 2
     assert all(f'--environment {environment} ' in call for call in calls)
     assert all('--compiled-dir _compiled ' in call for call in calls)
+
+
+@pytest.mark.parametrize("supporting_files", [False, True])
+def test_accuracy_runner_passes_only_verified_local_resources(tmp_path, supporting_files):
+    import hashlib
+    import io
+    import tarfile
+
+    compiled = tmp_path / "compiled with spaces"
+    profile = compiled / "clip_vit_b_16/w8a16"
+    profile.mkdir(parents=True)
+    manifest = {}
+    if supporting_files:
+        asset = profile / "tokenizer.json"
+        asset.write_text("{}")
+        manifest["runtime_files"] = [{"path": asset.name, "sha256": hashlib.sha256(asset.read_bytes()).hexdigest()}]
+    (profile / "compile-outputs.json").write_text(json.dumps(manifest))
+    dataset = tmp_path / "dataset.tgz"
+    with tarfile.open(dataset, "w:gz") as archive:
+        info = tarfile.TarInfo("val2012/image.JPEG")
+        info.size = 3
+        archive.addfile(info, io.BytesIO(b"img"))
+    registry = tmp_path / "registry-python"
+    registry.write_text(f'''#!{sys.executable}
+import json, os, sys
+if sys.argv[1] == '-c' or sys.argv[3] == 'model-runtime-directory':
+    os.execv(sys.executable, [sys.executable, *sys.argv[1:]])
+command = sys.argv[3]
+if command == 'resolve-devkit-accuracy':
+    print(json.dumps({{"name": "imagenet-2012-val", "path": {str(dataset)!r}}}))
+elif command == 'model-component-mpks':
+    print('image_encoder=image.tar.gz\\ntext_encoder=text.tar.gz')
+elif command != 'check-report':
+    raise AssertionError(command)
+''')
+    board = tmp_path / "board-python"
+    captured = tmp_path / "arguments.json"
+    board.write_text(f'''#!{sys.executable}
+import json, sys
+from pathlib import Path
+if sys.argv[1:3] != ['-m', 'pip']:
+    Path({str(captured)!r}).write_text(json.dumps(sys.argv[2:]))
+''')
+    registry.chmod(0o755)
+    board.chmod(0o755)
+    environment = {
+        **os.environ, "PYTHONPATH": str(ROOT / "tools"), "REGISTRY_PYTHON": str(registry),
+        "PYNEAT_PYTHON": str(board), "WORK_DIR": str(tmp_path / "scratch"),
+        "DATASET_CACHE": str(tmp_path / "cache"), "DATASET_LOCK": str(tmp_path / "prepare.lock"),
+    }
+    run = subprocess.run(
+        [ROOT / "scripts/run_model_accuracy.sh", ROOT / "models/clip_vit_b_16", "w8a16", compiled, tmp_path / "report"],
+        cwd=ROOT, env=environment, capture_output=True, text=True,
+    )
+    assert run.returncode == 0, run.stderr
+    arguments = json.loads(captured.read_text())
+    assert ("--resources" in arguments) == supporting_files
+    if supporting_files:
+        assert arguments[arguments.index("--resources") + 1] == str(profile)
+    assert arguments.count("--mpk") == 2

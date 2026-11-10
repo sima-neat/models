@@ -206,3 +206,34 @@ def test_package_preserves_runner_audit(tmp_path, monkeypatch, grouped):
                 repository=ROOT, compiled_dir=compiled, output_dir=tmp_path / "packages",
                 model_id="resnet_50", build_profile_id="w16a16", package_id="default",
             )
+
+
+@pytest.mark.parametrize("grouped", [False, True])
+def test_package_ships_verified_supporting_files(tmp_path, monkeypatch, grouped):
+    compiled = _two_component_model(monkeypatch, tmp_path, "head.tar.gz") if grouped else _compiled_component(tmp_path)
+    profile = compiled / "resnet_50/w16a16"
+    tokenizer = profile / "model/tokenizer.json"
+    tokenizer.write_bytes(b'{"version":"1.0"}')
+    declared = [{"path": "model/tokenizer.json", "sha256": hashlib.sha256(tokenizer.read_bytes()).hexdigest()}]
+    (profile / "compile-outputs.json").write_text(json.dumps({"runtime_files": declared}))
+    arguments = dict(
+        repository=ROOT,
+        compiled_dir=compiled,
+        output_dir=tmp_path / "packages",
+        model_id="resnet_50",
+        build_profile_id="w16a16",
+        package_id="default",
+    )
+    result = assemble_package(**arguments)
+    archive = tmp_path / "packages/resnet_50/w16a16/packages/default" / result["archive"]
+    with zipfile.ZipFile(archive) as package:
+        assert package.read("model/tokenizer.json") == tokenizer.read_bytes()
+        assert len(package.namelist()) == (3 if grouped else 2)
+    assert result["sha256"] == assemble_package(**arguments)["sha256"]
+    assert next(item for item in result["manifest"]["files"] if item["path"] == "model/tokenizer.json") == {
+        **declared[0],
+        "size_bytes": tokenizer.stat().st_size,
+    }
+    tokenizer.write_bytes(b"corrupted")
+    with pytest.raises(ValidationError, match="SHA-256"):
+        assemble_package(**arguments)

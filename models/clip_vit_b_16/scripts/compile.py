@@ -381,6 +381,10 @@ def _write_compile_outputs(
             }
             for component_id in COMPONENT_IDS
         ],
+        "runtime_files": [
+            {"path": f"text_encoder/{name}", "sha256": sha256_file(output_dir / "text_encoder" / name)[0]}
+            for name in ("tokenizer.json", "token_embeddings.npy")
+        ],
         "derived_graphs": [
             {"component_id": component_id, "sha256": graph_hashes[component_id]} for component_id in COMPONENT_IDS
         ],
@@ -434,6 +438,8 @@ def compile_model(source: Path, profile_id: str, fidelity_dataset: Path, output_
         _write_fidelity(temporary_dir, profile_id, fidelity_config, precision)
         output_dir.mkdir(parents=True)
         archives = _copy_component_archives(temporary_dir, profile_id, output_dir)
+        for name in ("tokenizer.json", "token_embeddings.npy"):
+            shutil.copyfile(temporary_dir / "graphs" / "text_encoder" / name, output_dir / "text_encoder" / name)
         shutil.copyfile(temporary_dir / FIDELITY_REPORT, output_dir / FIDELITY_REPORT)
         _write_compile_outputs(output_dir, profile_id, archives, graph_hashes)
         return archives

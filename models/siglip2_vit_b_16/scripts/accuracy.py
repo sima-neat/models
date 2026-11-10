@@ -3,8 +3,8 @@
 At evaluation startup, encode the upstream ImageNet class prompts with the compiled text encoder.
 Normalize each prompt embedding, average within each class and normalize again. Keep the resulting
 1,000 class vectors in memory and rank their cosine similarities to each compiled image embedding.
-Text tokenization and embedding-table lookup run on CPU. Source assets are fetched from the pinned
-upstream checkpoint, or read from --checkpoint-dir; generated class vectors are never persisted.
+Text tokenization and embedding-table lookup run on CPU using the packaged tokenizer and lookup weights.
+Generated class vectors are never persisted.
 
 Recipe: Big Vision commit 0127fb6b337ee2a27bf4e54dea79cff176527356, configs/proj/image_text/common.py
 get_disclf(224) and evaluators/proj/image_text/discriminative_classifier.py defaults: canonicalized
@@ -121,10 +121,6 @@ TEMPLATES = (
 
 COMPONENTS = {"image_encoder", "text_encoder"}
 EMBED_DIM = 768
-SOURCE_REPOSITORY = "google/siglip2-base-patch16-224"
-SOURCE_REVISION = "75de2d55ec2d0b4efc50b3e9ad70dba96a7b2fa2"
-WEIGHTS_FILE = "model.safetensors"
-TOKEN_EMBEDDING = "text_model.embeddings.token_embedding.weight"
 TEXT_LENGTH = 64
 
 # Images decode on worker threads while the MPK runs; Pillow releases the GIL while it decodes and resizes.
@@ -206,25 +202,15 @@ def class_scores(outputs: list[pyneat.Tensor], classes: np.ndarray) -> np.ndarra
     return classes @ normalize(embedding)
 
 
-def load_text_inputs(checkpoint_dir: Path | None = None):
-    """Load the tokenizer and CPU lookup table, without loading a CPU transformer."""
-    from huggingface_hub import hf_hub_download
+def load_text_inputs(resources: Path):
+    """Read the CPU tokenizer and lookup weights shipped with the compiled encoders."""
     from tokenizers import Tokenizer
 
-    def asset(name):
-        return (
-            checkpoint_dir / name
-            if checkpoint_dir is not None
-            else Path(hf_hub_download(SOURCE_REPOSITORY, name, revision=SOURCE_REVISION))
-        )
-
-    tokenizer = Tokenizer.from_file(str(asset("tokenizer.json")))
+    directory = resources / "text_encoder"
+    tokenizer = Tokenizer.from_file(str(directory / "tokenizer.json"))
     tokenizer.enable_truncation(max_length=TEXT_LENGTH)
     tokenizer.enable_padding(length=TEXT_LENGTH, pad_id=0, pad_token="<pad>")
-    from safetensors import safe_open
-
-    with safe_open(asset(WEIGHTS_FILE), framework="np") as weights:
-        table = weights.get_tensor(TOKEN_EMBEDDING)
+    table = np.load(directory / "token_embeddings.npy", mmap_mode="r", allow_pickle=False)
     if table.shape != (256000, EMBED_DIM) or table.dtype != np.float32:
         raise ValueError(f"unexpected token embedding table: {table.shape}, {table.dtype}")
     return tokenizer, table
@@ -327,7 +313,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dataset", required=True, help="imagenet-2012-val=<extracted directory>")
     parser.add_argument("--output", type=Path, required=True, help="directory for model-report.json")
     parser.add_argument(
-        "--checkpoint-dir", type=Path, help="local pinned tokenizer.json and checkpoint; default: HF cache/download"
+        "--resources",
+        type=Path,
+        required=True,
+        help="package root containing text_encoder/tokenizer.json and token_embeddings.npy",
     )
     parser.add_argument("--limit", type=int, help="measure the first images only (local runs only)")
     args = parser.parse_args(argv)
@@ -340,7 +329,7 @@ def main(argv: list[str] | None = None) -> int:
     available = sorted(labels)
     names = available[: args.limit] if args.limit else available
 
-    tokenizer, table = load_text_inputs(args.checkpoint_dir)
+    tokenizer, table = load_text_inputs(args.resources)
     classes = build_class_embeddings(mpks["text_encoder"], tokenizer, table)
     del tokenizer, table
     model = pyneat.Model(str(mpks["image_encoder"]), tensor_options())

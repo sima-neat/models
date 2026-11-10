@@ -605,3 +605,23 @@ def test_publish_conversion_cli_rejects_unvalidated_output(validation):
         main(["publish-conversion", "yolo26n", "output", "--api-url", "https://registry.test",
               "--bucket", "artifacts", "--environment", "production", "--validation", validation])
     assert error.value.code == 2
+
+
+def test_model_runtime_directory_verifies_assets_and_omits_unneeded_arguments(tmp_path, capsys):
+    import hashlib
+
+    profile = tmp_path / "test/w16a16"
+    profile.mkdir(parents=True)
+    arguments = ["model-runtime-directory", str(tmp_path), "--model", "test", "--build-profile", "w16a16"]
+    assert main(arguments) == 0
+    assert capsys.readouterr().out == ""
+    asset = profile / "tokenizer.json"
+    asset.write_text("{}")
+    (profile / "compile-outputs.json").write_text(json.dumps({
+        "runtime_files": [{"path": asset.name, "sha256": hashlib.sha256(asset.read_bytes()).hexdigest()}],
+    }))
+    assert main(arguments) == 0
+    assert capsys.readouterr().out.strip() == str(profile)
+    asset.write_text("corrupted")
+    assert main(arguments) != 0
+    assert "SHA-256" in capsys.readouterr().err

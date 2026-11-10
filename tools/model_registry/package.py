@@ -6,12 +6,12 @@ import os
 import shutil
 import zipfile
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from jsonschema import Draft202012Validator
 
-from .artifact import deployment_files, verify_artifact
+from .artifact import deployment_files, read_runtime_files, verify_artifact
 from .errors import ValidationError
 from .fetch import sha256_file
 from .mla_stage_simulation import SIMULATION_FILE
@@ -44,8 +44,10 @@ def _zip_info(name: str) -> zipfile.ZipInfo:
 
 
 def _add_file(archive: zipfile.ZipFile, name: str, path: Path) -> None:
-    with path.open("rb") as stream:
-        archive.writestr(_zip_info(name), stream.read())
+    info = _zip_info(name)
+    info.file_size = path.stat().st_size
+    with path.open("rb") as source, archive.open(info, "w") as target:
+        shutil.copyfileobj(source, target)
 
 
 def _link_or_copy(source: str, destination: str) -> str:
@@ -174,7 +176,18 @@ def assemble_package(
         if package_path in occupied_paths:
             raise ValidationError(f"package path is declared more than once: {package_path}")
         occupied_paths.add(package_path)
-    packaged_files = sorted(component_files)
+    profile_dir = compiled / model_id / build_profile_id
+    runtime_files = [(item["path"], profile_dir / item["path"]) for item in read_runtime_files(profile_dir)]
+    if native_deployment is not None and runtime_files:
+        raise ValidationError("LLiMa supporting files belong in its deployment manifest")
+    for package_path, _ in runtime_files:
+        if package_path in occupied_paths:
+            raise ValidationError(f"package path is declared more than once: {package_path}")
+        occupied_paths.add(package_path)
+    for package_path in occupied_paths:
+        if any(parent.as_posix() in occupied_paths for parent in PurePosixPath(package_path).parents):
+            raise ValidationError(f"package paths overlap: {package_path}")
+    packaged_files = sorted((*component_files, *runtime_files))
     installed_files = [
         {"path": name, "sha256": sha256_file(path)[0], "size_bytes": path.stat().st_size}
         for name, path in packaged_files
@@ -190,7 +203,7 @@ def assemble_package(
         "target": profiles[build_profile_id]["target"],
         "provenance": provenance_identity or {},
         "components": component_entries,
-        "resources": [],  # sima-cli reads the field; no package carries extra resources.
+        "resources": [],  # Supporting files derived during compilation are recorded in files.
         "files": installed_files,
         "license": model["license"],
     }

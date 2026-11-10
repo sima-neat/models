@@ -293,6 +293,14 @@ def test_build_holds_both_encoders_and_matches_the_onnx(
     assert [item["component_id"] for item in outputs["outputs"]] == ["image_encoder", "text_encoder"]
     for item in outputs["outputs"]:
         recipe.audit_mpk(compiled / item["mpk_path"], item["component_id"])
+    from model_registry.artifact import read_runtime_files
+
+    assert [item["path"] for item in read_runtime_files(compiled)] == [
+        "text_encoder/tokenizer.json", "text_encoder/token_embeddings.npy",
+    ]
+    table = np.load(compiled / "text_encoder/token_embeddings.npy", mmap_mode="r", allow_pickle=False)
+    assert table.shape == (49408, recipe.COMPONENT_GRAPHS["text_encoder"]["inputs"]["token_embeds"][-1])
+    assert table.dtype == np.float32
     fidelity = json.loads((compiled / "fidelity.json").read_text(encoding="utf-8"))
     _check_fidelity(fidelity, build_profile)
 

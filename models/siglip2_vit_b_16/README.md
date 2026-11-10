@@ -22,10 +22,10 @@ as a 224×224×3 (height, width, channel) float tensor, with Neat's resize, colo
 conversion, and normalization turned off.
 
 **Text input.** Lowercase the prompt and tokenize it with SigLIP 2's Gemma
-tokenizer (`tokenizer.json` in the source checkpoint), which appends the
+tokenizer (`text_encoder/tokenizer.json` in the package), which appends the
 end-of-sequence token, then pad it to 64 tokens with the padding token. On the
-CPU, replace each token ID with its 768-value row of the checkpoint's token
-embedding table, `text_model.embeddings.token_embedding.weight`. This gives the
+CPU, replace each token ID with its 768-value row of the packaged
+`text_encoder/token_embeddings.npy` lookup table. This gives the
 64×768 float tensor `token_embeds`; pass it as a 1×64×768 tensor with height,
 width, channel (HWC) axes.
 
