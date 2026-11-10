@@ -50,6 +50,24 @@ def _pfm(path: Path, disparity: np.ndarray) -> None:
     path.write_bytes(b"Pf\n960 540\n-1.0\n" + np.flipud(disparity).astype("<f4").tobytes())
 
 
+def _test_list(dataset: Path, test_list: str) -> list[np.ndarray]:
+    """Three listed test pairs of uniform grey views, and their true disparities. The first truth counts only 10
+    pixels; the other two count every pixel."""
+    sparse = np.zeros((540, 960), np.float32)
+    sparse[:2, :5] = 50.0
+    dense = np.full((540, 960), 50.0, np.float32)
+    lines = []
+    for index, (left, right, truth) in enumerate([(60, 90, sparse), (30, 120, dense), (150, 210, dense)]):
+        views = [f"FlyingThings3D/frames_finalpass/TEST/A/000{index}/{view}/0006.png" for view in ("left", "right")]
+        disparity = f"FlyingThings3D/disparity/TEST/A/000{index}/left/0006.pfm"
+        _png(dataset / views[0], left)
+        _png(dataset / views[1], right)
+        _pfm(dataset / disparity, truth)
+        lines.append(f"{views[0]} {views[1]} {disparity}\n")
+    (dataset / test_list).write_text("".join(lines), encoding="utf-8")
+    return [sparse, dense, dense]
+
+
 def _neat(disparities: list[np.ndarray], frames: list[np.ndarray]) -> types.SimpleNamespace:
     """PyNeat for the script: its runner records each input frame and returns the next disparity, NHWC as Neat does."""
     outputs = iter(disparities)
@@ -62,16 +80,27 @@ def _neat(disparities: list[np.ndarray], frames: list[np.ndarray]) -> types.Simp
             return [types.SimpleNamespace(to_numpy=lambda copy=False: disparity)]
 
     class Model:
-        def __init__(self, path: str) -> None:
+        def __init__(self, path: str, options: types.SimpleNamespace) -> None:
             assert path == "raft_stereo_realtime_mpk.tar.gz"
+            # The frames arrive as model input: Neat must not resize, convert or normalize them again.
+            preprocess = options.preprocess
+            assert preprocess.kind == "tensor"
+            assert {preprocess.resize.enable, preprocess.color_convert.enable, preprocess.normalize.enable} == {"off"}
 
         def build(self, tensors: list[np.ndarray]) -> Runner:
             return Runner()
+
+    def model_options() -> types.SimpleNamespace:
+        stage = types.SimpleNamespace
+        return stage(preprocess=stage(kind=None, resize=stage(), color_convert=stage(), normalize=stage()))
 
     return types.SimpleNamespace(
         __version__="3.0.0",
         build_info=lambda: {"version": "3.0.0"},
         Model=Model,
+        ModelOptions=model_options,
+        InputKind=types.SimpleNamespace(Tensor="tensor"),
+        AutoFlag=types.SimpleNamespace(Off="off"),
         Tensor=types.SimpleNamespace(from_numpy=lambda array, copy: array),
     )
 
@@ -81,24 +110,10 @@ def test_each_pair_runs_side_by_side_and_scores_average_over_pairs(
 ) -> None:
     accuracy = load_script("accuracy")
     dataset = tmp_path / "scene_flow"
-    # The first pair's truth counts only 10 pixels, 4 px off; the other two count every pixel, 1 px off.
-    sparse = np.zeros((540, 960), np.float32)
-    sparse[:2, :5] = 50.0
-    dense = np.full((540, 960), 50.0, np.float32)
-    lines = []
-    for index, (left, right, truth) in enumerate([(60, 90, sparse), (30, 120, dense), (150, 210, dense)]):
-        views = [f"FlyingThings3D/frames_finalpass/TEST/A/000{index}/{view}/0006.png" for view in ("left", "right")]
-        disparity = f"FlyingThings3D/disparity/TEST/A/000{index}/left/0006.pfm"
-        _png(dataset / views[0], left)
-        _png(dataset / views[1], right)
-        _pfm(dataset / disparity, truth)
-        lines.append(f"{views[0]} {views[1]} {disparity}\n")
-    (dataset / accuracy.TEST_LIST).write_text("".join(lines), encoding="utf-8")
+    sparse, dense, _ = _test_list(dataset, accuracy.TEST_LIST)
     frames: list[np.ndarray] = []
-    neat = _neat([sparse + 4, dense + 1, dense + 1], frames)
-    # The script runs the MPK through its pyneat; model_report reads the runtime's version from the same module.
-    monkeypatch.setattr(accuracy, "pyneat", neat)
-    monkeypatch.setitem(sys.modules, "pyneat", neat)
+    # The first pair's disparity is 4 px off its 10 counted pixels; the other two are 1 px off every pixel.
+    monkeypatch.setitem(sys.modules, "pyneat", _neat([sparse + 4, dense + 1, dense + 1], frames))
 
     accuracy.main(
         [
@@ -122,6 +137,38 @@ def test_each_pair_runs_side_by_side_and_scores_average_over_pairs(
     # Each pair scores alone: EPE 4, 1 and 1 px, D1-all 100% (4 px is over 3 px and 5% of 50), 0% and 0%. Their mean
     # is 2 px and 33.3%; their median would be 1 px and 0%, and pooling the pixels about 1 px and 0%.
     assert result["metrics"] == pytest.approx({"epe": 2.0, "d1_all": 100 / 3})
+
+
+def test_fp32_baseline_scores_the_onnx_as_accuracy_scores_the_mpk(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, load_script: Callable[[str], ModuleType]
+) -> None:
+    baseline = load_script("fp32_baseline_accuracy")
+    accuracy = baseline.accuracy
+    dataset = tmp_path / "scene_flow"
+    sparse, dense, _ = _test_list(dataset, accuracy.TEST_LIST)
+    outputs = iter([sparse + 4, dense + 1, dense + 1])
+    feeds: list[np.ndarray] = []
+
+    class Session:
+        def __init__(self, path: str, providers: list[str]) -> None:
+            assert path == "model.onnx"
+
+        def run(self, names: None, inputs: dict[str, np.ndarray]) -> list[np.ndarray]:
+            feeds.append(inputs["stereo"])
+            return [next(outputs).reshape(1, 1, 540, 960)]
+
+    monkeypatch.setitem(sys.modules, "onnxruntime", types.SimpleNamespace(InferenceSession=Session))
+    output = tmp_path / "fp32-baseline.json"
+
+    baseline.main(["--onnx", "model.onnx", "--dataset", f"scene-flow-val={dataset}", "--output", str(output)])
+
+    # The ONNX takes the frame channels-first, the layout surgery.py exports: [1, 3, 540, 1920].
+    assert [feed.shape for feed in feeds] == [(1, 3, 540, 1920)] * 3
+    scene_flow = load_script("scene_flow")
+    np.testing.assert_allclose(feeds[0][0, :, 0, 960], (90 / 255 - scene_flow.MEAN) / scene_flow.STD, rtol=1e-6)
+    # The same disparities score as test_each_pair_runs_side_by_side_and_scores_average_over_pairs scores them.
+    result = json.loads(output.read_text(encoding="utf-8"))
+    assert result == {"pairs": 3, "metrics": {"epe": 2.0, "d1_all": round(100 / 3, 4)}}
 
 
 def test_accuracy_meets_its_expected_values(accuracy: dict[str, Any], model_dir: Path, build_profile: str) -> None:

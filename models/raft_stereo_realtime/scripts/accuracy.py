@@ -26,17 +26,15 @@ from pathlib import Path
 
 import model_report
 import numpy as np
-import pyneat
 from scene_flow import HEIGHT, MAX_DISPARITY, WIDTH, Pair, end_point_error, preprocess_image, read_pfm
 
+DATASET = "scene-flow-val"
 # Each line names a pair's left view, right view and left-view disparity, relative to the dataset directory.
 TEST_LIST = "sceneflow_finalpass_test.txt"
 SPLIT = "test"
 # D1 counts a pixel whose error exceeds both D1_PIXELS and D1_FRACTION of its true disparity.
 D1_PIXELS, D1_FRACTION = 3.0, 0.05
-# Neat returns the left view's disparity NHWC, one channel.
-OUTPUT_SHAPE = (1, HEIGHT, WIDTH, 1)
-# Pairs decode and normalize on worker threads while the MPK runs; Pillow and NumPy release the GIL for most of it.
+# Pairs decode and normalize on worker threads while the model runs; Pillow and NumPy release the GIL for most of it.
 WORKERS = 4
 PREFETCH = 8
 
@@ -61,8 +59,15 @@ def listed_pairs(dataset: Path) -> list[Pair]:
     return pairs
 
 
+def sampled_pairs(pairs: list[Pair], limit: int | None) -> list[Pair]:
+    """Every pair, or a seeded sample of limit pairs in list order for a quick local run."""
+    if not limit:
+        return pairs
+    return [pairs[index] for index in sorted(random.Random(0).sample(range(len(pairs)), limit))]
+
+
 def read_pair(dataset: Path, pair: Pair) -> tuple[np.ndarray, np.ndarray]:
-    """One pair's model input, the [left | right] side-by-side frame, and its left view's true disparity."""
+    """One pair's model input, the [left | right] side-by-side HWC frame, and its left view's true disparity."""
     left, right, disparity = (dataset / name for name in pair)
     frame = np.concatenate([preprocess_image(left.read_bytes()), preprocess_image(right.read_bytes())], axis=1)
     return frame, read_pfm(disparity.read_bytes())
@@ -78,6 +83,22 @@ def d1_all(disparity: np.ndarray, truth: np.ndarray) -> float:
     return float(100 * np.mean((error > D1_PIXELS) & (error / truth[counted] > D1_FRACTION)))
 
 
+def evaluate(dataset: Path, pairs: list[Pair], disparity_of: Callable[[np.ndarray], np.ndarray]) -> dict[str, float]:
+    """Score disparity_of, which maps one HWC frame to its 540x960 disparity, on the pairs: mean EPE and D1-all."""
+    epe, d1 = [], []
+    started = time.monotonic()
+    frames = prefetched(lambda pair: read_pair(dataset, pair), pairs)
+    for count, (pair, (frame, truth)) in enumerate(zip(pairs, frames), start=1):
+        disparity = disparity_of(frame)
+        if disparity.size != HEIGHT * WIDTH or not np.isfinite(disparity).all():
+            raise ValueError(f"unexpected disparity for {pair[0]}: shape {disparity.shape}")
+        epe.append(end_point_error(disparity, truth))
+        d1.append(d1_all(disparity, truth))
+        if count == 1 or count % 250 == 0 or count == len(pairs):
+            log(f"{count}/{len(pairs)} pairs, {(time.monotonic() - started) / count * 1000:.0f} ms/pair")
+    return {"epe": float(np.mean(epe)), "d1_all": float(np.mean(d1))}
+
+
 def parse_mpks(values: list[str]) -> Path:
     mpks = dict(value.split("=", 1) for value in values)
     if set(mpks) != {"model"}:
@@ -90,42 +111,43 @@ def log(*values: object) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--mpk", action="append", required=True, help="model=<path>")
-    parser.add_argument("--dataset", required=True, help="scene-flow-val=<extracted directory>")
+    parser.add_argument("--dataset", required=True, help=f"{DATASET}=<extracted directory>")
     parser.add_argument("--output", type=Path, required=True, help="directory for model-report.json")
     parser.add_argument("--limit", type=int, help="measure a seeded sample of pairs (local runs only)")
     args = parser.parse_args(argv)
-    dataset_id, dataset_dir = args.dataset.split("=", 1)
-    dataset = Path(dataset_dir)
-
+    dataset_id, directory = args.dataset.split("=", 1)
+    if dataset_id != DATASET:
+        raise SystemExit(f"--dataset must be {DATASET}, got {dataset_id}")
+    dataset = Path(directory)
     available = listed_pairs(dataset)
-    if args.limit:
-        pairs = [available[index] for index in sorted(random.Random(0).sample(range(len(available)), args.limit))]
-    else:
-        pairs = available
+    pairs = sampled_pairs(available, args.limit)
 
-    model = pyneat.Model(str(parse_mpks(args.mpk)))
+    import pyneat
+
+    options = pyneat.ModelOptions()
+    # The frames arrive normalized, as model input: Neat only quantizes and tessellates them.
+    options.preprocess.kind = pyneat.InputKind.Tensor
+    options.preprocess.resize.enable = pyneat.AutoFlag.Off
+    options.preprocess.color_convert.enable = pyneat.AutoFlag.Off
+    options.preprocess.normalize.enable = pyneat.AutoFlag.Off
+    model = pyneat.Model(str(parse_mpks(args.mpk)), options)
     runner = None
-    epe, d1 = [], []
-    started = time.monotonic()
-    frames = prefetched(lambda pair: read_pair(dataset, pair), pairs)
-    for count, (pair, (frame, truth)) in enumerate(zip(pairs, frames), start=1):
+
+    def disparity_of(frame: np.ndarray) -> np.ndarray:
+        nonlocal runner
         tensor = pyneat.Tensor.from_numpy(frame, copy=False)
         if runner is None:
             runner = model.build([tensor])
-        disparity = runner.run([tensor], timeout_ms=120000)[0].to_numpy(copy=False)
-        if disparity.shape != OUTPUT_SHAPE or not np.isfinite(disparity).all():
-            raise ValueError(f"unexpected disparity for {pair[0]}: shape {disparity.shape}")
-        epe.append(end_point_error(disparity, truth))
-        d1.append(d1_all(disparity, truth))
-        if count == 1 or count % 250 == 0 or count == len(pairs):
-            log(f"{count}/{len(pairs)} pairs, {(time.monotonic() - started) / count * 1000:.0f} ms/pair")
+        return runner.run([tensor], timeout_ms=120000)[0].to_numpy(copy=False)
 
+    started = time.monotonic()
+    metrics = evaluate(dataset, pairs, disparity_of)
     report = model_report.from_accuracy(
         {
             dataset_id: {
-                "metrics": {"epe": float(np.mean(epe)), "d1_all": float(np.mean(d1))},
+                "metrics": metrics,
                 "split": SPLIT,
                 "evaluated_samples": len(pairs),
                 "available_samples": len(available),
@@ -134,8 +156,7 @@ def main(argv: list[str] | None = None) -> int:
         }
     )
     report.save(args.output)
-    measured = report.document["datasets"][dataset_id]["metrics"]
-    print(json.dumps({name: round(value, 4) for name, value in measured.items()}))
+    print(json.dumps({name: round(value, 4) for name, value in metrics.items()}))
     return 0
 
 
