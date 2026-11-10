@@ -62,7 +62,7 @@ def _model(nodes, inputs, outputs, initializers) -> onnx.ModelProto:
         [helper.make_tensor_value_info(name, onnx.TensorProto.FLOAT, shape) for name, shape in outputs.items()],
         [onnx.numpy_helper.from_array(value, name) for name, value in initializers.items()],
     )
-    return helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)])
+    return helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)], ir_version=10)
 
 
 def _run(model: onnx.ModelProto, feeds: dict[str, np.ndarray]) -> list[np.ndarray]:

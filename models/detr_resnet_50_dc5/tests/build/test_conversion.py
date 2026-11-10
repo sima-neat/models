@@ -65,7 +65,9 @@ def test_fixed_onnx_interface(tmp_path, case, converter: ModuleType):
         for value in values[1:]
     ]
     graph = helper.make_graph(nodes, "fixture", values[:1], values[1:])
-    model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 18 if case == "opset" else 17)])
+    model = helper.make_model(
+        graph, opset_imports=[helper.make_opsetid("", 18 if case == "opset" else 17)], ir_version=10
+    )
     path = tmp_path / "model.onnx"
     onnx.save(model, path)
     if case == "valid":
