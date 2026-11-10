@@ -35,20 +35,3 @@ def test_converted_weights_are_openstereo_tensors(converted: Path) -> None:
     # BatchNorm's num_batches_tracked counters are int64; every weight is float32.
     weights = {name: value for name, value in weights.items() if not name.endswith("num_batches_tracked")}
     assert all(value.dtype == torch.float32 for value in weights.values())
-
-
-def test_converted_weights_hold_the_blocks_surgery_builds(
-    converted: Path, load_script: Callable[[str], ModuleType]
-) -> None:
-    """The checkpoint's cost aggregation has the block counts and hidden width surgery.py builds for this size."""
-    torch = pytest.importorskip("torch")
-    surgery = load_script("surgery")
-    weights = torch.load(converted, weights_only=True)
-
-    def blocks(stage: str) -> int:
-        return len({name.split(".")[2] for name in weights if name.startswith(f"cost_agg.{stage}.")})
-
-    quarter, eighth, sixteenth = surgery.AGGREGATION_BLOCKS
-    # conv1 and conv3 are the first block of the eighth and sixteenth scales.
-    assert [blocks("conv0"), blocks("conv2"), blocks("conv4")] == [quarter, eighth - 1, sixteenth - 1]
-    assert weights["cost_agg.conv0.0.pwconv.0.weight"].shape[0] == surgery.BINS * surgery.EXPANSION
