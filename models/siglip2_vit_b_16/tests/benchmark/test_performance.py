@@ -2,20 +2,12 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from typing import Any
 
 import numpy as np
 import pytest
 from model_registry.model_tests import measured_shortfalls
-
-
-class _Tensor:
-    def __init__(self, array: np.ndarray) -> None:
-        self.array = array
-
-    def to_numpy(self, copy: bool = True) -> np.ndarray:
-        return self.array.copy() if copy else self.array
 
 
 def test_mpk_arguments_name_exactly_both_encoders(load_script: Callable[[str], ModuleType]) -> None:
@@ -27,7 +19,7 @@ def test_mpk_arguments_name_exactly_both_encoders(load_script: Callable[[str], M
         script.parse_mpks(["image_encoder=/data/image_mpk.tar.gz"])
 
 
-def test_the_cpu_looks_the_check_prompt_up_for_the_text_encoder(load_script: Callable[[str], ModuleType]) -> None:
+def test_the_cpu_looks_the_probe_prompt_up_for_the_text_encoder(load_script: Callable[[str], ModuleType]) -> None:
     script = load_script("performance")
     prompt = script.load_prompt()
 
@@ -35,18 +27,6 @@ def test_the_cpu_looks_the_check_prompt_up_for_the_text_encoder(load_script: Cal
     assert embeds.shape == (1, 64, 768)
     for position, token in enumerate(prompt.token_ids):
         np.testing.assert_array_equal(embeds[0, position], prompt.rows[token])
-
-
-def test_the_cpu_step_scores_the_image_against_the_pooled_text(load_script: Callable[[str], ModuleType]) -> None:
-    script = load_script("performance")
-    image = np.zeros(768, np.float32)
-    image[0] = 2.0
-    text = np.zeros((1, 768), np.float32)
-    text[0, :2] = [1.0, 1.0]
-
-    embedding = script.image_embedding([_Tensor(np.zeros((1, 1000), np.float32)), _Tensor(image[None])])
-    np.testing.assert_array_equal(embedding, image)
-    assert script.similarity(embedding, [_Tensor(text)]) == pytest.approx(np.sqrt(0.5))
 
 
 def test_performance_meets_its_expected_values(
@@ -74,3 +54,55 @@ def test_mla_stats_collected(performance: dict[str, Any]) -> None:
         assert (layer_stats["status"], stage_stats["status"]) == ("ok", "ok"), component_id
         assert any(layer["latency_us"] > 0 for layer in layer_stats["layers"]), component_id
         assert stage_stats["stages"], component_id
+
+
+def test_each_encoder_has_an_independent_core_benchmark(tmp_path, monkeypatch, load_script):
+    script = load_script("performance")
+    image, text = object(), object()
+    monkeypatch.setattr(script, "sample_image", lambda dataset: Path("sample.JPEG"))
+    monkeypatch.setattr(script, "frame_tensor", lambda path: image)
+    monkeypatch.setattr(script, "load_prompt", lambda: "prompt")
+    monkeypatch.setattr(script, "look_up", lambda prompt: text)
+    monkeypatch.setattr(script.pyneat, "BenchmarkOptions", SimpleNamespace)
+    monkeypatch.setattr(
+        script.pyneat,
+        "ModelOptions",
+        lambda: SimpleNamespace(
+            preprocess=SimpleNamespace(
+                resize=SimpleNamespace(), normalize=SimpleNamespace(), color_convert=SimpleNamespace()
+            )
+        ),
+    )
+    measured, combined, saved = [], [], []
+
+    class Model:
+        def __init__(self, mpk, options):
+            self.mpk, self.options = mpk, options
+
+        def benchmark(self, options):
+            measured.append((self.mpk, self.options, options))
+            return SimpleNamespace(fps=100.0 * len(measured), latency_ms=10.0 / len(measured))
+
+    monkeypatch.setattr(script.pyneat, "Model", Model)
+    monkeypatch.setattr(
+        script.model_report, "from_performance", lambda benchmark, models, **kw: (benchmark, models, kw)
+    )
+    monkeypatch.setattr(
+        script.model_report,
+        "from_component_performance",
+        lambda reports: combined.append(reports) or SimpleNamespace(save=saved.append),
+    )
+    script.benchmark_encoders(
+        {"image_encoder": Path("image.tar.gz"), "text_encoder": Path("text.tar.gz")},
+        "imagenet-2012-val",
+        tmp_path,
+        tmp_path / "out",
+    )
+    assert [item[0] for item in measured] == ["image.tar.gz", "text.tar.gz"]
+    assert [item[2].inputs for item in measured] == [[image], [text]]
+    assert measured[0][1].preprocess.kind == script.pyneat.InputKind.Image
+    assert measured[1][1].preprocess.kind == script.pyneat.InputKind.Tensor
+    assert all(options.include_mla_layer_stats and options.include_mla_stage_stats for _, _, options in measured)
+    assert list(combined[0]) == ["image_encoder", "text_encoder"]
+    assert combined[0]["image_encoder"][0].fps != combined[0]["text_encoder"][0].fps
+    assert saved == [tmp_path / "out"]

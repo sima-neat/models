@@ -10,7 +10,9 @@ from types import ModuleType
 from unittest.mock import MagicMock, call
 
 import numpy as np
+import onnx
 import pytest
+from onnx import numpy_helper
 from PIL import Image
 
 MODEL_DIR = Path(__file__).resolve().parents[2]
@@ -124,12 +126,12 @@ def test_compile_reads_both_encoders_of_each_build_profile(load_script: Callable
         parameters = recipe._component_parameters(metadata, profile["id"])
         assert list(parameters) == list(recipe.COMPONENT_IDS) == ["image_encoder", "text_encoder"]
         assert {item["precision"] for item in parameters.values()} == {profile["id"]}
-        # Both encoders calibrate: AFE needs calibrated ranges even at BF16.
+        # Retain the validated calibrated recipe for both encoders.
         assert all("calibration_bins" in item for item in parameters.values())
         assert recipe._precision_label(parameters) == profile["id"].upper()
 
 
-@pytest.mark.parametrize("precision", ["w8a8", "w8a16", "w16a16"])
+@pytest.mark.parametrize("precision", ["w8a16", "w16a16"])
 def test_the_quantization_recipe_follows_the_precision(
     monkeypatch: pytest.MonkeyPatch, load_script: Callable[[str], ModuleType], precision: str
 ) -> None:
@@ -137,14 +139,7 @@ def test_the_quantization_recipe_follows_the_precision(
     for name in ("quantization_scheme", "bfloat16_scheme", "HistogramMSEMethod", "default_quantization"):
         monkeypatch.setattr(recipe, name, MagicMock(name=name))
     recipe._quantization_config({"precision": precision, "calibration_bins": 2048})
-    if precision == "w8a8":
-        # The held-back w8a8 profile keeps its recipe: INT8 activations per tensor, INT8 weights per channel.
-        assert recipe.quantization_scheme.call_args_list == [
-            call(asymmetric=True, per_channel=False, bits=8),
-            call(asymmetric=False, per_channel=True, bits=8),
-        ]
-        recipe.bfloat16_scheme.assert_not_called()
-    elif precision == "w8a16":
+    if precision == "w8a16":
         # BF16 activations, INT8 weights per channel.
         assert recipe.quantization_scheme.call_args_list == [call(asymmetric=False, per_channel=True, bits=8)]
         recipe.bfloat16_scheme.assert_called_once_with()
@@ -154,7 +149,7 @@ def test_the_quantization_recipe_follows_the_precision(
     # Only w8a16 scales activations per token.
     per_token = [c[1] for c in recipe.default_quantization.mock_calls if c[0].endswith("with_per_token_quant")]
     assert per_token == [(precision == "w8a16",)]
-    # Every precision calibrates: AFE needs calibrated ranges even at BF16.
+    # Retain the validated calibration recipe.
     recipe.HistogramMSEMethod.assert_called_once_with(2048)
     with pytest.raises(ValueError, match="unsupported precision"):
         recipe._quantization_config({"precision": "w4a8", "calibration_bins": 2048})
@@ -234,9 +229,21 @@ def test_compile_main_rejects_an_invocation_not_named_after_the_build_profile(
     load_script: Callable[[str], ModuleType],
 ) -> None:
     recipe = load_script("compile")
-    arguments = ["compile.py", "--model", str(tmp_path / "model.onnx"), "--output-dir", str(tmp_path / "out"),
-                 "--dataset", str(tmp_path), "--fidelity-dataset", str(tmp_path), "--build-profile", "w16a16",
-                 "--compile-invocation", "w8a8"]
+    arguments = [
+        "compile.py",
+        "--model",
+        str(tmp_path / "weights.pth"),
+        "--output-dir",
+        str(tmp_path / "out"),
+        "--dataset",
+        str(tmp_path),
+        "--fidelity-dataset",
+        str(tmp_path),
+        "--build-profile",
+        "w16a16",
+        "--compile-invocation",
+        "w8a8",
+    ]
     monkeypatch.setattr("sys.argv", arguments)
     with pytest.raises(SystemExit) as stopped:
         recipe.main()
@@ -258,3 +265,107 @@ def test_build_holds_both_encoders_and_bf16_matches_the_onnx(
     if build_profile == "w16a16":
         # BF16 keeps every output within rounding of the ONNX; a broken operator shows up as a low cosine.
         assert all(metric["cosine_similarity"] > 0.99 for metric in fidelity["metrics"]), fidelity["metrics"]
+
+
+ROOT = Path(__file__).resolve().parents[4]
+TEXT_CHECK = ROOT / "models/siglip2_vit_b_16/scripts/text_encoder_check.npz"
+
+
+@pytest.fixture
+def exporter(load_script: Callable[[str], ModuleType]) -> ModuleType:
+    return load_script("surgery")
+
+
+def test_prompt_tables_are_openais_imagenet_classes_and_templates(exporter: ModuleType):
+    assert len(exporter.CLASS_NAMES) == exporter.CLASS_COUNT == 1000
+    assert (exporter.CLASS_NAMES[0], exporter.CLASS_NAMES[-1]) == ("tench", "toilet paper")
+    assert exporter.TEMPLATES[0] == "itap of a {}." and len(exporter.TEMPLATES) == 7
+    assert all(template.count("{}") == 1 for template in exporter.TEMPLATES)
+
+
+def test_prompts_are_lowercased_class_by_class(exporter: ModuleType):
+    assert exporter.prompts(["American robin", "tench"], ["a photo of a {}.", "art of the {}."]) == [
+        "a photo of a american robin.",
+        "art of the american robin.",
+        "a photo of a tench.",
+        "art of the tench.",
+    ]
+
+
+def test_the_text_check_prompts_use_each_template_on_classes_the_embedded_prompts_leave_out(exporter: ModuleType):
+    embedded = exporter.calibration_prompts()
+    assert len(embedded) == exporter.CALIBRATION_PROMPTS
+    assert embedded[:2] == ["itap of a tench.", "a bad photo of the american robin."]
+    check = exporter.check_prompts()
+    assert len(check) == len(exporter.TEMPLATES) and check[0] == "itap of a goldfish."
+    assert not set(check) & set(embedded)
+    embedded_classes = {index * exporter.CLASS_COUNT // len(embedded) for index in range(len(embedded))}
+    assert not embedded_classes & set(exporter.CHECK_CLASSES)
+    with np.load(TEXT_CHECK, allow_pickle=False) as saved:
+        assert saved["prompts"].tolist() == check, "the stored check holds these prompts"
+
+
+def test_text_check_uses_the_local_bundle_and_given_onnx(tmp_path, monkeypatch, capsys, exporter):
+    checkpoint, onnx_path, output = tmp_path / "weights.pth", tmp_path / "model.onnx", tmp_path / "check.npz"
+    written = []
+
+    def write_text_check(*arguments):
+        written.append(arguments)
+        output.write_bytes(b"check")
+
+    monkeypatch.setattr(exporter, "write_text_check", write_text_check)
+    for arguments in (["--text-check", str(output)], ["--output-dir", str(tmp_path), "--onnx", str(onnx_path)]):
+        monkeypatch.setattr("sys.argv", ["surgery.py", "--weights", str(checkpoint), *arguments])
+        with pytest.raises(SystemExit) as stopped:
+            exporter.main()
+        assert stopped.value.code == 2 and "--text-check and --onnx go together" in capsys.readouterr().err
+    monkeypatch.setattr(
+        "sys.argv", ["surgery.py", "--weights", str(checkpoint), "--text-check", str(output), "--onnx", str(onnx_path)]
+    )
+    exporter.main()
+    assert written == [(checkpoint.resolve(), onnx_path.resolve(), output.resolve())]
+
+
+def _interface_model(exporter: ModuleType, case: str) -> onnx.ModelProto:
+    helper = onnx.helper
+
+    def value(name: str) -> onnx.ValueInfoProto:
+        return helper.make_tensor_value_info(name, onnx.TensorProto.FLOAT, exporter.INTERFACE[name])
+
+    inputs = [value(name) for name in exporter.INPUTS]
+    outputs = [value(name) for name in exporter.OUTPUTS]
+    if case == "order":
+        outputs[:2] = outputs[1::-1]
+    elif case == "dtype":
+        outputs[-1].type.tensor_type.elem_type = onnx.TensorProto.DOUBLE
+    elif case == "shape":
+        outputs[0].type.tensor_type.shape.dim[0].dim_value = 2
+    nodes = []
+    for output in outputs:
+        dtype = output.type.tensor_type.elem_type
+        shape = [dim.dim_value for dim in output.type.tensor_type.shape.dim]
+        array = np.zeros(shape, dtype=np.float64 if dtype == onnx.TensorProto.DOUBLE else np.float32)
+        nodes.append(helper.make_node("Constant", [], [output.name], value=numpy_helper.from_array(array)))
+    graph = helper.make_graph(nodes, "fixture", inputs, outputs)
+    return helper.make_model(graph, opset_imports=[helper.make_opsetid("", 18 if case == "opset" else 17)])
+
+
+@pytest.mark.parametrize("case", ["valid", "opset", "order", "dtype", "shape"])
+def test_fixed_onnx_interface(tmp_path, case, exporter: ModuleType):
+    path = tmp_path / "model.onnx"
+    onnx.save(_interface_model(exporter, case), path)
+    if case == "valid":
+        exporter.validate_export(path)
+    else:
+        with pytest.raises(ValueError):
+            exporter.validate_export(path)
+
+
+@pytest.mark.parametrize("model_type", ["siglip", "siglip2"])
+def test_config_must_name_siglip(tmp_path, model_type, exporter: ModuleType):
+    (tmp_path / "config.json").write_text(json.dumps({"model_type": model_type}), encoding="utf-8")
+    if model_type == "siglip":
+        exporter.validate_config(tmp_path)
+    else:
+        with pytest.raises(ValueError, match="'siglip'"):
+            exporter.validate_config(tmp_path)

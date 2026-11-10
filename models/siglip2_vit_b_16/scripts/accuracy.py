@@ -1,10 +1,10 @@
 """Measure SigLIP 2 ViT-B/16 zero-shot ImageNet top-1 and top-5 accuracy with its MPKs on a Modalix board.
 
-The conversion bakes the 1,000 ImageNet class embeddings (OpenAI's class names and 7 selected prompt templates, run
+Surgery bakes the 1,000 ImageNet class embeddings (OpenAI's class names and 7 selected prompt templates, run
 through the text encoder in FP32) into the image encoder's logits output, so zero-shot classification runs the image
 encoder alone. The text encoder is checked first, as an application runs it. The board has no tokenizer, so
 text_encoder_check.npz holds 7 tokenized prompts, the token embedding rows they use, and each prompt's text embedding
-from the FP32 ONNX (convert.py --text-check writes it). The CPU looks each prompt's rows up, the text encoder's MPK
+from the FP32 ONNX (surgery.py --text-check writes it). The CPU looks each prompt's rows up, the text encoder's MPK
 embeds it, and the stage fails when any embedding's cosine similarity with the ONNX's is below MIN_TEXT_COSINE.
 """
 
@@ -88,7 +88,7 @@ def load_text_check(path: Path = TEXT_CHECK, sha256: str = TEXT_CHECK_SHA256) ->
     """The check's arrays, from a file with the SHA-256 the script names."""
     content = path.read_bytes()
     if hashlib.sha256(content).hexdigest() != sha256:
-        raise ValueError(f"{path.name} does not have TEXT_CHECK_SHA256; regenerate it with convert.py --text-check")
+        raise ValueError(f"{path.name} does not have TEXT_CHECK_SHA256; regenerate it with surgery.py --text-check")
     with np.load(io.BytesIO(content), allow_pickle=False) as arrays:
         return {name: arrays[name] for name in arrays.files}
 

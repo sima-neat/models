@@ -1,12 +1,9 @@
-"""Benchmark SigLIP 2 ViT-B/16 with Neat Core and save its report.
+"""Benchmark SigLIP 2's independent image and text encoders with Neat's benchmark API.
 
-Given --mpk image_encoder=<path> --mpk text_encoder=<path> and --dataset imagenet-2012-val=<extracted directory>,
-the script measures the whole model on one image-text pair per frame: Neat's preprocessing and the image encoder on
-one ImageNet image in a 720p frame, the CPU's token embedding lookup and the text encoder on a 64-token prompt, and
-their cosine similarity on the CPU, each stage working on a different frame at the same time. The package carries no
-tokenizer, so the prompt comes tokenized: the first prompt of text_encoder_check.npz, the file accuracy.py checks the
-text encoder with, which holds its token IDs and the embedding rows they use. The script also records each MPK's MLA
-layer and stage stats and its execution plan.
+The image benchmark includes Neat preprocessing of one dataset image in a 720p
+RGB frame. The text benchmark starts from one prompt's prepared 64x768 token
+embeddings. Tokenization, CPU lookup and cosine scoring are outside timing.
+Each encoder reports its own latency, throughput, telemetry and MLA statistics.
 """
 
 from __future__ import annotations
@@ -14,11 +11,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import io
-import queue
 import random
-import threading
-import time
-from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -27,24 +20,13 @@ import model_report
 import numpy as np
 import pyneat
 
-IMAGE_SIZE = 224
-TEXT_SHAPE = (1, 64, 768)
-EMBED_DIM = 768
-# The prompt's token IDs and the embedding rows they use. The stage's fingerprint covers this script but not the check
-# file, so the script names the file's SHA-256.
 TEXT_CHECK = Path(__file__).with_name("text_encoder_check.npz")
 TEXT_CHECK_SHA256 = "273bfe20216fb3c1ef681f453335b37b066f687744dec2893154384e3c1305e5"
-# The image mean and std, from the checkpoint's preprocessor_config.json.
 MEAN = [0.5, 0.5, 0.5]
 STD = [0.5, 0.5, 0.5]
-WARMUP_FRAMES = 100
-MEASURED_FRAMES = 1000
-MIN_DURATION_S = 60
-TIMEOUT_MS = 10000
-# Frames each runner may queue; deeper queues add latency without adding throughput.
-QUEUE_DEPTH = 4
+NUM_SAMPLES = 1000
+MIN_DURATION_MS = 60000
 VALIDATION_SPLIT = "val2012"
-# The benchmark input is a 720p camera frame, letterboxed with grey padding.
 FRAME_WIDTH, FRAME_HEIGHT, FILL = 1280, 720, 114
 
 
@@ -59,7 +41,7 @@ def image_options() -> pyneat.ModelOptions:
     options.preprocess.resize.enable = pyneat.AutoFlag.On
     options.preprocess.resize.mode = pyneat.ResizeMode.Stretch
     options.preprocess.normalize.enable = pyneat.AutoFlag.On
-    # Without explicit statistics Neat only scales pixels to [0, 1]; the model expects mean and std 0.5.
+    # Without explicit statistics Neat only scales pixels to [0, 1]; the model expects SigLIP 2's mean and std.
     options.preprocess.normalize.mean = MEAN
     options.preprocess.normalize.stddev = STD
     options.preprocess.normalize.has_explicit_stats = True
@@ -74,42 +56,6 @@ def tensor_options() -> pyneat.ModelOptions:
     options.preprocess.color_convert.enable = pyneat.AutoFlag.Off
     options.preprocess.normalize.enable = pyneat.AutoFlag.Off
     return options
-
-
-def image_embedding(outputs: list[pyneat.Tensor]) -> np.ndarray:
-    """The image encoder's embedding, told apart from its 1,000 logits by its size, copied off the runner."""
-    (embedding,) = [array for array in (output.to_numpy().reshape(-1) for output in outputs) if array.size == EMBED_DIM]
-    return embedding
-
-
-def similarity(image: np.ndarray, outputs: list[pyneat.Tensor]) -> float:
-    """The cosine similarity of the image and the prompt's pooled embedding: the CPU step."""
-    (text_embeds,) = outputs
-    text = text_embeds.to_numpy(copy=False).reshape(EMBED_DIM)
-    score = float(np.dot(image, text) / (np.linalg.norm(image) * np.linalg.norm(text)))
-    if not np.isfinite(score):
-        raise ValueError("the image-text similarity is not finite")
-    return score
-
-
-def percentile_ms(seconds: list[float], percentile: float) -> float:
-    return float(np.percentile(seconds, percentile) * 1000)
-
-
-def mla_stats(mpk: Path) -> tuple[dict[str, object], dict[str, object]]:
-    """Core's MLA layer and stage stats for one MPK, in the shape Core saves them. Their throughput is not the
-    model's, so Core's default run serves."""
-    options = pyneat.BenchmarkOptions()
-    options.include_mla_layer_stats = True
-    options.include_mla_stage_stats = True
-    report = pyneat.Model(str(mpk)).benchmark(options)
-    layer_stats, stage_stats = report.mla_layer_stats, report.mla_stage_stats
-    layers = [
-        {"stage_index": layer.stage_index, "name": layer.name, "latency_us": layer.latency_us}
-        for layer in layer_stats.layers
-    ]
-    stages = [{"stage_index": stage.stage_index, "latency_us": stage.latency_us} for stage in stage_stats.stages]
-    return {"status": layer_stats.status, "layers": layers}, {"status": stage_stats.status, "stages": stages}
 
 
 def sample_image(dataset: Path) -> Path:
@@ -147,20 +93,20 @@ def frame_tensor(path: Path) -> pyneat.Tensor:
 
 @dataclass(frozen=True)
 class Prompt:
-    """A tokenized prompt: its token IDs and the embedding rows they use."""
+    """A tokenized prompt and the embedding rows its tokens use."""
 
     token_ids: list[int]
     rows: dict[int, np.ndarray]
 
 
 def load_prompt(path: Path = TEXT_CHECK) -> Prompt:
-    """The first prompt of the text encoder check, from a file with the SHA-256 the script names."""
+    """The first prompt of the text probe, from a file with the checksum the script pins."""
     content = path.read_bytes()
     if hashlib.sha256(content).hexdigest() != TEXT_CHECK_SHA256:
-        raise SystemExit(f"{path} does not have TEXT_CHECK_SHA256")
-    with np.load(io.BytesIO(content), allow_pickle=False) as check:
-        token_ids = check["token_ids"][0]
-        rows = dict(zip(check["row_ids"].tolist(), check["rows"]))
+        raise SystemExit(f"{path} does not match TEXT_CHECK_SHA256")
+    with np.load(io.BytesIO(content), allow_pickle=False) as probe:
+        token_ids = probe["token_ids"][0]
+        rows = dict(zip(probe["row_ids"].tolist(), probe["rows"]))
     return Prompt(token_ids.tolist(), rows)
 
 
@@ -170,7 +116,7 @@ def token_embeddings(prompt: Prompt) -> np.ndarray:
 
 
 def look_up(prompt: Prompt) -> pyneat.Tensor:
-    """The prompt's token embeddings, looked up for every frame and placed in the memory the text encoder reads.
+    """Prepare the prompt's token embeddings before timing, in the memory the text encoder reads.
 
     Neat sizes the text input as height 1, width 64 and depth 768, so the tensor declares HWC axes; untagged, a 3-D
     tensor counts as CHW, and its width, 768, exceeds the input's 64.
@@ -180,205 +126,6 @@ def look_up(prompt: Prompt) -> pyneat.Tensor:
     )
 
 
-def build_runners(models: dict[str, pyneat.Model], image: pyneat.Tensor,
-                  prompt: Prompt) -> tuple[pyneat.ModelRunner, pyneat.ModelRunner]:
-    run_options = pyneat.RunOptions()
-    run_options.queue_depth = QUEUE_DEPTH
-    run_options.overflow_policy = pyneat.OverflowPolicy.Block
-    image_encoder = models["image_encoder"].build([image], run_options=run_options)
-    text_encoder = models["text_encoder"].build([look_up(prompt)], run_options=run_options)
-    return image_encoder, text_encoder
-
-
-def infer_one(image_encoder: pyneat.ModelRunner, text_encoder: pyneat.ModelRunner, image: pyneat.Tensor,
-              prompt: Prompt) -> None:
-    embedding = image_embedding(image_encoder.run([image], timeout_ms=TIMEOUT_MS))
-    similarity(embedding, text_encoder.run([look_up(prompt)], timeout_ms=TIMEOUT_MS))
-
-
-def measure_latency(image_encoder: pyneat.ModelRunner, text_encoder: pyneat.ModelRunner, image: pyneat.Tensor,
-                    prompt: Prompt) -> list[float]:
-    """Seconds per frame through every stage with nothing else in flight, after the warm-up."""
-    for _ in range(WARMUP_FRAMES):
-        infer_one(image_encoder, text_encoder, image, prompt)
-    seconds: list[float] = []
-    ends = time.perf_counter() + MIN_DURATION_S
-    while len(seconds) < MEASURED_FRAMES or time.perf_counter() < ends:
-        started = time.perf_counter()
-        infer_one(image_encoder, text_encoder, image, prompt)
-        seconds.append(time.perf_counter() - started)
-    return seconds
-
-
-@dataclass(frozen=True)
-class Throughput:
-    """The measured span of the throughput pass: the frames the CPU step finished, how long they took, and the
-    board telemetry sampled over the same span."""
-
-    frames: int
-    seconds: float
-    telemetry: pyneat.Telemetry
-
-    @property
-    def fps(self) -> float:
-        return self.frames / self.seconds
-
-
-def push(runner: pyneat.ModelRunner, inputs: list[pyneat.Tensor], name: str) -> None:
-    if not runner.push(inputs):
-        raise RuntimeError(f"the {name} rejected a frame")
-
-
-def drain(runner: pyneat.ModelRunner, name: str, pushed: dict[str, int]) -> Iterator[list[pyneat.Tensor]]:
-    """Each output until the runner's end of stream. Fewer outputs than frames pushed means a stall.
-
-    Core's pull returns no tensors both at end of stream and on a timeout, so the count tells them apart.
-    """
-    pulled = 0
-    while tensors := runner.pull(TIMEOUT_MS).tensors:
-        pulled += 1
-        yield tensors
-        # Return the outputs to the runner before waiting for the next frame.
-        del tensors
-    if pulled != pushed[name]:
-        raise RuntimeError(f"the {name} stalled: {pulled} of {pushed[name]} frames came out within {TIMEOUT_MS} ms")
-
-
-def run_together(*stages: Callable[[], None], runners: tuple[pyneat.ModelRunner, ...]) -> None:
-    """Run each stage on its own thread. The first failure ends every runner's input, which unblocks a stage
-    waiting to push, and is raised once all stages stop. Each stage waits in Core with the GIL released."""
-    errors: list[BaseException] = []
-
-    def run(stage: Callable[[], None]) -> None:
-        try:
-            stage()
-        except BaseException as error:
-            errors.append(error)
-            for runner in runners:
-                runner.close_input()
-
-    threads = [threading.Thread(target=run, args=(stage,), name=stage.__name__) for stage in stages]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join()
-    if errors:
-        raise errors[0]
-
-
-def measure_throughput(image_encoder: pyneat.ModelRunner, text_encoder: pyneat.ModelRunner, image: pyneat.Tensor,
-                       prompt: Prompt) -> Throughput:
-    """Frames per second and board telemetry with every stage busy, each on a different frame. The measured span
-    starts after WARMUP_FRAMES outputs and lasts at least MEASURED_FRAMES frames and MIN_DURATION_S seconds."""
-    monitor = pyneat.TelemetryMonitor()
-    measured = threading.Event()
-    throughput: Throughput | None = None
-    pushed = {"image encoder": 0, "text encoder": 0}
-    embeddings: queue.SimpleQueue[np.ndarray] = queue.SimpleQueue()
-
-    def push_frames() -> None:
-        try:
-            while not measured.is_set():
-                push(image_encoder, [image], "image encoder")
-                pushed["image encoder"] += 1
-        finally:
-            # End of stream follows the last frame through the image encoder, then the text encoder.
-            image_encoder.close_input()
-
-    def forward_prompts() -> None:
-        try:
-            for outputs in drain(image_encoder, "image encoder", pushed):
-                embeddings.put(image_embedding(outputs))
-                # The embedding is copied, so the image encoder gets its output buffers back.
-                del outputs
-                push(text_encoder, [look_up(prompt)], "text encoder")
-                pushed["text encoder"] += 1
-        finally:
-            text_encoder.close_input()
-
-    def score_pairs() -> None:
-        nonlocal throughput
-        frames, started = 0, 0.0
-        for outputs in drain(text_encoder, "text encoder", pushed):
-            similarity(embeddings.get(), outputs)
-            # Return the text encoder's output buffers before the next pull.
-            del outputs
-            frames += 1
-            if frames == WARMUP_FRAMES:
-                monitor.start()
-                started = time.perf_counter()
-            elif frames > WARMUP_FRAMES and not measured.is_set():
-                count, seconds = frames - WARMUP_FRAMES, time.perf_counter() - started
-                if count >= MEASURED_FRAMES and seconds >= MIN_DURATION_S:
-                    throughput = Throughput(count, seconds, monitor.stop())
-                    measured.set()
-        if throughput is None:
-            raise RuntimeError("the pipeline stopped before the measured span ended")
-
-    try:
-        run_together(push_frames, forward_prompts, score_pairs, runners=(image_encoder, text_encoder))
-    finally:
-        # A failure inside the measured span leaves the monitor running.
-        if monitor.running():
-            monitor.stop()
-        image_encoder.close()
-        text_encoder.close()
-    return throughput
-
-
-def write_report(
-    output: Path,
-    image: str,
-    latencies: list[float],
-    throughput: Throughput,
-    models: dict[str, pyneat.Model],
-    mla_layer_stats: dict[str, dict[str, object]],
-    mla_stage_stats: dict[str, dict[str, object]],
-) -> None:
-    benchmark = pyneat.BenchmarkReport()
-    benchmark.latency_ms = float(np.mean(latencies) * 1000)
-    benchmark.latency_p50_ms = percentile_ms(latencies, 50)
-    benchmark.latency_p95_ms = percentile_ms(latencies, 95)
-    benchmark.latency_p99_ms = percentile_ms(latencies, 99)
-    benchmark.fps = throughput.fps
-    benchmark.throughput_duration_ms = throughput.seconds * 1000
-    benchmark.throughput_samples = throughput.frames
-    report = model_report.from_performance(
-        benchmark,
-        models,
-        workload=(
-            f"{image} in a {FRAME_WIDTH}x{FRAME_HEIGHT} RGB frame, Neat preprocessing stretched to "
-            f"{IMAGE_SIZE}x{IMAGE_SIZE}, image encoder, token embedding lookup on the CPU and text encoder on a "
-            f"{TEXT_SHAPE[1]}-token prompt, and cosine similarity on the CPU, pipelined {QUEUE_DEPTH} frames deep"
-        ),
-        telemetry=throughput.telemetry,
-        mla_layer_stats=mla_layer_stats,
-        mla_stage_stats=mla_stage_stats,
-    )
-    report.save(output)
-    print(
-        f"{benchmark.fps:.1f} FPS over {throughput.frames} frames in {throughput.seconds:.1f} s; "
-        f"latency {benchmark.latency_ms:.2f} ms over {len(latencies)} frames"
-    )
-
-
-def benchmark_pipeline(mpks: dict[str, Path], dataset_id: str, dataset: Path, output: Path) -> None:
-    mla_layer_stats, mla_stage_stats = {}, {}
-    for name, mpk in mpks.items():
-        mla_layer_stats[name], mla_stage_stats[name] = mla_stats(mpk)
-    models = {
-        "image_encoder": pyneat.Model(str(mpks["image_encoder"]), image_options()),
-        "text_encoder": pyneat.Model(str(mpks["text_encoder"]), tensor_options()),
-    }
-    path = sample_image(dataset)
-    image, prompt = frame_tensor(path), load_prompt()
-    image_encoder, text_encoder = build_runners(models, image, prompt)
-    latencies = measure_latency(image_encoder, text_encoder, image, prompt)
-    throughput = measure_throughput(image_encoder, text_encoder, image, prompt)
-    write_report(output, f"{dataset_id} {VALIDATION_SPLIT}/{path.name}", latencies, throughput, models,
-                 mla_layer_stats, mla_stage_stats)
-
-
 def parse_mpks(values: list[str]) -> dict[str, Path]:
     mpks = dict(value.split("=", 1) for value in values if "=" in value)
     if len(mpks) != len(values) or set(mpks) != {"image_encoder", "text_encoder"}:
@@ -386,14 +133,42 @@ def parse_mpks(values: list[str]) -> dict[str, Path]:
     return {name: Path(path) for name, path in mpks.items()}
 
 
+def benchmark_encoders(mpks: dict[str, Path], dataset_id: str, dataset: Path, output: Path) -> None:
+    path = sample_image(dataset)
+    image, prompt = frame_tensor(path), load_prompt()
+    reports = {}
+    for component in ("image_encoder", "text_encoder"):
+        is_image = component == "image_encoder"
+        model = pyneat.Model(str(mpks[component]), image_options() if is_image else tensor_options())
+        options = pyneat.BenchmarkOptions()
+        options.inputs = [image if is_image else look_up(prompt)]
+        options.num_samples = NUM_SAMPLES
+        options.min_duration_ms = MIN_DURATION_MS
+        options.include_mla_layer_stats = True
+        options.include_mla_stage_stats = True
+        workload = (
+            f"{dataset_id} {path.name} in a 1280x720 RGB frame; Neat resize and SigLIP 2 normalization, "
+            "image encoder with fixed 1000-class ImageNet head and tensor conversions"
+            if is_image
+            else "One prompt padded to 64 tokens; prepared FP32 token embeddings, "
+            "text encoder with a pooled 768-value output and tensor conversions; "
+            "tokenization and CPU embedding lookup excluded"
+        )
+        benchmark = model.benchmark(options)
+        reports[component] = model_report.from_performance(benchmark, {component: model}, workload=workload)
+        print(f"{component}: {benchmark.fps:.1f} inferences/s, mean latency {benchmark.latency_ms:.2f} ms", flush=True)
+        del model
+    model_report.from_component_performance(reports).save(output)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mpk", action="append", required=True, help="component=path, for each component")
     parser.add_argument("--dataset", required=True, help="imagenet-2012-val=<extracted directory>")
-    parser.add_argument("--output", required=True, help="directory for model-report.json")
+    parser.add_argument("--output", type=Path, required=True, help="directory for model-report.json")
     args = parser.parse_args()
     dataset_id, dataset_dir = args.dataset.split("=", 1)
-    benchmark_pipeline(parse_mpks(args.mpk), dataset_id, Path(dataset_dir), Path(args.output))
+    benchmark_encoders(parse_mpks(args.mpk), dataset_id, Path(dataset_dir), args.output)
 
 
 if __name__ == "__main__":

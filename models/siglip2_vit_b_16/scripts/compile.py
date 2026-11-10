@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Split the verified SigLIP 2 ViT-B/16 ONNX into its image and text encoders, compile each, and measure fidelity.
+"""Prepare SigLIP 2 from its conversion bundle, compile both encoders, and measure fidelity.
 
-The text encoder calibrates and is compared on the tokenized prompts the conversion embeds as a constant output:
+The text encoder calibrates and is compared on the tokenized prompts surgery embeds as a constant output:
 the first TEXT_CALIBRATION prompts calibrate it, and fidelity compares each held-out prompt's pooled embedding.
 """
 
@@ -22,7 +22,6 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 import numpy as np
-import onnx
 import onnxruntime as ort
 from afe.apis.defines import (
     HistogramMSEMethod,
@@ -41,15 +40,12 @@ from calibration import load_images, select_names
 from model_registry.fetch import sha256_file
 from model_registry.model import load_model as load_metadata
 from sima_utils.data.data_generator import DataGenerator
+from surgery import COMPONENT_GRAPHS, prepare_model
+from surgery import graph_paths as _graph_paths
 
 MODEL_DIR = Path(__file__).resolve().parents[1]
 MODEL_ID = "siglip2_vit_b_16"
-COMPONENT_IDS = ("image_encoder", "text_encoder")
-# Each component's graph inputs and outputs in the converted ONNX, with their shapes.
-COMPONENT_GRAPHS = {
-    "image_encoder": {"inputs": {"pixel_values": (1, 3, 224, 224)}, "outputs": {"image_embeds": (1, 768), "logits": (1, 1000)}},
-    "text_encoder": {"inputs": {"token_embeds": (1, 64, 768)}, "outputs": {"text_embeds": (1, 768)}},
-}
+COMPONENT_IDS = tuple(COMPONENT_GRAPHS)
 PROMPTS = "calibration_token_embeds"
 TEXT_CALIBRATION = 32
 # Files the compilation phases pass to each other in the temporary directory.
@@ -77,10 +73,7 @@ def _component_name(profile_id: str, component_id: str) -> str:
 
 def _quantization_config(parameters: dict[str, Any]) -> Any:
     precision = parameters["precision"]
-    if precision == "w8a8":
-        activation = quantization_scheme(asymmetric=True, per_channel=False, bits=8)
-        weights = quantization_scheme(asymmetric=False, per_channel=True, bits=8)
-    elif precision == "w8a16":
+    if precision == "w8a16":
         activation = bfloat16_scheme()
         weights = quantization_scheme(asymmetric=False, per_channel=True, bits=8)
     elif precision == "w16a16":
@@ -91,12 +84,12 @@ def _quantization_config(parameters: dict[str, Any]) -> Any:
         default_quantization.with_activation_quantization(activation)
         .with_weight_quantization(weights)
         .with_requantization_mode(RequantizationMode.sima)
-        # AFE refuses to quantize these encoders without calibrated ranges, even at BF16.
+        # Preserve the calibrated recipe validated for these encoders.
         .with_calibration(HistogramMSEMethod(int(parameters["calibration_bins"])))
         .with_channel_equalization(False)
         .with_smooth_quant(False)
         # with_activation_quantization turns per-token quantization on for BF16. w8a16 keeps it, scaling each token's
-        # activations on its own before an INT8-weight operation; w16a16 and w8a8 do not use it.
+        # activations on its own before an INT8-weight operation; w16a16 does not use it.
         .with_per_token_quant(precision == "w8a16")
     )
 
@@ -106,8 +99,9 @@ def _afe_layout(array: np.ndarray) -> np.ndarray:
     return np.ascontiguousarray(array.transpose(0, 2, 3, 1) if array.ndim == 4 else array)
 
 
-def _quantize_component(graph: Path, name: str, component_id: str, parameters: dict[str, Any],
-                        calibration: np.ndarray) -> Any:
+def _quantize_component(
+    graph: Path, name: str, component_id: str, parameters: dict[str, Any], calibration: np.ndarray
+) -> Any:
     shapes = COMPONENT_GRAPHS[component_id]["inputs"]
     importer = onnx_source(str(graph), shape_dict=shapes, layout="NCHW", flexible_batch_size=True)
     loaded = load_model(importer, target=gen2_target)
@@ -165,7 +159,7 @@ def _find_mpk(build_dir: Path, component_id: str) -> Path:
     return archives[0]
 
 
-def _compile_component(quantized: Any, build_dir: Path, component_id: str, precision: str) -> Path:
+def _compile_component(quantized: Any, build_dir: Path, component_id: str) -> Path:
     build_dir.mkdir(parents=True, exist_ok=False)
     quantized.compile(
         output_path=str(build_dir),
@@ -179,8 +173,8 @@ def _compile_component(quantized: Any, build_dir: Path, component_id: str, preci
         retained_temporary_directory_name=None,
         use_power_limits=False,
         max_mla_power=None,
-        # The option applies to every layer norm, and ones with INT8 activations (w8a8) reject it.
-        layer_norm_use_fp32_intermediates=precision != "w8a8",
+        # Keep FP32 LayerNorm intermediates in both BF16-activation profiles.
+        layer_norm_use_fp32_intermediates=True,
         rms_norm_use_fp32_intermediates=False,
         enable_filter_sharing=False,
         layout_search_effort_level=0,
@@ -233,10 +227,6 @@ class _OutputError:
         }
 
 
-def _graph_paths(graphs_dir: Path) -> dict[str, Path]:
-    return {component_id: graphs_dir / f"{component_id}.onnx" for component_id in COMPONENT_IDS}
-
-
 def _session(path: Path) -> ort.InferenceSession:
     return ort.InferenceSession(str(path), providers=["CPUExecutionProvider"])
 
@@ -248,19 +238,14 @@ def _full_inputs(**inputs: np.ndarray) -> dict[str, np.ndarray]:
 
 
 def _prepare_phase(source: Path, fidelity_dataset: Path, fidelity_names: list[str], temporary_dir: Path) -> None:
-    """Split the ONNX into the two encoders, check the split, and save the prompts and the reference outputs."""
-    full = onnx.load(source)
-    extractor = onnx.utils.Extractor(full)
-    paths = _graph_paths(temporary_dir / "graphs")
-    paths["image_encoder"].parent.mkdir(parents=True)
-    for component_id, path in paths.items():
-        graph = COMPONENT_GRAPHS[component_id]
-        onnx.save(extractor.extract_model(list(graph["inputs"]), list(graph["outputs"])), path)
-    del extractor, full
-
-    reference = _session(source)
+    """Prepare the static graphs, check the split and record fidelity reference outputs."""
+    paths = prepare_model(source, temporary_dir / "graphs")
+    reference = _session(temporary_dir / "graphs/model.onnx")
     (prompts,) = reference.run([PROMPTS], _full_inputs())
-    if prompts.shape[0] <= TEXT_CALIBRATION or prompts.shape[1:] != COMPONENT_GRAPHS["text_encoder"]["inputs"]["token_embeds"][1:]:
+    if (
+        prompts.shape[0] <= TEXT_CALIBRATION
+        or prompts.shape[1:] != COMPONENT_GRAPHS["text_encoder"]["inputs"]["token_embeds"][1:]
+    ):
         raise RuntimeError(f"unexpected embedded prompts: {prompts.shape}")
     np.savez(temporary_dir / PROMPTS_FILE, prompts=prompts)
 
@@ -300,14 +285,21 @@ def _output(outputs: dict[tuple[int, ...], np.ndarray], component_id: str, name:
     return outputs[shape]
 
 
-def _image_phase(graph: Path, temporary_dir: Path, profile_id: str, parameters: dict[str, Any],
-                 calibration_dataset: Path, calibration_names: list[str], fidelity_dataset: Path,
-                 fidelity_names: list[str]) -> None:
+def _image_phase(
+    graph: Path,
+    temporary_dir: Path,
+    profile_id: str,
+    parameters: dict[str, Any],
+    calibration_dataset: Path,
+    calibration_names: list[str],
+    fidelity_dataset: Path,
+    fidelity_names: list[str],
+) -> None:
     """Compile the image encoder and compare its outputs on the fidelity images."""
     calibration = load_images(calibration_dataset, calibration_names).transpose(0, 3, 1, 2)
     name = _component_name(profile_id, "image_encoder")
     encoder = _quantize_component(graph, name, "image_encoder", parameters, calibration)
-    _compile_component(encoder, temporary_dir / name, "image_encoder", parameters["precision"])
+    _compile_component(encoder, temporary_dir / name, "image_encoder")
     with np.load(temporary_dir / REFERENCE_OUTPUTS) as saved:
         reference = {key: saved[key] for key in ("image_embeds", "logits")}
     errors = [_OutputError(key) for key in reference]
@@ -324,7 +316,7 @@ def _text_phase(graph: Path, temporary_dir: Path, profile_id: str, parameters: d
         prompts = saved["prompts"]
     name = _component_name(profile_id, "text_encoder")
     encoder = _quantize_component(graph, name, "text_encoder", parameters, prompts[:TEXT_CALIBRATION])
-    _compile_component(encoder, temporary_dir / name, "text_encoder", parameters["precision"])
+    _compile_component(encoder, temporary_dir / name, "text_encoder")
     with np.load(temporary_dir / REFERENCE_OUTPUTS) as saved:
         reference = saved["text_embeds"]
     error = _OutputError("text_embeds")
@@ -394,8 +386,9 @@ def _copy_component_archives(temporary_dir: Path, profile_id: str, output_dir: P
     return archives
 
 
-def _write_compile_outputs(output_dir: Path, profile_id: str, archives: dict[str, Path],
-                           graph_hashes: dict[str, str]) -> None:
+def _write_compile_outputs(
+    output_dir: Path, profile_id: str, archives: dict[str, Path], graph_hashes: dict[str, str]
+) -> None:
     """Write compile-outputs.json, which records each MPK and derived graph."""
     manifest = {
         "model_id": MODEL_ID,
@@ -413,12 +406,14 @@ def _write_compile_outputs(output_dir: Path, profile_id: str, archives: dict[str
             {"component_id": component_id, "sha256": graph_hashes[component_id]} for component_id in COMPONENT_IDS
         ],
     }
-    (output_dir / "compile-outputs.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n",
-                                                     encoding="utf-8")
+    (output_dir / "compile-outputs.json").write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
 
 
-def compile_model(source: Path, profile_id: str, calibration_dataset: Path, fidelity_dataset: Path,
-                  output_dir: Path) -> dict[str, Path]:
+def compile_model(
+    source: Path, profile_id: str, calibration_dataset: Path, fidelity_dataset: Path, output_dir: Path
+) -> dict[str, Path]:
     metadata = load_metadata(MODEL_DIR)
     component_parameters = _component_parameters(metadata, profile_id)
     precision = _precision_label(component_parameters)
@@ -487,8 +482,8 @@ def main() -> int:
     source = args.model.expanduser().resolve()
     dataset = args.dataset.expanduser().resolve()
     fidelity_dataset = args.fidelity_dataset.expanduser().resolve()
-    if source.suffix != ".onnx":
-        parser.error("--model must be the verified ONNX from the manual conversion workflow")
+    if source.suffix not in {".pt", ".pth"}:
+        parser.error("--model must be the verified checkpoint bundle from the manual conversion workflow")
     if not source.is_file():
         parser.error(f"source does not exist: {source}")
     if not dataset.exists():
@@ -496,7 +491,9 @@ def main() -> int:
     if not fidelity_dataset.exists():
         parser.error(f"fidelity dataset does not exist: {fidelity_dataset}")
     logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
-    outputs = compile_model(source, args.build_profile, dataset, fidelity_dataset, args.output_dir.expanduser().resolve())
+    outputs = compile_model(
+        source, args.build_profile, dataset, fidelity_dataset, args.output_dir.expanduser().resolve()
+    )
     for component_id, archive in outputs.items():
         logging.info("Compiled %s MPK: %s", component_id, archive)
     return 0

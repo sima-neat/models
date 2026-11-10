@@ -15,8 +15,17 @@ accuracy:
         top5_accuracy: 0.9528
 performance:
   run_tests: true
+  # Independent encoder measurements on the published bd3c4a3 packages, 2026-11-10.
   expected:
     w16a16:
-      throughput_fps: 80.4
+      components:
+        image_encoder:
+          throughput_fps: 115.6
+        text_encoder:
+          throughput_fps: 261.4
     w8a16:
-      throughput_fps: 128.4
+      components:
+        image_encoder:
+          throughput_fps: 180.6
+        text_encoder:
+          throughput_fps: 397.7

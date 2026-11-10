@@ -17,7 +17,7 @@ encoder to compare images with prompts of your own.
 
 **Image input.** Resize the image straight to 224×224 with bilinear
 resampling, without keeping its aspect ratio or cropping. Scale the RGB values
-to 0–1, subtract 0.5, and divide by 0.5. The reference scripts pass this image
+to 0–1, subtract 0.5, and divide by 0.5. The accuracy script passes this image
 as a 224×224×3 (height, width, channel) float tensor, with Neat's resize, color
 conversion, and normalization turned off.
 

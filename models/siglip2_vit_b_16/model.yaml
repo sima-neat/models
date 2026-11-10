@@ -19,6 +19,7 @@ upstream:
   revision: 75de2d55ec2d0b4efc50b3e9ad70dba96a7b2fa2
 
 conversion:
+  outputs: [weights.pth]
   source:
     repository: google/siglip2-base-patch16-224
     revision: 75de2d55ec2d0b4efc50b3e9ad70dba96a7b2fa2
@@ -41,8 +42,8 @@ calibrations:
 - id: imagenet-2012-cal
   dataset: {id: imagenet-2012, variant: cal, sha256: e6c18b281f5ac5fc7cf6d36ef9a5f486ce95eb43ead99ee8523bd8162bc49a6f, size_bytes: 112710756}
 
-# Both precisions calibrate: AFE refuses to quantize these encoders without calibrated ranges, even at BF16.
-# The text encoder calibrates on 32 of the tokenized prompts the conversion embeds, not on images.
+# Retain the validated calibrated BF16 recipe. The text encoder calibrates on
+# 32 fixed tokenized prompts prepared by surgery, independently of image calibration.
 build_profiles:
   w16a16:
     calibration_dataset: imagenet-2012-cal
@@ -60,24 +61,7 @@ build_profiles:
       text_encoder:
         parameters: {precision: w8a16, calibration_bins: 2048}
 
-  # w8a8 is held back: the build scores zero-shot ImageNet top-1 0.0014 (w16a16: 0.777), far outside the 5% the
-  # registry allows; INT8 activations are the likely cause, as for ViT-B/16. Uncomment it once an INT8 recipe
-  # keeps SigLIP 2's accuracy.
-  # w8a8:
-  #   calibration_dataset: imagenet-2012-cal
-  #   components:
-  #     image_encoder:
-  #       parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 50}
-  #     text_encoder:
-  #       parameters: {precision: w8a8, calibration_bins: 2048}
-
-# Display only: the encoders do not feed each other. The CPU looks the prompt's tokens up for the text encoder and
-# compares the two embeddings.
-pipeline:
-- {component: image_encoder}
-- {cpu: Token embedding lookup}
-- {component: text_encoder}
-- {cpu: Cosine similarity}
+# Full INT8 is omitted: the previous recipe scored only 0.0014 ImageNet top-1.
 
 numerical_fidelity:
   status: diagnostic
@@ -91,11 +75,11 @@ accuracy:
   datasets:
   - {id: imagenet-2012, variant: val, sha256: 018bf95eb75b8b7f1d7766303cdecf3c45ecb02ccf4cf161122ae885c4d7a36f, size_bytes: 6666407650}
 
-performance: {}
+performance: {scope: components}
 
 reference_metrics:
 - source: https://arxiv.org/pdf/2502.14786v1
   dataset: {id: imagenet-2012, split: val}
   conditions: 224x224, zero-shot
-  note: Zero-shot top-1 of SigLIP 2 B/16 at 224x224 in Table 1 of the SigLIP 2 paper. The conversion builds its class embeddings from OpenAI's ImageNet class names and the 7 prompt templates OpenAI selected. The paper prints no top-5.
+  note: Zero-shot top-1 of SigLIP 2 B/16 at 224x224 in Table 1 of the SigLIP 2 paper. Surgery builds its class embeddings from OpenAI's ImageNet class names and the 7 prompt templates OpenAI selected. The paper prints no top-5.
   metrics: {top1_accuracy: 0.782}
