@@ -10,10 +10,10 @@ modalities:
 architecture: lightstereo
 
 license:
-  # Neither the Hugging Face repository nor OpenStereo on GitHub declares a license; the model is for
-  # internal evaluation only, so the registry must not publish its packages (sima-neat/models#364).
+  # Neither the Hugging Face repository nor OpenStereo on GitHub declares a license, so it grants no right to
+  # redistribute; CI compiles and benchmarks the model, and its page offers no download (sima-neat/models#364).
   spdx: LicenseRef-OpenStereo-Undeclared
-  redistribution: prohibited
+  redistribution: restricted
   attribution: LightStereo is developed by Xianda Guo et al. in OpenStereo; no license is declared.
 
 upstream:

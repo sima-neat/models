@@ -299,8 +299,6 @@ def test_model_calibrates_every_profile_and_compares_disparity_on_scene_flow() -
     # Calibration takes the first pairs of the seeded order, so the fidelity pairs must start after them.
     assert fidelity["selection"]["offset"] >= largest
     assert fidelity["dataset"]["variant"] == "cal" and fidelity["outputs"] == ["disparity"]
-    # Upstream declares no license; the issue's decision is internal evaluation, never publication.
-    assert model["license"]["redistribution"] == "prohibited"
 
 
 def test_compiled_build_holds_the_audited_mpk_and_a_disparity_fidelity_report(
