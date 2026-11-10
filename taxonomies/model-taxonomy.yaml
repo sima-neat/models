@@ -65,6 +65,10 @@ architectures:
     display_name: Gemma4
     paradigm: transformer
     allowed_model_types: [llm, vlm]
+  inception:
+    display_name: Inception
+    paradigm: cnn
+    allowed_model_types: [vision]
   lfm:
     display_name: LFM
     paradigm: transformer
@@ -89,10 +93,18 @@ architectures:
     display_name: Phi
     paradigm: transformer
     allowed_model_types: [llm]
+  qwen3:
+    display_name: Qwen3
+    paradigm: transformer
+    allowed_model_types: [llm]
   qwen3_5:
     display_name: Qwen3.5
     paradigm: transformer
     allowed_model_types: [llm, vlm]
+  qwen3_vl:
+    display_name: Qwen3-VL
+    paradigm: transformer
+    allowed_model_types: [vlm]
   resnet:
     display_name: ResNet
     paradigm: cnn
