@@ -1,0 +1,64 @@
+display_name: YOLOv8l-det
+description: A large YOLOv8 detector for COCO objects.
+model_type: vision
+tasks: [object_detection]
+
+modalities:
+  inputs: [image]
+  outputs: [bounding_boxes, class_scores]
+
+architecture: yolov8_det
+
+license:
+  spdx: AGPL-3.0-only
+  redistribution: restricted
+  attribution: YOLOv8 is developed by Ultralytics and distributed under AGPL-3.0.
+
+upstream:
+  repository: https://huggingface.co/Ultralytics/YOLOv8
+  revision: 27f858f2dc238503a66ce10248cf7ec71a3ded5d
+  derived_from: https://github.com/ultralytics/ultralytics/tree/f2d3aed634a5b0e4828024718d4a61ab2f83fb19
+
+conversion:
+  source:
+    uri: hf://models/Ultralytics/YOLOv8@27f858f2dc238503a66ce10248cf7ec71a3ded5d/yolov8l.pt
+    sha256: 18218ea4798da042d9862e6029ca9531adbd40ace19b6c9a75e2e28f1adf30cc
+    size_bytes: 87769683
+
+compilation:
+  format: onnx
+  source: conversion
+
+calibrations:
+- id: coco-2017-cal
+  dataset: {id: coco-2017, variant: cal, sha256: 54c64d84122eba371ac014d7b43849a461551c2e6c5c430b5ead90ec1dec12b1, size_bytes: 187510866}
+
+build_profiles:
+  w16a16:
+    components:
+      model:
+        parameters: {precision: w16a16}
+
+  w8a8:
+    calibration_dataset: coco-2017-cal
+    components:
+      model:
+        parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 50}
+
+  w8a16:
+    components:
+      model:
+        parameters: {precision: w8a16}
+
+accuracy:
+  # The reference uses padded rectangular batches; accuracy.py runs a square 640x640 input.
+  datasets:
+  - {id: coco-2017, variant: val, sha256: a40de1caf42b47c5a8976eb97efe3c83f3a41337c4d16d318eb15d65c293f2da, size_bytes: 898368520}
+
+performance: {}
+
+reference_metrics:
+- source: https://github.com/ultralytics/ultralytics/blob/f2d3aed634a5b0e4828024718d4a61ab2f83fb19/docs/en/models/yolov8.md
+  dataset: {id: coco-2017, split: val}
+  conditions: 640x640, NMS at IoU 0.7
+  metrics: {coco_map: 0.529}

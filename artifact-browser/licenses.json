@@ -1,0 +1,22 @@
+{
+  "AGPL-3.0-only": {
+    "name": "GNU Affero General Public License v3.0",
+    "summary": "Copyleft license. Anyone who redistributes the model must provide its source under the same license.",
+    "downloadable": true
+  },
+  "Apache-2.0": {
+    "name": "Apache License 2.0",
+    "summary": "Permissive license. Redistribution must include the license text and existing notices.",
+    "downloadable": true
+  },
+  "BSD-3-Clause": {
+    "name": "BSD 3-Clause License",
+    "summary": "Permissive license. Redistribution must keep the copyright notice and disclaimer.",
+    "downloadable": true
+  },
+  "LicenseRef-MagicLeap-Noncommercial-Research": {
+    "name": "Magic Leap noncommercial research license",
+    "summary": "Noncommercial research use only. The license does not permit redistribution, so SiMa.ai does not offer this model for download.",
+    "downloadable": false
+  }
+}

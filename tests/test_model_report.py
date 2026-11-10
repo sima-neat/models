@@ -282,8 +282,8 @@ def write_image(path, value, size=SOURCE_SIZE):
 
 def benchmark_dataset(root):
     """A dataset with the files each script samples from: COCO val2017, ImageNet's val2012 and ImageNet mini's val
-    split, an HPatches val sequence, and the Scene Flow test list. Only the second COCO image labels a person, so a
-    pose script must pick it."""
+    split, an HPatches val sequence, DOTA's val images, and the Scene Flow test list. Only the second COCO image labels
+    a person, so a pose script must pick it."""
     write_image(root / STEREO_PAIR.format(view="left"), STEREO_LEFT, STEREO_VIEW)
     write_image(root / STEREO_PAIR.format(view="right"), STEREO_RIGHT, STEREO_VIEW)
     disparity = STEREO_PAIR.replace("frames_finalpass", "disparity").format(view="left").replace(".png", ".pfm")
@@ -397,6 +397,7 @@ def test_every_single_component_script_benchmarks_a_dataset_image(script, monkey
         assert (options.preprocess.resize.mode, options.preprocess.preset) == ("Stretch", "ImageNet")
         assert STEREO_PAIR.format(view="left") in report["workload"]
     elif getattr(options, "decode_type", "").startswith(("YoloV26", "YoloV8")):
+        # Box decoders take a probability threshold, in [0, 1).
         assert_letterboxed_frame(frame)
         assert (options.preprocess.resize.mode, options.top_k, options.score_threshold) == ("Letterbox", 10, 0.25)
         if options.decode_type in {"YoloV8", "YoloV8Obb"}:
