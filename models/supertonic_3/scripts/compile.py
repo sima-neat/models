@@ -44,8 +44,8 @@ SURGERY_PARAMETERS: dict[str, dict[str, Any]] = {
     },
     "vocoder": {"component": "vocoder", "latent_length": LATENT_LENGTH},
 }
-# Activations are BF16, so quantization needs no measured ranges: one seeded synthetic sample calibrates.
-CALIBRATION_SEED = 1101
+# One seeded synthetic sample compares the quantized graph with the float graph.
+VERIFICATION_SEED = 1101
 RUNTIME_DATA = "supertonic_runtime_data.npz"
 COMPILE_REPORT = "compile-report.json"
 
@@ -83,9 +83,9 @@ def _to_afe_layout(value: np.ndarray) -> np.ndarray:
     return np.ascontiguousarray(value.transpose(0, 2, 3, 1), dtype=np.float32)
 
 
-def _calibration_inputs(component_id: str, runtime_data: Path | None) -> dict[str, np.ndarray]:
+def _verification_inputs(component_id: str, runtime_data: Path | None) -> dict[str, np.ndarray]:
     """One seeded synthetic input set with the masks, step table and rotary tables the engine builds."""
-    rng = np.random.default_rng(CALIBRATION_SEED)
+    rng = np.random.default_rng(VERIFICATION_SEED)
     shapes = COMPONENTS[component_id]["inputs"]
     if component_id == "vocoder":
         return {"latent": rng.standard_normal(shapes["latent"], dtype=np.float32)}
@@ -116,33 +116,33 @@ def _calibration_inputs(component_id: str, runtime_data: Path | None) -> dict[st
 
 
 def _quantization(parameters: dict[str, Any]) -> Any:
+    """BF16 activations need no measured ranges, so neither precision calibrates."""
     from afe.apis.defines import (
-        BiasCorrectionType,
-        CalibrationMethod,
+        QuantizationParams,
         RequantizationMode,
+        SkipCalibration,
         bfloat16_scheme,
-        default_quantization,
         quantization_scheme,
     )
 
     precision = parameters["precision"]
     if precision == "w8a16":
-        weights = quantization_scheme(asymmetric=False, per_channel=True, bits=8)
-    elif precision == "w16a16":
-        weights = bfloat16_scheme()
-    else:
-        raise ValueError(f"unsupported precision: {precision}")
-    return (
-        default_quantization.with_activation_quantization(bfloat16_scheme())
-        .with_weight_quantization(weights)
-        .with_requantization_mode(RequantizationMode.sima)
-        .with_calibration(CalibrationMethod.from_str("mse"))
-        .with_bias_correction(BiasCorrectionType.NONE)
-        .with_channel_equalization(False)
-        .with_smooth_quant(False)
-        .with_prefer_int8_udf(True)
-        .with_per_token_quant(False)
-    )
+        return QuantizationParams(
+            activation_quantization_scheme=bfloat16_scheme(),
+            weight_quantization_scheme=quantization_scheme(asymmetric=False, per_channel=True, bits=8),
+            requantization_mode=RequantizationMode.sima,
+            calibration_method=SkipCalibration(),
+            per_token_quant=False,
+        )
+    if precision == "w16a16":
+        return QuantizationParams(
+            activation_quantization_scheme=bfloat16_scheme(),
+            weight_quantization_scheme=bfloat16_scheme(),
+            requantization_mode=RequantizationMode.sima,
+            calibration_method=SkipCalibration(),
+            per_token_quant=False,
+        )
+    raise ValueError(f"unsupported precision: {precision}")
 
 
 def _load_and_quantize(
@@ -154,17 +154,14 @@ def _load_and_quantize(
 ) -> tuple[Any, Any, dict[InputName, np.ndarray]]:
     from afe.apis.defines import InputName, gen2_target
     from afe.apis.loaded_net import load_model
-    from afe.core.utils import convert_data_generator_to_iterable
     from afe.load.importers.general_importer import onnx_source
-    from sima_utils.data.data_generator import DataGenerator
 
     contract = COMPONENTS[component_id]
     importer = onnx_source(str(graph), shape_dict=contract["inputs"], layout="NCHW")
     loaded = load_model(importer, target=gen2_target)
     afe_inputs = {InputName(name): _to_afe_layout(physical_inputs[name]) for name in contract["inputs"]}
-    calibration = convert_data_generator_to_iterable(DataGenerator(afe_inputs))
     quantized = loaded.quantize(
-        calibration_data=calibration,
+        calibration_data=None,
         quantization_config=_quantization(parameters),
         model_name=model_name,
         log_level=logging.INFO,
@@ -212,10 +209,9 @@ def _verify_quantized(
     physical_inputs: dict[str, np.ndarray],
     afe_inputs: dict[InputName, np.ndarray],
 ) -> list[dict[str, Any]]:
-    """Compare the quantized graph with the float graph on the calibration sample.
+    """Compare the quantized graph with the float graph on the verification sample.
 
-    ONNX Runtime runs the float graph: the compiler's own float execution of this graph crashes with
-    Model Compiler 8681769b526b.
+    ONNX Runtime runs the float graph, because the compiler's own float execution of this graph fails.
     """
     import onnxruntime as ort
 
@@ -300,7 +296,7 @@ def _component_phase(
     prepared = prepare_model(source, work_dir / "surgery", component_id, SURGERY_PARAMETERS[component_id])
     graph = prepared["model"]
     model_name = mpk_filename(load_metadata(MODEL_DIR), profile_id, component_id).removesuffix("_mpk.tar.gz")
-    inputs = _calibration_inputs(component_id, prepared.get("runtime_data"))
+    inputs = _verification_inputs(component_id, prepared.get("runtime_data"))
     _, quantized, afe_inputs = _load_and_quantize(graph, component_id, model_name, parameters, inputs)
     verification = _verify_quantized(graph, component_id, quantized, inputs, afe_inputs)
     build_dir = work_dir / "compiled"

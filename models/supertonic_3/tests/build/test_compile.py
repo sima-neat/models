@@ -8,8 +8,9 @@ import sys
 import tarfile
 from collections.abc import Callable
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from typing import Any
+from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
@@ -108,8 +109,7 @@ def test_recipe_quantizes_with_the_declared_name_and_audits_the_mpk(
         def quantize(self, *, calibration_data: Any, quantization_config: Any, model_name: str, log_level: int) -> Any:
             assert quantization_config is quantization
             assert model_name == mpk_filename(model, PROFILE_ID, component_id).removesuffix("_mpk.tar.gz")
-            for name, value in inputs.items():
-                np.testing.assert_array_equal(calibration_data[name], value.transpose(0, 2, 3, 1))
+            assert calibration_data is None
             return quantized
 
     loaded = Loaded()
@@ -121,9 +121,7 @@ def test_recipe_quantizes_with_the_declared_name_and_audits_the_mpk(
     modules = {
         "afe.apis.defines": {"InputName": str, "gen2_target": target},
         "afe.apis.loaded_net": {"load_model": load_model_stub},
-        "afe.core.utils": {"convert_data_generator_to_iterable": lambda data: data},
         "afe.load.importers.general_importer": {"onnx_source": onnx_source},
-        "sima_utils.data.data_generator": {"DataGenerator": lambda data: data},
     }
     for name, attributes in modules.items():
         module = ModuleType(name)
@@ -254,3 +252,30 @@ def test_quantized_components_agree_with_the_float_graphs(compiled: Path) -> Non
     for component_id in COMPONENT_IDS:
         for output in report["components"][component_id]["quantized_verification"]:
             assert output["cosine_similarity"] > 0.9, (component_id, output)
+
+
+@pytest.mark.parametrize("precision", ["w8a16", "w16a16"])
+def test_neither_precision_calibrates(
+    monkeypatch: pytest.MonkeyPatch, load_script: Callable[[str], ModuleType], precision: str
+) -> None:
+    recipe = load_script("compile")
+    defines = ModuleType("afe.apis.defines")
+    for name in ("QuantizationParams", "SkipCalibration", "bfloat16_scheme", "quantization_scheme"):
+        setattr(defines, name, MagicMock(name=name))
+    defines.RequantizationMode = SimpleNamespace(sima="sima")
+    monkeypatch.setitem(sys.modules, "afe.apis.defines", defines)
+    recipe._quantization({"precision": precision})
+    options = defines.QuantizationParams.call_args.kwargs
+    # BF16 activations for both; INT8 per-channel weights only for w8a16.
+    assert options["activation_quantization_scheme"] is defines.bfloat16_scheme.return_value
+    if precision == "w8a16":
+        defines.quantization_scheme.assert_called_once_with(asymmetric=False, per_channel=True, bits=8)
+        assert options["weight_quantization_scheme"] is defines.quantization_scheme.return_value
+    else:
+        defines.quantization_scheme.assert_not_called()
+        assert options["weight_quantization_scheme"] is defines.bfloat16_scheme.return_value
+    defines.SkipCalibration.assert_called_once_with()
+    assert options["calibration_method"] is defines.SkipCalibration.return_value
+    assert (options["requantization_mode"], options["per_token_quant"]) == ("sima", False)
+    with pytest.raises(ValueError, match="unsupported precision"):
+        recipe._quantization({"precision": "w4a8"})
