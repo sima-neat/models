@@ -1,4 +1,4 @@
-display_name: YOLOX-n
+display_name: YOLOX-Nano
 description: The Nano YOLOX detector for the 80 COCO object classes.
 model_type: vision
 tasks: [object_detection]
