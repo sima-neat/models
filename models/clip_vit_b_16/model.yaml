@@ -1,0 +1,77 @@
+display_name: CLIP ViT-B/16
+description: Embeds images and text in one space for zero-shot classification and image-text search.
+model_type: vlm
+tasks: [image_text_embedding]
+
+modalities:
+  inputs: [image, text]
+  outputs: [embeddings, class_scores]
+
+architecture: clip
+
+license:
+  spdx: MIT
+  redistribution: allowed
+  attribution: CLIP ViT-B/16 is distributed by OpenAI under the MIT License.
+
+upstream:
+  repository: https://huggingface.co/openai/clip-vit-base-patch16
+  revision: 57c216476eefef5ab752ec549e440a49ae4ae5f3
+
+conversion:
+  outputs: [weights.pth]
+  source:
+    repository: openai/clip-vit-base-patch16
+    revision: 57c216476eefef5ab752ec549e440a49ae4ae5f3
+    main_file: pytorch_model.bin
+    files:
+      pytorch_model.bin: {sha256: ec89c7b09c749a60aae3c9cd910516f24b58214a7df060b48962d14c469cfbf0, size_bytes: 598641023}
+      config.json: {sha256: eaf1c9089a8553c913d27ea66407f8bfc2be9989c80c9f331ddb3d63d4c5e8ad, size_bytes: 4104}
+      preprocessor_config.json: {sha256: 910e70b3956ac9879ebc90b22fb3bc8a75b6a0677814500101a4c072bd7857bd, size_bytes: 316}
+      tokenizer.json: {sha256: a83e0809aa4c3af7208b2df632a7a69668c6d48775b3c3fe4e1b1199d1f8b8f4, size_bytes: 2224003}
+      tokenizer_config.json: {sha256: 3f74b6a4d97fee70b3b96921a687fc5e3f2fb583f5f81e7c178c0c22281beade, size_bytes: 905}
+      vocab.json: {sha256: 3f0c4f7d2086b61b38487075278ea9ed04edb53a03cbb045b86c27190fa8fb69, size_bytes: 961143}
+      merges.txt: {sha256: 9fd691f7c8039210e0fced15865466c65820d09b63988b0174bfe25de299051a, size_bytes: 524619}
+      special_tokens_map.json: {sha256: f8c0d6c39aee3f8431078ef6646567b0aba7f2246e9c54b8b99d55c22b707cbf, size_bytes: 389}
+
+compilation:
+  format: onnx
+  source: conversion
+  components: [image_encoder, text_encoder]
+
+# BF16 activations need no calibration. W8A16 scales activations dynamically per token.
+# Full INT8 is omitted: the previous recipe scored only 0.0012 ImageNet top-1.
+build_profiles:
+  w16a16:
+    components:
+      image_encoder:
+        parameters: {precision: w16a16}
+      text_encoder:
+        parameters: {precision: w16a16}
+
+  w8a16:
+    components:
+      image_encoder:
+        parameters: {precision: w8a16}
+      text_encoder:
+        parameters: {precision: w8a16}
+
+numerical_fidelity:
+  status: diagnostic
+  dataset: {id: imagenet-2012, variant: cal, sha256: e6c18b281f5ac5fc7cf6d36ef9a5f486ce95eb43ead99ee8523bd8162bc49a6f, size_bytes: 112710756}
+  # Fifty images for output comparison only; text fidelity covers 64 fixed prompts.
+  selection: {method: seeded_random_without_replacement, seed: 42, offset: 0, samples: 50}
+  outputs: [image_embeds, logits, text_embeds]
+
+accuracy:
+  datasets:
+  - {id: imagenet-2012, variant: val, sha256: 018bf95eb75b8b7f1d7766303cdecf3c45ecb02ccf4cf161122ae885c4d7a36f, size_bytes: 6666407650}
+
+performance: {scope: components}
+
+reference_metrics:
+- source: https://arxiv.org/pdf/2103.00020v1
+  dataset: {id: imagenet-2012, split: val}
+  conditions: 224x224, zero-shot
+  note: Zero-shot top-1 of CLIP ViT-B/16 in Table 11 of the CLIP paper, with OpenAI's 80 prompt templates per class, as surgery builds its class embeddings. The paper prints no top-5.
+  metrics: {top1_accuracy: 0.686}
