@@ -2,9 +2,29 @@ conversion:
   run_tests: true
 compile:
   run_tests: true
+# Provisional acceptance targets until the first current-recipe reports are available.
+# Replace these targets with each profile's reviewed measurements after its first CI run.
 accuracy:
-  run_tests: false
-  skip_reason: Awaiting the first DOTA validation report for the declared profiles.
+  run_tests: true
+  expected:
+    w16a16:
+      dota-v1-0-val:
+        dota_obb_map50: 0.5
+        dota_obb_map: 0.25
+    w8a8:
+      dota-v1-0-val:
+        dota_obb_map50: 0.5
+        dota_obb_map: 0.25
+    w8a16:
+      dota-v1-0-val:
+        dota_obb_map50: 0.5
+        dota_obb_map: 0.25
 performance:
-  run_tests: false
-  skip_reason: Awaiting the first DevKit performance report for the declared profiles.
+  run_tests: true
+  expected:
+    w16a16:
+      throughput_fps: 1.0
+    w8a8:
+      throughput_fps: 1.0
+    w8a16:
+      throughput_fps: 1.0
