@@ -283,6 +283,16 @@ function loadReferenceMetrics(modelId) {
   return referenceMetrics.then((reference) => reference[modelId] || []);
 }
 
+// The licenses a model may declare, from licenses.json beside this module. Without the list the page
+// cannot tell whether a license permits redistribution, so it offers no download.
+let licenseList = null;
+function loadLicenses() {
+  licenseList ||= fetch(new URL("./licenses.json", import.meta.url))
+    .then((response) => (response.ok ? response.json() : null))
+    .catch(() => null);
+  return licenseList;
+}
+
 // The package run's summary and test results: its artifacts and its numerical fidelity.
 export function loadPackageRun(runId) {
   return Promise.all([
@@ -300,16 +310,17 @@ export async function loadVariant(anchor) {
   const runs = details.map((detail) => detail.summary.run);
   const packageRun = variantPackage(componentRuns);
   const fingerprints = await benchmarkFingerprints(runs, runProfile(anchor));
-  const [performance, accuracy, [packageSummary, packageTests], pipeline, reference] = await Promise.all([
+  const [performance, accuracy, [packageSummary, packageTests], pipeline, reference, licenses] = await Promise.all([
     loadBenchmarkRun("performance", fingerprints.performance),
     loadBenchmarkRun("accuracy", fingerprints.accuracy),
     packageRun ? loadPackageRun(packageRun.run_id) : [null, null],
     loadComponentPipeline(anchor.metadata?.model_id),
     loadReferenceMetrics(anchor.metadata?.model_id),
+    loadLicenses(),
   ]);
   const variant = {
     key, modelId: anchor.metadata?.model_id, profile: runProfile(anchor), anchor, runs, details, performance, accuracy,
-    packageSummary, packageTests, requestedPackageId: packageRun?.run_id || null, pipeline, reference,
+    packageSummary, packageTests, requestedPackageId: packageRun?.run_id || null, pipeline, reference, licenses,
   };
   state.variantCache.set(key, variant);
   return variant;

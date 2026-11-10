@@ -365,7 +365,7 @@ When this checklist passes, continue to [Submit for review](contributing.md).
 | `id must match directory name` | Rename the directory or correct `id`; both use the same snake-case value. |
 | Unknown or incompatible taxonomy ID | Select an ID from the canonical taxonomy or propose a reviewed taxonomy change. |
 | `source.sha256` or size mismatch | Hash and measure the exact immutable bytes addressed by `source.uri`. |
-| Source host or URL rejected | Use a full-commit Hugging Face resource or another approved checksum-verified host; GitHub release assets are not accepted. |
+| Source host or URL rejected | Use one of the [approved forms](adding-a-model.md#3-pin-every-input): a full-commit Hugging Face resource, or for a conversion checkpoint a tagged release file of a public GitHub repository. |
 | Referenced file does not exist | Keep recipe and surgery paths under the model's `scripts/`; a declared `conversion` also needs `scripts/convert.py` and `scripts/requirements-convert.txt`. |
 | Unexpected file in the model directory | A model directory holds only `model.yaml`, `README.md`, `hero.png`, `scripts/`, and `tests/`. |
 | `set up exactly the stages this model has` or `unexpected test files` | Give `tests/tests.yaml` one entry per stage the model has, and keep only `tests.yaml`, the stage test files, and `fixtures/` under `tests/` ([write the model's tests](adding-a-model.md#10-write-the-models-tests)). |
