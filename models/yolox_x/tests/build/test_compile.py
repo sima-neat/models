@@ -116,10 +116,11 @@ def test_compile_profiles_and_sources_match_the_definition(model_dir, load_scrip
     assert model["architecture"]["id"] == "yolox"
     assert model["components"][0]["source"]["type"] == "conversion"
     assert model["license"]["spdx"] == "Apache-2.0"
-    for profile in ("w16a16", "w8a8", "w8a16"):
-        assert recipe._parameters(profile)["precision"] == profile
-    with pytest.raises(ValueError, match="no build profile"):
-        recipe._parameters("unknown")
+    assert [profile["id"] for profile in model["build_profiles"]] == ["w8a8"]
+    assert recipe._parameters("w8a8")["precision"] == "w8a8"
+    for profile in ("w16a16", "w8a16", "unknown"):
+        with pytest.raises(ValueError, match="no build profile"):
+            recipe._parameters(profile)
 
 
 def write_mpk(path, recipe, case="valid"):
