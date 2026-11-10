@@ -97,3 +97,57 @@ def test_compiled_components_are_entirely_on_mla(compiled: Path, load_script):
         manifests[component] = compiler.audit_mpk(archive)
     assert [row["name"] for row in manifests["text_encoder"]["input_nodes"]] == ["token_embeddings", "eos_selector"]
     assert [row["name"] for row in manifests["detector"]["input_nodes"]] == ["images", "text_embeddings", "prompt_mask"]
+
+
+def test_compile_recipe_records_grouped_graphs_and_final_archives(tmp_path, load_script):
+    import hashlib
+    import io
+    import tarfile
+    from unittest.mock import patch
+
+    from model_registry.artifact import validate_compile_outputs
+    from model_registry.errors import ValidationError
+
+    compiler = load_script("compile")
+    prepared = tmp_path / "graphs"
+    prepared.mkdir()
+    for component in compiler.COMPONENTS:
+        (prepared / f"{component}.onnx").write_bytes(f"{component} graph".encode())
+    np.save(prepared / "token_embedding_table.npy", np.zeros((1, 512), np.float32))
+    (prepared / "tokenizer.json").write_text("{}")
+
+    class Backend:
+        def quantize(self, **kwargs):
+            return self
+
+        def compile(self, *, output_path, **kwargs):
+            directory = Path(output_path)
+            directory.mkdir(parents=True)
+            with tarfile.open(directory / "fixture_mpk.tar.gz", "w:gz") as archive:
+                for name, content in {
+                    "model.elf": b"fixture",
+                    "model_mpk.json": b'{"plugins":[{"processor":"MLA"}]}',
+                }.items():
+                    member = tarfile.TarInfo(name)
+                    member.size = len(content)
+                    archive.addfile(member, io.BytesIO(content))
+
+    output = tmp_path / "build"
+    profile = "w8a8_mixed_w16a16"
+    with patch.object(compiler, "load_model", return_value=Backend()), \
+            patch.object(compiler, "onnx_source"), patch.object(compiler, "calibration_inputs"):
+        compiler.compile_prepared(prepared, output, profile)
+    identity = dict(model_id=compiler.MODEL_DIR.name, build_profile_id=profile,
+                    compile_invocation_id=profile, component_ids=list(compiler.COMPONENTS))
+    manifest = output / "compile-outputs.json"
+    result = validate_compile_outputs(manifest, output, **identity)
+    assert result["derived_graphs"] == [
+        {"component_id": component, "sha256": hashlib.sha256(f"{component} graph".encode()).hexdigest()}
+        for component in compiler.COMPONENTS
+    ]
+    # The checksum must cover the final CLIP archive including its prompt assets.
+    with tarfile.open(output / "text_encoder" / "fixture_mpk.tar.gz") as archive:
+        assert "prompt_assets/token_embedding_table.npy" in archive.getnames()
+    (output / "detector" / "fixture_mpk.tar.gz").write_bytes(b"changed after manifest")
+    with pytest.raises(ValidationError, match="MPK SHA-256 does not match"):
+        validate_compile_outputs(manifest, output, **identity)

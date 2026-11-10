@@ -20,6 +20,7 @@ from afe.apis.loaded_net import load_model
 from afe.load.importers.general_importer import onnx_source
 from calibration import calibration_inputs
 from calibration_samples import SAMPLES
+from model_registry.fetch import sha256_file
 from model_registry.model import build_profile_for, load_model as load_metadata
 from surgery import COMPONENTS, prepare_model
 
@@ -95,6 +96,13 @@ def compile_prepared(directory, output, profile_id, dataset=None, quantized_outp
         raise ValueError("this recipe requires the qualified 80-slot projection_attention profile and 128 samples")
     output.mkdir(parents=True, exist_ok=False)
     table = np.load(directory / "token_embedding_table.npy", allow_pickle=False)
+    manifest = {
+        "model_id": metadata["id"],
+        "build_profile_id": profile_id,
+        "compile_invocation_id": profile_id,
+        "outputs": [],
+        "derived_graphs": [],
+    }
 
     def create_text_calibrator():
         loaded = load_model(onnx_source(str(directory / "text_calibration.onnx"), layout="NCHW", flexible_batch_size=False),
@@ -106,8 +114,9 @@ def compile_prepared(directory, output, profile_id, dataset=None, quantized_outp
         build = Path(temporary)
         for component in COMPONENTS:
             name = f"{metadata['id']}_{profile_id}_{component}"
-            loaded = load_model(onnx_source(str(directory / (component + ".onnx")), layout="NCHW", flexible_batch_size=False),
-                                target=gen2_target)
+            graph = directory / (component + ".onnx")
+            manifest["derived_graphs"].append({"component_id": component, "sha256": sha256_file(graph)[0]})
+            loaded = load_model(onnx_source(str(graph), layout="NCHW", flexible_batch_size=False), target=gen2_target)
             data = (calibration_inputs(dataset, directory / "text_calibration.onnx", directory / "tokenizer.json", table,
                                        create_text_calibrator)
                     if component == "detector" else None)
@@ -125,6 +134,13 @@ def compile_prepared(directory, output, profile_id, dataset=None, quantized_outp
             destination = output / component
             destination.mkdir()
             shutil.copyfile(archive, destination / archive.name)
+            manifest["outputs"].append({
+                "component_id": component,
+                "mpk_path": f"{component}/{archive.name}",
+                "mpk_sha256": sha256_file(destination / archive.name)[0],
+            })
+    (output / "compile-outputs.json").write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def main():
