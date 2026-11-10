@@ -1,0 +1,54 @@
+display_name: YOLOX-s
+description: The S YOLOX detector for the 80 COCO object classes.
+model_type: vision
+tasks: [object_detection]
+
+modalities:
+  inputs: [image]
+  outputs: [bounding_boxes, class_scores]
+
+architecture: yolox
+
+license:
+  spdx: Apache-2.0
+  redistribution: allowed
+  attribution: YOLOX is developed by Megvii and distributed under Apache-2.0.
+
+upstream:
+  repository: https://github.com/Megvii-BaseDetection/YOLOX
+  revision: 419778480ab6ec0590e5d3831b3afb3b46ab2aa3
+
+conversion:
+  source:
+    # Pin the official Megvii release asset as the source of record, rather than a third-party mirror.
+    uri: https://github.com/Megvii-BaseDetection/YOLOX/releases/download/0.1.1rc0/yolox_s.pth
+    sha256: f55ded7181e1b0c13285c56e7790b8f0e8f8db590fe4edb37f0b7f345c913a30
+    size_bytes: 72089125
+
+compilation:
+  format: onnx
+  source: conversion
+
+calibrations:
+- id: coco-2017-cal
+  dataset: {id: coco-2017, variant: cal, sha256: 54c64d84122eba371ac014d7b43849a461551c2e6c5c430b5ead90ec1dec12b1, size_bytes: 187510866}
+
+build_profiles:
+  w8a8:
+    calibration_dataset: coco-2017-cal
+    components:
+      model:
+        parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 50}
+
+accuracy:
+  datasets:
+  - {id: coco-2017, variant: val, sha256: a40de1caf42b47c5a8976eb97efe3c83f3a41337c4d16d318eb15d65c293f2da, size_bytes: 898368520}
+
+performance: {}
+
+reference_metrics:
+- source: https://github.com/Megvii-BaseDetection/YOLOX/blob/419778480ab6ec0590e5d3831b3afb3b46ab2aa3/README.md
+  dataset: {id: coco-2017, split: val}
+  # Published upstream scores use top-left letterboxing; this package uses centered letterboxing.
+  conditions: 640x640, upstream top-left letterboxing and class-aware NMS at IoU 0.65
+  metrics: {coco_map: 0.405}
