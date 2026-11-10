@@ -10,10 +10,11 @@ modalities:
 
 architecture: gemma
 
+# Google licenses Gemma 4 under Apache-2.0. The Gemma Terms of Use cover Gemma 1 to 3.
 license:
-  spdx: LicenseRef-Gemma
-  redistribution: restricted
-  attribution: Derived from google/gemma-4-E4B-it under the Gemma Terms of Use; GPTQ checkpoint provided by SiMa.ai.
+  spdx: Apache-2.0
+  redistribution: allowed
+  attribution: Derived from google/gemma-4-E4B-it under Apache-2.0; GPTQ checkpoint provided by SiMa.ai.
 
 upstream:
   repository: https://huggingface.co/simaai/Gemma-4-E4B-it-GPTQ-Safetensors
