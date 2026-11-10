@@ -1,9 +1,9 @@
 """Measure CLIP ViT-B/16 zero-shot ImageNet top-1 and top-5 accuracy with its MPKs on a Modalix board.
 
-The conversion bakes the 1,000 ImageNet class embeddings (OpenAI's class names and 80 prompt templates, run through
+Surgery bakes the 1,000 ImageNet class embeddings (OpenAI's class names and 80 prompt templates, run through
 the text encoder in FP32) into the image encoder's logits output, so zero-shot classification runs the image encoder
 alone. The board has no tokenizer, so the script first checks the text encoder on the eight prompts in
-text_probe.npz, which convert.py --text-probe writes: their token IDs, only the token-embedding rows those IDs use,
+text_probe.npz, which surgery.py --text-probe writes: their token IDs, only the token-embedding rows those IDs use,
 and the converted ONNX's FP32 end-of-text rows. It looks each prompt's tokens up on the CPU, as an application does,
 runs the text encoder, and stops when an end-of-text row's cosine similarity with its FP32 row is below
 MIN_TEXT_COSINE.
@@ -158,16 +158,20 @@ def main(argv: list[str] | None = None) -> int:
         if count == 1 or count % 500 == 0 or count == len(names):
             log(f"{count}/{len(names)} images, {(time.monotonic() - started) / count * 1000:.0f} ms/image")
 
-    report = model_report.from_accuracy({
-        dataset_id: {
-            "metrics": {
-                "top1_accuracy": top1 / len(names),
-                "top5_accuracy": top5 / len(names),
+    report = model_report.from_accuracy(
+        {
+            dataset_id: {
+                "metrics": {
+                    "top1_accuracy": top1 / len(names),
+                    "top5_accuracy": top5 / len(names),
+                },
+                "split": VALIDATION_SPLIT,
+                "evaluated_samples": len(names),
+                "available_samples": len(available),
+                "details": {"inference_seconds": round(time.monotonic() - started, 1)},
             },
-            "split": VALIDATION_SPLIT, "evaluated_samples": len(names), "available_samples": len(available),
-            "details": {"inference_seconds": round(time.monotonic() - started, 1)},
-        },
-    })
+        }
+    )
     report.save(args.output)
     measured = report.document["datasets"][dataset_id]["metrics"]
     print(json.dumps({name: round(value, 4) for name, value in measured.items()}))

@@ -182,8 +182,9 @@ def look_up(prompt: Prompt) -> pyneat.Tensor:
     )
 
 
-def build_runners(models: dict[str, pyneat.Model], image: pyneat.Tensor,
-                  prompt: Prompt) -> tuple[pyneat.ModelRunner, pyneat.ModelRunner]:
+def build_runners(
+    models: dict[str, pyneat.Model], image: pyneat.Tensor, prompt: Prompt
+) -> tuple[pyneat.ModelRunner, pyneat.ModelRunner]:
     run_options = pyneat.RunOptions()
     run_options.queue_depth = QUEUE_DEPTH
     run_options.overflow_policy = pyneat.OverflowPolicy.Block
@@ -192,14 +193,16 @@ def build_runners(models: dict[str, pyneat.Model], image: pyneat.Tensor,
     return image_encoder, text_encoder
 
 
-def infer_one(image_encoder: pyneat.ModelRunner, text_encoder: pyneat.ModelRunner, image: pyneat.Tensor,
-              prompt: Prompt) -> None:
+def infer_one(
+    image_encoder: pyneat.ModelRunner, text_encoder: pyneat.ModelRunner, image: pyneat.Tensor, prompt: Prompt
+) -> None:
     embedding = image_embedding(image_encoder.run([image], timeout_ms=TIMEOUT_MS))
     similarity(embedding, text_encoder.run([look_up(prompt)], timeout_ms=TIMEOUT_MS), prompt.end)
 
 
-def measure_latency(image_encoder: pyneat.ModelRunner, text_encoder: pyneat.ModelRunner, image: pyneat.Tensor,
-                    prompt: Prompt) -> list[float]:
+def measure_latency(
+    image_encoder: pyneat.ModelRunner, text_encoder: pyneat.ModelRunner, image: pyneat.Tensor, prompt: Prompt
+) -> list[float]:
     """Seconds per frame through every stage with nothing else in flight, after the warm-up."""
     for _ in range(WARMUP_FRAMES):
         infer_one(image_encoder, text_encoder, image, prompt)
@@ -268,8 +271,9 @@ def run_together(*stages: Callable[[], None], runners: tuple[pyneat.ModelRunner,
         raise errors[0]
 
 
-def measure_throughput(image_encoder: pyneat.ModelRunner, text_encoder: pyneat.ModelRunner, image: pyneat.Tensor,
-                       prompt: Prompt) -> Throughput:
+def measure_throughput(
+    image_encoder: pyneat.ModelRunner, text_encoder: pyneat.ModelRunner, image: pyneat.Tensor, prompt: Prompt
+) -> Throughput:
     """Frames per second and board telemetry with every stage busy, each on a different frame. The measured span
     starts after WARMUP_FRAMES outputs and lasts at least MEASURED_FRAMES frames and MIN_DURATION_S seconds."""
     monitor = pyneat.TelemetryMonitor()
@@ -377,8 +381,15 @@ def benchmark_pipeline(mpks: dict[str, Path], dataset_id: str, dataset: Path, ou
     image_encoder, text_encoder = build_runners(models, image, prompt)
     latencies = measure_latency(image_encoder, text_encoder, image, prompt)
     throughput = measure_throughput(image_encoder, text_encoder, image, prompt)
-    write_report(output, f"{dataset_id} {VALIDATION_SPLIT}/{path.name}", latencies, throughput, models,
-                 mla_layer_stats, mla_stage_stats)
+    write_report(
+        output,
+        f"{dataset_id} {VALIDATION_SPLIT}/{path.name}",
+        latencies,
+        throughput,
+        models,
+        mla_layer_stats,
+        mla_stage_stats,
+    )
 
 
 def parse_mpks(values: list[str]) -> dict[str, Path]:

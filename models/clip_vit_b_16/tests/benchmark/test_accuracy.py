@@ -73,8 +73,10 @@ def test_class_logits_are_told_apart_from_the_embedding_by_size(load_script: Cal
     script = load_script("accuracy")
     logits = np.arange(1000, dtype=np.float32)
 
-    for outputs in ([_Tensor(np.zeros((1, 512), np.float32)), _Tensor(logits[None])],
-                    [_Tensor(logits[None]), _Tensor(np.zeros((1, 512), np.float32))]):
+    for outputs in (
+        [_Tensor(np.zeros((1, 512), np.float32)), _Tensor(logits[None])],
+        [_Tensor(logits[None]), _Tensor(np.zeros((1, 512), np.float32))],
+    ):
         np.testing.assert_array_equal(script.class_logits(outputs), logits)
     with pytest.raises(ValueError, match="output sizes"):
         script.class_logits([_Tensor(logits[None])])
@@ -164,8 +166,16 @@ def test_a_stray_text_encoder_stops_the_stage_before_any_image(
     }
     (tmp_path / "annotations").mkdir()
     (tmp_path / "annotations" / "labels_val2012.json").write_text(json.dumps(labels), encoding="utf-8")
-    arguments = ["--mpk", "image_encoder=image.tar.gz", "--mpk", "text_encoder=text.tar.gz",
-                 "--dataset", f"imagenet-2012-val={tmp_path}", "--output", str(tmp_path / "report")]
+    arguments = [
+        "--mpk",
+        "image_encoder=image.tar.gz",
+        "--mpk",
+        "text_encoder=text.tar.gz",
+        "--dataset",
+        f"imagenet-2012-val={tmp_path}",
+        "--output",
+        str(tmp_path / "report"),
+    ]
 
     with pytest.raises(ValueError, match="text encoder end-of-text rows below cosine 0.99 with FP32"):
         script.main(arguments)

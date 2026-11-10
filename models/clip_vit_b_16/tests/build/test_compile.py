@@ -10,7 +10,9 @@ from types import ModuleType
 from unittest.mock import MagicMock, call
 
 import numpy as np
+import onnx
 import pytest
+from onnx import numpy_helper
 from PIL import Image
 
 MODEL_DIR = Path(__file__).resolve().parents[2]
@@ -39,8 +41,11 @@ def _mpk(path: Path, plugins: list[dict], inputs: list[dict]) -> Path:
 def test_preprocessing_follows_the_checkpoints_processor(load_script: Callable[[str], ModuleType]) -> None:
     calibration = load_script("calibration")
     processor = {
-        "crop_size": 224, "size": 224, "resample": 3,
-        "image_mean": [0.48145466, 0.4578275, 0.40821073], "image_std": [0.26862954, 0.26130258, 0.27577711],
+        "crop_size": 224,
+        "size": 224,
+        "resample": 3,
+        "image_mean": [0.48145466, 0.4578275, 0.40821073],
+        "image_std": [0.26862954, 0.26130258, 0.27577711],
     }
     assert calibration.SIZE == processor["size"] == processor["crop_size"]
     assert calibration.RESCALE == pytest.approx(1 / 255)
@@ -129,27 +134,19 @@ def test_compile_reads_both_encoders_of_each_build_profile(load_script: Callable
         parameters = recipe._component_parameters(metadata, profile["id"])
         assert list(parameters) == list(recipe.COMPONENT_IDS) == ["image_encoder", "text_encoder"]
         assert {item["precision"] for item in parameters.values()} == {profile["id"]}
-        # Both encoders calibrate: AFE needs calibrated ranges even at BF16.
-        assert all("calibration_bins" in item for item in parameters.values())
+        assert all("calibration_bins" not in item and "calibration_samples" not in item for item in parameters.values())
         assert recipe._precision_label(parameters) == profile["id"].upper()
 
 
-@pytest.mark.parametrize("precision", ["w8a8", "w8a16", "w16a16"])
+@pytest.mark.parametrize("precision", ["w8a16", "w16a16"])
 def test_the_quantization_recipe_follows_the_precision(
     monkeypatch: pytest.MonkeyPatch, load_script: Callable[[str], ModuleType], precision: str
 ) -> None:
     recipe = load_script("compile")
-    for name in ("quantization_scheme", "bfloat16_scheme", "HistogramMSEMethod", "default_quantization"):
+    for name in ("quantization_scheme", "bfloat16_scheme", "SkipCalibration", "QuantizationParams"):
         monkeypatch.setattr(recipe, name, MagicMock(name=name))
-    recipe._quantization_config({"precision": precision, "calibration_bins": 2048})
-    if precision == "w8a8":
-        # The held-back w8a8 profile keeps its recipe: INT8 activations per tensor, INT8 weights per channel.
-        assert recipe.quantization_scheme.call_args_list == [
-            call(asymmetric=True, per_channel=False, bits=8),
-            call(asymmetric=False, per_channel=True, bits=8),
-        ]
-        recipe.bfloat16_scheme.assert_not_called()
-    elif precision == "w8a16":
+    recipe._quantization_config({"precision": precision})
+    if precision == "w8a16":
         # BF16 activations, INT8 weights per channel.
         assert recipe.quantization_scheme.call_args_list == [call(asymmetric=False, per_channel=True, bits=8)]
         recipe.bfloat16_scheme.assert_called_once_with()
@@ -157,12 +154,13 @@ def test_the_quantization_recipe_follows_the_precision(
         recipe.quantization_scheme.assert_not_called()
         recipe.bfloat16_scheme.assert_called_once_with()
     # Only w8a16 scales activations per token.
-    per_token = [c[1] for c in recipe.default_quantization.mock_calls if c[0].endswith("with_per_token_quant")]
-    assert per_token == [(precision == "w8a16",)]
-    # Every precision calibrates: AFE needs calibrated ranges even at BF16.
-    recipe.HistogramMSEMethod.assert_called_once_with(2048)
+    options = recipe.QuantizationParams.call_args.kwargs
+    assert options["per_token_quant"] == (precision == "w8a16")
+    assert options["requantization_mode"] == recipe.RequantizationMode.sima
+    recipe.SkipCalibration.assert_called_once_with()
+    assert options["calibration_method"] is recipe.SkipCalibration.return_value
     with pytest.raises(ValueError, match="unsupported precision"):
-        recipe._quantization_config({"precision": "w4a8", "calibration_bins": 2048})
+        recipe._quantization_config({"precision": "w4a8"})
 
 
 def test_compile_rejects_an_undeclared_build_profile_or_mixed_precisions(
@@ -175,19 +173,21 @@ def test_compile_rejects_an_undeclared_build_profile_or_mixed_precisions(
         recipe._precision_label({"image_encoder": {"precision": "w8a8"}, "text_encoder": {"precision": "w16a16"}})
 
 
-def test_fidelity_compares_every_output_after_the_calibration_images(load_script: Callable[[str], ModuleType]) -> None:
+def test_fidelity_checks_every_output_without_calibration(load_script: Callable[[str], ModuleType]) -> None:
     recipe = load_script("compile")
     metadata = recipe.load_metadata(MODEL_DIR)
     fidelity = metadata["numerical_fidelity"]
     assert fidelity["outputs"] == ["image_embeds", "logits", "text_embeds"]
-    counts = [
-        int(binding["parameters"]["calibration_samples"])
-        for profile in metadata["build_profiles"]
-        for binding in profile["components"]
-        if binding["id"] == "image_encoder"
-    ]
-    assert len(counts) == len(metadata["build_profiles"]) and fidelity["selection"]["offset"] >= max(counts)
-    assert metadata["calibrations"][0]["dataset"] == fidelity["dataset"]
+    assert fidelity["selection"]["offset"] == 0
+    assert not metadata.get("calibrations")
+
+
+def test_quantization_supplies_no_calibration_data(monkeypatch, load_script):
+    recipe = load_script("compile")
+    loaded = MagicMock()
+    monkeypatch.setattr(recipe, "load_model", lambda *args, **kwargs: loaded)
+    recipe._quantize_component(Path("encoder.onnx"), "clip", "text_encoder", {"precision": "w8a16"})
+    assert loaded.quantize.call_args.kwargs["calibration_data"] is None
 
 
 def test_fidelity_error_sums_match_the_metrics_over_all_samples(load_script: Callable[[str], ModuleType]) -> None:
@@ -239,9 +239,19 @@ def test_compile_main_rejects_an_invocation_not_named_after_the_build_profile(
     load_script: Callable[[str], ModuleType],
 ) -> None:
     recipe = load_script("compile")
-    arguments = ["compile.py", "--model", str(tmp_path / "model.onnx"), "--output-dir", str(tmp_path / "out"),
-                 "--dataset", str(tmp_path), "--fidelity-dataset", str(tmp_path), "--build-profile", "w16a16",
-                 "--compile-invocation", "w8a8"]
+    arguments = [
+        "compile.py",
+        "--model",
+        str(tmp_path / "weights.pth"),
+        "--output-dir",
+        str(tmp_path / "out"),
+        "--fidelity-dataset",
+        str(tmp_path),
+        "--build-profile",
+        "w16a16",
+        "--compile-invocation",
+        "w8a8",
+    ]
     monkeypatch.setattr("sys.argv", arguments)
     with pytest.raises(SystemExit) as stopped:
         recipe.main()
@@ -263,3 +273,63 @@ def test_build_holds_both_encoders_and_bf16_matches_the_onnx(
     if build_profile == "w16a16":
         # BF16 keeps every output within rounding of the ONNX; a broken operator shows up as a low cosine.
         assert all(metric["cosine_similarity"] > 0.99 for metric in fidelity["metrics"]), fidelity["metrics"]
+
+
+ROOT = MODEL_DIR.parents[1]
+
+
+@pytest.fixture
+def exporter(load_script: Callable[[str], ModuleType]) -> ModuleType:
+    return load_script("surgery")
+
+
+def test_prompt_tables_are_openais_imagenet_classes_and_templates(exporter: ModuleType):
+    assert len(exporter.CLASS_NAMES) == exporter.CLASS_COUNT == 1000
+    assert (exporter.CLASS_NAMES[0], exporter.CLASS_NAMES[-1]) == ("tench", "toilet paper")
+    assert len(exporter.TEMPLATES) == 80
+    assert all(template.count("{}") == 1 for template in exporter.TEMPLATES)
+
+
+def _text_probe() -> dict[str, np.ndarray]:
+    with np.load(ROOT / "models/clip_vit_b_16/scripts/text_probe.npz") as saved:
+        return {name: saved[name] for name in saved.files}
+
+
+def test_the_text_probe_holds_the_exported_prompts(exporter: ModuleType):
+    assert "a photo of a {}." in exporter.TEMPLATES
+    assert _text_probe()["prompts"].tolist() == list(exporter.TEXT_PROBE_PROMPTS)
+
+
+def _interface_model(exporter: ModuleType, case: str) -> onnx.ModelProto:
+    helper = onnx.helper
+
+    def value(name: str) -> onnx.ValueInfoProto:
+        return helper.make_tensor_value_info(name, onnx.TensorProto.FLOAT, exporter.INTERFACE[name])
+
+    inputs = [value(name) for name in exporter.INPUTS]
+    outputs = [value(name) for name in exporter.OUTPUTS]
+    if case == "order":
+        outputs[:2] = outputs[1::-1]
+    elif case == "dtype":
+        outputs[-1].type.tensor_type.elem_type = onnx.TensorProto.INT64
+    elif case == "shape":
+        outputs[0].type.tensor_type.shape.dim[0].dim_value = 2
+    nodes = []
+    for output in outputs:
+        dtype = output.type.tensor_type.elem_type
+        shape = [dim.dim_value for dim in output.type.tensor_type.shape.dim]
+        array = np.zeros(shape, dtype=np.int64 if dtype == onnx.TensorProto.INT64 else np.float32)
+        nodes.append(helper.make_node("Constant", [], [output.name], value=numpy_helper.from_array(array)))
+    graph = helper.make_graph(nodes, "fixture", inputs, outputs)
+    return helper.make_model(graph, opset_imports=[helper.make_opsetid("", 18 if case == "opset" else 17)])
+
+
+@pytest.mark.parametrize("case", ["valid", "opset", "order", "dtype", "shape"])
+def test_fixed_onnx_interface(tmp_path, case, exporter: ModuleType):
+    path = tmp_path / "model.onnx"
+    onnx.save(_interface_model(exporter, case), path)
+    if case == "valid":
+        exporter.validate_export(path)
+    else:
+        with pytest.raises(ValueError):
+            exporter.validate_export(path)
