@@ -24,15 +24,11 @@ REPOSITORY_PATH = "/v1/repositories/sima-neat/models"
 ARTIFACT = "onnx"
 FIELDS = ("s3_bucket", "s3_key", "s3_version_id", "sha256", "size_bytes", "media_type")
 
-# Shared files that can change the ONNX or its bundle. A missing conversion stops the plan for every model, so
-# files that only validate the output or read metadata stay out; a changed check applies on the next conversion.
-CONVERSION_TOOLING = (
-    ".github/workflows/vulcan-model-convert.yml",
-    "scripts/run_model_conversion.sh",
-    "tools/model_registry/conversion.py",
-    "tools/model_registry/fetch.py",
-    "tools/model_registry/source.py",
-)
+# The conversion fingerprint holds a model's own inputs and no shared file, so editing shared tooling reconverts
+# nothing. Raise this in the change that makes shared tooling produce a different converted model from the same
+# inputs, such as a new Python version in scripts/run_model_conversion.sh or a new bundle layout. Every
+# conversion-backed model then needs Vulcan Model Convert again.
+FINGERPRINT_VERSION = 1
 # Other stages' dependencies, which never reach the conversion environment.
 OTHER_STAGE_REQUIREMENTS = {"requirements-compile.txt", "requirements-accuracy.txt"}
 DEFAULT_OUTPUTS = ["model.onnx"]
@@ -74,9 +70,10 @@ def _imported_modules(scripts: Path) -> set[Path]:
 
 
 def conversion_fingerprint(root: Path, model: dict) -> str:
+    """Return the digest of what decides a model's converted output: its checkpoint, conversion code and outputs."""
     scripts = root / "models" / model["id"] / "scripts"
     imported = _imported_modules(scripts)
-    paths = [scripts / "requirements-convert.txt", *(root / path for path in CONVERSION_TOOLING)]
+    paths = [scripts / "requirements-convert.txt"]
     # A module beside convert.py counts only when imported: compile, benchmark, calibration and surgery code
     # does not. Anything else under scripts/, such as an exporter patch or a helper package, always counts.
     paths += [
@@ -95,7 +92,7 @@ def conversion_fingerprint(root: Path, model: dict) -> str:
         files[path.relative_to(root).as_posix()] = sha256_file(path)[0]
     return digest(
         {
-            "version": 1,
+            "version": FINGERPRINT_VERSION,
             "model_id": model["id"],
             "source": source_identity(model["conversion"]["default"]["source"]),
             "outputs": conversion_outputs(scripts.parent),
