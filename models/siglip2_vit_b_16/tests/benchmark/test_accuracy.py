@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
@@ -9,6 +10,7 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 from model_registry.model_tests import measured_shortfalls
+from PIL import Image
 
 
 class _Tensor:
@@ -227,3 +229,27 @@ def test_accuracy_uses_big_visions_81_canonicalized_imagenet_templates(load_scri
     assert "a photo of a american robin" in texts
     assert texts[-1] == "american robin"
     assert not any("." in text or "," in text for text in texts)
+
+
+def test_accuracy_preprocessing_uses_the_big_vision_resize_and_center_crop(load_script):
+    accuracy = load_script("accuracy")
+    # At 256x256 the resize is identity. Cropping removes the border, rather than squeezing it into the image.
+    pixels = np.zeros((256, 256, 3), np.uint8)
+    pixels[16:240, 16:240] = (128, 192, 255)
+    stream = io.BytesIO()
+    Image.fromarray(pixels).save(stream, format="PNG")
+    result = accuracy.preprocess_image(stream.getvalue())
+    assert result.shape == (224, 224, 3) and result.dtype == np.float32
+    expected = np.broadcast_to((np.array([128, 192, 255], np.float32) / 255 - 0.5) / 0.5, result.shape)
+    np.testing.assert_allclose(result, expected, atol=1e-6)
+
+
+def test_accuracy_resize_does_not_antialias_before_sampling(load_script):
+    accuracy = load_script("accuracy")
+    # At 768 -> 256, half-pixel bilinear centers land exactly on source pixels 1, 4, 7, ... .
+    # An antialiasing filter would average these with their neighbors.
+    pixels = np.zeros((768, 768, 3), np.uint8)
+    pixels[1::3, 1::3] = 255
+    stream = io.BytesIO()
+    Image.fromarray(pixels).save(stream, format="PNG")
+    np.testing.assert_array_equal(accuracy.preprocess_image(stream.getvalue()), np.ones((224, 224, 3)))

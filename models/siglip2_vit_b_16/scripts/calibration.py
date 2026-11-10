@@ -12,9 +12,8 @@ from pathlib import Path, PurePosixPath
 import numpy as np
 from PIL import Image
 
-# Class names and clip_paper templates from Big Vision at commit
-# 0127fb6b337ee2a27bf4e54dea79cff176527356: datasets/imagenet/class_names.py and
-# evaluators/proj/image_text/prompt_engineering_constants.py (80 CLIP templates plus the bare class name).
+# ImageNet class names from Big Vision commit 0127fb6b337ee2a27bf4e54dea79cff176527356:
+# datasets/imagenet/class_names.py. Surgery also uses these names for calibration and fidelity prompts.
 # fmt: off
 CLASS_NAMES = (
     "tench", "goldfish", "great white shark", "tiger shark", "hammerhead shark", "electric ray",
@@ -176,26 +175,6 @@ CLASS_NAMES = (
     "agaric", "gyromitra", "stinkhorn mushroom", "earth star fungus", "hen of the woods mushroom",
     "bolete", "corn cob", "toilet paper",
 )
-TEMPLATES = ('a bad photo of a {}.', 'a photo of many {}.', 'a sculpture of a {}.', 'a photo of the hard to see {}.',
- 'a low resolution photo of the {}.', 'a rendering of a {}.', 'graffiti of a {}.', 'a bad photo of the {}.',
- 'a cropped photo of the {}.', 'a tattoo of a {}.', 'the embroidered {}.', 'a photo of a hard to see {}.',
- 'a bright photo of a {}.', 'a photo of a clean {}.', 'a photo of a dirty {}.', 'a dark photo of the {}.',
- 'a drawing of a {}.', 'a photo of my {}.', 'the plastic {}.', 'a photo of the cool {}.',
- 'a close-up photo of a {}.', 'a black and white photo of the {}.', 'a painting of the {}.',
- 'a painting of a {}.', 'a pixelated photo of the {}.', 'a sculpture of the {}.', 'a bright photo of the {}.',
- 'a cropped photo of a {}.', 'a plastic {}.', 'a photo of the dirty {}.', 'a jpeg corrupted photo of a {}.',
- 'a blurry photo of the {}.', 'a photo of the {}.', 'a good photo of the {}.', 'a rendering of the {}.',
- 'a {} in a video game.', 'a photo of one {}.', 'a doodle of a {}.', 'a close-up photo of the {}.',
- 'a photo of a {}.', 'the origami {}.', 'the {} in a video game.', 'a sketch of a {}.', 'a doodle of the {}.',
- 'a origami {}.', 'a low resolution photo of a {}.', 'the toy {}.', 'a rendition of the {}.',
- 'a photo of the clean {}.', 'a photo of a large {}.', 'a rendition of a {}.', 'a photo of a nice {}.',
- 'a photo of a weird {}.', 'a blurry photo of a {}.', 'a cartoon {}.', 'art of a {}.', 'a sketch of the {}.',
- 'a embroidered {}.', 'a pixelated photo of a {}.', 'itap of the {}.', 'a jpeg corrupted photo of the {}.',
- 'a good photo of a {}.', 'a plushie {}.', 'a photo of the nice {}.', 'a photo of the small {}.',
- 'a photo of the weird {}.', 'the cartoon {}.', 'art of the {}.', 'a drawing of the {}.',
- 'a photo of the large {}.', 'a black and white photo of a {}.', 'the plushie {}.', 'a dark photo of a {}.',
- 'itap of a {}.', 'graffiti of the {}.', 'a toy {}.', 'itap of my {}.', 'a photo of a cool {}.',
- 'a photo of a small {}.', 'a tattoo of the {}.', '{}')
 # fmt: on
 
 # The checkpoint's declared preprocessing (its preprocessor_config.json): a bilinear resize straight to 224x224,
@@ -278,23 +257,3 @@ def load_images(dataset: Path, names: list[str]) -> np.ndarray:
     """The named images, preprocessed and stacked in NHWC order."""
     images = read_images(dataset, names)
     return np.stack([preprocess_image(images[name]) for name in names])
-
-
-def preprocess_validation_image(content: bytes) -> np.ndarray:
-    """Big Vision get_disclf(224): bilinear resize(256), central_crop(224), value_range(-1,1).
-
-    Its TensorFlow resize uses half-pixel centers without antialiasing and casts back to uint8.
-    Pillow's bilinear downsampling applies an antialiasing filter, so use NumPy for this step.
-    """
-    with Image.open(io.BytesIO(content)) as source:
-        image = np.asarray(source.convert("RGB"), dtype=np.float32)
-    y, x = [
-        np.maximum((np.arange(256, dtype=np.float32) + 0.5) * (length / 256) - 0.5, 0) for length in image.shape[:2]
-    ]
-    y0, x0 = y.astype(np.int32), x.astype(np.int32)
-    y1, x1 = np.minimum(y0 + 1, image.shape[0] - 1), np.minimum(x0 + 1, image.shape[1] - 1)
-    dx, dy = (x - x0.astype(np.float32))[None, :, None], (y - y0.astype(np.float32))[:, None, None]
-    top = image[y0[:, None], x0] + (image[y0[:, None], x1] - image[y0[:, None], x0]) * dx
-    bottom = image[y1[:, None], x0] + (image[y1[:, None], x1] - image[y1[:, None], x0]) * dx
-    image = np.clip(top + (bottom - top) * dy, 0, 255).astype(np.uint8)[16:240, 16:240]
-    return (image.astype(np.float32) * RESCALE - MEAN) / STD
