@@ -121,6 +121,10 @@ architectures:
     display_name: YOLO26-det
     paradigm: cnn
     allowed_model_types: [vision]
+  yolo26_obb:
+    display_name: YOLO26-obb
+    paradigm: cnn
+    allowed_model_types: [vision]
   yolo26_pose:
     display_name: YOLO26-pose
     paradigm: cnn
