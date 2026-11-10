@@ -14,6 +14,11 @@
     "summary": "Permissive license. Redistribution must keep the copyright notice and disclaimer.",
     "downloadable": true
   },
+  "LicenseRef-BigScience-OpenRAIL-M": {
+    "name": "BigScience Open RAIL-M License",
+    "summary": "Responsible AI license. Redistribution must include the license and pass its use restrictions on to every recipient.",
+    "downloadable": true
+  },
   "LicenseRef-Llama-3.1-Community": {
     "name": "Llama 3.1 Community License",
     "summary": "Use and redistribution are subject to Meta’s Community License and Acceptable Use Policy. Include the license, attribution and notices.",
@@ -37,11 +42,6 @@
   "MIT": {
     "name": "MIT License",
     "summary": "Permissive license. Redistribution must include the copyright and permission notices.",
-    "downloadable": true
-  },
-  "OpenRAIL-M": {
-    "name": "Open RAIL-M License",
-    "summary": "Responsible AI license. Redistribution must include the license and pass its use restrictions on to every recipient.",
     "downloadable": true
   }
 }

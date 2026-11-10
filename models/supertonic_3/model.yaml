@@ -10,14 +10,13 @@ modalities:
 architecture: supertonic
 
 license:
-  spdx: OpenRAIL-M
+  spdx: LicenseRef-BigScience-OpenRAIL-M
   redistribution: restricted
-  attribution: Supertonic 3 model weights are distributed by Supertone under the OpenRAIL-M license.
+  attribution: Supertonic 3 model weights are distributed by Supertone under the BigScience Open RAIL-M License.
 
 upstream:
   repository: https://huggingface.co/Supertone/supertonic-3
   revision: 724fb5abbf5502583fb520898d45929e62f02c0b
-  derived_from: https://github.com/florianvoss-commit/supertonic-sima
 
 compilation:
   format: onnx
