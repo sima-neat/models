@@ -27,9 +27,6 @@ def test_the_cpu_looks_the_probe_prompt_up_for_the_text_encoder(load_script: Cal
     assert embeds.shape == (1, 77, 512)
     for position, token in enumerate(prompt.token_ids):
         np.testing.assert_array_equal(embeds[0, position], prompt.rows[token])
-    # "a photo of a tench." is the start token, seven tokens, then the first end-of-text token at row 8.
-    assert prompt.end == 8
-    assert prompt.token_ids[prompt.end] == max(prompt.token_ids)
 
 
 def test_performance_meets_its_expected_values(

@@ -16,6 +16,12 @@ from onnx import numpy_helper
 from PIL import Image
 
 MODEL_DIR = Path(__file__).resolve().parents[2]
+# W8A16 CI on 50 ImageNet images and 64 prompts measured 0.99303 image,
+# 0.99962 logits and 0.99899 text cosine. Keep margin for compiler rounding.
+FIDELITY_MIN_COSINE = {
+    "w16a16": {"image_embeds": 0.99, "logits": 0.99, "text_embeds": 0.99},
+    "w8a16": {"image_embeds": 0.99, "logits": 0.999, "text_embeds": 0.995},
+}
 
 
 def _png(width: int, height: int, colour: tuple[int, int, int] = (255, 0, 0)) -> bytes:
@@ -260,7 +266,26 @@ def test_compile_main_rejects_an_invocation_not_named_after_the_build_profile(
     assert not (tmp_path / "out").exists()
 
 
-def test_build_holds_both_encoders_and_bf16_matches_the_onnx(
+def _check_fidelity(fidelity: dict, build_profile: str) -> None:
+    floors = FIDELITY_MIN_COSINE[build_profile]
+    assert [metric["name"] for metric in fidelity["metrics"]] == list(floors)
+    for metric in fidelity["metrics"]:
+        assert metric["cosine_similarity"] >= floors[metric["name"]], metric
+
+
+@pytest.mark.parametrize("profile", ["w16a16", "w8a16"])
+@pytest.mark.parametrize("output", ["image_embeds", "logits", "text_embeds"])
+def test_fidelity_gate_rejects_drift_in_each_output(profile: str, output: str) -> None:
+    fidelity = {"metrics": [{"name": name, "cosine_similarity": 1.0} for name in FIDELITY_MIN_COSINE[profile]]}
+    _check_fidelity(fidelity, profile)
+    next(metric for metric in fidelity["metrics"] if metric["name"] == output)["cosine_similarity"] = (
+        FIDELITY_MIN_COSINE[profile][output] - 0.0001
+    )
+    with pytest.raises(AssertionError, match=output):
+        _check_fidelity(fidelity, profile)
+
+
+def test_build_holds_both_encoders_and_matches_the_onnx(
     compiled: Path, build_profile: str, load_script: Callable[[str], ModuleType]
 ) -> None:
     recipe = load_script("compile")
@@ -269,10 +294,7 @@ def test_build_holds_both_encoders_and_bf16_matches_the_onnx(
     for item in outputs["outputs"]:
         recipe.audit_mpk(compiled / item["mpk_path"], item["component_id"])
     fidelity = json.loads((compiled / "fidelity.json").read_text(encoding="utf-8"))
-    assert [metric["name"] for metric in fidelity["metrics"]] == ["image_embeds", "logits", "text_embeds"]
-    if build_profile == "w16a16":
-        # BF16 keeps every output within rounding of the ONNX; a broken operator shows up as a low cosine.
-        assert all(metric["cosine_similarity"] > 0.99 for metric in fidelity["metrics"]), fidelity["metrics"]
+    _check_fidelity(fidelity, build_profile)
 
 
 ROOT = MODEL_DIR.parents[1]

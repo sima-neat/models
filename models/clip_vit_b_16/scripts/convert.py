@@ -10,10 +10,9 @@ from model_registry.model import load_model as load_metadata
 MODEL_DIR = Path(__file__).resolve().parents[1]
 
 
-def convert(source, output_dir):
+def convert(source, output_dir, metadata):
     import torch
 
-    metadata = load_metadata(MODEL_DIR)["conversion"]["default"]["source"]
     assets = {
         item["path"]: (source.parent / item["path"]).read_text(encoding="utf-8")
         for item in metadata["files"]
@@ -35,8 +34,9 @@ def main():
     conversions = load_metadata(MODEL_DIR)["conversion"]
     if args.conversion not in conversions:
         parser.error(f"unknown conversion {args.conversion!r}; model.yaml declares: {', '.join(sorted(conversions))}")
-    source, *_ = Fetcher().fetch_source(conversions[args.conversion]["source"])
-    convert(source, args.output_dir.resolve())
+    metadata = conversions[args.conversion]["source"]
+    source, *_ = Fetcher().fetch_source(metadata)
+    convert(source, args.output_dir.resolve(), metadata)
 
 
 if __name__ == "__main__":

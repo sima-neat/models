@@ -374,7 +374,7 @@ example before the model has a published report to expect values from.
 
 A running `accuracy` or `performance` entry also states what the model must
 deliver on a DevKit in `expected`, keyed by every build profile the stage
-measures: the latest published values of that profile's whole model. For
+measures: the latest published values for the profile's declared scope. For
 accuracy, key the values by each dataset `accuracy` names, and supply finite
 values of accuracy metrics from
 [`tools/model_report/metrics.json`](../tools/model_report/metrics.json),
@@ -382,6 +382,25 @@ covering at least the metrics that dataset requires. Keep optional expectations 
 top-5: a missing expected measurement fails. For performance, supply
 `throughput_fps`. Take the values from the model browser's latest `develop`
 results, rounded to 4 decimal places for accuracy and 1 for throughput.
+
+When `model.yaml` declares `performance: {scope: components}`, each component
+needs its own throughput expectation. All declared components must appear:
+
+```yaml
+performance:
+  run_tests: true
+  expected:
+    w8a16:
+      components:
+        image_encoder:
+          throughput_fps: 230.5
+        text_encoder:
+          throughput_fps: 643.9
+```
+
+The shared limits apply to each component separately. Whole-model scope keeps
+the flat `expected.<profile>.throughput_fps` form below. See
+[independent components](benchmarking.md#independent-components).
 
 A measured value passes when it falls at most 5% below its expected accuracy
 or 10% below its expected throughput. For a metric that `metrics.json` marks
@@ -427,10 +446,10 @@ def test_performance_meets_its_expected_values(
 
 
 def test_performance_records_the_execution_plan_the_browser_draws(performance: dict[str, Any]) -> None:
-    (component,) = performance["components"].values()
-    plan = component["execution_plan"]
-    assert (plan["schema"], plan["schema_version"]) == ("sima.neat.execution_plan", 1)
-    assert plan["nodes"] and plan["edges"]
+    for component in performance["components"].values():
+        plan = component["execution_plan"]
+        assert (plan["schema"], plan["schema_version"]) == ("sima.neat.execution_plan", 1)
+        assert plan["nodes"] and plan["edges"]
 ```
 
 Update `expected` when a reviewed change moves a published value, such as a

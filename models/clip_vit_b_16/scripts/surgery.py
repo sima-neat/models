@@ -368,15 +368,11 @@ def build_image_encoder(clip, class_weights):
     return ImageEncoder().float().eval()
 
 
-def export_model(source, output_dir):
-    import onnxruntime as ort
+def load_clip(source):
+    """Restore the upstream checkpoint and its processor from the conversion bundle."""
     import torch
-    from PIL import Image
     from transformers import CLIPConfig, CLIPModel, CLIPProcessor
 
-    output_dir.mkdir(parents=True, exist_ok=False)
-    output = output_dir / "model.onnx"
-    torch.set_num_threads(4)
     checkpoint = torch.load(source, map_location="cpu", weights_only=True)
     assets = checkpoint["assets"]
     with tempfile.TemporaryDirectory(prefix="clip-processor-") as directory:
@@ -395,34 +391,56 @@ def export_model(source, output_dir):
         if not torch.equal(positions, torch.arange(length)[None]):
             raise ValueError(f"unexpected {name} position IDs")
     clip.load_state_dict(state, strict=True)
-    del checkpoint
-    tokenizer = processor.tokenizer
+    return clip, processor
 
-    def tokens(prompts, padding="max_length"):
-        return tokenizer(list(prompts), padding=padding, max_length=TEXT_LENGTH, truncation=True, return_tensors="pt")[
-            "input_ids"
-        ]
 
-    def text_features(input_ids):
-        features = clip.get_text_features(input_ids=input_ids)
-        return getattr(features, "pooler_output", features)
+def tokenize(tokenizer, prompts, padding="max_length"):
+    return tokenizer(list(prompts), padding=padding, max_length=TEXT_LENGTH, truncation=True, return_tensors="pt")[
+        "input_ids"
+    ]
+
+
+def text_features(clip, input_ids):
+    features = clip.get_text_features(input_ids=input_ids)
+    return getattr(features, "pooler_output", features)
+
+
+def build_class_weights(clip, tokenizer):
+    """Build OpenAI's normalized 80-prompt ensemble for the fixed ImageNet head."""
+    import torch
 
     with torch.inference_mode():
         # Each class's embedding is the normalized mean of its normalized prompt embeddings, as OpenAI evaluates it.
         # The text encoder is causal, so padding to the longest prompt gives the same features as padding to 77.
         class_embeds = []
         for name in CLASS_NAMES:
-            features = text_features(tokens((template.format(name) for template in TEMPLATES), padding=True))
+            features = text_features(
+                clip, tokenize(tokenizer, (template.format(name) for template in TEMPLATES), padding=True)
+            )
             mean = torch.nn.functional.normalize(features, dim=-1).mean(0)
             class_embeds.append(torch.nn.functional.normalize(mean, dim=0))
-        class_weights = torch.stack(class_embeds).T * clip.logit_scale.exp()
-        prompt_ids = tokens(
-            TEMPLATES[index % len(TEMPLATES)].format(CLASS_NAMES[index * CLASS_COUNT // FIDELITY_PROMPTS])
-            for index in range(FIDELITY_PROMPTS)
+        return torch.stack(class_embeds).T * clip.logit_scale.exp()
+
+
+def prepare_prompts(clip, tokenizer):
+    """Prepare the fixed token IDs and embeddings used for export and fidelity checks."""
+    import torch
+
+    with torch.inference_mode():
+        prompt_ids = tokenize(
+            tokenizer,
+            (
+                TEMPLATES[index % len(TEMPLATES)].format(CLASS_NAMES[index * CLASS_COUNT // FIDELITY_PROMPTS])
+                for index in range(FIDELITY_PROMPTS)
+            ),
         )
         prompt_embeds = clip.text_model.embeddings.token_embedding(prompt_ids)
-        # The end-of-text token has the highest id in CLIP's vocabulary.
-        prompt_ends = prompt_ids.argmax(-1)
+    return prompt_ids, prompt_embeds
+
+
+def build_model(clip, class_weights):
+    """Compose the optimized image encoder and the static text transformer."""
+    import torch
 
     class Clip(torch.nn.Module):
         def __init__(self):
@@ -440,10 +458,13 @@ def export_model(source, output_dir):
             text_embeds = self.text_projection(text.final_layer_norm(hidden))
             return image_embeds, logits, text_embeds
 
-    model = Clip().eval()
-    rng = np.random.RandomState(0)
-    image = Image.fromarray(rng.randint(0, 256, (300, 400, 3), dtype=np.uint8))
-    pixel_values = processor(images=image, return_tensors="pt")["pixel_values"]
+    return Clip().eval()
+
+
+def export_onnx(model, pixel_values, prompt_embeds, output):
+    """Export the fixed interface and fold constant ONNX expressions."""
+    import torch
+
     with torch.inference_mode():
         torch.onnx.export(
             model,
@@ -457,6 +478,14 @@ def export_model(source, output_dir):
     fold_constants(output)
     validate_export(output)
 
+
+def compare_checkpoint(output, clip, class_weights, pixel_values, prompt_ids, prompt_embeds):
+    """Compare the exported image, class-score and end-of-text outputs with upstream CLIP."""
+    import onnxruntime as ort
+    import torch
+
+    # The end-of-text token has the highest id in CLIP's vocabulary.
+    prompt_ends = prompt_ids.argmax(-1)
     session = ort.InferenceSession(str(output), providers=["CPUExecutionProvider"])
     with torch.inference_mode():
         expected_image = clip.get_image_features(pixel_values=pixel_values)
@@ -464,7 +493,7 @@ def export_model(source, output_dir):
         expected_logits = (
             expected_image / np.linalg.norm(expected_image, axis=-1, keepdims=True)
         ) @ class_weights.numpy()
-        expected_text = text_features(prompt_ids[:4]).numpy()
+        expected_text = text_features(clip, prompt_ids[:4]).numpy()
     for index in range(4):
         image_embeds, logits, text_embeds = session.run(
             None, {"pixel_values": pixel_values.numpy(), "token_embeds": prompt_embeds[index : index + 1].numpy()}
@@ -472,7 +501,26 @@ def export_model(source, output_dir):
         np.testing.assert_allclose(text_embeds[0, int(prompt_ends[index])], expected_text[index], rtol=1e-3, atol=1e-3)
     np.testing.assert_allclose(image_embeds, expected_image, rtol=1e-3, atol=1e-3)
     np.testing.assert_allclose(logits, expected_logits, rtol=1e-3, atol=1e-2)
-    np.savez(output_dir / "prompts.npz", prompts=prompt_embeds.numpy(), ends=prompt_ends.numpy())
+
+
+def export_model(source, output_dir):
+    """Restore CLIP, prepare its static inputs, export the graph and verify checkpoint parity."""
+    import torch
+    from PIL import Image
+
+    output_dir.mkdir(parents=True, exist_ok=False)
+    output = output_dir / "model.onnx"
+    torch.set_num_threads(4)
+    clip, processor = load_clip(source)
+    class_weights = build_class_weights(clip, processor.tokenizer)
+    prompt_ids, prompt_embeds = prepare_prompts(clip, processor.tokenizer)
+    model = build_model(clip, class_weights)
+    rng = np.random.RandomState(0)
+    image = Image.fromarray(rng.randint(0, 256, (300, 400, 3), dtype=np.uint8))
+    pixel_values = processor(images=image, return_tensors="pt")["pixel_values"]
+    export_onnx(model, pixel_values, prompt_embeds, output)
+    compare_checkpoint(output, clip, class_weights, pixel_values, prompt_ids, prompt_embeds)
+    np.savez(output_dir / "prompts.npz", prompts=prompt_embeds.numpy(), ends=prompt_ids.argmax(-1).numpy())
     print(f"PyTorch/ONNX check passed: {output}")
     return output
 
@@ -521,10 +569,13 @@ def write_text_probe(source, converted, output_dir):
 
 COMPONENT_GRAPHS = {
     "image_encoder": {
-        "inputs": {"pixel_values": (1, 3, 224, 224)},
-        "outputs": {"image_embeds": (1, 512), "logits": (1, 1000)},
+        "inputs": {"pixel_values": tuple(INTERFACE["pixel_values"])},
+        "outputs": {name: tuple(INTERFACE[name]) for name in ("image_embeds", "logits")},
     },
-    "text_encoder": {"inputs": {"token_embeds": (1, 77, 512)}, "outputs": {"text_embeds": (1, 77, 512)}},
+    "text_encoder": {
+        "inputs": {"token_embeds": tuple(INTERFACE["token_embeds"])},
+        "outputs": {"text_embeds": tuple(INTERFACE["text_embeds"])},
+    },
 }
 
 

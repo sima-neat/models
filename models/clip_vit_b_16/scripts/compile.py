@@ -39,7 +39,7 @@ from surgery import graph_paths as _graph_paths
 
 MODEL_DIR = Path(__file__).resolve().parents[1]
 MODEL_ID = "clip_vit_b_16"
-COMPONENT_IDS = ("image_encoder", "text_encoder")
+COMPONENT_IDS = tuple(COMPONENT_GRAPHS)
 # Files the compilation phases pass to each other in the temporary directory.
 PROMPTS_FILE = "prompts.npz"
 REFERENCE_OUTPUTS = "reference_outputs.npz"
@@ -66,20 +66,24 @@ def _component_name(profile_id: str, component_id: str) -> str:
 def _quantization_config(parameters: dict[str, Any]) -> Any:
     precision = parameters["precision"]
     if precision == "w8a16":
-        activation = bfloat16_scheme()
-        weights = quantization_scheme(asymmetric=False, per_channel=True, bits=8)
-    elif precision == "w16a16":
-        activation = weights = bfloat16_scheme()
-    else:
-        raise ValueError(f"unsupported precision: {precision}")
-    return QuantizationParams(
-        activation_quantization_scheme=activation,
-        weight_quantization_scheme=weights,
-        requantization_mode=RequantizationMode.sima,
-        calibration_method=SkipCalibration(),
-        # Scale each token's activations before an INT8-weight operation.
-        per_token_quant=precision == "w8a16",
-    )
+        return QuantizationParams(
+            activation_quantization_scheme=bfloat16_scheme(),
+            weight_quantization_scheme=quantization_scheme(asymmetric=False, per_channel=True, bits=8),
+            requantization_mode=RequantizationMode.sima,
+            calibration_method=SkipCalibration(),
+            # Scale each token's activations before an INT8-weight operation.
+            per_token_quant=True,
+        )
+    if precision == "w16a16":
+        scheme = bfloat16_scheme()
+        return QuantizationParams(
+            activation_quantization_scheme=scheme,
+            weight_quantization_scheme=scheme,
+            requantization_mode=RequantizationMode.sima,
+            calibration_method=SkipCalibration(),
+            per_token_quant=False,
+        )
+    raise ValueError(f"unsupported precision: {precision}")
 
 
 def _afe_layout(array: np.ndarray) -> np.ndarray:

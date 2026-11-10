@@ -20,8 +20,6 @@ import model_report
 import numpy as np
 import pyneat
 
-IMAGE_SIZE = 224
-TEXT_SHAPE = (1, 77, 512)
 TEXT_PROBE = Path(__file__).with_name("text_probe.npz")
 TEXT_PROBE_SHA256 = "0c2b26bbee9ee7587a0b39df3e2e354eef3b2a434c6f7d97bad7398a36df5aac"
 MEAN = [0.48145466, 0.4578275, 0.40821073]
@@ -95,11 +93,10 @@ def frame_tensor(path: Path) -> pyneat.Tensor:
 
 @dataclass(frozen=True)
 class Prompt:
-    """A tokenized prompt: its token IDs, the embedding rows they use, and the row of its first end-of-text token."""
+    """A tokenized prompt and the embedding rows its tokens use."""
 
     token_ids: list[int]
     rows: dict[int, np.ndarray]
-    end: int
 
 
 def load_prompt(path: Path = TEXT_PROBE) -> Prompt:
@@ -110,8 +107,7 @@ def load_prompt(path: Path = TEXT_PROBE) -> Prompt:
     with np.load(io.BytesIO(content), allow_pickle=False) as probe:
         token_ids = probe["token_ids"][0]
         rows = dict(zip(probe["row_ids"].tolist(), probe["rows"]))
-    # The first end-of-text token: its ID is the highest in CLIP's vocabulary.
-    return Prompt(token_ids.tolist(), rows, int(np.argmax(token_ids)))
+    return Prompt(token_ids.tolist(), rows)
 
 
 def token_embeddings(prompt: Prompt) -> np.ndarray:

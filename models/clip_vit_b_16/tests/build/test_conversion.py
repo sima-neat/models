@@ -2,11 +2,38 @@
 
 import hashlib
 import json
+import sys
 from pathlib import Path
+from unittest.mock import MagicMock
 
 from model_registry.model import load_model
 
 MODEL_DIR = Path(__file__).resolve().parents[2]
+
+
+def test_conversion_bundles_assets_of_the_selected_source(monkeypatch, tmp_path, load_script):
+    recipe = load_script("convert")
+    source = tmp_path / "alternate.bin"
+    source.write_bytes(b"checkpoint")
+    (tmp_path / "alternate.json").write_text('{"selected": true}')
+    metadata = {"entrypoint": source.name, "files": [{"path": source.name}, {"path": "alternate.json"}]}
+    monkeypatch.setattr(recipe, "load_metadata", lambda model_dir: {"conversion": {"alternate": {"source": metadata}}})
+    monkeypatch.setattr(recipe, "conversion_outputs", lambda model_dir: ("weights.pth",))
+    fetcher = MagicMock()
+    fetcher.fetch_source.return_value = [source]
+    monkeypatch.setattr(recipe, "Fetcher", lambda: fetcher)
+    torch = MagicMock()
+    monkeypatch.setitem(sys.modules, "torch", torch)
+    monkeypatch.setattr("sys.argv", ["convert.py", "--conversion", "alternate", "--output-dir", str(tmp_path / "out")])
+
+    recipe.main()
+
+    fetcher.fetch_source.assert_called_once_with(metadata)
+    torch.load.assert_called_once_with(source, map_location="cpu", weights_only=True)
+    torch.save.assert_called_once_with(
+        {"state_dict": torch.load.return_value, "assets": {"alternate.json": '{"selected": true}'}},
+        tmp_path / "out/weights.pth",
+    )
 
 
 def test_converted_checkpoint_preserves_weights_and_processor_assets(converted: Path):
