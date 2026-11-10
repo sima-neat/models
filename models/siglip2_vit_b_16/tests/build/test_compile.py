@@ -126,8 +126,7 @@ def test_compile_reads_both_encoders_of_each_build_profile(load_script: Callable
         parameters = recipe._component_parameters(metadata, profile["id"])
         assert list(parameters) == list(recipe.COMPONENT_IDS) == ["image_encoder", "text_encoder"]
         assert {item["precision"] for item in parameters.values()} == {profile["id"]}
-        # Retain the validated calibrated recipe for both encoders.
-        assert all("calibration_bins" in item for item in parameters.values())
+        assert all(set(item) == {"precision"} for item in parameters.values())
         assert recipe._precision_label(parameters) == profile["id"].upper()
 
 
@@ -136,9 +135,9 @@ def test_the_quantization_recipe_follows_the_precision(
     monkeypatch: pytest.MonkeyPatch, load_script: Callable[[str], ModuleType], precision: str
 ) -> None:
     recipe = load_script("compile")
-    for name in ("quantization_scheme", "bfloat16_scheme", "HistogramMSEMethod", "default_quantization"):
+    for name in ("quantization_scheme", "bfloat16_scheme", "SkipCalibration", "default_quantization"):
         monkeypatch.setattr(recipe, name, MagicMock(name=name))
-    recipe._quantization_config({"precision": precision, "calibration_bins": 2048})
+    recipe._quantization_config({"precision": precision})
     if precision == "w8a16":
         # BF16 activations, INT8 weights per channel.
         assert recipe.quantization_scheme.call_args_list == [call(asymmetric=False, per_channel=True, bits=8)]
@@ -149,10 +148,9 @@ def test_the_quantization_recipe_follows_the_precision(
     # Only w8a16 scales activations per token.
     per_token = [c[1] for c in recipe.default_quantization.mock_calls if c[0].endswith("with_per_token_quant")]
     assert per_token == [(precision == "w8a16",)]
-    # Retain the validated calibration recipe.
-    recipe.HistogramMSEMethod.assert_called_once_with(2048)
+    recipe.SkipCalibration.assert_called_once_with()
     with pytest.raises(ValueError, match="unsupported precision"):
-        recipe._quantization_config({"precision": "w4a8", "calibration_bins": 2048})
+        recipe._quantization_config({"precision": "w4a8"})
 
 
 def test_compile_rejects_an_undeclared_build_profile_or_mixed_precisions(
@@ -165,19 +163,63 @@ def test_compile_rejects_an_undeclared_build_profile_or_mixed_precisions(
         recipe._precision_label({"image_encoder": {"precision": "w8a8"}, "text_encoder": {"precision": "w16a16"}})
 
 
-def test_fidelity_compares_every_output_after_the_calibration_images(load_script: Callable[[str], ModuleType]) -> None:
+@pytest.mark.parametrize("component", ["image_encoder", "text_encoder"])
+def test_quantization_does_not_require_calibration_data(component, tmp_path, monkeypatch, load_script):
+    recipe = load_script("compile")
+    loaded = MagicMock()
+    monkeypatch.setattr(recipe, "onnx_source", MagicMock())
+    monkeypatch.setattr(recipe, "load_model", lambda *args, **kwargs: loaded)
+    config = object()
+    monkeypatch.setattr(recipe, "_quantization_config", lambda parameters: config)
+    result = recipe._quantize_component(tmp_path / "model.onnx", "test", component, {"precision": "w8a16"})
+    assert result is loaded.quantize.return_value
+    loaded.quantize.assert_called_once()
+    assert loaded.quantize.call_args.kwargs["calibration_data"] is None
+    assert loaded.quantize.call_args.kwargs["quantization_config"] is config
+
+
+def test_compile_cli_needs_only_the_fidelity_dataset(tmp_path, monkeypatch, load_script):
+    recipe = load_script("compile")
+    weights = tmp_path / "weights.pth"
+    weights.touch()
+    compile_model = MagicMock(return_value={})
+    monkeypatch.setattr(recipe, "compile_model", compile_model)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "compile.py",
+            "--model",
+            str(weights),
+            "--fidelity-dataset",
+            str(tmp_path),
+            "--output-dir",
+            str(tmp_path / "out"),
+            "--build-profile",
+            "w8a16",
+            "--compile-invocation",
+            "w8a16",
+        ],
+    )
+    assert recipe.main() == 0
+    compile_model.assert_called_once_with(weights, "w8a16", tmp_path, tmp_path / "out")
+
+
+def test_fidelity_checks_every_output_without_calibration(load_script: Callable[[str], ModuleType]) -> None:
     recipe = load_script("compile")
     metadata = recipe.load_metadata(MODEL_DIR)
     fidelity = metadata["numerical_fidelity"]
     assert fidelity["outputs"] == ["image_embeds", "text_embeds"]
-    counts = [
-        int(binding["parameters"]["calibration_samples"])
-        for profile in metadata["build_profiles"]
-        for binding in profile["components"]
-        if binding["id"] == "image_encoder"
-    ]
-    assert len(counts) == len(metadata["build_profiles"]) and fidelity["selection"]["offset"] >= max(counts)
-    assert metadata["calibrations"][0]["dataset"] == fidelity["dataset"]
+    assert fidelity["selection"] == {
+        "method": "seeded_random_without_replacement",
+        "seed": 42,
+        "offset": 50,
+        "samples": 50,
+    }
+    assert recipe.FIDELITY_PROMPTS == 64
+    assert not metadata.get("calibrations")
+    assert all(
+        "calibration" not in binding for profile in metadata["build_profiles"] for binding in profile["components"]
+    )
 
 
 def test_fidelity_error_sums_match_the_metrics_over_all_samples(load_script: Callable[[str], ModuleType]) -> None:
@@ -235,8 +277,6 @@ def test_compile_main_rejects_an_invocation_not_named_after_the_build_profile(
         str(tmp_path / "weights.pth"),
         "--output-dir",
         str(tmp_path / "out"),
-        "--dataset",
-        str(tmp_path),
         "--fidelity-dataset",
         str(tmp_path),
         "--build-profile",
@@ -284,8 +324,8 @@ def test_prompt_tables_are_openais_imagenet_classes_and_templates(exporter: Modu
 
 
 def test_the_text_check_prompts_use_each_template_on_classes_the_embedded_prompts_leave_out(exporter: ModuleType):
-    embedded = exporter.calibration_prompts()
-    assert len(embedded) == exporter.CALIBRATION_PROMPTS
+    embedded = exporter.fidelity_prompts()
+    assert len(embedded) == exporter.FIDELITY_PROMPTS
     assert embedded[:2] == ["itap of a tench.", "a bad photo of the american robin."]
     check = exporter.check_prompts()
     assert len(check) == len(exporter.PROBE_TEMPLATES) and check[0] == "itap of a goldfish."

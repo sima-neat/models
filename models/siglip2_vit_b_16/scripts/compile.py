@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Prepare SigLIP 2 from its conversion bundle, compile both encoders, and measure fidelity.
 
-The text encoder calibrates and is compared on the tokenized prompts surgery embeds as a constant output:
-the first TEXT_CALIBRATION prompts calibrate it, and fidelity compares each held-out prompt's pooled embedding.
+BF16 activations need no calibration. Image fidelity uses the declared dataset selection; text fidelity
+compares every fixed prompt surgery embeds as a constant output against the original FP32 ONNX.
 """
 
 from __future__ import annotations
@@ -24,9 +24,9 @@ from typing import Any
 import numpy as np
 import onnxruntime as ort
 from afe.apis.defines import (
-    HistogramMSEMethod,
     InputName,
     RequantizationMode,
+    SkipCalibration,
     bfloat16_scheme,
     default_quantization,
     gen2_target,
@@ -34,20 +34,17 @@ from afe.apis.defines import (
 )
 from afe.apis.loaded_net import load_model
 from afe.apis.model import L2CachingMode
-from afe.core.utils import convert_data_generator_to_iterable
 from afe.load.importers.general_importer import onnx_source
 from calibration import load_images, select_names
 from model_registry.fetch import sha256_file
 from model_registry.model import load_model as load_metadata
-from sima_utils.data.data_generator import DataGenerator
-from surgery import COMPONENT_GRAPHS, prepare_model
+from surgery import COMPONENT_GRAPHS, FIDELITY_PROMPTS, prepare_model
 from surgery import graph_paths as _graph_paths
 
 MODEL_DIR = Path(__file__).resolve().parents[1]
 MODEL_ID = "siglip2_vit_b_16"
 COMPONENT_IDS = tuple(COMPONENT_GRAPHS)
-PROMPTS = "calibration_token_embeds"
-TEXT_CALIBRATION = 32
+PROMPTS = "fidelity_token_embeds"
 # Files the compilation phases pass to each other in the temporary directory.
 PROMPTS_FILE = "prompts.npz"
 REFERENCE_OUTPUTS = "reference_outputs.npz"
@@ -84,8 +81,7 @@ def _quantization_config(parameters: dict[str, Any]) -> Any:
         default_quantization.with_activation_quantization(activation)
         .with_weight_quantization(weights)
         .with_requantization_mode(RequantizationMode.sima)
-        # Preserve the calibrated recipe validated for these encoders.
-        .with_calibration(HistogramMSEMethod(int(parameters["calibration_bins"])))
+        .with_calibration(SkipCalibration())
         .with_channel_equalization(False)
         .with_smooth_quant(False)
         # with_activation_quantization turns per-token quantization on for BF16. w8a16 keeps it, scaling each token's
@@ -99,16 +95,12 @@ def _afe_layout(array: np.ndarray) -> np.ndarray:
     return np.ascontiguousarray(array.transpose(0, 2, 3, 1) if array.ndim == 4 else array)
 
 
-def _quantize_component(
-    graph: Path, name: str, component_id: str, parameters: dict[str, Any], calibration: np.ndarray
-) -> Any:
+def _quantize_component(graph: Path, name: str, component_id: str, parameters: dict[str, Any]) -> Any:
     shapes = COMPONENT_GRAPHS[component_id]["inputs"]
     importer = onnx_source(str(graph), shape_dict=shapes, layout="NCHW", flexible_batch_size=True)
     loaded = load_model(importer, target=gen2_target)
-    (input_name,) = shapes
-    data = convert_data_generator_to_iterable(DataGenerator({InputName(input_name): _afe_layout(calibration)}))
     return loaded.quantize(
-        calibration_data=data,
+        calibration_data=None,
         quantization_config=_quantization_config(parameters),
         model_name=name,
         log_level=logging.INFO,
@@ -242,10 +234,7 @@ def _prepare_phase(source: Path, fidelity_dataset: Path, fidelity_names: list[st
     paths = prepare_model(source, temporary_dir / "graphs")
     reference = _session(temporary_dir / "graphs/model.onnx")
     (prompts,) = reference.run([PROMPTS], _full_inputs())
-    if (
-        prompts.shape[0] <= TEXT_CALIBRATION
-        or prompts.shape[1:] != COMPONENT_GRAPHS["text_encoder"]["inputs"]["token_embeds"][1:]
-    ):
+    if prompts.shape != (FIDELITY_PROMPTS, *COMPONENT_GRAPHS["text_encoder"]["inputs"]["token_embeds"][1:]):
         raise RuntimeError(f"unexpected embedded prompts: {prompts.shape}")
     np.savez(temporary_dir / PROMPTS_FILE, prompts=prompts)
 
@@ -254,7 +243,7 @@ def _prepare_phase(source: Path, fidelity_dataset: Path, fidelity_names: list[st
     for image in images:
         (image_embeds,) = reference.run(["image_embeds"], _full_inputs(pixel_values=image[None]))
         outputs["image_embeds"].append(image_embeds)
-    for prompt in prompts[TEXT_CALIBRATION:]:
+    for prompt in prompts:
         (text_embeds,) = reference.run(["text_embeds"], _full_inputs(token_embeds=prompt[None]))
         outputs["text_embeds"].append(text_embeds)
     np.savez(temporary_dir / REFERENCE_OUTPUTS, **{name: np.concatenate(values) for name, values in outputs.items()})
@@ -289,15 +278,12 @@ def _image_phase(
     temporary_dir: Path,
     profile_id: str,
     parameters: dict[str, Any],
-    calibration_dataset: Path,
-    calibration_names: list[str],
     fidelity_dataset: Path,
     fidelity_names: list[str],
 ) -> None:
     """Compile the image encoder and compare its outputs on the fidelity images."""
-    calibration = load_images(calibration_dataset, calibration_names).transpose(0, 3, 1, 2)
     name = _component_name(profile_id, "image_encoder")
-    encoder = _quantize_component(graph, name, "image_encoder", parameters, calibration)
+    encoder = _quantize_component(graph, name, "image_encoder", parameters)
     _compile_component(encoder, temporary_dir / name, "image_encoder")
     with np.load(temporary_dir / REFERENCE_OUTPUTS) as saved:
         reference = {key: saved[key] for key in ("image_embeds",)}
@@ -310,16 +296,16 @@ def _image_phase(
 
 
 def _text_phase(graph: Path, temporary_dir: Path, profile_id: str, parameters: dict[str, Any]) -> None:
-    """Compile the text encoder and compare the held-out prompts' pooled embeddings."""
+    """Compile the text encoder and compare every fidelity prompt's pooled embedding."""
     with np.load(temporary_dir / PROMPTS_FILE) as saved:
         prompts = saved["prompts"]
     name = _component_name(profile_id, "text_encoder")
-    encoder = _quantize_component(graph, name, "text_encoder", parameters, prompts[:TEXT_CALIBRATION])
+    encoder = _quantize_component(graph, name, "text_encoder", parameters)
     _compile_component(encoder, temporary_dir / name, "text_encoder")
     with np.load(temporary_dir / REFERENCE_OUTPUTS) as saved:
         reference = saved["text_embeds"]
     error = _OutputError("text_embeds")
-    for index, prompt in enumerate(prompts[TEXT_CALIBRATION:]):
+    for index, prompt in enumerate(prompts):
         text_embeds = _output(_execute(encoder, "token_embeds", prompt[None]), "text_encoder", "text_embeds")
         error.add(reference[index : index + 1], text_embeds)
     (temporary_dir / "text_encoder_fidelity.json").write_text(json.dumps([error.summary()]))
@@ -410,9 +396,7 @@ def _write_compile_outputs(
     )
 
 
-def compile_model(
-    source: Path, profile_id: str, calibration_dataset: Path, fidelity_dataset: Path, output_dir: Path
-) -> dict[str, Path]:
+def compile_model(source: Path, profile_id: str, fidelity_dataset: Path, output_dir: Path) -> dict[str, Path]:
     metadata = load_metadata(MODEL_DIR)
     component_parameters = _component_parameters(metadata, profile_id)
     precision = _precision_label(component_parameters)
@@ -420,10 +404,6 @@ def compile_model(
     selection = fidelity_config["selection"]
     seed, offset, samples = (int(selection[key]) for key in ("seed", "offset", "samples"))
     image_parameters = component_parameters["image_encoder"]
-    count = int(image_parameters["calibration_samples"])
-    if offset < count:
-        raise ValueError("the fidelity selection must begin after the calibration images")
-    calibration_names = select_names(calibration_dataset, seed, 0, count)
     fidelity_names = select_names(fidelity_dataset, seed, offset, samples)
     if output_dir.exists():
         raise FileExistsError(f"output directory already exists: {output_dir}")
@@ -446,8 +426,6 @@ def compile_model(
             temporary_dir=temporary_dir,
             profile_id=profile_id,
             parameters=image_parameters,
-            calibration_dataset=calibration_dataset,
-            calibration_names=calibration_names,
             fidelity_dataset=fidelity_dataset,
             fidelity_names=fidelity_names,
         )
@@ -470,7 +448,6 @@ def compile_model(
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", type=Path, required=True)
-    parser.add_argument("--dataset", type=Path, required=True, help="calibration images")
     parser.add_argument("--fidelity-dataset", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--build-profile", required=True)
@@ -479,20 +456,15 @@ def main() -> int:
     if args.compile_invocation != args.build_profile:
         parser.error("a build profile compiles in one invocation named after it")
     source = args.model.expanduser().resolve()
-    dataset = args.dataset.expanduser().resolve()
     fidelity_dataset = args.fidelity_dataset.expanduser().resolve()
     if source.suffix not in {".pt", ".pth"}:
         parser.error("--model must be the verified checkpoint bundle from the manual conversion workflow")
     if not source.is_file():
         parser.error(f"source does not exist: {source}")
-    if not dataset.exists():
-        parser.error(f"dataset does not exist: {dataset}")
     if not fidelity_dataset.exists():
         parser.error(f"fidelity dataset does not exist: {fidelity_dataset}")
     logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
-    outputs = compile_model(
-        source, args.build_profile, dataset, fidelity_dataset, args.output_dir.expanduser().resolve()
-    )
+    outputs = compile_model(source, args.build_profile, fidelity_dataset, args.output_dir.expanduser().resolve())
     for component_id, archive in outputs.items():
         logging.info("Compiled %s MPK: %s", component_id, archive)
     return 0

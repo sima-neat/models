@@ -1,4 +1,4 @@
-"""SigLIP 2 ViT-B/16 image preprocessing and ImageNet sample selection, shared by compile.py and accuracy.py."""
+"""SigLIP 2 ViT-B/16 image preprocessing and ImageNet sample selection, used for numerical fidelity and accuracy."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ import numpy as np
 from PIL import Image
 
 # ImageNet class names from Big Vision commit 0127fb6b337ee2a27bf4e54dea79cff176527356:
-# datasets/imagenet/class_names.py. Surgery also uses these names for calibration and fidelity prompts.
+# datasets/imagenet/class_names.py. Surgery also uses these names for fidelity prompts.
 # fmt: off
 CLASS_NAMES = (
     "tench", "goldfish", "great white shark", "tiger shark", "hammerhead shark", "electric ray",
@@ -186,7 +186,7 @@ STD = np.asarray([0.5, 0.5, 0.5], dtype=np.float32)
 # imagenet-2012/cal holds cal2012/<image> and imagenet-2012/val holds val2012/<image>, each with
 # annotations/labels_<split>.json, whose category IDs are the ImageNet class indices.
 IMAGE_SUFFIXES = (".jpeg",)
-CALIBRATION_SPLIT = "cal2012"
+FIDELITY_SPLIT = "cal2012"
 VALIDATION_SPLIT = "val2012"
 CLASSES = 1000
 
@@ -245,8 +245,8 @@ def read_images(dataset: Path, names: Iterable[str]) -> dict[str, bytes]:
 
 
 def select_names(dataset: Path, seed: int, offset: int, samples: int) -> list[str]:
-    """Calibration images selected as model.yaml declares: a seeded shuffle, then a slice."""
-    names = split_names(dataset, CALIBRATION_SPLIT)
+    """Fidelity images selected as model.yaml declares: a seeded shuffle, then a slice."""
+    names = split_names(dataset, FIDELITY_SPLIT)
     if offset + samples > len(names):
         raise ValueError(f"the selection needs {offset + samples} images, but {dataset} has {len(names)}")
     random.Random(seed).shuffle(names)

@@ -38,36 +38,29 @@ compilation:
   source: conversion
   components: [image_encoder, text_encoder]
 
-calibrations:
-- id: imagenet-2012-cal
-  dataset: {id: imagenet-2012, variant: cal, sha256: e6c18b281f5ac5fc7cf6d36ef9a5f486ce95eb43ead99ee8523bd8162bc49a6f, size_bytes: 112710756}
-
-# Retain the validated calibrated BF16 recipe. The text encoder calibrates on
-# 32 fixed tokenized prompts prepared by surgery, independently of image calibration.
+# Both profiles use BF16 activations and skip activation calibration.
 build_profiles:
   w16a16:
-    calibration_dataset: imagenet-2012-cal
     components:
       image_encoder:
-        parameters: {precision: w16a16, calibration_bins: 2048, calibration_samples: 50}
+        parameters: {precision: w16a16}
       text_encoder:
-        parameters: {precision: w16a16, calibration_bins: 2048}
+        parameters: {precision: w16a16}
 
   w8a16:
-    calibration_dataset: imagenet-2012-cal
     components:
       image_encoder:
-        parameters: {precision: w8a16, calibration_bins: 2048, calibration_samples: 50}
+        parameters: {precision: w8a16}
       text_encoder:
-        parameters: {precision: w8a16, calibration_bins: 2048}
+        parameters: {precision: w8a16}
 
 # Full INT8 is omitted: the previous recipe scored only 0.0014 ImageNet top-1.
 
 numerical_fidelity:
   status: diagnostic
   dataset: {id: imagenet-2012, variant: cal, sha256: e6c18b281f5ac5fc7cf6d36ef9a5f486ce95eb43ead99ee8523bd8162bc49a6f, size_bytes: 112710756}
-  # The 50 images after the 50 calibration images. text_embeds compares the pooled embeddings of the 32
-  # embedded prompts the text encoder does not calibrate on.
+  # Keep the existing 50-image selection for comparable fidelity results.
+  # Text fidelity compares all 64 fixed prompts prepared by surgery; none calibrates the model.
   selection: {method: seeded_random_without_replacement, seed: 42, offset: 50, samples: 50}
   outputs: [image_embeds, text_embeds]
 

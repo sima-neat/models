@@ -2,7 +2,7 @@
 
 The image and text encoders return their raw embeddings. The text encoder starts after token lookup,
 which the CPU performs, and pools the last of its 64 tokens. ImageNet scoring stays in accuracy.py.
-The export also returns fixed token embeddings for 64 prompts, which calibrate and check the text encoder.
+The export also returns fixed token embeddings for 64 prompts, which check the text encoder against FP32.
 
 Use --weights weights.pth --output-dir graphs to prepare the encoders. Surgery verifies
 PyTorch/ONNX parity and the committed runtime probes before compilation. To regenerate
@@ -26,16 +26,16 @@ IMAGE_SIZE = 224
 TEXT_LENGTH = 64
 EMBED_DIM = 768
 CLASS_COUNT = 1000
-CALIBRATION_PROMPTS = 64
+FIDELITY_PROMPTS = 64
 INTERFACE = {
     "pixel_values": [1, 3, IMAGE_SIZE, IMAGE_SIZE],
     "token_embeds": [1, TEXT_LENGTH, EMBED_DIM],
     "image_embeds": [1, EMBED_DIM],
     "text_embeds": [1, EMBED_DIM],
-    "calibration_token_embeds": [CALIBRATION_PROMPTS, TEXT_LENGTH, EMBED_DIM],
+    "fidelity_token_embeds": [FIDELITY_PROMPTS, TEXT_LENGTH, EMBED_DIM],
 }
 INPUTS = ("pixel_values", "token_embeds")
-OUTPUTS = ("image_embeds", "text_embeds", "calibration_token_embeds")
+OUTPUTS = ("image_embeds", "text_embeds", "fidelity_token_embeds")
 
 # OpenAI's ImageNet class names and the 7 prompt templates its forward selection chose over the 80, from
 # https://github.com/openai/CLIP/blob/d05afc436d78f1c48dc0dbf8e5980a9d471f35f6/notebooks/Prompt_Engineering_for_ImageNet.ipynb
@@ -43,7 +43,7 @@ OUTPUTS = ("image_embeds", "text_embeds", "calibration_token_embeds")
 # The text-encoder check's classes, one per template: ImageNet classes the 64 embedded prompts leave out, each named by
 # one token, so the check file stores few token embedding rows.
 CHECK_CLASSES = (1, 107, 291, 340, 879, 963, 980)
-# Fixed calibration and regression prompts are independent of the ImageNet accuracy recipe.
+# Fixed fidelity and regression prompts are independent of the ImageNet accuracy recipe.
 PROBE_TEMPLATES = (
     "itap of a {}.",
     "a bad photo of the {}.",
@@ -118,13 +118,13 @@ def fold_constants(path):
     onnx.save(model, path)
 
 
-def calibration_prompts():
+def fidelity_prompts():
     """The 64 prompts the export embeds: the templates in turn, with classes spread over the 1,000."""
     return [
         PROBE_TEMPLATES[index % len(PROBE_TEMPLATES)]
-        .format(CLASS_NAMES[index * CLASS_COUNT // CALIBRATION_PROMPTS])
+        .format(CLASS_NAMES[index * CLASS_COUNT // FIDELITY_PROMPTS])
         .lower()
-        for index in range(CALIBRATION_PROMPTS)
+        for index in range(FIDELITY_PROMPTS)
     ]
 
 
@@ -149,9 +149,9 @@ def write_text_check(checkpoint, onnx_path, output):
         )
 
     texts = check_prompts()
-    check_ids, calibration_ids = token_ids(texts), token_ids(calibration_prompts())
+    check_ids, prompt_ids = token_ids(texts), token_ids(fidelity_prompts())
     table = siglip.text_model.embeddings.token_embedding.weight.detach().numpy()
-    needed = np.unique(np.concatenate([check_ids, calibration_ids])).tolist()
+    needed = np.unique(np.concatenate([check_ids, prompt_ids])).tolist()
     rows = {token: table[token] for token in needed}
 
     def lookup(ids):
@@ -164,14 +164,14 @@ def write_text_check(checkpoint, onnx_path, output):
         (embeds,) = session.run(["text_embeds"], {"pixel_values": pixel_values, "token_embeds": token_embeds[None]})
         return embeds[0]
 
-    # The ONNX holds the token embeddings surgery looked up for its calibration prompts; this tokenizer and lookup
+    # The ONNX holds the token embeddings surgery looked up for its fidelity prompts; this tokenizer and lookup
     # must reproduce them exactly.
     (embedded,) = session.run(
-        ["calibration_token_embeds"],
+        ["fidelity_token_embeds"],
         {"pixel_values": pixel_values, "token_embeds": np.zeros(INTERFACE["token_embeds"], np.float32)},
     )
     np.testing.assert_array_equal(
-        np.stack([lookup(ids) for ids in calibration_ids]),
+        np.stack([lookup(ids) for ids in prompt_ids]),
         embedded,
         err_msg="this tokenizer and lookup differ from the export's",
     )
@@ -200,26 +200,26 @@ def text_features(siglip, input_ids):
     return getattr(features, "pooler_output", features)
 
 
-def adapted_model(siglip, calibration_embeds):
+def adapted_model(siglip, prompt_embeds):
     import torch
 
     class SigLIP(torch.nn.Module):
         def __init__(self):
             super().__init__()
             self.siglip = siglip
-            self.register_buffer("calibration_token_embeds", calibration_embeds)
+            self.register_buffer("fidelity_token_embeds", prompt_embeds)
 
         def forward(self, pixel_values, token_embeds):
             image_embeds = self.siglip.vision_model(pixel_values=pixel_values).pooler_output
             text = self.siglip.text_model
             hidden = text.encoder(inputs_embeds=text.embeddings(inputs_embeds=token_embeds)).last_hidden_state
             text_embeds = text.head(text.final_layer_norm(hidden)[:, -1, :])
-            return image_embeds, text_embeds, self.calibration_token_embeds
+            return image_embeds, text_embeds, self.fidelity_token_embeds
 
     return SigLIP().eval()
 
 
-def validate_parity(path, siglip, pixel_values, calibration_ids, calibration_embeds):
+def validate_parity(path, siglip, pixel_values, prompt_ids, prompt_embeds):
     import onnxruntime as ort
     import torch
 
@@ -227,14 +227,14 @@ def validate_parity(path, siglip, pixel_values, calibration_ids, calibration_emb
     with torch.inference_mode():
         expected_image = siglip.get_image_features(pixel_values=pixel_values)
         expected_image = getattr(expected_image, "pooler_output", expected_image).numpy()
-        expected_text = text_features(siglip, calibration_ids[:4]).numpy()
+        expected_text = text_features(siglip, prompt_ids[:4]).numpy()
     for index in range(4):
         image_embeds, text_embeds, embeds = session.run(
-            None, {"pixel_values": pixel_values.numpy(), "token_embeds": calibration_embeds[index : index + 1].numpy()}
+            None, {"pixel_values": pixel_values.numpy(), "token_embeds": prompt_embeds[index : index + 1].numpy()}
         )
         np.testing.assert_allclose(text_embeds[0], expected_text[index], rtol=1e-3, atol=1e-3)
     np.testing.assert_allclose(image_embeds, expected_image, rtol=1e-3, atol=1e-3)
-    np.testing.assert_array_equal(embeds, calibration_embeds.numpy())
+    np.testing.assert_array_equal(embeds, prompt_embeds.numpy())
     print(f"PyTorch/ONNX check passed: {path}")
 
 
@@ -246,17 +246,17 @@ def export_model(source, output_dir):
     output = output_dir / "model.onnx"
     torch.set_num_threads(4)
     siglip, processor = load_siglip(source)
-    calibration_ids = tokenize(processor.tokenizer, calibration_prompts())
+    prompt_ids = tokenize(processor.tokenizer, fidelity_prompts())
     with torch.inference_mode():
-        calibration_embeds = siglip.text_model.embeddings.token_embedding(calibration_ids)
-    model = adapted_model(siglip, calibration_embeds)
+        prompt_embeds = siglip.text_model.embeddings.token_embedding(prompt_ids)
+    model = adapted_model(siglip, prompt_embeds)
     rng = np.random.RandomState(0)
     image = Image.fromarray(rng.randint(0, 256, (300, 400, 3), dtype=np.uint8))
     pixel_values = processor(images=image, return_tensors="pt")["pixel_values"]
     with torch.inference_mode():
         torch.onnx.export(
             model,
-            (pixel_values, calibration_embeds[:1]),
+            (pixel_values, prompt_embeds[:1]),
             str(output),
             input_names=list(INPUTS),
             output_names=list(OUTPUTS),
@@ -265,7 +265,7 @@ def export_model(source, output_dir):
         )
     fold_constants(output)
     validate_export(output)
-    validate_parity(output, siglip, pixel_values, calibration_ids, calibration_embeds)
+    validate_parity(output, siglip, pixel_values, prompt_ids, prompt_embeds)
     return output
 
 
