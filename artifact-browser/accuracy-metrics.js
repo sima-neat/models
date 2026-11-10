@@ -54,6 +54,8 @@ export const ACCURACY_METRIC_LABELS = {
   recall_at_10: "Recall@10",
   epe: "EPE",
   d1_all: "D1-all",
+  abs_rel: "AbsRel",
+  delta1: "δ1",
 };
 
 // The accuracy metrics that are not ratios from 0 to 1 with higher better; metrics.json gives the same units and
@@ -61,6 +63,7 @@ export const ACCURACY_METRIC_LABELS = {
 export const ACCURACY_METRIC_SCALES = {
   epe: { unit: "px", direction: "lower" },
   d1_all: { unit: "%", direction: "lower" },
+  abs_rel: { unit: "1", direction: "lower" },
 };
 
 export function accuracyMetricLabel(name) {
@@ -77,7 +80,8 @@ export function accuracyDisplay(name, value) {
 export function formatAccuracy(name, value, { blank = false } = {}) {
   if (!Number.isFinite(value)) return blank ? "" : "—";
   const { number, unit } = accuracyDisplay(name, value);
-  return unit === "%" ? `${number.toFixed(2)}%` : `${number.toFixed(3)} ${unit}`;
+  if (unit === "%") return `${number.toFixed(2)}%`;
+  return unit === "1" ? number.toFixed(3) : `${number.toFixed(3)} ${unit}`;
 }
 
 // Known metrics follow the label order and any others follow them in the order given.

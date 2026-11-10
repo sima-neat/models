@@ -53,6 +53,10 @@ architectures:
     display_name: DepthART
     paradigm: transformer
     allowed_model_types: [vision]
+  depth_anything_3:
+    display_name: Depth Anything 3
+    paradigm: transformer
+    allowed_model_types: [vision]
   dla:
     display_name: DLA
     paradigm: cnn

@@ -172,6 +172,12 @@ def test_accuracy_report_keeps_disparity_errors_in_their_units(tmp_path):
 SAMPLES = {"split": "val", "evaluated_samples": 1, "available_samples": 1}
 
 
+def test_depth_error_is_unbounded_but_threshold_accuracy_is_a_fraction(tmp_path):
+    result = {**SAMPLES, "metrics": {"abs_rel": 1.25, "delta1": 0.89}}
+    model_report.from_accuracy({"nyu-depth-v2-default": result}).save(tmp_path)
+    assert saved_report(tmp_path)["datasets"]["nyu-depth-v2-default"]["metrics"] == result["metrics"]
+
+
 @pytest.mark.parametrize(
     ("datasets", "message"),
     [
@@ -250,7 +256,7 @@ class Tensor:
 PYNEAT_ENUMS = {
     "InputKind": ("Image", "Tensor"),
     "AutoFlag": ("On", "Off"),
-    "ResizeMode": ("Letterbox", "Stretch"),
+    "ResizeMode": ("Letterbox", "Stretch", "Crop"),
     "NormalizePreset": ("ImageNet",),
     "PixelFormat": ("RGB",),
     "TensorMemory": ("EV74",),
@@ -299,6 +305,7 @@ def benchmark_dataset(root):
     write_image(root / "val/n01440764/ILSVRC2012_val_00000001.webp", 200)
     write_image(root / "val/images/P0003.jpg", 200)
     write_image(root / "val/v_scene/1.ppm", 200)
+    write_image(root / "val/rgb_0001.jpg", 200)
     keypoints = {
         "images": [{"id": 1, "file_name": "000000000001.jpg"}, {"id": 2, "file_name": "000000000002.jpg"}],
         "annotations": [{"image_id": 1, "num_keypoints": 0}, {"image_id": 2, "num_keypoints": 17}],
@@ -375,8 +382,10 @@ def test_every_single_component_script_benchmarks_a_dataset_image(script, monkey
     ))
     dataset = benchmark_dataset(tmp_path / "dataset")
     output = tmp_path / "output"
+    declaration = yaml.safe_load((script.parents[1] / "model.yaml").read_text())["accuracy"]["datasets"][0]
+    source_id = f"{declaration['id']}-{declaration['variant']}"
     monkeypatch.setattr(sys, "argv", [
-        str(script), "--mpk", "model.tar.gz", "--dataset", f"source={dataset}", "--output", str(output),
+        str(script), "--mpk", "model.tar.gz", "--dataset", f"{source_id}={dataset}", "--output", str(output),
     ])
 
     runpy.run_path(str(script), run_name="__main__")
@@ -400,6 +409,10 @@ def test_every_single_component_script_benchmarks_a_dataset_image(script, monkey
         assert_side_by_side_frame(frame)
         assert (options.preprocess.resize.mode, options.preprocess.preset) == ("Stretch", "ImageNet")
         assert STEREO_PAIR.format(view="left") in report["workload"]
+    elif first_accuracy_dataset(script) == "nyu-depth-v2":
+        assert_letterboxed_frame(frame)
+        assert (options.preprocess.resize.mode, options.preprocess.preset) == ("Crop", "ImageNet")
+        assert "val/rgb_0001.jpg" in report["workload"]
     elif getattr(options, "decode_type", "").startswith(("YoloV26", "YoloV8", "YoloX")):
         # Box decoders take a probability threshold, in [0, 1).
         assert_letterboxed_frame(frame)

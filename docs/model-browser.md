@@ -246,6 +246,11 @@ in this order:
 A section that has no data, such as Accuracy for a model with neither an
 accuracy result nor published scores, is left out.
 
+Depth estimation results show dimensionless AbsRel with lower values better,
+and δ1 as a percentage with higher values better. Models sharing a display name
+remain separate entries identified by model ID; their descriptions distinguish
+input resolutions and view counts.
+
 ## Preview your model locally
 
 `artifact-browser/preview.py` serves the browser with a local registry API built

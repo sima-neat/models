@@ -75,3 +75,11 @@ test('ratios show as percentages and other units as reported, each with its dire
 test('disparity metrics lead with EPE', () => {
   assert.deepEqual(orderedMetricNames(['d1_all', 'epe']), ['epe', 'd1_all']);
 });
+
+test('depth error is dimensionless and unbounded, while delta1 is a percentage', () => {
+  assert.equal(formatAccuracy('abs_rel', 0.0924), '0.092');
+  assert.equal(formatAccuracy('abs_rel', 1.25), '1.250');
+  assert.equal(formatAccuracy('delta1', 0.893), '89.30%');
+  assert.deepEqual(accuracyDisplay('abs_rel', 0.0924), {number: 0.0924, unit: '1', direction: 'lower'});
+  assert.deepEqual(orderedMetricNames(['delta1', 'abs_rel']), ['abs_rel', 'delta1']);
+});

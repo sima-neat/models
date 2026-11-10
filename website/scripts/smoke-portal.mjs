@@ -204,9 +204,9 @@ async function checkCatalogLayouts(browser, url) {
         if (viewport.width === 390) await page.keyboard.press('Tab');
         if (!await taskFilter.evaluate(el => document.activeElement === el && getComputedStyle(el).outlineStyle === 'solid')) throw new Error('keyboard navigation lost its filter focus outline');
         if (viewport.width === 390) await page.locator('#filter-toggle').click();
-        const names = await page.locator('.model-card strong').allTextContents();
+        const ids = await page.locator('.model-card').evaluateAll(cards => cards.map(card => card.dataset.modelCard));
         const tasksByModel = await page.locator('.model-card').evaluateAll(cards => Object.fromEntries(cards.map(card => [
-          card.querySelector('strong').textContent,
+          card.dataset.modelCard,
           [...card.querySelectorAll('.model-card-tag')].map(tag => tag.textContent),
         ])));
         const tableButton = page.getByRole('button', {name: 'Table', exact: true});
@@ -215,17 +215,17 @@ async function checkCatalogLayouts(browser, url) {
         await page.locator('.catalog-table').first().waitFor();
         const settled = () => page.waitForFunction(() => !document.querySelector('.catalog-pending'));
         await settled();
-        const tableNames = await page.locator('.catalog-model-link').allTextContents();
-        if (new Set(tableNames).size !== names.length || names.some(name => tableNames.filter(value => value === name).length !== tasksByModel[name].length)) throw new Error('model is missing from a task group or duplicated within one');
-        if (await page.locator('#result-count').innerText() !== `${names.length} models`) throw new Error('task groups inflated the model count');
+        const tableIds = await page.locator('[data-catalog-entry]').evaluateAll(rows => rows.map(row => row.dataset.catalogEntry));
+        if (new Set(tableIds).size !== ids.length || ids.some(id => tableIds.filter(value => value === id).length !== tasksByModel[id].length)) throw new Error('model is missing from a task group or duplicated within one');
+        if (await page.locator('#result-count').innerText() !== `${ids.length} models`) throw new Error('task groups inflated the model count');
         const headings = await page.locator('.catalog-task-group h3').allTextContents();
         if (JSON.stringify(headings) !== JSON.stringify([...headings].sort((a, b) => a.localeCompare(b)))) throw new Error('task groups are not alphabetical');
         for (const group of await page.locator('.catalog-task-group').all()) {
-          const groupNames = await group.locator('.catalog-model-link').allTextContents();
-          if (JSON.stringify(groupNames) !== JSON.stringify(names.filter(name => groupNames.includes(name)))) throw new Error('task grouping changed family ordering');
+          const groupIds = await group.locator('[data-catalog-entry]').evaluateAll(rows => rows.map(row => row.dataset.catalogEntry));
+          if (JSON.stringify(groupIds) !== JSON.stringify(ids.filter(id => groupIds.includes(id)))) throw new Error('task grouping changed family ordering');
           const heading = await group.locator('h3').innerText();
-          for (const name of groupNames) {
-            if (!tasksByModel[name].includes(heading)) throw new Error('model appears under an unrelated task');
+          for (const id of groupIds) {
+            if (!tasksByModel[id].includes(heading)) throw new Error('model appears under an unrelated task');
           }
         }
         const resnet = page.locator('[data-catalog-entry="resnet_50"]');
@@ -255,8 +255,8 @@ async function checkCatalogLayouts(browser, url) {
         if (viewport.width === 390) await page.locator('#filter-toggle').click();
         await page.locator('#task-filter').selectOption('visual_question_answering');
         await page.getByRole('heading', {name: 'Visual Question Answering', exact: true}).waitFor();
-        const answering = (await page.locator('.catalog-model-link').allInnerTexts()).sort();
-        const expected = names.filter(name => tasksByModel[name].includes('Visual Question Answering')).sort();
+        const answering = (await page.locator('[data-catalog-entry]').evaluateAll(rows => rows.map(row => row.dataset.catalogEntry))).sort();
+        const expected = ids.filter(id => tasksByModel[id].includes('Visual Question Answering')).sort();
         if (JSON.stringify(answering) !== JSON.stringify(expected)) throw new Error('multi-task model did not follow the selected task');
         await page.locator('#task-filter').selectOption('');
         await page.locator('#search').fill('no such model xyz');

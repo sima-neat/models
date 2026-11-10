@@ -381,6 +381,14 @@ Initialization timings and MLA memory before and after the run are not exported
 by this Core API, so reports do not carry them. Adding them belongs in Core
 before Models consumes them.
 
+## Depth accuracy measurements
+
+Depth accuracy reports use `abs_rel` (mean absolute relative error, lower is
+better) and `delta1` (the fraction of pixels with depth ratio below 1.25, higher
+is better). AbsRel has dimensionless unit `1` and can exceed one; δ1 is a ratio
+between zero and one. Each model's accuracy script states its alignment, crop,
+depth range and image aggregation, which must match before comparing scores.
+
 ## CI and registry publication
 
 Model authors do not publish benchmark results directly. After a build profile's

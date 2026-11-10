@@ -145,3 +145,22 @@ def test_only_conversion_sources_pin_github_release_files() -> None:
 def test_vulcan_onnx_source() -> None:
     uri = f"https://artifacts.stg.neat.sima.ai/models-onnx/rf_detr_small/{DIGEST}/123-1/model.onnx"
     assert SourceSpec(uri=uri, sha256=DIGEST, size_bytes=10).resolve_url() == uri
+
+
+def test_pypi_wheel_uses_its_hashed_package_path() -> None:
+    uri = f"https://files.pythonhosted.org/packages/ab/cd/{'e' * 60}/depth_anything_3-0.1.1-py3-none-any.whl"
+    source = SourceSpec(uri=uri, sha256=DIGEST, size_bytes=10)
+    assert source.resolve_url() == uri
+    assert source.filename == "depth_anything_3-0.1.1-py3-none-any.whl"
+
+
+@pytest.mark.parametrize("path", [
+    "/packages/source/d/depth_anything_3/depth_anything_3-0.1.1.tar.gz",
+    "/packages/ab/cd/short/model-0.1-py3-none-any.whl",
+    f"/packages/ab/cd/{'e' * 60}/model-0.1.tar.gz",
+    f"/packages/ab/cd/{'e' * 60}/nested/model-0.1-py3-none-any.whl",
+    "/simple/depth-anything-3/",
+])
+def test_pypi_rejects_indexes_and_non_wheel_paths(path: str) -> None:
+    with pytest.raises(SourcePolicyError, match="hashed package path"):
+        SourceSpec(uri=f"https://files.pythonhosted.org{path}", sha256=DIGEST, size_bytes=10).resolve_url()

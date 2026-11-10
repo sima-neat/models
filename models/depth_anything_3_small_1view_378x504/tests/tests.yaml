@@ -1,0 +1,10 @@
+conversion:
+  run_tests: true
+compile:
+  run_tests: true
+accuracy:
+  run_tests: false
+  skip_reason: No develop report is published yet to set expected values from.
+performance:
+  run_tests: false
+  skip_reason: No develop report is published yet to set expected values from.
