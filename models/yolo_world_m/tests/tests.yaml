@@ -7,7 +7,7 @@ accuracy:
   expected:
     w8a8_mixed_w16a16:
       coco-2017-val:
-        coco_map: 0.0
+        coco_map: 0.4233977250241906
 performance:
   run_tests: true
   expected:
