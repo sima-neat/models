@@ -253,7 +253,7 @@ PYNEAT_ENUMS = {
     "NormalizePreset": ("ImageNet",),
     "PixelFormat": ("RGB",),
     "TensorMemory": ("EV74",),
-    "BoxDecodeType": ("YoloV8", "YoloV26", "YoloV26Pose", "YoloV26Seg", "YoloV26Obb", "YoloV8Obb", "SuperPoint"),
+    "BoxDecodeType": ("YoloV8", "YoloV26", "YoloV26Pose", "YoloV26Seg", "YoloV8Obb", "YoloV26Obb", "SuperPoint"),
     "SuperPointProfile": ("MagicLeapDemoV1", "LightGlueV1"),
 }
 SCRIPT_PYNEAT = {
@@ -403,10 +403,10 @@ def test_every_single_component_script_benchmarks_a_dataset_image(script, monkey
         if options.decode_type in {"YoloV8", "YoloV8Obb"}:
             assert options.nms_iou_threshold == 0.7
             assert "NMS IoU 0.7" in report["workload"]
-        # Pose accuracy scores only images with a labelled person; OBB scripts sample aerial images.
-        expected = {"YoloV26Pose": "000000000002.jpg", "YoloV26Obb": "P0003.jpg", "YoloV8Obb": "P0003.jpg"}.get(
-            options.decode_type, ".jpg"
-        )
+        # Pose accuracy scores only images with a labelled person; oriented boxes measure DOTA's aerial images.
+        expected = {
+            "YoloV26Pose": "000000000002.jpg", "YoloV8Obb": "P0003.jpg", "YoloV26Obb": "P0003.jpg",
+        }.get(options.decode_type, ".jpg")
         assert expected in report["workload"]
     elif getattr(options, "decode_type", "") == "SuperPoint":
         # SuperPoint takes the frame stretched to its input, converted to GRAY8, scaled to [0, 1] without a preset,

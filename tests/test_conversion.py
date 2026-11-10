@@ -543,7 +543,7 @@ def test_conversion_fingerprint_ignores_generated_caches(repository):
     model = load_and_validate_model(repository / "models/yolo26x")
     original = conversion.conversion_fingerprint(repository, model)
     path = repository / "models/yolo26x/scripts/__pycache__/convert.pyc"
-    path.parent.mkdir()
+    path.parent.mkdir(exist_ok=True)
     path.write_bytes(b"generated cache")
     assert conversion.conversion_fingerprint(repository, model) == original
 

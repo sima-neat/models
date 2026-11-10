@@ -21,6 +21,7 @@ upstream:
 
 conversion:
   source:
+    # Ultralytics/YOLO11 on Hugging Face has no OBB checkpoints; use the official upstream release asset.
     uri: https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11s-obb.pt
     sha256: 43fa63102922e0701501241b307420d24fc55e080816888b18bf8c6f96b1a45a
     size_bytes: 19934534

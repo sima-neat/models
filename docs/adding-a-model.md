@@ -74,6 +74,10 @@ one immutable repository/revision declaration; see [Compilation and
 sources](metadata-schema.md#compilation-and-sources). Exceptional members can
 keep explicit URIs.
 
+Prefer Hugging Face whenever the required checkpoint is available there. Only
+otherwise use an official upstream GitHub release asset, and explain the
+fallback in a source comment in `model.yaml`.
+
 A source comes from an approved host, in this form:
 
 | Host | Form |
