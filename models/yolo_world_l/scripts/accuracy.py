@@ -198,7 +198,13 @@ def main(argv: list[str] | None = None) -> int:
     images = prefetched(lambda record: preprocess_image((image_dir / record["file_name"]).read_bytes()), records)
     for count, (record, image) in enumerate(zip(records, images), start=1):
         tensors = model.tensors({"images": image[None], "text_embeddings": embeddings, "prompt_mask": mask})
-        outputs = model.run(tensors)
+        try:
+            outputs = model.run(tensors)
+        except Exception:
+            log(f"Detector failed at image {count}/{len(records)}: {record['file_name']} (COCO id {record['id']})")
+            with contextlib.suppress(Exception):
+                model.close()
+            raise
         rows.append(decode(outputs, record["id"], record["width"], record["height"], categories))
         if count == 1 or count % 250 == 0 or count == len(records):
             log(f"{count}/{len(records)} images, {(time.monotonic() - started) / count * 1000:.0f} ms/image")
