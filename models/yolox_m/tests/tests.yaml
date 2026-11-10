@@ -3,8 +3,24 @@ conversion:
 compile:
   run_tests: true
 accuracy:
-  run_tests: false
-  skip_reason: No published develop accuracy result yet; set expectations after initial qualification.
+  run_tests: true
+  expected:
+    w8a8:
+      coco-2017-val:
+        coco_map: 0.4630
+        coco_ap50: 0.6514
+        coco_ap75: 0.5063
+        coco_ap_small: 0.2843
+        coco_ap_medium: 0.5121
+        coco_ap_large: 0.6173
+        coco_ar1: 0.3598
+        coco_ar10: 0.5823
+        coco_ar100: 0.6231
+        coco_ar_small: 0.4277
+        coco_ar_medium: 0.6806
+        coco_ar_large: 0.7779
 performance:
-  run_tests: false
-  skip_reason: No published develop performance result yet; set expectations after initial qualification.
+  run_tests: true
+  expected:
+    w8a8:
+      throughput_fps: 406.38
