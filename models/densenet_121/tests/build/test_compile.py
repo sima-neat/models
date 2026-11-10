@@ -174,16 +174,19 @@ def test_compile_reads_each_declared_build_profile(load_script: Callable[[str], 
 def test_compile_rejects_an_undeclared_build_profile(load_script: Callable[[str], ModuleType]) -> None:
     recipe = load_script("compile")
 
-    assert recipe.load_metadata(recipe.MODEL_DIR)["numerical_fidelity"]["outputs"] == ["logits"]
     with pytest.raises(ValueError, match="exactly one build profile named 'w32a32'"):
         recipe._parameters("w32a32")
 
 
-@pytest.mark.parametrize(
-    ("precision", "calibrates", "per_token"), [("w8a8", True, False), ("w8a16", False, True), ("w16a16", False, False)]
-)
+def test_numerical_fidelity_compares_the_logits(load_script: Callable[[str], ModuleType]) -> None:
+    recipe = load_script("compile")
+
+    assert recipe.load_metadata(recipe.MODEL_DIR)["numerical_fidelity"]["outputs"] == ["logits"]
+
+
+@pytest.mark.parametrize(("precision", "calibrates"), [("w8a8", True), ("w16a16", False)])
 def test_quantization_calibrates_only_int8_activations(
-    load_script: Callable[[str], ModuleType], precision: str, calibrates: bool, per_token: bool
+    load_script: Callable[[str], ModuleType], precision: str, calibrates: bool
 ) -> None:
     recipe = load_script("compile")
 
@@ -192,7 +195,13 @@ def test_quantization_calibrates_only_int8_activations(
     arguments = recipe.QuantizationParams.call_args.kwargs
     calibration = recipe.CalibrationMethod.from_str.return_value if calibrates else recipe.SkipCalibration.return_value
     assert arguments["calibration_method"] is calibration
-    assert arguments.get("per_token_quant", False) is per_token
+
+
+def test_quantization_rejects_an_undeclared_precision(load_script: Callable[[str], ModuleType]) -> None:
+    recipe = load_script("compile")
+
+    with pytest.raises(ValueError, match="unsupported precision 'w8a16'"):
+        recipe._quantization("w8a16")
 
 
 def test_bf16_builds_quantize_without_calibration_data(

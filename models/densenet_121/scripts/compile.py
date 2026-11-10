@@ -52,14 +52,6 @@ def _quantization(precision: str) -> QuantizationParams:
             activation_quantization_scheme=quantization_scheme(asymmetric=True, per_channel=False, bits=8),
             weight_quantization_scheme=quantization_scheme(asymmetric=False, per_channel=True, bits=8),
         )
-    if precision == "w8a16":
-        return QuantizationParams(
-            calibration_method=SkipCalibration(),
-            activation_quantization_scheme=bfloat16_scheme(),
-            weight_quantization_scheme=quantization_scheme(asymmetric=False, per_channel=True, bits=8),
-            # Each token's activations get their own INT8 scale before an INT8-weight operation.
-            per_token_quant=True,
-        )
     if precision == "w16a16":
         return QuantizationParams(
             calibration_method=SkipCalibration(),
@@ -72,7 +64,7 @@ def _quantization(precision: str) -> QuantizationParams:
 def compile_model(source: Path, component_dir: Path, profile_id: str, dataset: Path | None) -> AfeModel:
     parameters = _parameters(profile_id)
     precision = str(parameters.get("precision"))
-    if precision not in {"w16a16", "w8a8", "w8a16"}:
+    if precision not in {"w16a16", "w8a8"}:
         raise ValueError("this recipe supports only the declared BF16 and INT8 build profiles")
 
     input_name = str(parameters["input_name"])
@@ -168,7 +160,8 @@ def main() -> int:
     args = parser.parse_args()
     if args.compile_invocation != args.build_profile:
         parser.error("a build profile compiles in one invocation named after it")
-    logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
+    # The compiler's imports already give the root logger a handler, which a plain basicConfig would keep.
+    logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s", force=True)
 
     source = args.model.expanduser().resolve()
     if not source.is_file():
