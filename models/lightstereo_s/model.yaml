@@ -78,5 +78,6 @@ performance: {}
 reference_metrics:
 - source: https://github.com/XiandaGuo/OpenStereo/blob/23d71c92e33ad1f80dfc42bf29f5c6a914d38769/docs/1.model_zoo.md
   dataset: {id: scene-flow, split: test}
-  conditions: FP32, each view edge-padded to 544x960 above and to the right, pixels with true disparity under 192
+  conditions: Mixed precision (AMP), each view edge-padded above to 544x960, pixels with true disparity above 0 and under 192
+  note: The model config pads to 544x960, but upstream's documented evaluation loads cfgs/sceneflow_eval.yaml, which pads to 576x960. The source does not say which produced this score.
   metrics: {epe: 0.73}
