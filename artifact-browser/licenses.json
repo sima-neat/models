@@ -19,9 +19,9 @@
     "summary": "Noncommercial research use only. The license does not permit redistribution, so SiMa.ai does not offer this model for download.",
     "downloadable": false
   },
-  "LicenseRef-OpenStereo-Undeclared": {
-    "name": "No license declared by OpenStereo",
-    "summary": "Upstream declares no license, so it grants no right to redistribute the model, and SiMa.ai does not offer it for download.",
+  "LicenseRef-OpenStereo-Academic": {
+    "name": "OpenStereo academic use terms",
+    "summary": "Academic use only, never commercial, and no license grants redistribution, so SiMa.ai does not offer this model for download.",
     "downloadable": false
   }
 }
