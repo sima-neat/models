@@ -436,6 +436,21 @@ async function checkTaskComparison(browser, base) {
   }
 }
 
+// A portal without its license list offers no download at all, so check a model on each side of the rule.
+async function checkLicensedDownloads(browser, base) {
+  for (const [model, offered] of [['resnet_50', true], ['superpoint', false]]) {
+    const page = await browser.newPage();
+    try {
+      await page.goto(new URL(`/?model=${model}&variant=w8a8`, base).href);
+      await page.locator('#license-section .license-summary').waitFor();
+      const downloads = await page.locator('[data-download="package"], [data-download-variant]').count();
+      if (Boolean(downloads) !== offered) throw new Error(`${model} ${offered ? 'offers no download' : 'offers a download its license forbids'}`);
+      if (await page.locator('.download-unavailable').count() !== (offered ? 0 : 1)) throw new Error(`${model} shows the wrong download notice`);
+      console.log(`ok  Licensed downloads · ${model}`);
+    } finally { await page.close(); }
+  }
+}
+
 const {server, ready} = startPreview();
 let failed = false;
 try {
@@ -469,6 +484,7 @@ try {
     await checkExecutionTooltips(browser, variantUrl);
     await checkCatalogLayouts(browser, new URL('/', variantUrl));
     await checkTaskComparison(browser, variantUrl);
+    await checkLicensedDownloads(browser, variantUrl);
     for (const [name, url, readySelector] of checks) {
       const problems = await checkPage(browser, url, readySelector);
       console.log(`${problems.length ? 'FAIL' : 'ok'}  ${name}  ${url.pathname}${url.search}`);

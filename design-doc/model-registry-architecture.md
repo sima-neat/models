@@ -33,7 +33,7 @@ byte size, and SHA-256.
 
 ```text
 .github/workflows/         Compile, build, DevKit-stage, conversion, tool, and branch workflows
-artifact-browser/          Model browser and its local preview server (preview.py)
+artifact-browser/          Model browser, its local preview server (preview.py), and licenses.json
 deps/                      Repository-wide toolchain and DevKit runtime pins
 design-doc/                Architecture and lifecycle design documents
 docs/                      Developer contribution guides
@@ -93,7 +93,7 @@ this table. Modules marked CI only are removed from the author package by
 | `dependencies.py` | resolving the Model Compiler and DevKit runtime pins in `deps/` |
 | `fetch.py` | verified downloads, the cache, and dataset resolution |
 | `conversion.py` | conversion fingerprints, declared outputs, validated bundles, publication, durable plan selections and exact downloads; author CLI exposes only saved-selection fetching |
-| `source.py` | source identity and URL redaction |
+| `source.py` | the approved source hosts and their URL checks, source identity, and URL redaction |
 | `taxonomy.py` | loading the taxonomy and validating model categories |
 | `documentation.py` | loading a model's README and hero image |
 | `runner_approval.py` | authorizing requested compile runner classes/markets and selecting optional runner audit fields for durable publication |

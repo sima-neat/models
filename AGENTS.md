@@ -40,9 +40,12 @@ when no completed run carries the current fingerprint. A change therefore
 reruns exactly the stages whose inputs it touches.
 
 A tooling change reruns a stage only when the changed file is in that stage's
-tooling list in `fingerprints.py`. A file in `CONVERSION_TOOLING` in
-`conversion.py` also invalidates every conversion, and planning then fails
-until Vulcan Model Convert reruns.
+tooling list in `fingerprints.py`. No shared file is a conversion input: a
+conversion reruns only when the model's checkpoint, `convert.py` and the
+modules it imports, `requirements-convert.txt`, or `conversion.outputs`
+change. Raise `FINGERPRINT_VERSION` in `conversion.py` in the change that
+makes shared tooling convert the same inputs to a different model. Planning
+then fails until Vulcan Model Convert reruns for every conversion-backed model.
 
 | Stage | Venue | Model entry point | Runner script |
 |---|---|---|---|
@@ -238,6 +241,7 @@ in the same commit.
 | When you change | Also change |
 |---|---|
 | what a stage depends on: a `model.yaml` field its fingerprint reads, or a shared file it runs | the fingerprint function or the `COMPILE_TOOLING`/`BOARD_STAGE_TOOLING`/`PERFORMANCE_TOOLING`/`ACCURACY_TOOLING` list in `fingerprints.py`, the tables in [what a change reruns](docs/adding-a-model.md#9-know-what-a-change-reruns), and a test in `tests/test_compile_matrix.py` or `tests/test_stage_plan.py` |
+| an approved source host | its entry in `HTTPS_HOST_CHECKS` in `source.py`, accept and reject cases in `tests/test_source.py`, and the host table in [pin every input](docs/adding-a-model.md#3-pin-every-input). This reruns no stage |
 | the set of model scripts a benchmark or conversion runs | `SCRIPTS` in `benchmark_declarations.py` or `CONVERSION_FILES` in `model.py`, which make up `NON_COMPILE_SCRIPTS` in `fingerprints.py` with `FP32_BASELINE_SCRIPT`; every other `.py`/`.sh` under `scripts/` is an ONNX compile input |
 | board-only code | keep it inside `performance.py` or `accuracy.py`; a helper module under `scripts/` is an ONNX compile input, so editing it recompiles and then remeasures the model |
 | how `performance.py` gets its input | `scripts/run_model_performance.sh`, the dataset steps in `vulcan-model-benchmarking.yml`, [Benchmark input](docs/benchmarking.md#benchmark-input), and `tests/test_model_report.py` and `tests/test_benchmark_workflow.py` |
@@ -246,6 +250,7 @@ in the same commit.
 | a `datasets/<id>.yaml` requirement | `dataset-requirements.schema.json` when its shape changes, and the `accuracy.py` and `tests.yaml` expectations of every model with that task that evaluates the dataset |
 | a field of the model report | `schemas/model-report.schema.json`, `tools/model_report/__init__.py`, the checks in `report_publication.py`, and the browser code that reads the report |
 | a model's category: `model_type`, `tasks`, `modalities`, or the family in `architecture.id` | pick existing IDs from `taxonomies/model-taxonomy.yaml`; when none fits, add the entry there and follow [Model categorization taxonomy](docs/model-taxonomy.md) |
+| a model's `license` | set `spdx` to an ID in `artifact-browser/licenses.json`. When the upstream license is not listed, add it there, with `downloadable: false` if it forbids redistribution. No fingerprint includes the license, so the change reruns nothing ([license](docs/metadata-schema.md#license)) |
 | the model folder layout | `MODEL_FOLDER_ENTRIES` in `model.py` and [the directory step](docs/adding-a-model.md#2-create-the-directory) |
 | a model script | the model's test of that behavior under `tests/build/` or `tests/benchmark/` |
 | what a model converts, compiles, or measures on a DevKit | its `tests/tests.yaml` entries, their `expected` values, and the stage test files they run |
@@ -360,7 +365,12 @@ change.
   `website/scripts/assemble-portal.mjs`. Assembly also writes
   `component-pipelines.<revision>.json` and `reference-metrics.<revision>.json`
   from each `model.yaml`, so `build:portal` needs the same Python as
-  `preview.py`.
+  `preview.py`. It copies the browser's `licenses.json` to
+  `licenses.<revision>.json`.
+- Offer a model's downloads only when `downloadOffered` in `downloads.js`
+  allows them. It reads the license from the branch catalog and
+  `licenses.json`, and an unlisted license offers none. Keep the list in
+  `artifact-browser/`, so a plain static server serves it with the page.
 - A new metric goes into `tools/model_report/metrics.json` and the browser's
   `metrics.js` or `accuracy-metrics.js`; a test keeps their labels, units and
   directions in step.
