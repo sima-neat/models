@@ -259,8 +259,6 @@ def audit_mpk(archive: Path, component_id: str, batch_size: int = 1) -> dict[str
         raise RuntimeError(
             f"invalid {component_id} MPK: MLA={len(mla)}, ELF={len(elfs)}, host={len(host)}, shared_objects={shared}"
         )
-    if str(manifest.get("model_sdk_version")) != COMPILER_VERSION:
-        raise RuntimeError(f"compiler mismatch: expected {COMPILER_VERSION}, found {manifest.get('model_sdk_version')}")
     expected_inputs = {
         name: int(np.prod(shape, dtype=np.int64)) * 4 * batch_size
         for name, shape in COMPONENTS[component_id]["inputs"].items()
@@ -391,11 +389,6 @@ def _write_outputs(
 
 
 def compile_model(source: Path, profile_id: str, output_dir: Path) -> dict[str, Path]:
-    from afe.apis.release_v1 import get_model_sdk_version
-
-    compiler_version = str(get_model_sdk_version())
-    if compiler_version != COMPILER_VERSION:
-        raise RuntimeError(f"Supertonic requires Model Compiler {COMPILER_VERSION}; found {compiler_version}")
     if output_dir.exists():
         raise FileExistsError(f"output directory already exists: {output_dir}")
     parameters = _component_parameters(load_metadata(MODEL_DIR), profile_id)

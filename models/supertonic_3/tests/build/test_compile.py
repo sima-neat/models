@@ -147,9 +147,6 @@ def test_one_invocation_writes_both_mpks_and_compile_outputs(
 ) -> None:
     recipe = load_script("compile")
     model = load_model(recipe.MODEL_DIR)
-    release = ModuleType("afe.apis.release_v1")
-    release.get_model_sdk_version = lambda: recipe.COMPILER_VERSION
-    monkeypatch.setitem(sys.modules, "afe.apis.release_v1", release)
     phases: list[tuple[str, Path]] = []
 
     def run_phase(_name: str, _target: Any, *, source: Path, temporary_dir: Path, profile_id: str,
