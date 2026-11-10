@@ -54,7 +54,7 @@ architectures:
     paradigm: transformer
     allowed_model_types: [vision]
   gemma:
-    display_name: Gemma
+    display_name: Gemma4
     paradigm: transformer
     allowed_model_types: [llm, vlm]
   lfm:
@@ -82,7 +82,7 @@ architectures:
     paradigm: transformer
     allowed_model_types: [llm]
   qwen:
-    display_name: Qwen
+    display_name: Qwen3.5
     paradigm: transformer
     allowed_model_types: [llm, vlm]
   resnet:
