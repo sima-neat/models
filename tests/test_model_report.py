@@ -210,7 +210,8 @@ def test_the_package_needs_only_the_standard_library():
         "print(sorted(third_party - {'model_report', '__main__'}))"
     )
     result = subprocess.run(
-        [sys.executable, "-I", "-c", f"import sys; sys.path.insert(0, {str(REPOSITORY / 'tools')!r}); {probe}"],
+        # Exclude site packages and system sitecustomize; the package promises a standard-library-only import.
+        [sys.executable, "-I", "-S", "-c", f"import sys; sys.path.insert(0, {str(REPOSITORY / 'tools')!r}); {probe}"],
         capture_output=True, text=True, check=True,
     )
     assert result.stdout.strip() == "[]"
@@ -253,7 +254,7 @@ PYNEAT_ENUMS = {
     "NormalizePreset": ("ImageNet",),
     "PixelFormat": ("RGB",),
     "TensorMemory": ("EV74",),
-    "BoxDecodeType": ("YoloV8", "YoloV26", "YoloV26Pose", "YoloV26Seg", "SuperPoint"),
+    "BoxDecodeType": ("YoloV8", "YoloV26", "YoloV26Pose", "YoloV26Seg", "YoloV8Obb", "YoloV26Obb", "SuperPoint"),
     "SuperPointProfile": ("MagicLeapDemoV1", "LightGlueV1"),
 }
 SCRIPT_PYNEAT = {
@@ -282,8 +283,8 @@ def write_image(path, value, size=SOURCE_SIZE):
 
 def benchmark_dataset(root):
     """A dataset with the files each script samples from: COCO val2017, ImageNet's val2012 and ImageNet mini's val
-    split, an HPatches val sequence, and the Scene Flow test list. Only the second COCO image labels a person, so a
-    pose script must pick it."""
+    split, an HPatches val sequence, DOTA's val images, and the Scene Flow test list. Only the second COCO image labels
+    a person, so a pose script must pick it."""
     write_image(root / STEREO_PAIR.format(view="left"), STEREO_LEFT, STEREO_VIEW)
     write_image(root / STEREO_PAIR.format(view="right"), STEREO_RIGHT, STEREO_VIEW)
     disparity = STEREO_PAIR.replace("frames_finalpass", "disparity").format(view="left").replace(".png", ".pfm")
@@ -293,6 +294,7 @@ def benchmark_dataset(root):
     write_image(root / "val2017/000000000002.jpg", 200)
     write_image(root / "val2012/ILSVRC2012_val_00000001.JPEG", 200)
     write_image(root / "val/n01440764/ILSVRC2012_val_00000001.webp", 200)
+    write_image(root / "val/images/P0003.jpg", 200)
     write_image(root / "val/v_scene/1.ppm", 200)
     keypoints = {
         "images": [{"id": 1, "file_name": "000000000001.jpg"}, {"id": 2, "file_name": "000000000002.jpg"}],
@@ -402,11 +404,13 @@ def test_every_single_component_script_benchmarks_a_dataset_image(script, monkey
         # Box decoders take a probability threshold, in [0, 1).
         assert_letterboxed_frame(frame)
         assert (options.preprocess.resize.mode, options.top_k, options.score_threshold) == ("Letterbox", 10, 0.25)
-        if options.decode_type == "YoloV8":
+        if options.decode_type in {"YoloV8", "YoloV8Obb"}:
             assert options.nms_iou_threshold == 0.7
             assert "NMS IoU 0.7" in report["workload"]
-        # Pose accuracy scores only images with a labelled person.
-        expected = "000000000002.jpg" if options.decode_type == "YoloV26Pose" else ".jpg"
+        # Pose accuracy scores only images with a labelled person; oriented boxes measure DOTA's aerial images.
+        expected = {
+            "YoloV26Pose": "000000000002.jpg", "YoloV8Obb": "P0003.jpg", "YoloV26Obb": "P0003.jpg",
+        }.get(options.decode_type, ".jpg")
         assert expected in report["workload"]
     elif getattr(options, "decode_type", "") == "SuperPoint":
         # SuperPoint takes the frame stretched to its input, converted to GRAY8, scaled to [0, 1] without a preset,
@@ -437,7 +441,12 @@ def test_every_single_component_script_benchmarks_a_dataset_image(script, monkey
     assert report["components"]["model"]["mla_stage_stats"] == CORE_REPORT["mla_stage_stats"]
 
 
-@pytest.mark.parametrize("script", performance_scripts(components=True), ids=lambda path: path.parents[1].name)
+@pytest.mark.parametrize(
+    "script", [path for path in performance_scripts(components=True)
+               if yaml.safe_load((path.parents[1] / "model.yaml").read_text())["performance"].get("scope")
+               != "components"],
+    ids=lambda path: path.parents[1].name,
+)
 def test_every_multi_component_script_keeps_cores_mla_stats(script, monkeypatch):
     requests = []
 
@@ -468,7 +477,10 @@ def test_every_multi_component_script_keeps_cores_mla_stats(script, monkeypatch)
 
 
 @pytest.mark.parametrize(
-    "script", performance_scripts(components=True, accuracy=True), ids=lambda path: path.parents[1].name
+    "script", [path for path in performance_scripts(components=True, accuracy=True)
+               if yaml.safe_load((path.parents[1] / "model.yaml").read_text())["performance"].get("scope")
+               != "components"],
+    ids=lambda path: path.parents[1].name,
 )
 def test_every_multi_component_script_feeds_its_backbone_a_dataset_frame(script, monkeypatch, tmp_path):
     monkeypatch.setitem(sys.modules, "pyneat", types.SimpleNamespace(
@@ -479,13 +491,21 @@ def test_every_multi_component_script_feeds_its_backbone_a_dataset_frame(script,
     image = functions["sample_image"](benchmark_dataset(tmp_path))
     frame = functions["frame_tensor"](image)
 
-    assert image.parent.name == "val2017"
+    metadata = yaml.safe_load((script.parents[1] / "model.yaml").read_text(encoding="utf-8"))
+    splits = {"coco-2017": "val2017", "imagenet-2012": "val2012"}
+    assert image.parent.name == splits[metadata["accuracy"]["datasets"][0]["id"]]
     assert_letterboxed_frame(frame)
     assert frame.options["memory"] == "EV74"
     options = functions["image_options"]()
-    assert (options.preprocess.kind, options.preprocess.resize.mode, options.preprocess.preset) == (
-        "Image", "Stretch", "ImageNet"
-    )
+    assert (options.preprocess.kind, options.preprocess.resize.mode) == ("Image", "Stretch")
+    # The first component normalizes with the ImageNet preset, or with the mean and std of its own preprocessing.
+    normalize = options.preprocess.normalize
+    if getattr(normalize, "has_explicit_stats", False):
+        calibration = runpy.run_path(str(script.parent / "calibration.py"))
+        assert list(normalize.mean) == pytest.approx(calibration["MEAN"].tolist())
+        assert list(normalize.stddev) == pytest.approx(calibration["STD"].tolist())
+    else:
+        assert options.preprocess.preset == "ImageNet"
     height, width = frame.array.shape[:2]
     assert (options.preprocess.input_max_width, options.preprocess.input_max_height) == (width, height)
 
@@ -500,3 +520,31 @@ def test_model_code_uses_cores_mla_stats_names():
         if name in path.read_text(encoding="utf-8")
     ]
     assert uses == []
+
+
+def test_independent_components_keep_their_own_metrics_telemetry_and_evidence(tmp_path):
+    image = model_report.from_performance(Saved(CORE_REPORT), {"image_encoder": Model("image")}, workload="image")
+    text_core = {**CORE_REPORT, "fps": 600.0, "latency_ms": 2.0,
+                 "telemetry": {**CORE_REPORT["telemetry"], "power_som_watts": {
+                     **CORE_REPORT["telemetry"]["power_som_watts"], "mean": 4.0}}}
+    text = model_report.from_performance(Saved(text_core), {"text_encoder": Model("text")}, workload="text")
+    model_report.from_component_performance({"image_encoder": image, "text_encoder": text}).save(tmp_path)
+    report = saved_report(tmp_path)
+    assert report["scope"] == "components" and "metrics" not in report and "telemetry" not in report
+    for name, expected in (("image_encoder", image), ("text_encoder", text)):
+        component = report["components"][name]
+        for key in ("metrics", "telemetry", "workload"):
+            assert component[key] == expected.document[key]
+        assert (tmp_path / f"{name}-benchmark-report.json").is_file()
+    assert report["components"]["text_encoder"]["metrics"]["energy_per_inference_joules"] == pytest.approx(4 / 600)
+
+
+def test_component_reports_reject_wrong_components_and_mixed_runtimes():
+    image = model_report.from_performance(Saved(CORE_REPORT), {"image": Model("image")}, workload="image")
+    with pytest.raises(ValueError, match="exactly that component"):
+        model_report.from_component_performance({"text": image})
+    image.document["runtime"]["pyneat"] = "another-runtime"
+    with pytest.raises(ValueError, match="same runtime"):
+        model_report.from_component_performance({"image": image})
+    with pytest.raises(ValueError, match="at least one component"):
+        model_report.from_component_performance({})

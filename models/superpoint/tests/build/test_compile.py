@@ -239,4 +239,4 @@ def test_model_preserves_compilation_and_licence_settings() -> None:
     assert model["components"][0]["interface"]["format"] == "onnx"
     assert [profile["id"] for profile in model["build_profiles"]] == ["w16a16", "w8a8", "w8a16"]
     assert model["license"]["redistribution"] == "restricted"
-    assert model["license"]["spdx"] == "LicenseRef-SiMa-Internal"
+    assert model["license"]["spdx"] == "LicenseRef-MagicLeap-Noncommercial-Research"

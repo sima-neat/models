@@ -40,9 +40,12 @@ when no completed run carries the current fingerprint. A change therefore
 reruns exactly the stages whose inputs it touches.
 
 A tooling change reruns a stage only when the changed file is in that stage's
-tooling list in `fingerprints.py`. A file in `CONVERSION_TOOLING` in
-`conversion.py` also invalidates every conversion, and planning then fails
-until Vulcan Model Convert reruns.
+tooling list in `fingerprints.py`. No shared file is a conversion input: a
+conversion reruns only when the model's checkpoint, `convert.py` and the
+modules it imports, `requirements-convert.txt`, or `conversion.outputs`
+change. Raise `FINGERPRINT_VERSION` in `conversion.py` in the change that
+makes shared tooling convert the same inputs to a different model. Planning
+then fails until Vulcan Model Convert reruns for every conversion-backed model.
 
 | Stage | Venue | Model entry point | Runner script |
 |---|---|---|---|
@@ -71,6 +74,11 @@ decode, or starts after an upstream step.
 Registry sources resolve during planning; only resolved content enters the compile
 fingerprint. See [conversion artifacts](docs/conversion-artifacts.md).
 
+Prefer Hugging Face whenever the required checkpoint is available there, pinned
+to a full repository commit. Use an official upstream GitHub release asset only
+as a fallback, declared in `conversion.source` with its SHA-256 and byte count.
+Explain the fallback in a source comment in `model.yaml`.
+
 The shared tooling is one module per job. The
 [module map](design-doc/model-registry-architecture.md#shared-tooling) says
 which module owns what; put new shared code in the module that owns its job,
@@ -90,8 +98,18 @@ and may add a display-only `pipeline`. Preprocessing, decoding and surgery
 belong in executable code and the README; ownership belongs in `CODEOWNERS`.
 Do not add maturity compatibility fields to new authored YAML.
 
-Performance and accuracy measure each build profile's whole model: every
-component's MPK and the CPU work between them. `model.yaml` declares only
+Performance defaults to each build profile's whole model: every component's
+MPK and the CPU work between them. Independent components such as CLIP's image
+and text encoders may declare `performance: {scope: components}` instead. Their
+script benchmarks each component separately with Core's benchmark API and merges
+its single-component `from_performance()` reports using
+`model_report.from_component_performance()`. Each component keeps its own
+metrics, workload, telemetry, execution plan and MLA stats; the report has no
+combined metrics. Every component must satisfy the required performance metrics,
+and `tests.yaml` uses `performance.expected.<profile>.components.<component>`.
+Composed pipelines such as RF-DETR keep `performance: {}` and one whole-model
+result. Accuracy remains model-level and declares its evaluated datasets.
+`model.yaml` declares only
 `performance`, `accuracy.datasets` (Dataset Registry pins) and optional
 `build_profiles`. Every performance report holds the metrics
 `tools/model_report/metrics.json` marks `required`. The metrics an accuracy
@@ -239,6 +257,7 @@ in the same commit.
 | When you change | Also change |
 |---|---|
 | what a stage depends on: a `model.yaml` field its fingerprint reads, or a shared file it runs | the fingerprint function or the `COMPILE_TOOLING`/`BOARD_STAGE_TOOLING`/`PERFORMANCE_TOOLING`/`ACCURACY_TOOLING` list in `fingerprints.py`, the tables in [what a change reruns](docs/adding-a-model.md#9-know-what-a-change-reruns), and a test in `tests/test_compile_matrix.py` or `tests/test_stage_plan.py` |
+| an approved source host | its entry in `HTTPS_HOST_CHECKS` in `source.py`, accept and reject cases in `tests/test_source.py`, and the host table in [pin every input](docs/adding-a-model.md#3-pin-every-input). This reruns no stage |
 | the set of model scripts a benchmark or conversion runs | `SCRIPTS` in `benchmark_declarations.py` or `CONVERSION_FILES` in `model.py`, which make up `NON_COMPILE_SCRIPTS` in `fingerprints.py` with `FP32_BASELINE_SCRIPT`; every other `.py`/`.sh` under `scripts/` is an ONNX compile input |
 | board-only code | keep it inside `performance.py` or `accuracy.py`; a helper module under `scripts/` is an ONNX compile input, so editing it recompiles and then remeasures the model |
 | how `performance.py` gets its input | `scripts/run_model_performance.sh`, the dataset steps in `vulcan-model-benchmarking.yml`, [Benchmark input](docs/benchmarking.md#benchmark-input), and `tests/test_model_report.py` and `tests/test_benchmark_workflow.py` |
@@ -248,6 +267,7 @@ in the same commit.
 | a `datasets/<id>.yaml` requirement | `dataset-requirements.schema.json` when its shape changes, and the `accuracy.py` and `tests.yaml` expectations of every model with that task that evaluates the dataset |
 | a field of the model report | `schemas/model-report.schema.json`, `tools/model_report/__init__.py`, the checks in `report_publication.py`, and the browser code that reads the report |
 | a model's category: `model_type`, `tasks`, `modalities`, or the family in `architecture.id` | pick existing IDs from `taxonomies/model-taxonomy.yaml`; when none fits, add the entry there and follow [Model categorization taxonomy](docs/model-taxonomy.md) |
+| a model's `license` | set `spdx` to an ID in `artifact-browser/licenses.json`. When the upstream license is not listed, add it there, with `downloadable: false` if it forbids redistribution. No fingerprint includes the license, so the change reruns nothing ([license](docs/metadata-schema.md#license)) |
 | the model folder layout | `MODEL_FOLDER_ENTRIES` in `model.py` and [the directory step](docs/adding-a-model.md#2-create-the-directory) |
 | a model script | the model's test of that behavior under `tests/build/` or `tests/benchmark/` |
 | what a model converts, compiles, or measures on a DevKit | its `tests/tests.yaml` entries, their `expected` values, and the stage test files they run |
@@ -349,9 +369,10 @@ change.
   `profileGroups` in `api.js` sets this, not the `model.yaml` profile order.
 - Keep the glance-first page: key facts in the section, the rest in one row.
   Actions are icon buttons; blue text with ↗ is only for external links.
-- Benchmarks are whole-model, per build profile. Show a component's layer
-  timings and execution plan per component; never add component numbers up
-  or mark one component best against a different component.
+- Benchmarks default to the whole model, per build profile. Independent-component
+  performance keeps separate measurements when `performance.scope: components`.
+  Show layer timings and execution plans per component; never add component
+  numbers up or mark one component best against a different component.
 - Render the current model report version, and let unknown metrics fall
   through to Other measurements rather than hiding them.
 - Keep the preview data-driven. `preview.py` builds its catalog from
@@ -362,7 +383,12 @@ change.
   `website/scripts/assemble-portal.mjs`. Assembly also writes
   `component-pipelines.<revision>.json` and `reference-metrics.<revision>.json`
   from each `model.yaml`, so `build:portal` needs the same Python as
-  `preview.py`.
+  `preview.py`. It copies the browser's `licenses.json` to
+  `licenses.<revision>.json`.
+- Offer a model's downloads only when `downloadOffered` in `downloads.js`
+  allows them. It reads the license from the branch catalog and
+  `licenses.json`, and an unlisted license offers none. Keep the list in
+  `artifact-browser/`, so a plain static server serves it with the page.
 - A new metric goes into `tools/model_report/metrics.json` and the browser's
   `metrics.js` or `accuracy-metrics.js`; a test keeps their labels, units and
   directions in step.

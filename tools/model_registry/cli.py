@@ -847,6 +847,9 @@ def _check_report(args: argparse.Namespace) -> int:
     if args.stage == "accuracy":
         for name, result in report["datasets"].items():
             print(f"Checked the accuracy report on {name}: {', '.join(sorted(result['metrics']))}")
+    elif report.get("scope") == "components":
+        for name, result in report["components"].items():
+            print(f"Checked the performance report for {name}: {', '.join(sorted(result['metrics']))}")
     else:
         print(f"Checked the {args.stage} report: {', '.join(sorted(report['metrics']))}")
     return 0

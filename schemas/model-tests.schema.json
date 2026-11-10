@@ -30,12 +30,26 @@
       "unevaluatedProperties": false,
       "properties": {
         "expected": {
-          "description": "Per build profile, the whole model's throughput and any other performance metric its report gives.",
+          "description": "Per build profile, performance expectations for the whole model or a components map with one expectation per independent component.",
           "type": "object",
           "additionalProperties": {
-            "$ref": "#/$defs/metricValues",
-            "required": ["throughput_fps"],
-            "properties": {"throughput_fps": {"type": "number", "exclusiveMinimum": 0}}
+            "if": {"required": ["components"]},
+            "then": {
+              "type": "object", "required": ["components"], "additionalProperties": false,
+              "properties": {
+                "components": {
+                  "type": "object", "minProperties": 1,
+                  "additionalProperties": {
+                    "$ref": "#/$defs/metricValues", "required": ["throughput_fps"],
+                    "properties": {"throughput_fps": {"type": "number", "exclusiveMinimum": 0}}
+                  }
+                }
+              }
+            },
+            "else": {
+              "$ref": "#/$defs/metricValues", "required": ["throughput_fps"],
+              "properties": {"throughput_fps": {"type": "number", "exclusiveMinimum": 0}}
+            }
           }
         }
       }

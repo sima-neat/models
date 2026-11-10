@@ -135,10 +135,11 @@
       }
     },
     "performance": {
-      "description": "Measures the whole model with scripts/performance.py on a DevKit. Every report must hold the metrics tools/model_report/metrics.json marks required.",
+      "description": "Measures the whole model by default, or independent components when scope is components. Each measured result holds the required performance metrics.",
       "type": "object", "additionalProperties": false,
       "properties": {
-        "build_profiles": {"$ref": "#/$defs/profileIds"}
+        "build_profiles": {"$ref": "#/$defs/profileIds"},
+        "scope": {"enum": ["model", "components"], "default": "model"}
       }
     },
     "reference_metrics": {

@@ -53,10 +53,18 @@ architectures:
     display_name: DepthART
     paradigm: transformer
     allowed_model_types: [vision]
-  gemma:
-    display_name: Gemma
+  dla:
+    display_name: DLA
+    paradigm: cnn
+    allowed_model_types: [vision]
+  gemma4:
+    display_name: Gemma4
     paradigm: transformer
-    allowed_model_types: [llm]
+    allowed_model_types: [llm, vlm]
+  inception:
+    display_name: Inception
+    paradigm: cnn
+    allowed_model_types: [vision]
   lfm:
     display_name: LFM
     paradigm: transformer
@@ -64,6 +72,10 @@ architectures:
   lightglue:
     display_name: LightGlue
     paradigm: transformer
+    allowed_model_types: [vision]
+  lightstereo:
+    display_name: LightStereo
+    paradigm: cnn
     allowed_model_types: [vision]
   llama:
     display_name: Llama
@@ -81,10 +93,18 @@ architectures:
     display_name: Phi
     paradigm: transformer
     allowed_model_types: [llm]
-  qwen:
-    display_name: Qwen
+  qwen3:
+    display_name: Qwen3
+    paradigm: transformer
+    allowed_model_types: [llm]
+  qwen3_5:
+    display_name: Qwen3.5
     paradigm: transformer
     allowed_model_types: [llm, vlm]
+  qwen3_vl:
+    display_name: Qwen3-VL
+    paradigm: transformer
+    allowed_model_types: [vlm]
   resnet:
     display_name: ResNet
     paradigm: cnn
@@ -121,8 +141,16 @@ architectures:
     display_name: YOLO11-det
     paradigm: cnn
     allowed_model_types: [vision]
+  yolo11_obb:
+    display_name: YOLO11-obb
+    paradigm: cnn
+    allowed_model_types: [vision]
   yolo26_det:
     display_name: YOLO26-det
+    paradigm: cnn
+    allowed_model_types: [vision]
+  yolo26_obb:
+    display_name: YOLO26-obb
     paradigm: cnn
     allowed_model_types: [vision]
   yolo26_pose:
@@ -135,6 +163,10 @@ architectures:
     allowed_model_types: [vision]
   yolov8_det:
     display_name: YOLOv8-det
+    paradigm: cnn
+    allowed_model_types: [vision]
+  yolov8_obb:
+    display_name: YOLOv8-obb
     paradigm: cnn
     allowed_model_types: [vision]
 
@@ -190,6 +222,9 @@ tasks:
   object_detection:
     display_name: Object Detection
     allowed_model_types: [vision, vlm]
+  oriented_object_detection:
+    display_name: Oriented Object Detection
+    allowed_model_types: [vision]
   pose_estimation:
     display_name: Pose Estimation
     allowed_model_types: [vision]
@@ -204,6 +239,9 @@ tasks:
     allowed_model_types: [llm, vlm]
   image_captioning:
     display_name: Image Captioning
+    allowed_model_types: [vlm]
+  image_text_embedding:
+    display_name: Image-Text Embedding
     allowed_model_types: [vlm]
   multimodal_chat:
     display_name: Multimodal Chat

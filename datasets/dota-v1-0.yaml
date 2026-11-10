@@ -1,0 +1,3 @@
+# What every model evaluating its accuracy on DOTA v1.0 must report, by the model's task.
+required_metrics:
+  oriented_object_detection: [dota_obb_map50]

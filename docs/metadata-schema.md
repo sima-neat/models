@@ -19,7 +19,7 @@ model
 ├── pipeline ─────────────── optional run order, for the model browser
 ├── numerical_fidelity ───── compiled outputs compared during compilation
 ├── accuracy ─────────────── whole-model DevKit accuracy
-├── performance ──────────── whole-model DevKit performance
+├── performance ──────────── whole-model or independent-component DevKit performance
 └── reference_metrics ────── scores the source model's authors published
 ```
 
@@ -47,8 +47,49 @@ See [Model taxonomy](model-taxonomy.md) for sanctioned taxonomy values.
 `upstream` records human-reviewable provenance. It defaults to the checkpoint's
 Hugging Face repository and revision; `model_card` defaults to its repository
 URL. Keep an explicit `upstream` when it identifies a different original model.
+A model whose source is not on Hugging Face has no default and declares
+`upstream` itself. Its `model_card` is the page the model browser links as the
+original model:
+
+```yaml
+upstream:
+  repository: https://github.com/owner/repo
+  revision: 0123456789abcdef0123456789abcdef01234567
+  model_card: https://github.com/owner/repo/releases/tag/v1.0.0
+```
+
 Downloadable inputs belong in a `conversion` or `compilation` `source`, where
 exact bytes are pinned.
+
+### License
+
+`license` records the license of the source model:
+
+```yaml
+license:
+  spdx: Apache-2.0
+  redistribution: allowed
+  attribution: Derived from microsoft/resnet-50 and distributed under Apache-2.0.
+```
+
+- `spdx` is an ID listed in [`artifact-browser/licenses.json`](../artifact-browser/licenses.json): an SPDX
+  identifier, or a `LicenseRef-` ID for a license SPDX does not list.
+- `redistribution` is `allowed`, `restricted`, `prohibited`, or `unknown`.
+  Publication refuses a package marked `prohibited` or `unknown`.
+- `attribution` is the credit line the model page shows.
+
+Each entry there holds the license's `name`, a `summary` of what it
+asks from someone who redistributes the model, and `downloadable`. The model
+page shows the name and summary in its License section and offers the model's
+downloads only when `downloadable` is `true`. A model whose license forbids
+redistribution still compiles and benchmarks in CI, and its page shows **Not
+available for download**.
+
+Read the license at the source model's repository before declaring it. When it
+is not listed, add an entry, validated by
+`schemas/licenses.schema.json`. `python -m pytest tests/test_licenses.py` fails
+when a model declares an unlisted license. No fingerprint includes the license
+or the license list, so a correction reruns nothing.
 
 Optional top-level `build-on-demand` is a boolean, default `false`, for any
 model requiring explicit build selection. When `true`, pushes validate the
@@ -69,6 +110,10 @@ conversion:
     sha256: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
     size_bytes: 123456
 ```
+
+The checkpoint is a pinned Hugging Face file or a release file of a public
+GitHub repository. [Pin every input](adding-a-model.md#3-pin-every-input) lists
+the approved forms.
 
 A model that declares `conversion` must also provide `scripts/convert.py` and
 `scripts/requirements-convert.txt`, which the **Vulcan Model Convert** workflow
@@ -323,8 +368,18 @@ Measured on a DevKit by `scripts/performance.py` in the performance stage:
 performance: {}
 ```
 
-It takes only the optional `build_profiles`, as `accuracy` does. Every report
-must hold the metrics
+The optional `build_profiles` selects the measured profiles, as for `accuracy`.
+The optional `scope` is `model` by default: one measurement of the whole model,
+including composed pipelines such as RF-DETR. Independent encoders declare:
+
+```yaml
+performance:
+  scope: components
+```
+
+Each component then has separate metrics, workload, telemetry and execution
+statistics in the report's `components` map, with no combined metrics. Both
+scopes publish one performance run per profile. Every measured result must hold the metrics
 [`metrics.json`](../tools/model_report/metrics.json) marks `required`. Decoder selection and measurement settings stay in the script, which
 customers can copy and run with PyNeat; YAML does not duplicate them.
 
