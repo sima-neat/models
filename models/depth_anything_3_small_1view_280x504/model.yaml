@@ -59,14 +59,7 @@ reference_metrics:
   script: scripts/fp32_baseline_accuracy.py
   dataset: {id: nyu-depth-v2, split: test}
   conditions: >-
-    FP32 ONNX on ONNX Runtime 1.21.1 CPU; all 654 official NYU test images as
-    original lossless RGB PNG and float32 depth in meters; 280x504 input;
-    Eigen crop intersected with the retained field of view; valid depth
-    (0.001, 10) meters; per-image least-squares scale/shift alignment in inverse
-    depth; mean per-image AbsRel and delta1 (depth ratio below 1.25).
-  note: >-
-    NYU's 640x480 images are resized to 504x378, then center-cropped by 49 rows
-    at the top and bottom to 504x280. These scores cover the retained crop.
-    Reproduce with --original-nyu-test; the registered accuracy archive uses
-    JPEG images and millimeter depth PNGs.
+    FP32 ONNX; 654 NYU test images; 280x504; original PNG/float32 depth;
+    Eigen crop; per-image inverse-depth scale/shift alignment.
+  note: NYU images center-cropped to 16:9.
   metrics: {abs_rel: 0.08771950898015553, delta1: 0.9133138965177866}
