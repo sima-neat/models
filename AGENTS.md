@@ -74,6 +74,11 @@ decode, or starts after an upstream step.
 Registry sources resolve during planning; only resolved content enters the compile
 fingerprint. See [conversion artifacts](docs/conversion-artifacts.md).
 
+Prefer Hugging Face whenever the required checkpoint is available there, pinned
+to a full repository commit. Use an official upstream GitHub release asset only
+as a fallback, declared in `conversion.source` with its SHA-256 and byte count.
+Explain the fallback in a source comment in `model.yaml`.
+
 The shared tooling is one module per job. The
 [module map](design-doc/model-registry-architecture.md#shared-tooling) says
 which module owns what; put new shared code in the module that owns its job,

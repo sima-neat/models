@@ -1,31 +1,41 @@
-# SiMa Neat Model Registry
+<p align="center">
+  <img src="docs/assets/readme/hero.png" width="100%" alt="The four steps every model takes: declare it in model.yaml, compile it with the Model Compiler, benchmark it on a Modalix DevKit, and publish it for sima-cli models download">
+</p>
 
-This repository defines the models in the SiMa Neat Model Registry and how
-each one is compiled, benchmarked, and published. `model.yaml` declares a model,
-the model's `scripts/` directory holds code specific to that model, and
-`tools/model_registry` holds the shared lifecycle.
+<h1 align="center">SiMa Neat Model Registry</h1>
 
-Git holds no model binaries, datasets, compiled model packs (MPKs), logs, or
-results. A model declaration pins every input it downloads by URI, byte size,
-and SHA-256.
+<p align="center">
+  The models that run on SiMa.ai Modalix, each one declared in a <code>model.yaml</code>,<br>
+  compiled with the Model Compiler, and benchmarked on a Modalix DevKit.
+</p>
 
-## Registry release state
+<p align="center">
+  <a href="https://developer.sima.ai/models/">Model Browser</a> ·
+  <a href="docs/adding-a-model.md">Add a Model</a> ·
+  <a href="docs/README.md">Developer Documentation</a> ·
+  <a href="design-doc/model-registry-architecture.md">Architecture</a> ·
+  <a href="https://github.com/sima-neat/models/issues">Issues</a>
+</p>
 
-[`state.json`](state.json) defines the release experience consumed by the SDK's
-Palette SDK component: `current_state` accepts `GA`, `Beta`, or `Alpha`, and
-`default_branch` accepts `develop` or `main`. Initial values are `Alpha` and
-`develop`, allowing the consumer to display `Current Release: Alpha`.
+Git holds the declaration and the code of each model, not its files. A
+declaration pins every input it downloads by URI, byte size, and SHA-256.
+Model binaries, datasets, compiled model packages (MPKs), logs, and results
+live in object storage.
 
-The [state workflow](.github/workflows/vulcan-model-state.yml) publishes
-`models/state.json` in the production artifact bucket only from `main`. Changes
-to the file, workflow, or publishing script on `main` deploy automatically;
-manual runs must also select `main`. Other branches cannot publish this state.
-Publication validates both fields, sets JSON content type and `Cache-Control:
-no-store`, and verifies the uploaded bytes. CDN configuration must honor that
-cache policy. Palette SDK integration must fetch this file; it is not implemented
-here. This file does not participate in model compilation or fingerprints.
+## Use a Model
 
-## How a model is built
+List the published models and download one:
+
+```bash
+sima-cli models list --branch develop
+sima-cli models download --id resnet_50 --variant w8a8 --branch develop
+```
+
+The [Model Browser](https://developer.sima.ai/models/) shows each model with
+its measured performance and accuracy. It needs your SiMa Developer Portal
+login.
+
+## How a Model Is Built
 
 A **build** is one compile invocation of one build profile of one model. Each
 build passes through up to three **stages**:
@@ -37,20 +47,16 @@ build passes through up to three **stages**:
 | accuracy | Modalix DevKit | `scripts/accuracy.py` | `scripts/run_model_accuracy.sh` |
 
 Each stage has a **fingerprint**: a SHA-256 of every input that decides its
-result. CI compiles a build only when the branch catalog records no build with
-its current compile fingerprint, and runs a **benchmark** (the performance or
-accuracy stage) only when no completed registry run carries its current
-benchmark fingerprint. A change therefore reruns exactly the stages whose
-inputs it touches. [What a change
-reruns](docs/adding-a-model.md#9-know-what-a-change-reruns) lists the inputs of
-each fingerprint, and the [vocabulary](AGENTS.md#vocabulary) defines these
-terms.
+result. CI runs a stage only when no published result carries its current
+fingerprint, so a change reruns exactly the stages whose inputs it touches.
+[What a change reruns](docs/adding-a-model.md#9-know-what-a-change-reruns)
+lists the inputs of each fingerprint, and the
+[vocabulary](AGENTS.md#vocabulary) defines these terms.
 
-Conversion publishes a validated ONNX output as a Vulcan registry run. Models
-can declare `compilation.source: conversion`; compile planning selects the latest
-matching conversion and records its exact output. See [conversion artifacts](docs/conversion-artifacts.md).
+A model can also compile from a converted ONNX file instead of a pinned
+download. See [conversion artifacts](docs/conversion-artifacts.md).
 
-## Set up the contributor tool
+## Add a Model
 
 Install the repository-pinned Model Compiler first. Then install
 `model-registry` into it and check a model:
@@ -62,34 +68,32 @@ model-registry validate models/resnet_50
 model-registry fetch models/resnet_50
 ```
 
-The installer finds the Model Compiler environment from the NEAT SDK or a
-standalone installation and adds `model-registry` without replacing
-compiler-owned packages. This package contains only author commands; it
-cannot publish.
+The installer adds `model-registry` to the Model Compiler environment of the
+Neat SDK or of a standalone installation, without replacing the compiler's
+packages. The package holds only author commands. It cannot publish.
 
-## Download a published model
+[Add a model](docs/adding-a-model.md) covers the path from `model.yaml` to
+review.
 
-```bash
-sima-cli models list --branch develop
-sima-cli models download --id resnet_50 --variant w8a8 --branch develop
+## Repository Layout
+
+```text
+models/<model-id>/      model.yaml, README.md, hero.png, scripts/, tests/
+tools/model_registry/   shared CLI and lifecycle code
+scripts/                stage runner scripts and CI helpers
+schemas/                JSON Schemas for model.yaml, tests, and reports
+artifact-browser/       the Model Browser
+docs/                   contribution guides
+design-doc/             architecture
 ```
 
-## CI
-
-| Workflow | Trigger | What it does |
-| --- | --- | --- |
-| `Target Branch Checks` | pull request | Runs `python -m pytest`, builds the `model-registry` package, and builds, browser-tests, and smoke-tests the model browser on the merge result. Contributor code never reaches a self-hosted runner. |
-| `Vulcan Model Orchestrator` | every push, manual dispatch | Plans each stage against the registry, runs `Vulcan Model Compile` for each changed build and the benchmark workflow for each reused build that lacks a benchmark, and publishes the branch catalog. Each build's jobs are grouped under the build's name. A newer push cancels the running orchestrator with its compiles and benchmarks. A push that changes no fingerprint only publishes the catalog. On `main` and `develop`, it also publishes the model browser it checked to staging, independently of `VULCAN_ENV`. |
-| `Vulcan Model Compile` | called by the orchestrator | Compiles one build, runs the model's compile tests on it, publishes it, and benchmarks it. |
-| `Vulcan Model Benchmarking` | called by `Vulcan Model Compile` and the orchestrator, manual dispatch | Runs the requested `performance` and `accuracy` stages of one build on a Modalix DevKit, runs the model's benchmark tests on each result, and publishes each result with its test outcome. |
-| `Vulcan Model Convert` | manual dispatch | Runs `scripts/run_model_conversion.sh` and the model's conversion tests, publishes a validated ONNX bundle and its provenance to Vulcan. |
-| `Build and Publish Model Registry` | push, manual dispatch | Runs `python -m pytest`, builds the `model-registry` package with `packaging/model-registry/build.sh`, publishes it, and moves the branch's `latest` tag. |
-| `Model branch lifecycle` | branch create or delete | Cancels a deleted branch's unfinished runs and purges or restores its registry state. |
+The [architecture](design-doc/model-registry-architecture.md#directory-contract)
+describes every directory.
 
 ## Documentation
 
 - [Developer documentation](docs/README.md): the contribution path from
   `model.yaml` to review.
 - [Model Registry architecture](design-doc/model-registry-architecture.md):
-  components, repository layout, and the CI flow.
+  components, the CI workflows, and the registry release state.
 - [Model taxonomy](docs/model-taxonomy.md): sanctioned category IDs.
