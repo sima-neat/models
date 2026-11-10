@@ -1,0 +1,45 @@
+build-on-demand: true
+display_name: Qwen3-4B-Instruct-2507
+description: Generates text from instructions and conversation history.
+model_type: llm
+tasks: [text_generation]
+
+modalities:
+  inputs: [text]
+  outputs: [text]
+
+architecture: qwen3
+
+license:
+  spdx: Apache-2.0
+  redistribution: allowed
+  attribution: Derived from Qwen/Qwen3-4B-Instruct-2507; GPTQ checkpoint provided by SiMa.ai under Apache-2.0.
+
+upstream:
+  repository: https://huggingface.co/simaai/Qwen3-4B-Instruct-2507-GPTQ-Safetensors
+  revision: b2b2fd29f7da6c550ef18e202a4fa2613081e6af
+  derived_from: https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507
+
+compilation:
+  format: huggingface
+  source:
+    repository: simaai/Qwen3-4B-Instruct-2507-GPTQ-Safetensors
+    revision: b2b2fd29f7da6c550ef18e202a4fa2613081e6af
+    main_file: config.json
+    files:
+      chat_template.jinja: {sha256: 64f85b198065d0fba2a81f37e10ed68161ce2c19a754c7100e67e0ca2ee9c326, size_bytes: 2630}
+      config.json: {sha256: f0b0c3376f9765df937da7864932e39540a05056532766a130353654f9618c59, size_bytes: 2519}
+      generation_config.json: {sha256: 9e823af93f8ef906ed463feb40676646bc9bb215ce376f813405b990960425ad, size_bytes: 213}
+      merges.txt: {sha256: 599bab54075088774b1733fde865d5bd747cbcc7a547c5bc12610e874e26f5e3, size_bytes: 1671839}
+      model.safetensors: {sha256: d2dcb8bc7da9af2f2bc9ef194542c8d26b49f150d08ccc9e2ac8eda0c0dd350a, size_bytes: 2820971456}
+      tokenizer.json: {sha256: be75606093db2094d7cd20f3c2f385c212750648bd6ea4fb2bf507a6a4c55506, size_bytes: 11422650}
+      tokenizer_config.json: {sha256: 3d1614cb194c7710b666fb6ba7b4a8fecff340889ff8db4bf6592ca249fa299f, size_bytes: 693}
+      vocab.json: {sha256: ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910, size_bytes: 2776833}
+  entrypoint: generate
+
+build_profiles:
+  w4a16:
+    runner_class: expensive
+    components:
+      model:
+        parameters: {precision: a16w4, max_num_tokens: 4096, language_group_size: 128}
