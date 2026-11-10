@@ -113,7 +113,7 @@ def test_calibration_uses_only_cal2017_and_is_reproducible(tmp_path, load_script
 def test_compile_profiles_and_sources_match_the_definition(model_dir, load_script):
     recipe = load_script("compile")
     model = load_model(model_dir)
-    assert model["architecture"]["id"] == "yolox_det"
+    assert model["architecture"]["id"] == "yolox"
     assert model["components"][0]["source"]["type"] == "conversion"
     assert model["license"]["spdx"] == "Apache-2.0"
     for profile in ("w16a16", "w8a8", "w8a16"):

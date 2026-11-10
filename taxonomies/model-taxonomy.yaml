@@ -149,8 +149,8 @@ architectures:
     display_name: YOLOv8-obb
     paradigm: cnn
     allowed_model_types: [vision]
-  yolox_det:
-    display_name: YOLOX-det
+  yolox:
+    display_name: YOLOX
     paradigm: cnn
     allowed_model_types: [vision]
 

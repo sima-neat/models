@@ -1,4 +1,4 @@
-display_name: YOLOX-L-det
+display_name: YOLOX-l
 description: The L YOLOX detector for the 80 COCO object classes.
 model_type: vision
 tasks: [object_detection]
@@ -7,7 +7,7 @@ modalities:
   inputs: [image]
   outputs: [bounding_boxes, class_scores]
 
-architecture: yolox_det
+architecture: yolox
 
 license:
   spdx: Apache-2.0

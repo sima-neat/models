@@ -1,10 +1,10 @@
-# YOLOX-Nano-det
+# YOLOX-n
 
-![YOLOX-Nano-det model hero](hero.png)
+![YOLOX-n model hero](hero.png)
 
 ## Overview
 
-YOLOX-Nano-det is the Nano size of the Megvii YOLOX object detector, trained on the
+YOLOX-n is the Nano size of the Megvii YOLOX object detector, trained on the
 80 COCO classes. It takes a 416×416 BGR image and returns raw box, objectness,
 and class outputs at three scales. The package runs as one component. Your
 application combines objectness with the most likely class at each grid cell,

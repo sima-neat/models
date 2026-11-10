@@ -1,10 +1,10 @@
-# YOLOX-S-det
+# YOLOX-s
 
-![YOLOX-S-det model hero](hero.png)
+![YOLOX-s model hero](hero.png)
 
 ## Overview
 
-YOLOX-S-det is the S size of the Megvii YOLOX object detector, trained on the
+YOLOX-s is the S size of the Megvii YOLOX object detector, trained on the
 80 COCO classes. It takes a 640×640 BGR image and returns raw box, objectness,
 and class outputs at three scales. The package runs as one component. Your
 application combines objectness with the most likely class at each grid cell,

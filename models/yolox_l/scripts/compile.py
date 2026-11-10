@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Cut the converted YOLOX-L-det ONNX at its raw heads and compile it into one Modalix MPK."""
+"""Cut the converted YOLOX-l ONNX at its raw heads and compile it into one Modalix MPK."""
 
 from __future__ import annotations
 

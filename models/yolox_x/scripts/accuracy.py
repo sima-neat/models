@@ -1,4 +1,4 @@
-"""Measure YOLOX-X-det COCO bounding-box AP and AR with its MPK on a Modalix board."""
+"""Measure YOLOX-x COCO bounding-box AP and AR with its MPK on a Modalix board."""
 
 from __future__ import annotations
 

@@ -1,10 +1,10 @@
-# YOLOX-L-det
+# YOLOX-l
 
-![YOLOX-L-det model hero](hero.png)
+![YOLOX-l model hero](hero.png)
 
 ## Overview
 
-YOLOX-L-det is the L size of the Megvii YOLOX object detector, trained on the
+YOLOX-l is the L size of the Megvii YOLOX object detector, trained on the
 80 COCO classes. It takes a 640×640 BGR image and returns raw box, objectness,
 and class outputs at three scales. The package runs as one component. Your
 application combines objectness with the most likely class at each grid cell,
