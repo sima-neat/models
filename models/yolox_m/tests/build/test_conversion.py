@@ -1,5 +1,7 @@
 """Verify the upstream output contract and conversion's numerical guard."""
 
+from urllib.parse import urlsplit
+
 import numpy as np
 import onnx
 import pytest
@@ -30,7 +32,16 @@ def test_source_is_the_original_megvii_checkpoint(model_dir, load_script):
     converter = load_script("convert")
     model = load_model(model_dir)
     source = model["conversion"]["default"]["source"]
-    assert source["uri"].startswith("https://github.com/Megvii-BaseDetection/YOLOX/releases/download/0.1.1rc0/")
+    uri = urlsplit(source["uri"])
+    assert (uri.scheme, uri.netloc) == ("https", "github.com")
+    assert uri.path.split("/")[1:] == [
+        "Megvii-BaseDetection",
+        "YOLOX",
+        "releases",
+        "download",
+        "0.1.1rc0",
+        converter.CHECKPOINT,
+    ]
     converter.validate_source(source)
     with pytest.raises(ValueError, match="checkpoint"):
         converter.validate_source({"type": "file", "uri": "https://example.com/other.pth"})

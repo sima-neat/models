@@ -1,4 +1,4 @@
-display_name: YOLOX-tiny
+display_name: YOLOX-t
 description: The Tiny YOLOX detector for the 80 COCO object classes.
 model_type: vision
 tasks: [object_detection]

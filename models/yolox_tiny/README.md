@@ -1,10 +1,10 @@
-# YOLOX-tiny
+# YOLOX-t
 
-![YOLOX-tiny model hero](hero.png)
+![YOLOX-t model hero](hero.png)
 
 ## Overview
 
-YOLOX-tiny is the Tiny size of the Megvii YOLOX object detector, trained on the
+YOLOX-t is the Tiny size of the Megvii YOLOX object detector, trained on the
 80 COCO classes. It takes a 416×416 BGR image and returns raw box, objectness,
 and class outputs at three scales. The package runs as one component. Your
 application combines objectness with the most likely class at each grid cell,
