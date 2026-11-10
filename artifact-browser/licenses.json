@@ -38,5 +38,10 @@
     "name": "MIT License",
     "summary": "Permissive license. Redistribution must include the copyright and permission notices.",
     "downloadable": true
+  },
+  "OpenRAIL-M": {
+    "name": "Open RAIL-M License",
+    "summary": "Responsible AI license. Redistribution must include the license and pass its use restrictions on to every recipient.",
+    "downloadable": true
   }
 }
