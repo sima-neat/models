@@ -97,3 +97,31 @@ test('reads accuracy per dataset, in the order the run parameters declare them',
   assert.equal(readAccuracy({run, parameters: {}, report: {...report, stage: 'performance'}}).kind, 'unsupported');
   assert.equal(readAccuracy({run, parameters: {}, report: {...report, datasets: null}}).kind, 'unsupported');
 });
+
+test('independent components retain separate metrics, telemetry and workloads without an aggregate', () => {
+  const saved = fixture('performance');
+  const stats = saved.components.model;
+  const report = {
+    schema: saved.schema, schema_version: saved.schema_version, stage: saved.stage, runtime: saved.runtime,
+    scope: 'components',
+    components: {
+      text_encoder: {...stats, workload: '77 token embeddings', telemetry: {}, metrics: {throughput_fps: 640}},
+      image_encoder: {...stats, workload: '720p image preprocessing', telemetry: saved.telemetry,
+        metrics: {throughput_fps: 230, avg_power_watts: 12}},
+    },
+  };
+  const result = readPerformance({run, report}, ['image_encoder', 'text_encoder']);
+  assert.equal(result.kind, 'supported');
+  assert.equal(result.value.scope, 'components');
+  assert.deepEqual(result.value.measurements, {});
+  assert.equal(result.value.telemetry, null);
+  const [image, text] = result.value.components;
+  assert.equal(image.id, 'image_encoder');
+  assert.equal(image.measurements.throughput_fps.value, 230);
+  assert.equal(text.measurements.throughput_fps.value, 640);
+  assert.equal(image.workload, '720p image preprocessing');
+  assert.equal(text.workload, '77 token embeddings');
+  assert.equal(image.telemetry.status, 'ok');
+  assert.equal(text.telemetry.samples, 0);
+  assert.ok(image.executionGraph);
+});
