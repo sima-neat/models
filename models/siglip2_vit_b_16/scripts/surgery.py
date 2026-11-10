@@ -20,8 +20,6 @@ import numpy as np
 import onnx
 from calibration import CLASS_NAMES
 
-MODEL_DIR = Path(__file__).resolve().parents[1]
-
 IMAGE_SIZE = 224
 TEXT_LENGTH = 64
 EMBED_DIM = 768

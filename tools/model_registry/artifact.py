@@ -42,14 +42,20 @@ def runtime_file_path(root: Path, name: str) -> Path:
     return path
 
 
-def validate_runtime_files(files: Any, root: Path) -> list[dict[str, str]]:
-    """Verify the compile's supporting files before packaging or using them on a board."""
+def _runtime_file_entries(files: Any) -> list[dict[str, str]]:
     if not isinstance(files, list) or not files:
         raise ValidationError("runtime_files must be a non-empty list")
-    names: set[str] = set()
     for item in files:
         if not isinstance(item, dict) or set(item) != {"path", "sha256"} or not isinstance(item["path"], str):
             raise ValidationError("runtime_files entries must contain path and sha256")
+    return files
+
+
+def validate_runtime_files(files: Any, root: Path) -> list[dict[str, str]]:
+    """Verify the compile's supporting files before packaging or using them on a board."""
+    files = _runtime_file_entries(files)
+    names: set[str] = set()
+    for item in files:
         path = runtime_file_path(root, item["path"])
         if item["path"] in names:
             raise ValidationError(f"duplicate runtime file: {item['path']}")
@@ -74,20 +80,13 @@ def read_runtime_files(profile_dir: Path) -> list[dict[str, str]]:
 
 def restore_runtime_files(archive: Path, files: Any, profile_dir: Path) -> None:
     """Restore only declared supporting files from an already checksum-verified package ZIP."""
-    if not isinstance(files, list) or not files:
-        raise ValidationError("runtime_files must be a non-empty list")
+    files = _runtime_file_entries(files)
     with tempfile.TemporaryDirectory(prefix="runtime-files-", dir=profile_dir) as temporary:
         staged = Path(temporary)
         try:
             with zipfile.ZipFile(archive) as package:
                 names = package.namelist()
                 for item in files:
-                    if (
-                        not isinstance(item, dict)
-                        or set(item) != {"path", "sha256"}
-                        or not isinstance(item["path"], str)
-                    ):
-                        raise ValidationError("runtime_files entries must contain path and sha256")
                     destination = runtime_file_path(staged, item["path"])
                     if names.count(item["path"]) != 1:
                         raise ValidationError(f"package must contain exactly one runtime file: {item['path']}")
