@@ -65,9 +65,31 @@ def package_resources(model: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
+def _reject_overlapping_paths(paths: list[str]) -> None:
+    """A package path may appear once and may not sit below another packaged file."""
+    occupied: set[str] = set()
+    for path in paths:
+        if path in occupied:
+            raise ValidationError(f"package path is declared more than once: {path}")
+        occupied.add(path)
+    for path in sorted(occupied):
+        if any(parent.as_posix() in occupied for parent in PurePosixPath(path).parents):
+            raise ValidationError(f"package paths overlap: {path}")
+
+
+def _resource_paths(resource: dict[str, Any]) -> list[str]:
+    """Where a resource's files land in the package, from its declaration alone."""
+    install_path = PurePosixPath(resource["install_path"])
+    if resource["source"]["type"] == "file":
+        return [install_path.as_posix()]
+    return [(install_path / member["path"]).as_posix() for member in resource["source"]["files"]]
+
+
 def validate_package_resources(model: dict[str, Any]) -> None:
-    """Hold each resource's source to the compile source's rules, so a bad one fails before the compile."""
-    for resource in package_resources(model):
+    """Hold each resource's source to the compile source's rules, and their package paths to the package's,
+    so a bad one fails before the compile."""
+    resources = package_resources(model)
+    for resource in resources:
         source = resource["source"]
         try:
             members = dict(source_members(source))
@@ -77,6 +99,10 @@ def validate_package_resources(model: dict[str, Any]) -> None:
             raise ValidationError(
                 f"{model['id']}: resource {resource['id']}: main_file {source['entrypoint']!r} is not one of its files"
             )
+    try:
+        _reject_overlapping_paths([path for resource in resources for path in _resource_paths(resource)])
+    except ValidationError as exc:
+        raise ValidationError(f"{model['id']}: resources: {exc}") from exc
 
 
 def fetch_package_resources(model: dict[str, Any], output_dir: Path, cache_dir: Path | None = None) -> Path | None:
@@ -111,16 +137,14 @@ def _resource_files(fetcher: Fetcher, resource: dict[str, Any]) -> tuple[dict[st
     """Fetch one pinned resource and place its files under install_path."""
     source = resource["source"]
     path, _, digest, size = fetcher.fetch_source(source)
-    install_path = PurePosixPath(resource["install_path"])
     if source["type"] == "file":
-        files = [(install_path.as_posix(), path)]
+        local = [path]
     else:
         source_root = path
         for _ in PurePosixPath(source["entrypoint"]).parts:
             source_root = source_root.parent
-        files = [
-            ((install_path / member["path"]).as_posix(), source_root / member["path"]) for member in source["files"]
-        ]
+        local = [source_root / member["path"] for member in source["files"]]
+    files = list(zip(_resource_paths(resource), local, strict=True))
     entry = {"id": resource["id"], "paths": [name for name, _ in files], "source_sha256": digest, "size_bytes": size}
     return entry, files
 
@@ -238,11 +262,6 @@ def assemble_package(
     else:
         packaged_composition = {"id": composition["id"], "type": composition["type"]}
 
-    occupied_paths: set[str] = set()
-    for package_path, _ in component_files:
-        if package_path in occupied_paths:
-            raise ValidationError(f"package path is declared more than once: {package_path}")
-        occupied_paths.add(package_path)
     extra_files = _runtime_files(compiled / model_id / build_profile_id)
     resource_entries: list[dict[str, Any]] = []
     resources = package_resources(model)
@@ -252,13 +271,7 @@ def assemble_package(
             entry, files = _resource_files(fetcher, resource)
             resource_entries.append(entry)
             extra_files.extend(files)
-    for package_path, _ in extra_files:
-        if package_path in occupied_paths:
-            raise ValidationError(f"package path is declared more than once: {package_path}")
-        occupied_paths.add(package_path)
-    for package_path in sorted(occupied_paths):
-        if any(parent.as_posix() in occupied_paths for parent in PurePosixPath(package_path).parents):
-            raise ValidationError(f"package paths overlap: {package_path}")
+    _reject_overlapping_paths([name for name, _ in (*component_files, *extra_files)])
     packaged_files = sorted((*component_files, *extra_files))
     installed_files = [
         {"path": name, "sha256": sha256_file(path)[0], "size_bytes": path.stat().st_size}

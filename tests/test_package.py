@@ -250,6 +250,21 @@ def test_a_resource_source_follows_the_compile_source_rules(source: dict, messag
         validate_package_resources(model)
 
 
+@pytest.mark.parametrize(("second_install_path", "message"), (
+    ("runtime", "resources: package path is declared more than once: runtime/tables.json"),
+    ("runtime/tables.json", "resources: package paths overlap: runtime/tables.json/tables.json"),
+))
+def test_resources_that_install_onto_each_other_fail_validation(second_install_path: str, message: str) -> None:
+    files = {"tables.json": {"sha256": "b" * 64, "size_bytes": 1}}
+    source = {"repository": "example/runtime", "revision": "0" * 40, "main_file": "tables.json", "files": files}
+    model = {"id": "resnet_50", "resources": {
+        "first": {"source": source, "install_path": "runtime"},
+        "second": {"source": {**source, "repository": "example/other"}, "install_path": second_install_path},
+    }}
+    with pytest.raises(ValidationError, match=message):
+        validate_package_resources(model)
+
+
 def test_package_with_resources_and_runtime_files_is_a_flat_deterministic_zip(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
