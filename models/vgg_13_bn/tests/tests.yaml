@@ -19,4 +19,4 @@ performance:
     w16a16:
       throughput_fps: 152.2
     w8a8:
-      throughput_fps: 371.6
+      throughput_fps: 371.7
