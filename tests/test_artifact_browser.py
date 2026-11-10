@@ -14,6 +14,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
+import pytest
 import yaml
 from jsonschema import Draft202012Validator
 from model_registry.fingerprints import BENCHMARK_RUN_TYPES
@@ -300,9 +301,9 @@ def test_preview_resolves_each_benchmark_fingerprint_to_a_model_report(tmp_path:
         assert (test["suite"], test["name"], test["status"]) == (stage, "model", "passed")
         validator.validate(test["summary"])
         assert test["summary"]["stage"] == stage
-    metrics = accuracy["tests"][0]["summary"]["datasets"]["imagenet-2012-mini"]["metrics"]
+    metrics = accuracy["tests"][0]["summary"]["datasets"]["imagenet-2012-val"]["metrics"]
     assert set(metrics) == {"top1_accuracy", "top5_accuracy"}
-    assert accuracy["parameters"]["accuracy"]["datasets"]["imagenet-2012-mini"]["id"] == "imagenet-2012"
+    assert accuracy["parameters"]["accuracy"]["datasets"]["imagenet-2012-val"]["id"] == "imagenet-2012"
     assert list(performance["tests"][0]["summary"]["components"]) == ["model"]
     assert wrong_type == 404
 
@@ -313,8 +314,8 @@ def test_preview_measures_a_multi_component_model_as_one_report(tmp_path: Path) 
 
     report = measured["tests"][0]["summary"]
     builds = [build for build in measured["model"]["builds"] if build["build_profile_id"] == "w8a8_w16a16"]
-    # One report for the whole model, with each component's layers in the order the pipeline runs them.
-    assert list(report["components"]) == ["backbone", "decoder"]
+    # One report for the whole model, its components in the jsonb key order the registry returns.
+    assert list(report["components"]) == ["decoder", "backbone"]
     assert all(component["mla_layer_stats"]["layers"] and component["mla_stage_stats"]["stages"]
                for component in report["components"].values())
     assert report["workload"] == "Backbone, Top 300 proposals on the CPU, decoder"
@@ -457,8 +458,10 @@ def test_assembled_portal_ships_the_model_data_api_fetches(tmp_path: Path) -> No
     assert [stage.get("component") for stage in pipelines["rf_detr_nano"]] == ["backbone", None, "decoder"]
     reference = json.loads((portal / "reference-metrics.aaaaaaaaaaaa.json").read_text(encoding="utf-8"))
     assert reference["rf_detr_nano"][0]["metrics"] == {"coco_ap50": 0.676, "coco_map": 0.484}
+    licenses = json.loads((portal / "licenses.aaaaaaaaaaaa.json").read_text(encoding="utf-8"))
+    assert licenses == json.loads((BROWSER / "licenses.json").read_text(encoding="utf-8"))
     api = (portal / "api.aaaaaaaaaaaa.js").read_text(encoding="utf-8")
-    for name in ("component-pipelines", "reference-metrics"):
+    for name in ("component-pipelines", "reference-metrics", "licenses"):
         assert f'"./{name}.aaaaaaaaaaaa.json"' in api
         assert f'"./{name}.json"' not in api
 
@@ -1388,7 +1391,7 @@ def test_performance_rendering_reads_the_model_report_and_is_charted() -> None:
 def test_preview_accuracy_uses_the_regression_metrics_without_an_authored_inventory() -> None:
     preview = runpy.run_path(str(BROWSER / "preview.py"))
     report = preview["_accuracy_report"](load_models(ROOT)["resnet_50"], "w8a8")
-    assert set(report["datasets"]["imagenet-2012-mini"]["metrics"]) == {"top1_accuracy", "top5_accuracy"}
+    assert set(report["datasets"]["imagenet-2012-val"]["metrics"]) == {"top1_accuracy", "top5_accuracy"}
 
 
 def test_accuracy_result_is_rendered_with_coverage_and_reference_comparison() -> None:
@@ -1439,10 +1442,12 @@ def test_benchmark_runs_are_resolved_from_catalog_fingerprints_and_accuracy_is_r
     # Results with more metrics than tiles list the rest in a table; each shows the reference score.
     assert ".slice(0, ACCURACY_SUMMARY_TILES)" in script
     assert ".slice(ACCURACY_SUMMARY_TILES)" in script
-    assert "Published ${published}" in script
-    assert '<th scope="col">Published</th>' in script
-    # Reference scores sit beside a measurement of the same dataset only; the headline is the first dataset's.
-    assert "referenceScores(reference, entry.dataset.id)" in script
+    assert "`${label} ${score}`" in script
+    assert '<th scope="col">${escapeHtml(REFERENCE_ORIGINS[origin].label)}</th>' in script
+    # Reference scores sit beside a measurement of the same dataset only, each origin apart; the headline is the
+    # first dataset's published score.
+    assert "scoresByOrigin(reference, entry.dataset.id)" in script
+    assert "referenceScores(reference, datasetId, origin)" in script
     assert "const { metrics, dataset } = result.value.datasets[0];" in script
     assert "metric.reference" not in script
     assert "<strong>${escapeHtml(formatAccuracy(name, value))}</strong>" in script
@@ -1572,12 +1577,13 @@ def test_compare_bolds_the_best_whole_model_value() -> None:
     assert best_value([build(8.4), build(None)], "latency_avg_ms") is None
 
 
-def test_catalog_orders_a_family_from_smallest_to_largest() -> None:
+@pytest.mark.parametrize("family", ["YOLO26", "YOLO11", "YOLOv8"])
+def test_catalog_orders_a_family_from_smallest_to_largest(family: str) -> None:
     script = _browser_source("catalog-view.js")
     ordering = script[script.index("// Size words order a family"):script.index("function modelCardImage(")]
     names = [
-        "YOLO26x-det", "RF-DETR Large", "YOLO26l-det", "YOLO26n-det", "RF-DETR Nano",
-        "YOLO26s-det", "ResNet-50", "YOLO26m-det", "RF-DETR Medium", "RF-DETR Small",
+        f"{family}x-det", "RF-DETR Large", f"{family}l-det", f"{family}n-det", "RF-DETR Nano",
+        f"{family}s-det", "ResNet-50", f"{family}m-det", "RF-DETR Medium", "RF-DETR Small",
     ]
     models = [{"display_name": name} for name in names]
     probe = (
@@ -1589,7 +1595,7 @@ def test_catalog_orders_a_family_from_smallest_to_largest() -> None:
     )
     assert json.loads(result.stdout) == [
         "ResNet-50", "RF-DETR Nano", "RF-DETR Small", "RF-DETR Medium", "RF-DETR Large",
-        "YOLO26n-det", "YOLO26s-det", "YOLO26m-det", "YOLO26l-det", "YOLO26x-det",
+        f"{family}n-det", f"{family}s-det", f"{family}m-det", f"{family}l-det", f"{family}x-det",
     ]
 
 
@@ -1682,8 +1688,8 @@ def test_model_license_metadata_is_rendered_with_redistribution_and_attribution(
     script = _browser_source("model-view.js")
     styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
 
-    assert "const license = run.metadata?.license" in script
-    assert "function licensePanel(license)" in script
+    assert "const license = catalogModel?.license || run.metadata?.license" in script
+    assert "function licensePanel(license, listed)" in script
     assert 'detailTag(icons.license, license.spdx, "license")' in script
     assert '<p class="license-line"><strong>${escapeHtml(license.spdx)}</strong>' in script
     assert "<span>${escapeHtml(redistribution)}</span></p>" in script
@@ -1691,6 +1697,27 @@ def test_model_license_metadata_is_rendered_with_redistribution_and_attribution(
     assert 'class="license-attribution"' in script
     assert ".detail-tag-license svg" in styles
     assert ".license-attribution" in styles
+
+
+def test_model_page_names_the_license_and_what_it_asks_from_the_license_list() -> None:
+    script = _browser_source("model-view.js")
+
+    assert "licensePanel(license, variant.licenses?.[license?.spdx])" in script
+    assert "<span>${escapeHtml(listed.name)}</span>" in script
+    assert '<p class="license-summary">${escapeHtml(listed.summary)}</p>' in script
+    assert ".license-summary" in (BROWSER / "styles.css").read_text(encoding="utf-8")
+
+
+def test_model_page_offers_artifact_downloads_only_under_a_downloadable_license() -> None:
+    script = _browser_source("model-view.js")
+    render_detail = script.split("export function renderDetail(", 1)[1]
+
+    assert "const offered = downloadOffered(license?.spdx, variant.licenses)" in render_detail
+    assert 'const downloadAction = !offered ? `<span class="download-unavailable">' in render_detail
+    assert "${offered ? packageCard(variant," in render_detail
+    # Every artifact download on the page sits in the header action or the package card.
+    assert script.count("data-download-variant=") == 2
+    assert script.count('data-download="package"') == 2
 
 
 def test_local_preview_fixtures_are_current_model_reports_and_server_is_same_origin() -> None:
@@ -1787,7 +1814,7 @@ def test_variant_page_shows_build_facts_once_and_one_row_per_component() -> None
     order = [
         "detailBuildSwitcher(variant)", "${overviewMarkup}", 'id="components-section"', "${accuracyMarkup}",
         "packageCard(variant,", 'disclosure("provenance", "Build provenance"', "sourceInputPanel(inputs)",
-        "licensePanel(license)",
+        "licensePanel(license,",
     ]
     positions = [render_detail.index(marker) for marker in order]
     assert positions == sorted(positions)
