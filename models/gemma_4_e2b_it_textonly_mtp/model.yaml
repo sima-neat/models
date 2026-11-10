@@ -9,7 +9,7 @@ modalities:
   - text
   outputs:
   - text
-architecture: gemma
+architecture: gemma4
 # Google licenses Gemma 4 under Apache-2.0. The Gemma Terms of Use cover Gemma 1 to 3.
 license:
   spdx: Apache-2.0

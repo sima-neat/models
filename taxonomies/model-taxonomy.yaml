@@ -53,10 +53,14 @@ architectures:
     display_name: DepthART
     paradigm: transformer
     allowed_model_types: [vision]
-  gemma:
-    display_name: Gemma
+  dla:
+    display_name: DLA
+    paradigm: cnn
+    allowed_model_types: [vision]
+  gemma4:
+    display_name: Gemma4
     paradigm: transformer
-    allowed_model_types: [llm]
+    allowed_model_types: [llm, vlm]
   lfm:
     display_name: LFM
     paradigm: transformer
@@ -81,8 +85,8 @@ architectures:
     display_name: Phi
     paradigm: transformer
     allowed_model_types: [llm]
-  qwen:
-    display_name: Qwen
+  qwen3_5:
+    display_name: Qwen3.5
     paradigm: transformer
     allowed_model_types: [llm, vlm]
   resnet:

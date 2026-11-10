@@ -14,14 +14,24 @@
     "summary": "Permissive license. Redistribution must keep the copyright notice and disclaimer.",
     "downloadable": true
   },
-  "MIT": {
-    "name": "MIT License",
-    "summary": "Permissive license. Redistribution must include the copyright and permission notices.",
+  "LicenseRef-Llama-3.1-Community": {
+    "name": "Llama 3.1 Community License",
+    "summary": "Use and redistribution are subject to Meta’s Community License and Acceptable Use Policy. Include the license, attribution and notices.",
+    "downloadable": true
+  },
+  "LicenseRef-Llama-3.2-Community": {
+    "name": "Llama 3.2 Community License",
+    "summary": "Use and redistribution are subject to Meta’s Community License and Acceptable Use Policy. Include the license, attribution and notices.",
     "downloadable": true
   },
   "LicenseRef-MagicLeap-Noncommercial-Research": {
     "name": "Magic Leap noncommercial research license",
     "summary": "Noncommercial research use only. The license does not permit redistribution, so SiMa.ai does not offer this model for download.",
     "downloadable": false
+  },
+  "MIT": {
+    "name": "MIT License",
+    "summary": "Permissive license. Redistribution must include the copyright and permission notices.",
+    "downloadable": true
   }
 }
