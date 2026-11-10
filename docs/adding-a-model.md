@@ -26,6 +26,9 @@ Before creating files, identify:
 
 Do not add a product whose source, ownership, or license is ambiguous. Record
 ownership in `CODEOWNERS`; do not add owner or maturity boilerplate to YAML.
+Declare the source model's [license](metadata-schema.md#license) with an ID
+from `artifact-browser/licenses.json`, which also decides whether the model page offers a
+download.
 
 ## 2. Create the directory
 
@@ -71,12 +74,29 @@ one immutable repository/revision declaration; see [Compilation and
 sources](metadata-schema.md#compilation-and-sources). Exceptional members can
 keep explicit URIs.
 
-Hugging Face sources use a full 40-character repository commit. Approved HTTPS
-sources include pinned Hugging Face resources and the ONNX files the registry
-converts. GitHub release assets are not sources; datasets come only from the
-Dataset Registry.
-Mutable branches, credentials, query parameters, fragments, and unapproved
-hosts are rejected.
+Prefer Hugging Face whenever the required checkpoint is available there. Only
+otherwise use an official upstream GitHub release asset, and explain the
+fallback in a source comment in `model.yaml`.
+
+A source comes from an approved host, in this form:
+
+| Host | Form |
+| --- | --- |
+| Hugging Face | `hf://models/<owner>/<repository>@<commit>/<file>`, with the full 40-character commit |
+| GitHub | `https://github.com/<owner>/<repository>/releases/download/<tag>/<file>`, a release file of a public repository |
+| the registry | the ONNX files the registry converts |
+
+The owner of a repository can replace or delete a GitHub release file, so only
+`conversion.source` pins one: Convert reads the checkpoint once, and the
+registry keeps the converted model. A model whose checkpoint is not on Hugging
+Face also declares [`upstream`](metadata-schema.md#product-identity-and-provenance)
+itself. Datasets come only from the Dataset Registry.
+Mutable branches, `releases/latest`, credentials, query parameters, fragments,
+and unapproved hosts are rejected.
+
+To approve another host, add its entry to `HTTPS_HOST_CHECKS` in
+`tools/model_registry/source.py` with accept and reject tests. That reruns no
+stage.
 
 Record hashes from the exact bytes the registry will fetch:
 
@@ -264,7 +284,7 @@ builds](#on-demand-builds).
 
 | Stage | Fingerprint inputs |
 | --- | --- |
-| conversion | what can change the ONNX: the upstream checkpoint, `conversion.outputs`, `convert.py` and the files it uses, and the shared export code. See [when to run Convert again](conversion-artifacts.md#when-to-run-convert-again) |
+| conversion | the model's own conversion inputs: the upstream checkpoint, `conversion.outputs`, and `convert.py` with its requirements and the files it uses. No shared file is an input. See [when to run Convert again](conversion-artifacts.md#when-to-run-convert-again) |
 | compile (ONNX) | the model and profile IDs, the target, each component's ID and the source identity and layout, each component's `parameters`, the profile's calibration pin, the `numerical_fidelity` section, compile/surgery code, the Model Compiler version, `scripts/run_model_compilation.sh`, the shared model loader, and the MLA stage simulation (`tools/model_registry/mla_stage_simulation.py`) |
 | compile (LLiMa) | checkpoint content hashes, the target, component graph `parameters`, and the pinned Model Compiler identity including its build revision |
 | performance | the compile run and MPK digest of every component, the `performance` declaration, the profile's optional `benchmark_baseline`, the model's `performance.py`, the shared benchmark tooling and `scripts/run_model_performance.sh`, and the DevKit runtime pin |
@@ -284,9 +304,10 @@ is always benchmarked again.
 
 | Change | Reruns |
 | --- | --- |
-| README, display metadata, `pipeline`, `reference_metrics`, `runner_class`, `runner_market`, `tools/model_report/metrics.json`, registry tooling outside a stage's tooling | nothing |
+| README, display metadata, `license`, `artifact-browser/licenses.json`, `pipeline`, `reference_metrics`, `runner_class`, `runner_market`, `tools/model_report/metrics.json`, registry tooling outside a stage's tooling | nothing |
 | `build-on-demand` | nothing; changes scheduling and catalog metadata only |
-| the upstream checkpoint, `conversion.outputs`, `convert.py` and the files it uses, or the shared export code | with `source: conversion`, planning fails until you run Vulcan Model Convert again. The model recompiles only if the ONNX changes. |
+| the upstream checkpoint, `conversion.outputs`, or `convert.py`, its requirements and the files it uses | with `source: conversion`, planning fails until you run Vulcan Model Convert again. The model recompiles only if the ONNX changes. |
+| the Convert workflow, `scripts/run_model_conversion.sh`, or the registry's conversion, fetch or source code | nothing. When the change alters converted output, raise `FINGERPRINT_VERSION` in `conversion.py`, and every conversion-backed model then needs Convert again. |
 | a model's tests, or `scripts/run_model_tests.sh` | nothing. The changed test runs the next time its stage runs. |
 | a model's `fp32_baseline_accuracy.py` | nothing; no stage runs it |
 | a model's `performance.py` or `performance` declaration | that model's performance stages |
@@ -312,7 +333,9 @@ The fingerprints are computed by `compile_fingerprint` and `benchmark_fingerprin
 To apply a changed test at once, dispatch **Vulcan Model Orchestrator** with
 `models` set to the model and `force_rebuild_all`: it recompiles the model's
 builds, which runs the compile tests and remeasures every build. To run a changed
-conversion test, dispatch **Vulcan Model Convert**.
+conversion test, dispatch **Vulcan Model Convert**. If a selected package is
+already published in the current catalog revision, use a new Git commit;
+[forced rebuilds cannot replace immutable packages](https://github.com/sima-neat/models/blob/develop/design-doc/model-registry-architecture.md#forced-rebuilds-of-published-packages).
 
 ## 10. Write the model's tests
 

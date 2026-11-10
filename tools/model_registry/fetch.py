@@ -29,6 +29,10 @@ class _SizeMismatch(FetchError):
     """A transfer ended before the declared payload size was received."""
 
 
+class _OversizedPayload(FetchError):
+    """A response carried more bytes than the declared payload size."""
+
+
 class _ChecksumMismatch(FetchError):
     """A complete payload did not match its immutable digest."""
 
@@ -118,6 +122,7 @@ class Fetcher:
                 except (OSError, TimeoutError, HTTPException) as exc:
                     raise _TransferError(str(exc)) from exc
                 with response:
+                    received = 0
                     while True:
                         try:
                             chunk = response.read(1024 * 1024)
@@ -125,6 +130,11 @@ class Fetcher:
                             raise _TransferError(str(exc)) from exc
                         if not chunk:
                             break
+                        received += len(chunk)
+                        if received > source.size_bytes:
+                            raise _OversizedPayload(
+                                f"size mismatch for {source.filename}: expected {source.size_bytes}, got more"
+                            )
                         output.write(chunk)
                 output.flush()
                 os.fsync(output.fileno())

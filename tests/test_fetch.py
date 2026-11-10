@@ -3,12 +3,15 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import threading
+from collections.abc import Iterator
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from urllib.request import HTTPRedirectHandler, Request
 
 import pytest
 from model_registry.errors import FetchError
-from model_registry.fetch import Fetcher, resolve_dataset
+from model_registry.fetch import Fetcher, open_verified_url, resolve_dataset
 from model_registry.source import SourceSpec, source_identity
 
 PAYLOAD = b"model registry fixture\n"
@@ -29,6 +32,47 @@ class InterruptedResponse(Response):
         if self.calls > 1:
             raise OSError("connection interrupted")
         return super().read(4)
+
+
+class OversizedResponse(Response):
+    """Hold eight 1 MiB chunks and count the reads the fetcher makes."""
+
+    def __init__(self) -> None:
+        super().__init__(bytes(8 * 1024 * 1024))
+        self.reads = 0
+
+    def read(self, size: int = -1) -> bytes:
+        self.reads += 1
+        return super().read(size)
+
+
+class ReleaseFileHandler(BaseHTTPRequestHandler):
+    """Redirect /release to /asset and serve PAYLOAD there, as GitHub does for a release file."""
+
+    def do_GET(self) -> None:
+        self.server.requests.append((self.path, self.headers.get("Authorization")))
+        if self.path == "/release":
+            self.send_response(302)
+            self.send_header("Location", "/asset")
+            self.end_headers()
+            return
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(PAYLOAD)))
+        self.end_headers()
+        self.wfile.write(PAYLOAD)
+
+    def log_message(self, format: str, *args: object) -> None:
+        pass
+
+
+@pytest.fixture
+def release_server() -> Iterator[HTTPServer]:
+    server = HTTPServer(("127.0.0.1", 0), ReleaseFileHandler)
+    server.requests = []
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    yield server
+    server.shutdown()
+    server.server_close()
 
 
 def source(digest: str = DIGEST, size: int = len(PAYLOAD)) -> SourceSpec:
@@ -159,6 +203,25 @@ def test_size_mismatch_fails(tmp_path: Path) -> None:
     assert calls == 3
 
 
+def test_oversized_download_stops_at_the_declared_size(tmp_path: Path) -> None:
+    responses = []
+
+    def opener(request: Request, timeout: int) -> OversizedResponse:
+        responses.append(OversizedResponse())
+        return responses[-1]
+
+    fetcher = Fetcher(
+        tmp_path,
+        opener=opener,
+        allowed_https_hosts={"models.example"},
+        sleeper=lambda seconds: None,
+    )
+    with pytest.raises(FetchError, match="after 1 attempt.*size mismatch"):
+        fetcher.fetch(source())
+    assert [response.reads for response in responses] == [1]
+    assert not list(fetcher.cache_path(source()).parent.glob("*.partial"))
+
+
 def test_interruption_removes_partial_file(tmp_path: Path) -> None:
     calls = 0
 
@@ -275,6 +338,27 @@ def test_hugging_face_token_is_sent_but_not_logged(tmp_path: Path, monkeypatch: 
     Fetcher(tmp_path, opener=opener).fetch(hf_source)
     assert observed["authorization"] == "Bearer top-secret-token"
     assert observed["redirect_authorization"] is None
+
+
+def test_github_release_file_is_fetched_through_its_redirect_without_a_token(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, release_server: HTTPServer
+) -> None:
+    declared = []
+
+    def opener(request: Request, timeout: int):
+        declared.append((request.full_url, request.get_header("Authorization")))
+        local_url = f"http://127.0.0.1:{release_server.server_port}/release"
+        return open_verified_url(Request(local_url, headers=dict(request.header_items())), timeout)
+
+    monkeypatch.setenv("HF_TOKEN", "top-secret-token")
+    uri = "https://github.com/ultralytics/assets/releases/download/v8.4.0/yolov8n-obb.pt"
+    release_file = SourceSpec(uri=uri, sha256=DIGEST, size_bytes=len(PAYLOAD))
+    path, cache_hit = Fetcher(tmp_path, opener=opener).fetch(release_file)
+
+    assert not cache_hit
+    assert path.read_bytes() == PAYLOAD
+    assert declared == [(uri, None)]
+    assert release_server.requests == [("/release", None), ("/asset", None)]
 
 
 def test_retry_rebuilds_authenticated_request(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

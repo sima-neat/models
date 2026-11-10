@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import Any
@@ -18,9 +19,31 @@ HF_URI_RE = re.compile(
 )
 HF_RESOLVE_RE = re.compile(r"^/(?:(?:datasets|spaces)/)?[^/]+/[^/]+/resolve/[a-f0-9]{40}/.+$")
 VULCAN_ONNX_RE = re.compile(r"^/models-onnx/[a-z][a-z0-9_]*/[a-f0-9]{64}/[0-9]+-[0-9]+/model\.onnx$")
-DEFAULT_HTTPS_HOSTS = {
-    "artifacts.stg.neat.sima.ai",
-    "huggingface.co",
+GITHUB_RELEASE_RE = re.compile(
+    r"^/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/releases/download/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$"
+)
+
+
+def _require_hugging_face_commit(path: str) -> None:
+    if not HF_RESOLVE_RE.fullmatch(path):
+        raise SourcePolicyError("Hugging Face HTTPS sources must use a full commit in a resolve URL")
+
+
+def _require_vulcan_onnx(path: str) -> None:
+    if not VULCAN_ONNX_RE.fullmatch(path):
+        raise SourcePolicyError("Vulcan sources must identify a versioned ONNX file")
+
+
+def _require_github_release_file(path: str) -> None:
+    if not GITHUB_RELEASE_RE.fullmatch(path):
+        raise SourcePolicyError("GitHub sources must be a release file addressed by its tag")
+
+
+# Every approved HTTPS host and the check its URL path must pass. Approving a host is one entry here.
+HTTPS_HOST_CHECKS: dict[str, Callable[[str], None]] = {
+    "artifacts.stg.neat.sima.ai": _require_vulcan_onnx,
+    "github.com": _require_github_release_file,
+    "huggingface.co": _require_hugging_face_commit,
 }
 
 
@@ -105,12 +128,11 @@ class SourceSpec:
             raise SourcePolicyError("HTTPS source URI must use the default TLS port")
         if any(part in {".", ".."} for part in parts.path.split("/")):
             raise SourcePolicyError("HTTPS source path must not contain dot or parent segments")
-        hosts = allowed_https_hosts or DEFAULT_HTTPS_HOSTS
+        hosts = allowed_https_hosts or set(HTTPS_HOST_CHECKS)
         hostname = (parts.hostname or "").lower()
         if hostname not in hosts:
             raise SourcePolicyError(f"HTTPS source host is not approved: {hostname or '<missing>'}")
-        if hostname == "huggingface.co" and not HF_RESOLVE_RE.fullmatch(parts.path):
-            raise SourcePolicyError("Hugging Face HTTPS sources must use a full commit in a resolve URL")
-        if hostname == "artifacts.stg.neat.sima.ai" and not VULCAN_ONNX_RE.fullmatch(parts.path):
-            raise SourcePolicyError("Vulcan sources must identify a versioned ONNX file")
+        require_path = HTTPS_HOST_CHECKS.get(hostname)
+        if require_path:
+            require_path(parts.path)
         return self.uri

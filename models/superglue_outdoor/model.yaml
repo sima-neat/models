@@ -9,9 +9,10 @@ modalities:
 
 architecture: superglue
 
-# Upstream terms are noncommercial research only; this entry is approved for internal use only.
+# The Magic Leap license allows noncommercial research only and no redistribution. This entry is approved
+# for internal use only.
 license:
-  spdx: LicenseRef-SiMa-Internal
+  spdx: LicenseRef-MagicLeap-Noncommercial-Research
   redistribution: restricted
   attribution: SuperGlue is developed by Magic Leap, Inc.; internal use only, under SiMa.ai's approval of the Magic Leap terms.
 

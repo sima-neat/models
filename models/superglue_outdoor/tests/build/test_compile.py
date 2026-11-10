@@ -175,7 +175,7 @@ def test_model_preserves_compilation_and_licence_settings() -> None:
     assert model["components"][0]["interface"]["format"] == "onnx"
     assert "w16a16" in [profile["id"] for profile in model["build_profiles"]]
     assert model["license"]["redistribution"] == "restricted"
-    assert model["license"]["spdx"] == "LicenseRef-SiMa-Internal"
+    assert model["license"]["spdx"] == "LicenseRef-MagicLeap-Noncommercial-Research"
 
 
 def test_sinkhorn_and_extraction_find_clear_matches(surgery: ModuleType) -> None:
