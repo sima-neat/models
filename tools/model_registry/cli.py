@@ -26,6 +26,7 @@ AUTHOR_COMMANDS = frozenset(
         "fetch",
         "fetch-calibration",
         "fetch-fidelity-dataset",
+        "fetch-resources",
         "matrix",
         "record-compile-outputs",
         "authorize-runner-matrix",

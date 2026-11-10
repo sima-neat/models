@@ -188,6 +188,23 @@ the tensors and the CPU steps.
 A model without an accuracy dataset builds a fixed, realistic input in its
 own script and takes no `--dataset`.
 
+A model whose application also reads files beyond its MPKs, such as Supertonic's
+text models and voices, declares them as `resources` in `model.yaml`, and its
+script takes `--resources <directory>`. For a standalone run, fetch them in the
+layout the package installs, or extract the package ZIP to the same effect, and
+install the model's `scripts/requirements-performance.txt` beside PyNeat's
+environment, as the stage does:
+
+```bash
+resources="$(model-registry fetch-resources models/supertonic_3 --output-dir /workspace/resources)"
+~/pyneat/bin/python -m pip install --no-deps --only-binary=:all: \
+  --target /workspace/site -r models/supertonic_3/scripts/requirements-performance.txt
+PYTHONPATH=tools:/workspace/site ~/pyneat/bin/python models/supertonic_3/scripts/performance.py \
+  --mpk vector_estimator=/workspace/vector_estimator_mpk.tar.gz \
+  --mpk vocoder=/workspace/vocoder_mpk.tar.gz \
+  --resources "$resources" --output /workspace/performance
+```
+
 ## Multi-component models
 
 A multi-component model's script measures every MPK and the CPU work between
