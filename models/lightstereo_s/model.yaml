@@ -39,11 +39,13 @@ calibrations:
 # Every profile calibrates: each instance normalization ends in a square root, which the Model Compiler runs as an
 # INT8 lookup table even when activations are BF16.
 build_profiles:
-  w8a8:
+  # W8A8 whose read-out runs BF16: the two softmaxes, the disparity regression and the context upsampling, whose
+  # INT8 rounding costs most of the accuracy plain W8A8 loses.
+  w8a8_mixed:
     calibration_dataset: scene-flow-cal
     components:
       model:
-        parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 16}
+        parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 16, bf16_regions: [readout]}
 
   w16a16:
     calibration_dataset: scene-flow-cal
@@ -51,13 +53,13 @@ build_profiles:
       model:
         parameters: {precision: w16a16, calibration_bins: 2048, calibration_samples: 16}
 
-  # W8A8 whose read-out runs BF16: the two softmaxes, the disparity regression and the context upsampling, whose
-  # INT8 rounding costs most of the accuracy W8A8 loses.
-  w8a8_mixed:
-    calibration_dataset: scene-flow-cal
-    components:
-      model:
-        parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 16, bf16_regions: [readout]}
+  # No w8a8: with an INT8 read-out it ran at 101.5 FPS on CI's DevKit against w8a8_mixed's 91.6, and scored
+  # 1.332 px EPE against 0.852, so w8a8_mixed replaces it. compile.py keeps its recipe.
+  # w8a8:
+  #   calibration_dataset: scene-flow-cal
+  #   components:
+  #     model:
+  #       parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 16}
 
   # No w8a16: its run-time INT8 conversions cost more MLA time than its INT8 weights save, and it keeps the INT8
   # disparity regression that limits w8a8. On CI's DevKit it ran at 32.9 FPS against w16a16's 41.1 and scored
