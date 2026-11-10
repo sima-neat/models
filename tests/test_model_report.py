@@ -253,7 +253,10 @@ PYNEAT_ENUMS = {
     "NormalizePreset": ("ImageNet",),
     "PixelFormat": ("RGB",),
     "TensorMemory": ("EV74",),
-    "BoxDecodeType": ("YoloV8", "YoloV26", "YoloV26Pose", "YoloV26Seg", "YoloV8Obb", "YoloV26Obb", "SuperPoint"),
+    "BoxDecodeType": (
+        "YoloV8", "YoloV26", "YoloV26Pose", "YoloV26Seg", "YoloV8Obb", "YoloV26Obb", "SuperPoint", "YoloX"
+    ),
+    "BoxDecodeTypeOption": ("Split3Interleaved",),
     "SuperPointProfile": ("MagicLeapDemoV1", "LightGlueV1"),
 }
 SCRIPT_PYNEAT = {
@@ -396,13 +399,24 @@ def test_every_single_component_script_benchmarks_a_dataset_image(script, monkey
         assert_side_by_side_frame(frame)
         assert (options.preprocess.resize.mode, options.preprocess.preset) == ("Stretch", "ImageNet")
         assert STEREO_PAIR.format(view="left") in report["workload"]
-    elif getattr(options, "decode_type", "").startswith(("YoloV26", "YoloV8")):
+    elif getattr(options, "decode_type", "").startswith(("YoloV26", "YoloV8", "YoloX")):
         # Box decoders take a probability threshold, in [0, 1).
         assert_letterboxed_frame(frame)
         assert (options.preprocess.resize.mode, options.top_k, options.score_threshold) == ("Letterbox", 10, 0.25)
         if options.decode_type in {"YoloV8", "YoloV8Obb"}:
             assert options.nms_iou_threshold == 0.7
             assert "NMS IoU 0.7" in report["workload"]
+        elif options.decode_type == "YoloX":
+            color, normalize = options.preprocess.color_convert, options.preprocess.normalize
+            assert (color.enable, color.input_format, color.output_format) == (
+                "On", "PreprocessColorFormat.RGB", "PreprocessColorFormat.BGR"
+            )
+            assert options.decode_type_option == "Split3Interleaved"
+            assert options.preprocess.resize.pad_value == 114
+            assert normalize.mean == [0.0] * 3 and normalize.stddev == [1.0 / 255] * 3
+            assert normalize.has_explicit_stats
+            assert options.nms_iou_threshold == 0.65
+            assert "NMS IoU 0.65" in report["workload"]
         # Pose accuracy scores only images with a labelled person; oriented boxes measure DOTA's aerial images.
         expected = {
             "YoloV26Pose": "000000000002.jpg", "YoloV8Obb": "P0003.jpg", "YoloV26Obb": "P0003.jpg",
