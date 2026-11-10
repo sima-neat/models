@@ -406,6 +406,12 @@ def test_every_single_component_script_benchmarks_a_dataset_image(script, monkey
         # Pose accuracy scores only images with a labelled person; oriented boxes measure DOTA's aerial images.
         expected = {"YoloV26Pose": "000000000002.jpg", "YoloV26Obb": "P0003.jpg"}.get(options.decode_type, ".jpg")
         assert expected in report["workload"]
+    elif first_accuracy_dataset(script) == "coco-2017" and not hasattr(options, "decode_type"):
+        # A COCO detector without a Neat box decoder, such as DETR, stretches the frame to its input with the
+        # ImageNet preset and returns its raw outputs for the CPU to decode.
+        assert_letterboxed_frame(frame)
+        assert (options.preprocess.resize.mode, options.preprocess.preset) == ("Stretch", "ImageNet")
+        assert any(f"{name} in a 1280x720" in report["workload"] for name in ("000000000001.jpg", "000000000002.jpg"))
     elif getattr(options, "decode_type", "") == "SuperPoint":
         # SuperPoint takes the frame stretched to its input, converted to GRAY8, scaled to [0, 1] without a preset,
         # and decodes it with Magic Leap's demo settings, as the accuracy stage does.

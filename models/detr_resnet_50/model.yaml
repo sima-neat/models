@@ -1,0 +1,68 @@
+display_name: DETR ResNet-50
+description: The original DETR transformer detector with a ResNet-50 backbone, for COCO objects.
+model_type: vision
+tasks: [object_detection]
+
+modalities:
+  inputs: [image]
+  outputs: [bounding_boxes, class_scores]
+
+architecture: detr
+
+license:
+  spdx: Apache-2.0
+  redistribution: allowed
+  attribution: DETR is developed by Facebook AI Research and distributed under Apache-2.0.
+
+upstream:
+  repository: https://huggingface.co/facebook/detr-resnet-50
+  revision: 1d5f47bd3bdd2c4bbfa585418ffe6da5028b4c0b
+  derived_from: https://github.com/facebookresearch/detr/tree/29901c51d7fe8712168b8d0d64351170bc0f83e0
+
+conversion:
+  source:
+    repository: facebook/detr-resnet-50
+    revision: 1d5f47bd3bdd2c4bbfa585418ffe6da5028b4c0b
+    main_file: model.safetensors
+    files:
+      model.safetensors: {sha256: 830f5e2eeaada8c8c8281779dcc8ab12833972eb8514ed0a35be6c1d4420ad81, size_bytes: 166587896}
+      config.json: {sha256: e7bcf3992363f27717a863f14b193140ad2e41d4338ee012730e58a92cae17e6, size_bytes: 4592}
+      preprocessor_config.json: {sha256: 0673fea2a6d3cf92cdbab3c7426c0ecdf8a4729a2a4d5199033dcd66a2b8759b, size_bytes: 290}
+
+compilation:
+  format: onnx
+  source: conversion
+
+calibrations:
+- id: coco-2017-cal
+  dataset: {id: coco-2017, variant: cal, sha256: 54c64d84122eba371ac014d7b43849a461551c2e6c5c430b5ead90ec1dec12b1, size_bytes: 187510866}
+
+build_profiles:
+  w16a16:
+    components:
+      model:
+        parameters: {precision: w16a16}
+
+  w8a8:
+    calibration_dataset: coco-2017-cal
+    components:
+      model:
+        parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 50}
+
+  w8a16:
+    components:
+      model:
+        parameters: {precision: w8a16, per_token: true}
+
+accuracy:
+  # The reference resizes the shortest side to 800 and masks the padding; accuracy.py stretches to a square 640x640 input.
+  datasets:
+  - {id: coco-2017, variant: val, sha256: a40de1caf42b47c5a8976eb97efe3c83f3a41337c4d16d318eb15d65c293f2da, size_bytes: 898368520}
+
+performance: {}
+
+reference_metrics:
+- source: https://github.com/facebookresearch/detr/blob/29901c51d7fe8712168b8d0d64351170bc0f83e0/README.md
+  dataset: {id: coco-2017, split: val}
+  conditions: shortest side 800, longest side 1333, padding masked
+  metrics: {coco_map: 0.420}
