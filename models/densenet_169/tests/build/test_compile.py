@@ -113,30 +113,6 @@ def test_split_names_read_an_extracted_directory_and_require_the_split(
         calibration.split_names(tmp_path, "cal2012")
 
 
-def test_validation_labels_come_from_the_labels_file(tmp_path: Path, load_script: Callable[[str], ModuleType]) -> None:
-    calibration = load_script("calibration")
-    categories = [{"id": index, "wnid": f"n{index:08d}", "name": f"class {index}"} for index in range(1000)]
-    labels = {
-        "categories": categories,
-        "images": [
-            {"id": 7, "file_name": "ILSVRC2012_val_00000007.JPEG", "width": 500, "height": 375},
-            {"id": 2, "file_name": "ILSVRC2012_val_00000002.JPEG", "width": 500, "height": 375},
-        ],
-        "annotations": [{"id": 7, "image_id": 7, "category_id": 999}, {"id": 2, "image_id": 2, "category_id": 0}],
-    }
-    path = tmp_path / "annotations" / "labels_val2012.json"
-    path.parent.mkdir()
-    path.write_text(json.dumps(labels), encoding="utf-8")
-
-    assert calibration.validation_labels(tmp_path) == {
-        "val2012/ILSVRC2012_val_00000002.JPEG": 0,
-        "val2012/ILSVRC2012_val_00000007.JPEG": 999,
-    }
-    path.write_text(json.dumps({**labels, "categories": categories[1:]}), encoding="utf-8")
-    with pytest.raises(ValueError, match="expected 1000 validation classes, found 999"):
-        calibration.validation_labels(tmp_path)
-
-
 def test_read_images_reports_a_missing_image(tmp_path: Path, load_script: Callable[[str], ModuleType]) -> None:
     calibration = load_script("calibration")
     archive = _write_archive(tmp_path / "cal.tar.gz", {"imagenet/cal2012/a.JPEG": b"a"})
@@ -229,7 +205,7 @@ def test_compile_rejects_an_undeclared_precision_before_compiling(
     recipe = load_script("compile")
     monkeypatch.setattr(recipe, "_parameters", lambda profile_id: {"precision": "fp32"})
 
-    with pytest.raises(ValueError, match="only the declared BF16 and INT8 build profiles"):
+    with pytest.raises(ValueError, match="unsupported precision 'fp32'"):
         recipe.compile_model(tmp_path / "model.onnx", tmp_path / "model", "w16a16", None)
     assert not (tmp_path / "model").exists()
 

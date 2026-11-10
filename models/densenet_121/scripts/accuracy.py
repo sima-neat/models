@@ -14,11 +14,24 @@ from pathlib import Path
 import model_report
 import numpy as np
 import pyneat
-from calibration import VALIDATION_SPLIT, preprocess_image, validation_labels
+from calibration import CLASSES, preprocess_image
 
 # Images decode on worker threads while the MPK runs; Pillow releases the GIL while it decodes and resizes.
 WORKERS = 4
 PREFETCH = 8
+
+# imagenet-2012/val holds val2012/<image> with annotations/labels_val2012.json, whose category IDs
+# are the ImageNet class indices.
+VALIDATION_SPLIT = "val2012"
+
+
+def validation_labels(dataset: Path) -> dict[str, int]:
+    """Each validation image's class index, from the extracted dataset's labels file."""
+    labels = json.loads((dataset / "annotations" / f"labels_{VALIDATION_SPLIT}.json").read_text(encoding="utf-8"))
+    if len(labels["categories"]) != CLASSES:
+        raise ValueError(f"expected {CLASSES} validation classes, found {len(labels['categories'])}")
+    names = {image["id"]: f"{VALIDATION_SPLIT}/{image['file_name']}" for image in labels["images"]}
+    return {names[annotation["image_id"]]: annotation["category_id"] for annotation in labels["annotations"]}
 
 
 def prefetched(load: Callable, items: Sequence) -> Iterator:
@@ -67,7 +80,7 @@ def main(argv: list[str] | None = None) -> int:
         if runner is None:
             runner = model.build([tensor])
         logits = runner.run([tensor], timeout_ms=120000)[0].to_numpy(copy=False).reshape(-1)
-        if logits.shape != (1000,) or not np.isfinite(logits).all():
+        if logits.shape != (CLASSES,) or not np.isfinite(logits).all():
             raise ValueError(f"unexpected logits for {name}: shape {logits.shape}")
         ranked = np.argsort(-logits, kind="stable")[:5]
         top1 += int(ranked[0] == labels[name])

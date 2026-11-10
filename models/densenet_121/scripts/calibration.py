@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import io
-import json
 import random
 import tarfile
 from collections.abc import Iterable
@@ -25,7 +24,6 @@ STD = np.asarray([0.229, 0.224, 0.225], dtype=np.float32)
 IMAGE_SUFFIXES = (".jpeg",)
 CALIBRATION_SPLIT = "cal2012"
 CALIBRATION_SEED = 42
-VALIDATION_SPLIT = "val2012"
 CLASSES = 1000
 
 
@@ -61,15 +59,6 @@ def split_names(dataset: Path, split: str) -> list[str]:
     if not names:
         raise ValueError(f"{dataset} has no images under {split}/")
     return names
-
-
-def validation_labels(dataset: Path) -> dict[str, int]:
-    """Each validation image's class index, from the extracted dataset's labels file."""
-    labels = json.loads((dataset / "annotations" / f"labels_{VALIDATION_SPLIT}.json").read_text(encoding="utf-8"))
-    if len(labels["categories"]) != CLASSES:
-        raise ValueError(f"expected {CLASSES} validation classes, found {len(labels['categories'])}")
-    names = {image["id"]: f"{VALIDATION_SPLIT}/{image['file_name']}" for image in labels["images"]}
-    return {names[annotation["image_id"]]: annotation["category_id"] for annotation in labels["annotations"]}
 
 
 def read_images(dataset: Path, names: Iterable[str]) -> dict[str, bytes]:

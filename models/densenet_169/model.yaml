@@ -10,9 +10,9 @@ modalities:
 architecture: densenet
 
 license:
-  spdx: BSD-3-Clause
+  spdx: Apache-2.0
   redistribution: allowed
-  attribution: Derived from torchvision's DenseNet-169 ImageNet weights (IMAGENET1K_V1) as published in timm/densenet169.tv_in1k, and distributed under BSD-3-Clause.
+  attribution: Derived from torchvision's DenseNet-169 ImageNet weights (IMAGENET1K_V1, BSD-3-Clause) as published in timm/densenet169.tv_in1k, and distributed under Apache-2.0.
 
 upstream:
   repository: https://huggingface.co/timm/densenet169.tv_in1k
