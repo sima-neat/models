@@ -11,7 +11,6 @@ from typing import Any
 import numpy as np
 import pytest
 from model_registry.model_tests import measured_shortfalls
-from PIL import Image
 
 
 def test_mpk_argument_names_exactly_the_model_component(load_script: Callable[[str], ModuleType]) -> None:
@@ -38,6 +37,9 @@ def test_d1_all_counts_errors_over_both_3_px_and_5_percent(load_script: Callable
 
 
 def _png(path: Path, value: int) -> None:
+    # Imported here: the DevKit's benchmark-test environment, which runs only the report test below, has no Pillow.
+    from PIL import Image
+
     path.parent.mkdir(parents=True, exist_ok=True)
     Image.new("RGB", (960, 540), (value, value, value)).save(path)
 
