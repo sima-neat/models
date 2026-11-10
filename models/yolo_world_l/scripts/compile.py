@@ -2,7 +2,8 @@
 
 CLIP uses SkipCalibration and no calibration samples. Only detector INT8
 activation ranges are calibrated, using the content-pinned 128 COCO training
-images and their paired prompt lists. Small/Medium use MSE; Large uses MinMax.
+images and their paired prompt lists. The build profile declares the detector
+calibration method.
 """
 import argparse
 import json

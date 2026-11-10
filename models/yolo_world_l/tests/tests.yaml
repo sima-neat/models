@@ -2,6 +2,8 @@ conversion:
   run_tests: true
 compile:
   run_tests: true
+# Accuracy and throughput retain the validated MinMax build as regression baselines
+# until the MSE build completes full COCO validation and component benchmarking.
 accuracy:
   run_tests: true
   expected:

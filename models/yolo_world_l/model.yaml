@@ -77,7 +77,7 @@ build_profiles:
           precision: w8a8_mixed_w16a16
           prompt_slots: 80
           calibration_samples: 128
-          calibration_method: minmax
+          calibration_method: mse
           bf16_region: projection_attention
 pipeline:
 - cpu: Tokenize and look up tokens
