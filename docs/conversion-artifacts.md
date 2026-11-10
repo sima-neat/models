@@ -13,6 +13,10 @@ compilation:
   source: conversion
 ```
 
+The checkpoint is a pinned Hugging Face file or a release file of a public
+GitHub repository. [Pin every input](adding-a-model.md#3-pin-every-input)
+lists the approved forms.
+
 Keep upstream pins and exporter dependencies in Git. Do not copy the output URL,
 checksum, size, or run ID into `model.yaml`. The folder identifies the model and
 the conversion produces `model.onnx`, unless `conversion.outputs` names other
@@ -94,11 +98,21 @@ Run **Vulcan Model Convert** again after changing anything that can change the O
   that `convert.py` imports
 - any other file under `scripts/` that is not a Python module beside `convert.py`,
   except `requirements-compile.txt` and `requirements-accuracy.txt`
-- shared export code, listed in `CONVERSION_TOOLING` in
-  `tools/model_registry/conversion.py`
 
-Everything else leaves the conversion valid, including tests, compile and benchmark
-code, and the taxonomy. A changed conversion test runs the next time Convert runs.
+Everything else leaves the conversion valid, including shared tooling, tests,
+compile and benchmark code, and the taxonomy. A changed conversion test runs the
+next time Convert runs.
+
+Shared tooling is not on the list because the checkpoint is verified against its
+pinned SHA-256: where it is hosted and how it is fetched cannot change the output.
+When a shared change does alter converted output, such as a new Python version in
+`scripts/run_model_conversion.sh` or a new bundle layout, raise
+`FINGERPRINT_VERSION` in `tools/model_registry/conversion.py` in the same change.
+Every conversion-backed model then needs Convert again.
+
+Leave a successful conversion alone. Planning selects the latest completed run
+for a fingerprint, so a repeated Convert whose output bytes differ recompiles
+that model on every branch.
 
 Use a normal `import` for helpers, because a module loaded dynamically is not
 detected. Pin exporter requirements too, because packages they pull in indirectly
