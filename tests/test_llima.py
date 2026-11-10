@@ -43,6 +43,7 @@ from model_registry.source import source_identity
 ROOT = Path(__file__).resolve().parents[1]
 MODEL = "qwen3_5_0_8b"
 MTP_MODEL = "gemma_4_e2b_it_textonly_mtp"
+DFLASH_MODEL = "qwen3_4b_dflash"
 PROFILE = "w4a16"
 
 
@@ -350,25 +351,26 @@ def test_candidate_upload_retry_reuses_saved_exact_s3_version(tmp_path, monkeypa
 
 
 @pytest.mark.parametrize("model_id, image_input, group_size", [
-    (MODEL, True, 64), (MODEL, False, 128), (MTP_MODEL, False, 128),
+    (MODEL, True, 64), (MODEL, False, 128), (MTP_MODEL, False, 128), (DFLASH_MODEL, False, 128),
 ])
 def test_llima_runner_passes_yaml_settings_to_the_recipe(tmp_path, model_id, image_input, group_size):
     root = tmp_path / "repository"
     for folder in ("schemas", "taxonomies", "deps", "scripts", "tools", f"models/{model_id}"):
         shutil.copytree(ROOT / folder, root / folder, ignore=shutil.ignore_patterns("__pycache__"))
-    if model_id == MTP_MODEL:
-        shutil.copytree(ROOT / "models/gemma_4_e2b_it_textonly", root / "models/gemma_4_e2b_it_textonly")
     model_dir = root / "models" / model_id
     path = model_dir / "model.yaml"
     model = yaml.safe_load(path.read_text())
+    if baseline := model["build_profiles"][PROFILE].get("benchmark_baseline"):
+        shutil.copytree(ROOT / "models" / baseline["model_id"], root / "models" / baseline["model_id"])
     parameters = model["build_profiles"][PROFILE]["components"]["model"]["parameters"]
+    speculative = "draft_model_path" in parameters
     parameters.update(max_num_tokens=8192, language_group_size=group_size)
     if image_input:
         parameters.update(input_height=512, input_width=640)
     else:
         parameters.pop("input_height", None)
         parameters.pop("input_width", None)
-    if model_id == MTP_MODEL:
+    if speculative:
         model["upstream"]["revision"] = "a" * 40
         for path_name, member in model["compilation"]["source"]["files"].items():
             repository, revision_path = member["uri"].split("@", 1)
@@ -381,15 +383,15 @@ def test_llima_runner_passes_yaml_settings_to_the_recipe(tmp_path, model_id, ima
     config = json.loads(config_path.read_text())
     config["pipeline_cfg"].update(max_num_tokens=8192, input_token_group_size=group_size)
     config["vm_cfg"]["image_size"] = [512, 640] if image_input else 448
-    if model_id == MTP_MODEL:
-        config["lm_cfg"]["speculative_decoding_cfg"] = {"is_draft": False, "method": "gemma4_mtp"}
+    if speculative:
+        config["lm_cfg"]["speculative_decoding_cfg"] = {"is_draft": False, "method": parameters["speculative_method"]}
     config_path.write_text(json.dumps(config))
     checkpoint = tmp_path / "source-sets/9f" / ("9f" + "a" * 62)
     checkpoint_config = checkpoint / model["components"][0]["source"]["entrypoint"]
     checkpoint_config.parent.mkdir(parents=True)
     checkpoint_config.write_text("{}")
     checkpoint = checkpoint_config.parent
-    if model_id == MTP_MODEL:
+    if speculative:
         target_name = Path(model["upstream"]["repository"]).name
         target = source / target_name
         target.mkdir()
@@ -399,7 +401,7 @@ def test_llima_runner_passes_yaml_settings_to_the_recipe(tmp_path, model_id, ima
         draft_name = parameters["draft_model_path"]
         draft = deployment(source / draft_name)
         draft_config = json.loads((draft / "devkit/vlm_config.json").read_text())
-        draft_config["lm_cfg"]["speculative_decoding_cfg"] = {"is_draft": True, "method": "gemma4_mtp"}
+        draft_config["lm_cfg"]["speculative_decoding_cfg"] = {"is_draft": True, "method": parameters["speculative_method"]}
         (draft / "devkit/vlm_config.json").write_text(json.dumps(draft_config))
         (checkpoint.parent / draft_name).mkdir()
         (checkpoint.parent / draft_name / "config.json").write_text("{}")
@@ -450,6 +452,8 @@ shutil.copytree(os.environ["DEPLOYMENT_SOURCE"], sys.argv[2])
     assert not Path(arguments[0]).exists()
     assert (checkpoint / "config.json").read_text() == "{}"
     assert arguments[arguments.index("--max_num_tokens") + 1] == "8192"
+    if model_id == DFLASH_MODEL:
+        assert arguments[arguments.index("--speculative_block_size") + 1] == "16"
     if group_size == 128:
         assert "--language_group_size" not in arguments
     else:
@@ -476,9 +480,9 @@ shutil.copytree(os.environ["DEPLOYMENT_SOURCE"], sys.argv[2])
     assert "set --" not in replay.read_text()
     checkpoint_name = Path(model["upstream"]["repository"]).name
     assert recorded[0] == checkpoint_name
-    assert recorded[1:3] == ["-o", checkpoint_name.removesuffix("-Safetensors") +
-                           ("-MTP" if model_id == MTP_MODEL else "")]
-    if model_id == MTP_MODEL:
+    suffix = "-DFlash" if model_id == DFLASH_MODEL else "-MTP" if speculative else ""
+    assert recorded[1:3] == ["-o", checkpoint_name.removesuffix("-Safetensors") + suffix]
+    if speculative:
         recipe = replay.read_text()
         for name, config in ((checkpoint_name, model["components"][0]["source"]["entrypoint"]),
                              (parameters["draft_model_path"], parameters["draft_model_path"] + "/config.json")):
@@ -498,7 +502,7 @@ shutil.copytree(os.environ["DEPLOYMENT_SOURCE"], sys.argv[2])
     assert recorded[3:] == arguments[3:]
     manifest = json.loads((replay.parent.parent / "deployment-manifest.json").read_text())
     assert "compile.sh" in {item["path"] for item in manifest["files"]}
-    if model_id == MTP_MODEL:
+    if speculative:
         assert "config.py" in {item["path"] for item in manifest["files"]}
     compiler = resolve_model_compiler(root)
     verify_artifact(output / model_id / PROFILE / "model", write_manifest=True, provenance={
@@ -512,9 +516,9 @@ shutil.copytree(os.environ["DEPLOYMENT_SOURCE"], sys.argv[2])
     assert prepared[0]["compiled_parameters"] == {
         "max_num_tokens": 8192, "language_group_size": group_size,
         "input_height": 512 if image_input else 448, "input_width": 640 if image_input else 448,
-        **({"speculative_method": "gemma4_mtp"} if model_id == MTP_MODEL else {}),
+        **({"speculative_method": parameters["speculative_method"]} if speculative else {}),
     }
-    if model_id == MTP_MODEL:
+    if speculative:
         registry = Registry()
         candidate = publish_candidate(repository=root, dist_dir=output, output_dir=tmp_path / "candidate",
                                       model_id=model_id, build_profile_id=PROFILE, **registry.args())
