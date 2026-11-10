@@ -1,5 +1,6 @@
 """Static input, quantization, projection equivalence and real compiled-package contracts."""
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -26,6 +27,49 @@ def test_preprocessing_preserves_rgb_and_applies_imagenet_normalization(load_scr
     assert image.shape == (preprocessing.HEIGHT, preprocessing.WIDTH, 3)
     assert image.dtype == np.float32 and image.flags.c_contiguous
     np.testing.assert_allclose(image[0, 0], (np.array([0, 0, 1]) - preprocessing.MEAN) / preprocessing.STD)
+
+
+def test_fp32_baseline_rejects_an_incomplete_original_test_split(load_script, tmp_path, monkeypatch):
+    baseline = load_script("fp32_baseline_accuracy")
+    monkeypatch.setattr(baseline.accuracy, "FRAMES", 2)
+    (tmp_path / "test").mkdir()
+    (tmp_path / "test/rgb_0001.png").touch()
+    (tmp_path / "provenance.json").write_text(json.dumps({"test_indices_one_based": [1, 9]}))
+    with pytest.raises(ValueError, match="official test IDs"):
+        baseline.original_frames(tmp_path)
+    (tmp_path / "test/rgb_0009.png").touch()
+    assert [path.name for path in baseline.original_frames(tmp_path)] == ["rgb_0001.png", "rgb_0009.png"]
+
+
+def test_fp32_baseline_scores_original_float_depth_without_millimeter_rounding(load_script, tmp_path, monkeypatch):
+    cv2 = pytest.importorskip("cv2")
+    baseline = load_script("fp32_baseline_accuracy")
+    scoring = baseline.accuracy
+    monkeypatch.setattr(scoring, "FRAMES", 1)
+    rows, columns = np.indices((scoring.HEIGHT, scoring.WIDTH))
+    depth = (1 + rows * 0.001 + columns * 0.0005).astype(np.float32)
+    _, (width, height), (left, top) = scoring.cover_geometry(640, 480)
+    ys, xs = np.indices((480, 640))
+    u = np.clip(np.floor((xs + 0.5) * width / 640 - left).astype(int), 0, scoring.WIDTH - 1)
+    v = np.clip(np.floor((ys + 0.5) * height / 480 - top).astype(int), 0, scoring.HEIGHT - 1)
+    truth = (1 / (0.8 / depth[v, u] + 0.1)).astype(np.float32)
+    (tmp_path / "test").mkdir()
+    assert cv2.imwrite(str(tmp_path / "test/rgb_0001.png"), np.zeros((480, 640, 3), np.uint8))
+    np.save(tmp_path / "test/depth_0001.npy", truth)
+    (tmp_path / "provenance.json").write_text(json.dumps({"test_indices_one_based": [1]}))
+
+    def run(names, inputs):
+        assert names == ["depth", "depth_conf"]
+        assert inputs["image"].shape == (1, 3, scoring.HEIGHT, scoring.WIDTH)
+        return [depth[None, None], np.ones_like(depth)[None, None]]
+
+    monkeypatch.setattr(baseline.ort, "InferenceSession", lambda *args, **kwargs: SimpleNamespace(run=run))
+    output = tmp_path / "baseline.json"
+    baseline.main(["--onnx", "model.onnx", "--original-nyu-test", str(tmp_path), "--output", str(output)])
+    result = json.loads(output.read_text())
+    assert result["samples"] == 1
+    assert result["metrics"]["abs_rel"] < 1e-6
+    assert result["metrics"]["delta1"] == 1
 
 
 def test_w8a16_uses_sima_per_token_quantization_without_calibration(load_script, monkeypatch):
