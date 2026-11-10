@@ -69,8 +69,10 @@ def _neat(disparities: list[np.ndarray], frames: list[np.ndarray]) -> types.Simp
             return Runner()
 
     return types.SimpleNamespace(
-        __version__="3.0.0", build_info=lambda: {"version": "3.0.0"},
-        Model=Model, Tensor=types.SimpleNamespace(from_numpy=lambda array, copy: array),
+        __version__="3.0.0",
+        build_info=lambda: {"version": "3.0.0"},
+        Model=Model,
+        Tensor=types.SimpleNamespace(from_numpy=lambda array, copy: array),
     )
 
 
@@ -98,10 +100,16 @@ def test_each_pair_runs_side_by_side_and_scores_average_over_pairs(
     monkeypatch.setattr(accuracy, "pyneat", neat)
     monkeypatch.setitem(sys.modules, "pyneat", neat)
 
-    accuracy.main([
-        "--mpk", "model=raft_stereo_realtime_mpk.tar.gz", "--dataset", f"scene-flow-val={dataset}",
-        "--output", str(tmp_path / "output"),
-    ])
+    accuracy.main(
+        [
+            "--mpk",
+            "model=raft_stereo_realtime_mpk.tar.gz",
+            "--dataset",
+            f"scene-flow-val={dataset}",
+            "--output",
+            str(tmp_path / "output"),
+        ]
+    )
 
     # The left view fills the first 960 columns of the frame and the right view the rest, each ImageNet-normalized.
     assert [(frame.shape, frame.dtype) for frame in frames] == [((540, 1920, 3), np.float32)] * 3

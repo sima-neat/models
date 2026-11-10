@@ -19,12 +19,15 @@ upstream:
   revision: 6e93ed2169bd858dbb43033988563f3b0bb49506
 
 conversion:
-  # princeton-vl releases its checkpoints in one archive; this Hugging Face mirror holds raftstereo-realtime.pth with
-  # the same bytes.
+  # princeton-vl releases its checkpoints in one Dropbox archive (download_models.sh), which no approved host serves;
+  # this Hugging Face mirror holds raftstereo-realtime.pth with the same bytes as the archive's copy, SHA-256
+  # bf296740… in both.
   source:
     uri: hf://models/shriarul5273/RAFT-Stereo@97526bde05a11452d25cce032ccb1ad030bb775e/raftstereo-realtime.pth
     sha256: bf296740354438cdb318e3873117d2c742de1f95881e42047c7d608368930489
     size_bytes: 39603288
+  # The checkpoint's state dict under the network's own module names; surgery.py builds and exports the network.
+  outputs: [weights.pth]
 
 compilation:
   format: onnx
@@ -41,8 +44,10 @@ build_profiles:
       model:
         parameters: {precision: w16a16, calibration_bins: 2048, calibration_samples: 4}
 
-  # w8a8 is held back: on the 8 Scene Flow fidelity pairs its disparity's end-point error is 6.449 px, against
-  # 1.111 px for the ONNX and 1.174 px for w16a16. Uncomment it once an INT8 recipe keeps RAFT-Stereo's accuracy.
+  # w8a8 is held back: on the 8 Scene Flow fidelity pairs its disparity's end-point error was 6.449 px, against
+  # 1.111 px for the ONNX and 1.174 px for w16a16 (1.143 px since surgery.py's lookup, abs and upsampling rewrites).
+  # Uncomment it once an INT8 recipe keeps RAFT-Stereo's accuracy, such as LightStereo-S's mixed build, which runs
+  # the operations INT8 rounding hurts most in BF16.
   # w8a8:
   #   calibration_dataset: scene-flow-cal
   #   components:

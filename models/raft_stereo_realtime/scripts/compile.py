@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Compile the converted RAFT-Stereo realtime ONNX into one Modalix MPK and measure its disparity fidelity.
+"""Build RAFT-Stereo's realtime network from the converted weights with surgery.py, compile it into one Modalix MPK,
+and measure its disparity fidelity.
 
 Calibration and numerical fidelity use one seeded order of the scene-flow cal pairs: calibration takes the first pairs,
 and fidelity compares the quantized graph's disparity with the ONNX's on a later span, before the MLA compile, so a
@@ -37,8 +38,9 @@ from afe.apis.model import L2CachingMode
 from afe.core.utils import convert_data_generator_to_iterable
 from afe.load.importers.general_importer import onnx_source
 from model_registry.model import load_model as load_metadata
-from scene_flow import HEIGHT, INPUT, WIDTH, end_point_error, read_pairs, selected_pairs
+from scene_flow import INPUT, end_point_error, read_pairs, selected_pairs
 from sima_utils.data.data_generator import DataGenerator
+from surgery import INTERFACE, OUTPUT, export_network
 
 # Importing afe leaves the root logger at WARNING, so the recipe logs through its own INFO logger.
 LOG = logging.getLogger("raft_stereo_realtime.compile")
@@ -46,13 +48,9 @@ LOG.setLevel(logging.INFO)
 MODEL_DIR = Path(__file__).resolve().parents[1]
 MODEL_ID = "raft_stereo_realtime"
 COMPONENT_ID = "model"
-# One side-by-side frame, [left | right], in; the left view's disparity out.
-INPUT_SHAPE = [1, 3, HEIGHT, 2 * WIDTH]
-OUTPUT = "disparity"
-OUTPUT_SHAPE = [1, 1, HEIGHT, WIDTH]
 # MPK manifests record each public tensor's size in bytes; the MPK keeps the ONNX float32 interface.
-INPUT_BYTES = {INPUT: math.prod(INPUT_SHAPE) * 4}
-OUTPUT_BYTES = [math.prod(OUTPUT_SHAPE) * 4]
+INPUT_BYTES = {INPUT: math.prod(INTERFACE[INPUT]) * 4}
+OUTPUT_BYTES = [math.prod(INTERFACE[OUTPUT]) * 4]
 
 
 def _metadata() -> dict[str, Any]:
@@ -131,7 +129,9 @@ def quantize(source: Path, profile_id: str, dataset: Path, seed: int) -> Any:
     quantization = _quantization(parameters)
     count = int(parameters["calibration_samples"])
     frames, _ = read_pairs(dataset, selected_pairs(dataset, seed, 0, count))
-    importer = onnx_source(str(source), shape_dict={INPUT: tuple(INPUT_SHAPE)}, layout="NCHW", flexible_batch_size=True)
+    importer = onnx_source(
+        str(source), shape_dict={INPUT: tuple(INTERFACE[INPUT])}, layout="NCHW", flexible_batch_size=True
+    )
     loaded = load_model(importer, target=gen2_target)
     LOG.info("Quantizing %s, calibrating on %d scene-flow cal pairs", parameters["precision"], count)
     try:
@@ -252,27 +252,30 @@ def main() -> int:
     args = parser.parse_args()
     if args.compile_invocation != args.build_profile:
         parser.error("a build profile compiles in one invocation named after it")
-    source = args.model.expanduser().resolve()
-    if source.suffix != ".onnx":
-        parser.error("--model must be the verified ONNX from the conversion workflow")
-    if not source.is_file():
-        parser.error(f"model does not exist: {source}")
+    weights = args.model.expanduser().resolve()
+    if weights.suffix != ".pth":
+        parser.error("--model must be the verified weights.pth from the conversion workflow")
+    if not weights.is_file():
+        parser.error(f"model does not exist: {weights}")
     fidelity = _metadata()["numerical_fidelity"]
     output_dir = args.output_dir.expanduser().resolve()
     seed = int(fidelity["selection"]["seed"])
-    quantized = quantize(source, args.build_profile, args.dataset.expanduser().resolve(), seed)
-    LOG.info("Measuring numerical fidelity on %d pairs", fidelity["selection"]["samples"])
-    report = measure_fidelity(
-        source, quantized, args.fidelity_dataset.expanduser().resolve(), fidelity, args.build_profile
-    )
-    LOG.info("Fidelity: %s", report["metrics"][0])
-    output_dir.mkdir(parents=True, exist_ok=False)
-    (output_dir / "fidelity.json").write_text(
-        json.dumps(report, allow_nan=False, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
-    # The calibration frames and the float graph are released; collecting them lowers the compile's peak memory.
-    gc.collect()
-    LOG.info("Compiled MPK: %s", compile_model(quantized, output_dir, args.build_profile))
+    with tempfile.TemporaryDirectory(prefix=f"{MODEL_ID}-onnx-", dir=os.environ.get("RUNNER_TEMP")) as temporary:
+        source = export_network(weights, Path(temporary) / "model.onnx")
+        quantized = quantize(source, args.build_profile, args.dataset.expanduser().resolve(), seed)
+        LOG.info("Measuring numerical fidelity on %d pairs", fidelity["selection"]["samples"])
+        report = measure_fidelity(
+            source, quantized, args.fidelity_dataset.expanduser().resolve(), fidelity, args.build_profile
+        )
+        LOG.info("Fidelity: %s", report["metrics"][0])
+        output_dir.mkdir(parents=True, exist_ok=False)
+        (output_dir / "fidelity.json").write_text(
+            json.dumps(report, allow_nan=False, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        # The calibration frames and the float graph are released; collecting them lowers the compile's peak memory.
+        gc.collect()
+        # Inside the block: the MPK manifest records the checksum of the ONNX it compiled from.
+        LOG.info("Compiled MPK: %s", compile_model(quantized, output_dir, args.build_profile))
     return 0
 
 

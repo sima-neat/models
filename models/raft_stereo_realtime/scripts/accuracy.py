@@ -122,13 +122,17 @@ def main(argv: list[str] | None = None) -> int:
         if count == 1 or count % 250 == 0 or count == len(pairs):
             log(f"{count}/{len(pairs)} pairs, {(time.monotonic() - started) / count * 1000:.0f} ms/pair")
 
-    report = model_report.from_accuracy({
-        dataset_id: {
-            "metrics": {"epe": float(np.mean(epe)), "d1_all": float(np.mean(d1))},
-            "split": SPLIT, "evaluated_samples": len(pairs), "available_samples": len(available),
-            "details": {"inference_seconds": round(time.monotonic() - started, 1)},
-        },
-    })
+    report = model_report.from_accuracy(
+        {
+            dataset_id: {
+                "metrics": {"epe": float(np.mean(epe)), "d1_all": float(np.mean(d1))},
+                "split": SPLIT,
+                "evaluated_samples": len(pairs),
+                "available_samples": len(available),
+                "details": {"inference_seconds": round(time.monotonic() - started, 1)},
+            },
+        }
+    )
     report.save(args.output)
     measured = report.document["datasets"][dataset_id]["metrics"]
     print(json.dumps({name: round(value, 4) for name, value in measured.items()}))
