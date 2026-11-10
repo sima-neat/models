@@ -1,0 +1,67 @@
+display_name: YOLO26x-obb
+description: The largest YOLO26 oriented-box detector here, for the 15 DOTA aerial object classes.
+model_type: vision
+tasks: [oriented_object_detection]
+
+modalities:
+  inputs: [image]
+  outputs: [bounding_boxes, class_scores]
+
+architecture: yolo26_obb
+
+license:
+  spdx: AGPL-3.0-only
+  redistribution: restricted
+  attribution: YOLO26 is developed by Ultralytics and distributed under AGPL-3.0.
+
+upstream:
+  repository: https://huggingface.co/Ultralytics/YOLO26
+  revision: 070ac3c51435984d992ba92eb3f234daf4e4500d
+  derived_from: https://github.com/ultralytics/ultralytics/tree/f2d3aed634a5b0e4828024718d4a61ab2f83fb19
+
+conversion:
+  source:
+    uri: hf://models/Ultralytics/YOLO26@070ac3c51435984d992ba92eb3f234daf4e4500d/yolo26x-obb.pt
+    sha256: d7b1d805b0ec149890efde89119ef9d60481566ec83166052c04b5d89d9e3cb7
+    size_bytes: 126937426
+
+compilation:
+  format: onnx
+  source: conversion
+
+calibrations:
+- id: dota-v1-0-cal
+  dataset: {id: dota-v1-0, variant: cal, sha256: c6d498eafa142ef134877bade87100fb2472b194f1fc4faffc600aa88231bbd1, size_bytes: 98562300}
+
+build_profiles:
+  w16a16:
+    components:
+      model:
+        parameters: {precision: w16a16}
+
+  w8a8:
+    calibration_dataset: dota-v1-0-cal
+    components:
+      model:
+        parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 50}
+
+  # w8a16 is disabled because it has no build: its Model Compiler 3.0.0 compile failed on the default
+  # 32 GiB runner. A 3.0.0.1 compile with 64 GiB passed, peaking at 26.7 GiB on x86_64, so it likely
+  # needs the 64 GiB moderate runner class. Uncomment it once that class is granted.
+  # w8a16:
+  #   components:
+  #     model:
+  #       parameters: {precision: w8a16}
+
+accuracy:
+  datasets:
+  - {id: dota-v1-0, variant: val, sha256: abeff63703f14da97d8e2033c67accacb88b732ce4ada940feddfeeac8f94a37, size_bytes: 327598055}
+
+performance: {}
+
+reference_metrics:
+- source: https://github.com/ultralytics/ultralytics/blob/f2d3aed634a5b0e4828024718d4a61ab2f83fb19/docs/en/models/yolo26.md
+  dataset: {id: dota-v1-0, split: test}
+  conditions: 1024x1024, single-model multiscale, NMS-free one-to-one head, scored by the DOTA evaluation server
+  note: accuracy.py scores single-scale tiles of the val split, so these test-split scores are not directly comparable.
+  metrics: {dota_obb_map: 0.567, dota_obb_map50: 0.821}

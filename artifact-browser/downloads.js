@@ -1,5 +1,11 @@
 import { deploymentCatalog, variantBuildRuns } from "./branch-builds.js";
 
+// A model's compiled artifacts are offered only under a license that licenses.json lists as downloadable.
+// An unlisted license, or a list that did not load, offers none.
+export function downloadOffered(licenseId, licenses) {
+  return licenses?.[licenseId]?.downloadable === true;
+}
+
 // Delivery comes from the resolved artifact, never from the source checkpoint URL.
 export function artifactDelivery(artifact = {}) {
   if (artifact.metadata?.storage_backend === "huggingface") return "huggingface";

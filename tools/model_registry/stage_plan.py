@@ -163,6 +163,16 @@ def _profiles(document: dict[str, Any]) -> dict[tuple[str, str], dict[str, Any]]
     return profiles
 
 
+def _pending_fingerprints(document: dict[str, Any]) -> dict[tuple[str, str], dict[str, str]]:
+    """Each build profile the catalog is compiling, by (model, build profile): its compile fingerprint per component."""
+    return {
+        (item["model_id"], item["build_profile_id"]): {
+            component_id: item["compile_fingerprint"] for component_id in item["component_ids"]
+        }
+        for item in document.get("pending_builds", [])
+    }
+
+
 def _carries_fingerprints(builds: list[dict[str, Any]], fingerprints: dict[str, str]) -> bool:
     """Whether the builds include every component at its head compile fingerprint."""
     published = {build.get("component_id"): build.get("compile_fingerprint") for build in builds}
@@ -174,8 +184,8 @@ def merge_catalog_sources(documents: list[dict[str, Any]], matrix: list[dict[str
 
     Each model build profile takes its builds, packages and benchmark fingerprints together from the first
     source whose builds carry every compile fingerprint the head declares for that profile, else from the first
-    source that has the profile at all, so its prior builds and their benchmarks stay visible while the
-    replacement compiles.
+    source that is compiling those fingerprints, else from the first source that has the profile at all, so its
+    prior builds and their benchmarks stay visible while the replacement compiles.
     """
     if not documents:
         return None
@@ -185,12 +195,17 @@ def merge_catalog_sources(documents: list[dict[str, Any]], matrix: list[dict[str
         for component_id in entry["component_ids"]:
             profile_fingerprints[component_id] = entry["compile_fingerprint"]
 
-    sources = [_profiles(document) for document in documents]
+    sources = [(_profiles(document), _pending_fingerprints(document)) for document in documents]
     models: dict[str, dict[str, Any]] = {}
     for (model_id, profile_id), fingerprints in sorted(head_fingerprints.items()):
-        present = [source[(model_id, profile_id)] for source in sources if (model_id, profile_id) in source]
-        matching = [profile for profile in present if _carries_fingerprints(profile["builds"], fingerprints)]
-        chosen = matching or present
+        present = [
+            (profiles[(model_id, profile_id)], pending)
+            for profiles, pending in sources
+            if (model_id, profile_id) in profiles
+        ]
+        matching = [profile for profile, _ in present if _carries_fingerprints(profile["builds"], fingerprints)]
+        compiling = [profile for profile, pending in present if pending.get((model_id, profile_id)) == fingerprints]
+        chosen = matching or compiling or [profile for profile, _ in present]
         if chosen:
             model = models.setdefault(model_id, {"builds": [], "packages": []})
             model["builds"].extend(chosen[0]["builds"])
@@ -246,6 +261,10 @@ def plan_stages(
 ) -> dict[str, Any]:
     """Select compile invocations whose compile fingerprint changed, and the benchmarks reused builds lack.
 
+    A feature branch leaves to its closest base branch every build profile that branch is compiling at the head
+    fingerprints and every benchmark whose fingerprint its catalog records, so a merged base branch's work is not
+    repeated.
+
     On-demand models require explicit model/profile selection and include_on_demand.
     Without a reader, every selected automatic invocation compiles.
     """
@@ -275,17 +294,31 @@ def plan_stages(
     ):
         raise ValidationError("on-demand builds require explicit --models and --profiles")
     document = None
+    base: dict[str, Any] = {}
     if read is not None:
         if not read_api_url:
             raise ValidationError("a registry read URL is required to plan against published runs")
-        _, sources = read_catalog_sources(read, read_api_url, branch, base_branches)
+        record, sources = read_catalog_sources(read, read_api_url, branch, base_branches)
         document = merge_catalog_sources(sources, head)
+        base_sources = sources[1:] if record is not None else sources
+        if base_sources and not is_long_lived(branch) and not force_rebuild_all:
+            base = base_sources[0]
     builds = catalog_builds(document)
+    base_pending = _pending_fingerprints(base)
+    base_benchmarks = {
+        (model["id"], profile_id): fingerprints
+        for model in base.get("models", [])
+        for profile_id, fingerprints in (model.get("benchmark_fingerprints") or {}).items()
+    }
 
     compile_entries: list[dict[str, Any]] = []
     benchmark_entries: list[dict[str, Any]] = []
     for entry in head:
         if entry.get("build_on_demand", False) and not include_on_demand:
+            continue
+        key = (entry["model_id"], entry["build_profile_id"])
+        fingerprints = {component_id: entry["compile_fingerprint"] for component_id in entry["component_ids"]}
+        if base_pending.get(key) == fingerprints:
             continue
         prior = {
             component_id: builds.get((entry["model_id"], entry["build_profile_id"], component_id))
@@ -298,16 +331,14 @@ def plan_stages(
             compile_entries.append(entry)
             continue
         model = models[entry["model_id"]]
-        stages = [
-            stage
-            for stage in entry["stages"]
-            if not stage_run_exists(
-                read,
-                read_api_url,
-                BENCHMARK_RUN_TYPES[stage],
-                benchmark_fingerprint(root, model, entry["build_profile_id"], prior, stage),
-            )
-        ]
+        base_benchmark_fingerprints = base_benchmarks.get(key, {})
+        stages = []
+        for stage in entry["stages"]:
+            fingerprint = benchmark_fingerprint(root, model, entry["build_profile_id"], prior, stage)
+            if base_benchmark_fingerprints.get(stage) != fingerprint and not stage_run_exists(
+                read, read_api_url, BENCHMARK_RUN_TYPES[stage], fingerprint
+            ):
+                stages.append(stage)
         if stages:
             benchmark_entries.append({**entry, "stages": stages})
     benchmark_entries = [item for item in benchmark_entries if not item.get("build_on_demand", False)]

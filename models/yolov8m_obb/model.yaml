@@ -1,0 +1,66 @@
+display_name: YOLOv8m-obb
+description: A mid-size YOLOv8 oriented-box detector for the 15 DOTA aerial object classes.
+model_type: vision
+tasks: [oriented_object_detection]
+
+modalities:
+  inputs: [image]
+  outputs: [bounding_boxes, class_scores]
+
+architecture: yolov8_obb
+
+license:
+  spdx: AGPL-3.0-only
+  redistribution: restricted
+  attribution: YOLOv8 is developed by Ultralytics and distributed under AGPL-3.0.
+
+upstream:
+  repository: https://github.com/ultralytics/assets
+  revision: dcececebff9fe00420c144baa5cd25a641d10aa6
+  model_card: https://github.com/ultralytics/assets/releases/tag/v8.4.0
+  derived_from: https://github.com/ultralytics/ultralytics/tree/f2d3aed634a5b0e4828024718d4a61ab2f83fb19
+
+conversion:
+  source:
+    # Ultralytics/YOLOv8 on Hugging Face has no OBB checkpoints; use the official upstream release asset.
+    uri: https://github.com/ultralytics/assets/releases/download/v8.4.0/yolov8m-obb.pt
+    sha256: 0678d79d5593db6e5e4a7de7d9f8bcaa70d5415f5541c8cf8911f3bcdbc13891
+    size_bytes: 53331094
+
+compilation:
+  format: onnx
+  source: conversion
+
+calibrations:
+- id: dota-v1-0-cal
+  dataset: {id: dota-v1-0, variant: cal, sha256: c6d498eafa142ef134877bade87100fb2472b194f1fc4faffc600aa88231bbd1, size_bytes: 98562300}
+
+build_profiles:
+  w16a16:
+    components:
+      model:
+        parameters: {precision: w16a16}
+
+  w8a8:
+    calibration_dataset: dota-v1-0-cal
+    components:
+      model:
+        parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 50}
+
+  w8a16:
+    components:
+      model:
+        parameters: {precision: w8a16}
+
+accuracy:
+  datasets:
+  - {id: dota-v1-0, variant: val, sha256: abeff63703f14da97d8e2033c67accacb88b732ce4ada940feddfeeac8f94a37, size_bytes: 327598055}
+
+performance: {}
+
+reference_metrics:
+- source: https://github.com/ultralytics/ultralytics/blob/f2d3aed634a5b0e4828024718d4a61ab2f83fb19/docs/en/models/yolov8.md
+  dataset: {id: dota-v1-0, split: test}
+  conditions: 1024x1024, single-model multiscale, merged tiles scored by the DOTA evaluation server
+  note: The DOTA-v1.0 test labels are not public, so the measured scores use the val split at a single scale and are not directly comparable.
+  metrics: {dota_obb_map50: 0.805}

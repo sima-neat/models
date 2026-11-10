@@ -326,10 +326,10 @@ def test_resolve_devkit_accuracy_caches_each_accuracy_dataset_of_the_profile(
 
     # One JSON line per dataset model.yaml's accuracy names.
     assert [json.loads(line) for line in capsys.readouterr().out.splitlines()] == [{
-        "name": "imagenet-2012-mini",
+        "name": "imagenet-2012-val",
         "path": str(dataset),
-        "sha256": "d769e759abba1fe6e03db704020dcff3f1e8309a8cac8885ab60f5a0e512c239",
-        "size_bytes": 356052889,
+        "sha256": "018bf95eb75b8b7f1d7766303cdecf3c45ecb02ccf4cf161122ae885c4d7a36f",
+        "size_bytes": 6666407650,
     }]
 
 
@@ -507,7 +507,8 @@ def test_publishing_a_report_requires_a_test_outcome(monkeypatch, extra: tuple[s
     ("argument", "base_branches"),
     [(None, []), ("", []), ("develop", ["develop"]), ("develop,release-1.0", ["develop", "release-1.0"])],
 )
-def test_publish_catalog_passes_optional_base_branches(monkeypatch, argument, base_branches) -> None:
+@pytest.mark.parametrize("force_rebuild_all", [False, True])
+def test_publish_catalog_passes_optional_base_branches(monkeypatch, argument, base_branches, force_rebuild_all) -> None:
     calls = []
 
     def publish(**kwargs):
@@ -521,9 +522,12 @@ def test_publish_catalog_passes_optional_base_branches(monkeypatch, argument, ba
         "--git-sha", "a" * 40, "--bucket", "model-artifacts",
         "--environment", "staging",
     ]
+    if force_rebuild_all:
+        args.append("--force-rebuild-all")
     if argument is not None:
         args.extend(["--base-branches", argument])
     assert main(args) == 0
+    assert calls[0]["force_rebuild_all"] == force_rebuild_all
     assert calls[0]["base_branches"] == base_branches
     assert calls[0]["branch"] == "feat/names"
     assert calls[0]["bucket"] == "model-artifacts"

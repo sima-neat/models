@@ -1,0 +1,74 @@
+display_name: SuperPoint
+description: Detects keypoints and computes their descriptors in a grayscale image.
+model_type: vision
+tasks: [feature_point_detection]
+
+modalities:
+  inputs: [image]
+  outputs: [keypoints, embeddings]
+
+architecture: superpoint
+
+# The Magic Leap license allows noncommercial research only and no redistribution. This entry is approved
+# for internal use only.
+license:
+  spdx: LicenseRef-MagicLeap-Noncommercial-Research
+  redistribution: restricted
+  attribution: SuperPoint is developed by Magic Leap, Inc.; internal use only, under SiMa.ai's approval of the Magic Leap terms.
+
+upstream:
+  repository: https://huggingface.co/magic-leap-community/superpoint
+  revision: 734450e9ffe229074f5998494ddc615475cdb20a
+  derived_from: https://github.com/magicleap/SuperPointPretrainedNetwork
+
+conversion:
+  source:
+    uri: hf://models/magic-leap-community/superpoint@734450e9ffe229074f5998494ddc615475cdb20a/model.safetensors
+    sha256: 1daf35c4ed78b386f7a8d3744f8160e72a30a749360a04a27ae886ff5a3ce23e
+    size_bytes: 5206004
+
+compilation:
+  format: onnx
+  source: conversion
+
+calibrations:
+- id: hpatches-cal
+  dataset: {id: hpatches, variant: cal, sha256: 279c200aecec67f979d3f5655e13b319b73cd364be604f5f4457897d38c82a0f, size_bytes: 112197937}
+
+build_profiles:
+  w16a16:
+    components:
+      model:
+        parameters: {precision: w16a16}
+
+  w8a8:
+    calibration_dataset: hpatches-cal
+    components:
+      model:
+        parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 50}
+
+  w8a16:
+    components:
+      model:
+        parameters: {precision: w8a16}
+
+accuracy:
+  # The SuperPoint paper's HPatches protocol on the 106 sequences the cal variant leaves out; see scripts/accuracy.py.
+  datasets:
+  - {id: hpatches, variant: val, sha256: 65861f9fcc9e5cf93b4aae23eeb8ea63b18ec4bad773ed26ebf53f2a2453e46d, size_bytes: 1166451792}
+
+performance: {}
+
+# No published score is comparable to this package. The SuperPoint paper's HPatches table (Table 4) does not
+# reproduce with these released weights: the FP32 ONNX under the paper's protocol, sweeping its unstated choices
+# (RANSAC threshold, plain or mutual matching, NMS radius, score threshold, keypoint count), matches its
+# localization error and matching score but stays 0.09 above its homography accuracy at 3 px (0.774 vs 0.684),
+# so the table most likely scores a different, training-time model. Neither the pinned Hugging Face model card nor
+# SuperPointPretrainedNetwork's README (1fda796addba9b6f8e79d586a3699700a86b1cea) publishes scores for these
+# weights. scripts/fp32_baseline_accuracy.py measures the FP32 baseline on this package's own inputs instead.
+reference_metrics:
+- origin: fp32_baseline
+  script: scripts/fp32_baseline_accuracy.py
+  dataset: {id: hpatches, split: val}
+  conditions: FP32 ONNX on ONNX Runtime CPU, Magic Leap's demo decode in NumPy, at most 1000 keypoints from a 640x480 image
+  metrics: {keypoint_repeatability: 0.6119, homography_accuracy: 0.8189}
