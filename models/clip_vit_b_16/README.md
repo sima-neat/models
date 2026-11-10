@@ -18,7 +18,7 @@ prompts of your own.
 **Image input.** Resize the image so its shorter side is 224 pixels, with
 bicubic resampling, and crop the center 224×224. Scale the RGB values to 0–1,
 subtract the mean (0.48145466, 0.4578275, 0.40821073) and divide by the
-standard deviation (0.26862954, 0.26130258, 0.27577711). The reference scripts
+standard deviation (0.26862954, 0.26130258, 0.27577711). The accuracy script
 pass this image as a 224×224×3 (height, width, channel) float tensor, with
 Neat's resize, color conversion, and normalization turned off.
 

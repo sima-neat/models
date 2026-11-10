@@ -56,14 +56,6 @@ build_profiles:
       text_encoder:
         parameters: {precision: w8a16}
 
-# Display only: the encoders do not feed each other. The CPU looks the prompt's tokens up for the text encoder and
-# compares the two embeddings.
-pipeline:
-- {component: image_encoder}
-- {cpu: Token embedding lookup}
-- {component: text_encoder}
-- {cpu: Cosine similarity}
-
 numerical_fidelity:
   status: diagnostic
   dataset: {id: imagenet-2012, variant: cal, sha256: e6c18b281f5ac5fc7cf6d36ef9a5f486ce95eb43ead99ee8523bd8162bc49a6f, size_bytes: 112710756}
@@ -75,7 +67,7 @@ accuracy:
   datasets:
   - {id: imagenet-2012, variant: val, sha256: 018bf95eb75b8b7f1d7766303cdecf3c45ecb02ccf4cf161122ae885c4d7a36f, size_bytes: 6666407650}
 
-performance: {}
+performance: {scope: components}
 
 reference_metrics:
 - source: https://arxiv.org/pdf/2103.00020v1
