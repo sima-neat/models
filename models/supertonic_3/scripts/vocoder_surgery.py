@@ -21,6 +21,7 @@ from typing import Any
 
 import numpy as np
 import onnx
+from graph_tools import compare, prune
 from onnx import TensorProto, helper, numpy_helper
 
 VOCODER_SOURCE_SHA256 = "085de76dd8e8d5836d6ca66826601f615939218f90e519f70ee8a36ed2a4c4ba"
@@ -57,15 +58,6 @@ def _replace_initializer(graph: onnx.GraphProto, name: str, value: np.ndarray) -
             graph.initializer[index].CopyFrom(numpy_helper.from_array(np.ascontiguousarray(value), name=name))
             return
     raise KeyError(f"initializer not found: {name}")
-
-
-def _remove_unused_initializers(graph: onnx.GraphProto) -> int:
-    used = {name for node in graph.node for name in node.input if name}
-    before = len(graph.initializer)
-    kept = [initializer for initializer in graph.initializer if initializer.name in used]
-    del graph.initializer[:]
-    graph.initializer.extend(kept)
-    return before - len(kept)
 
 
 def _replace_edge_pads(graph: onnx.GraphProto) -> int:
@@ -302,7 +294,7 @@ def optimize(model: onnx.ModelProto, output: Path) -> dict[str, Any]:
         ]
     )
 
-    removed_initializers = _remove_unused_initializers(graph)
+    removed_initializers = prune(model)["initializers"]
     del graph.value_info[:]
     model = onnx.shape_inference.infer_shapes(model, strict_mode=True, data_prop=True)
     onnx.checker.check_model(model, full_check=True)
@@ -373,27 +365,20 @@ def validate_equivalence(source: Path, optimized: Path, reference_cases: list[Pa
         source_waveform = source_session.run(None, {"latent": latent})[0]
         frames = optimized_session.run(None, {"latent": latent[:, :, None, :]})[0]
         flat_waveform = frames.transpose(0, 2, 3, 1).reshape(BATCH_SIZE, -1)
-        difference = flat_waveform.astype(np.float64) - source_waveform.astype(np.float64)
-        reference = source_waveform.astype(np.float64)
-        relative_l2 = float(np.linalg.norm(difference) / max(np.linalg.norm(reference), 1e-30))
-        cosine = float(
-            np.vdot(flat_waveform.ravel().astype(np.float64), reference.ravel())
-            / max(
-                np.linalg.norm(flat_waveform.astype(np.float64)) * np.linalg.norm(reference),
-                1e-30,
-            )
-        )
         comparison = {
             "case": case_path.stem,
             "natural_latent_length": natural_length,
             "source_output_shape": list(source_waveform.shape),
             "optimized_output_shape": list(frames.shape),
-            "max_abs": float(np.max(np.abs(difference))),
-            "mean_abs": float(np.mean(np.abs(difference))),
-            "relative_l2": relative_l2,
-            "cosine": cosine,
+            **compare(source_waveform, flat_waveform),
         }
-        comparison["passed"] = bool(comparison["max_abs"] <= 3e-5 and relative_l2 <= 1e-5 and cosine >= 0.999999999)
+        comparison["passed"] = bool(
+            comparison["shape_equal"]
+            and comparison["finite"]
+            and comparison["max_absolute_error"] <= 3e-5
+            and comparison["relative_l2"] <= 1e-5
+            and comparison["cosine_similarity"] >= 0.999999999
+        )
         comparisons.append(comparison)
 
     if not all(comparison["passed"] for comparison in comparisons):
@@ -401,12 +386,12 @@ def validate_equivalence(source: Path, optimized: Path, reference_cases: list[Pa
     return {
         "status": "passed",
         "thresholds": {
-            "max_abs": 3e-5,
+            "max_absolute_error": 3e-5,
             "relative_l2": 1e-5,
-            "min_cosine": 0.999999999,
+            "min_cosine_similarity": 0.999999999,
         },
         "comparisons": comparisons,
-        "max_abs": max(comparison["max_abs"] for comparison in comparisons),
+        "max_absolute_error": max(comparison["max_absolute_error"] for comparison in comparisons),
         "max_relative_l2": max(comparison["relative_l2"] for comparison in comparisons),
-        "min_cosine": min(comparison["cosine"] for comparison in comparisons),
+        "min_cosine_similarity": min(comparison["cosine_similarity"] for comparison in comparisons),
     }

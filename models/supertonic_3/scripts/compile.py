@@ -16,6 +16,7 @@ from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
+from graph_tools import compare
 from model_registry.dependencies import resolve_model_compiler
 from model_registry.model import load_model as load_metadata
 from model_registry.model import mpk_filename
@@ -170,25 +171,14 @@ def _load_and_quantize(
 
 
 def _metrics(reference: np.ndarray, candidate: np.ndarray) -> dict[str, Any]:
-    expected = np.asarray(reference, dtype=np.float64)
-    actual = np.asarray(candidate, dtype=np.float64)
-    if expected.shape != actual.shape:
-        raise RuntimeError(f"verification shape mismatch: {expected.shape} != {actual.shape}")
-    if not np.isfinite(expected).all() or not np.isfinite(actual).all():
+    result = compare(reference, candidate)
+    if not result["shape_equal"]:
+        raise RuntimeError(f"verification shape mismatch: {np.shape(reference)} != {np.shape(candidate)}")
+    if not result["finite"]:
         raise RuntimeError("verification produced a non-finite tensor")
-    delta = actual - expected
-    denominator = max(float(np.linalg.norm(expected)), np.finfo(np.float64).tiny)
-    norm_product = max(
-        float(np.linalg.norm(expected) * np.linalg.norm(actual)),
-        np.finfo(np.float64).tiny,
-    )
-    return {
-        "shape": list(actual.shape),
-        "cosine_similarity": float(np.vdot(expected.ravel(), actual.ravel()) / norm_product),
-        "relative_l2": float(np.linalg.norm(delta) / denominator),
-        "mean_absolute_error": float(np.mean(np.abs(delta))),
-        "max_absolute_error": float(np.max(np.abs(delta))),
-    }
+    return {name: result[name] for name in (
+        "shape", "cosine_similarity", "relative_l2", "mean_absolute_error", "max_absolute_error"
+    )}
 
 
 def _to_nchw(value: np.ndarray, shape: tuple[int, ...]) -> np.ndarray:

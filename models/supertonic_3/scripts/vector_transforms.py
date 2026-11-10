@@ -12,6 +12,7 @@ from typing import Any
 
 import numpy as np
 import onnx
+from graph_tools import compare, prune
 from onnx import TensorProto, checker, helper, numpy_helper, shape_inference
 from runtime_inputs import (
     MAX_SEQUENCE_LENGTH,
@@ -56,43 +57,6 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def prune_to_output(model: onnx.ModelProto, output_name: str) -> None:
-    """Remove nodes and initializers that cannot affect *output_name*."""
-
-    producer = {out: node for node in model.graph.node for out in node.output}
-    required_tensors = {output_name}
-    required_node_ids: set[int] = set()
-    stack = [output_name]
-    while stack:
-        tensor = stack.pop()
-        node = producer.get(tensor)
-        if node is None or id(node) in required_node_ids:
-            continue
-        required_node_ids.add(id(node))
-        for node_input in node.input:
-            if node_input and node_input not in required_tensors:
-                required_tensors.add(node_input)
-                stack.append(node_input)
-
-    kept_nodes = [node for node in model.graph.node if id(node) in required_node_ids]
-    del model.graph.node[:]
-    model.graph.node.extend(kept_nodes)
-
-    kept_initializers = [value for value in model.graph.initializer if value.name in required_tensors]
-    del model.graph.initializer[:]
-    model.graph.initializer.extend(kept_initializers)
-
-    initializer_names = {value.name for value in kept_initializers}
-    used_graph_inputs = required_tensors - initializer_names
-    kept_inputs = [value for value in model.graph.input if value.name in used_graph_inputs]
-    del model.graph.input[:]
-    model.graph.input.extend(kept_inputs)
-
-    # The original inferred value-info records the wrapper's internal batch of
-    # two.  Discard it and infer fresh batch-1 metadata after rewiring.
-    del model.graph.value_info[:]
-
-
 def extract(source: Path, output: Path) -> dict[str, object]:
     model = onnx.load(source)
 
@@ -123,7 +87,10 @@ def extract(source: Path, output: Path) -> dict[str, object]:
     model.graph.node.append(identity)
     del model.graph.output[:]
     model.graph.output.append(helper.make_tensor_value_info("velocity", TensorProto.FLOAT, [1, 144, 192]))
-    prune_to_output(model, "velocity")
+    prune(model, inputs=True)
+    # The original inferred value-info records the wrapper's internal batch of
+    # two.  Discard it and infer fresh batch-1 metadata after rewiring.
+    del model.graph.value_info[:]
 
     model.graph.name = "supertonic_vector_field_b1_t192_l192"
     model.doc_string = (
@@ -131,6 +98,13 @@ def extract(source: Path, output: Path) -> dict[str, object]:
         "wrapper. The caller performs two evaluations and applies 4*c-3*u."
     )
     checker.check_model(model, full_check=True)
+    # Fold the static shape bookkeeping. Graph optimizations stay off: the later passes match the exported
+    # MatMul and Add pattern of each linear.
+    from onnxsim import simplify
+
+    model, check = simplify(model, check_n=0, perform_optimization=False)
+    if not check:
+        raise RuntimeError("onnxsim did not validate the vector field")
     inferred = shape_inference.infer_shapes(model, strict_mode=True, data_prop=True)
     checker.check_model(inferred, full_check=True)
 
@@ -274,42 +248,6 @@ def staticize(source: Path, output: Path) -> dict[str, object]:
 def load_case(path: Path) -> dict[str, np.ndarray]:
     with np.load(path) as archive:
         return {name: archive[name] for name in archive.files}
-
-
-def metrics(reference: np.ndarray, candidate: np.ndarray) -> dict[str, Any]:
-    reference = np.asarray(reference, dtype=np.float32)
-    candidate = np.asarray(candidate, dtype=np.float32)
-    finite = bool(np.isfinite(reference).all() and np.isfinite(candidate).all())
-    base = {
-        "shape": list(candidate.shape),
-        "shape_equal": reference.shape == candidate.shape,
-        "finite": finite,
-        "reference_nonfinite": int(np.size(reference) - np.count_nonzero(np.isfinite(reference))),
-        "candidate_nonfinite": int(np.size(candidate) - np.count_nonzero(np.isfinite(candidate))),
-    }
-    if reference.shape != candidate.shape or not finite:
-        return {
-            **base,
-            "max_abs": None,
-            "mean_abs": None,
-            "relative_l2": None,
-            "cosine": None,
-        }
-
-    delta = candidate - reference
-    reference64 = reference.reshape(-1).astype(np.float64)
-    candidate64 = candidate.reshape(-1).astype(np.float64)
-    delta64 = delta.reshape(-1).astype(np.float64)
-    reference_norm = float(np.linalg.norm(reference64))
-    candidate_norm = float(np.linalg.norm(candidate64))
-    tiny = np.finfo(np.float64).tiny
-    return {
-        **base,
-        "max_abs": float(np.max(np.abs(delta))),
-        "mean_abs": float(np.mean(np.abs(delta))),
-        "relative_l2": float(np.linalg.norm(delta64) / max(reference_norm, tiny)),
-        "cosine": float(np.dot(reference64, candidate64) / max(reference_norm * candidate_norm, tiny)),
-    }
 
 
 def source_constants(source: Path) -> dict[str, np.ndarray]:
@@ -526,75 +464,6 @@ def control_tensors(model: onnx.ModelProto) -> set[str]:
             continue
         stack.extend(value for value in node.input if value)
     return control
-
-
-def fold_forbidden_shape_ops(model: onnx.ModelProto) -> Counter:
-    """Fold static Gather/Unsqueeze/Squeeze nodes to Constant nodes."""
-
-    values = {initializer.name: numpy_helper.to_array(initializer) for initializer in model.graph.initializer}
-    folded = Counter()
-    for node in model.graph.node:
-        result: np.ndarray | None = None
-        if node.op_type == "Constant":
-            for attr in node.attribute:
-                if attr.name == "value":
-                    result = numpy_helper.to_array(attr.t)
-                    break
-        elif node.op_type == "Gather" and all(name in values for name in node.input):
-            axis = attr_int(node, "axis", 0)
-            result = np.take(values[node.input[0]], values[node.input[1]], axis=axis)
-        elif node.op_type in {"Unsqueeze", "Squeeze"} and all(name in values for name in node.input):
-            axes = [int(axis) for axis in values[node.input[1]].reshape(-1)]
-            result = values[node.input[0]]
-            if node.op_type == "Unsqueeze":
-                for axis in sorted(axes):
-                    result = np.expand_dims(result, axis=axis)
-            else:
-                result = np.squeeze(result, axis=tuple(axes))
-
-        if result is None:
-            continue
-        values[node.output[0]] = np.asarray(result)
-        if node.op_type in {"Gather", "Unsqueeze", "Squeeze"}:
-            old_op = node.op_type
-            del node.input[:]
-            del node.attribute[:]
-            node.op_type = "Constant"
-            node.attribute.append(helper.make_attribute("value", numpy_helper.from_array(np.asarray(result))))
-            folded[old_op] += 1
-    return folded
-
-
-def prune_unused(model: onnx.ModelProto) -> dict[str, int]:
-    """Prune dead static-shape subgraphs and their initializers."""
-
-    old_nodes = len(model.graph.node)
-    old_initializers = len(model.graph.initializer)
-    producer = {out: node for node in model.graph.node for out in node.output}
-    required = {value.name for value in model.graph.output}
-    required_node_ids: set[int] = set()
-    stack = list(required)
-    while stack:
-        name = stack.pop()
-        node = producer.get(name)
-        if node is None or id(node) in required_node_ids:
-            continue
-        required_node_ids.add(id(node))
-        for node_input in node.input:
-            if node_input and node_input not in required:
-                required.add(node_input)
-                stack.append(node_input)
-
-    nodes = [node for node in model.graph.node if id(node) in required_node_ids]
-    initializers = [value for value in model.graph.initializer if value.name in required]
-    del model.graph.node[:]
-    model.graph.node.extend(nodes)
-    del model.graph.initializer[:]
-    model.graph.initializer.extend(initializers)
-    return {
-        "nodes": old_nodes - len(nodes),
-        "initializers": old_initializers - len(initializers),
-    }
 
 
 def rewrite_equal_where_masks(model: onnx.ModelProto) -> Counter:
@@ -864,9 +733,8 @@ def lift(source: Path, output: Path) -> dict[str, object]:
 
     del model.graph.node[:]
     model.graph.node.extend(new_nodes)
-    rewritten.update(fold_forbidden_shape_ops(model))
     rewritten.update(rewrite_equal_where_masks(model))
-    pruned = prune_unused(model)
+    pruned = prune(model)
     del model.graph.value_info[:]
     model.graph.name = "supertonic_vector_field_b1_t192_l192_all4d"
     model.doc_string = (
@@ -1235,10 +1103,49 @@ def set_axis(node: onnx.NodeProto, axis: int) -> None:
     node.attribute.append(helper.make_attribute("axis", axis))
 
 
-def rewrite_attention_like_llima(model: onnx.ModelProto) -> Counter:
-    """Use the channel-first LLiMa attention layout and ONNX Einsum pattern.
+def use_channel_first_context_inputs(model: onnx.ModelProto) -> Counter:
+    """Give the style and text-mask inputs channel-first shapes, and lay the rotary positions out as [B,1,1,L].
 
-    This follows ``llima/sima_lmm/model/language_cache_model.py``: Q/K/V use
+    The host transposes the two compact style arrays once while constructing a request, so no graph layout node
+    is needed. The text mask follows the attention score layout [B,K,1,Q-broadcast].
+    """
+
+    input_shapes = {
+        "style_ttl": (1, 256, 1, 50),
+        "style_key": (1, 256, 1, 50),
+        "text_mask": (1, 192, 1, 1),
+    }
+    result = Counter()
+    for value in model.graph.input:
+        if value.name not in input_shapes:
+            continue
+        for dim, size in zip(value.type.tensor_type.shape.dim, input_shapes[value.name]):
+            dim.ClearField("dim_param")
+            dim.dim_value = size
+        result["inputs"] += 1
+
+    # The extracted graph folds the static position ramps of the latent and text branches to constants.
+    prefix = "/vector_estimator/vector_field/main_blocks.3/attn"
+    theta_name = "vector_estimator.tts.ttl.vector_field.main_blocks.3.attn.theta"
+    layouts = {
+        f"{prefix}/Cast_output_0": (0, 1, 3, 2),
+        f"{prefix}/Cast_1_output_0": (0, 1, 3, 2),
+        theta_name: (0, 3, 1, 2),
+    }
+    for index, value in enumerate(model.graph.initializer):
+        if value.name in layouts:
+            array = numpy_helper.to_array(value).transpose(layouts[value.name])
+            model.graph.initializer[index].CopyFrom(numpy_helper.from_array(array, name=value.name))
+            result["rotary"] += 1
+    if result != Counter({"inputs": 3, "rotary": 3}):
+        raise RuntimeError(f"unexpected context inputs or rotary constants: {dict(result)}")
+    return result
+
+
+def rewrite_attention_channel_first(model: onnx.ModelProto) -> Counter:
+    """Rewrite attention channel-first, with Einsum for both products.
+
+    The layout matches SiMa's language-model attention: Q/K/V use
     [B,D,H,L], scores use [B,K,H,Q], Softmax reduces K, and the second Einsum
     returns [B,D,H,Q].  Projection and output linears become 1x1 Conv2D, which
     means the convolutional residual stream never needs a layout transpose.
@@ -1328,40 +1235,6 @@ def rewrite_attention_like_llima(model: onnx.ModelProto) -> Counter:
         set_axis(softmax, 1)
         result["matmul_to_einsum"] += 2
         return bmm2.output[0]
-
-    # Public context tensors use NCHW too.  The host transposes the two compact
-    # style arrays once while constructing a request; no graph layout node is
-    # needed.  The text mask follows LLiMa's [B,K,1,Q-broadcast] score layout.
-    input_shapes = {
-        "style_ttl": (1, 256, 1, 50),
-        "style_key": (1, 256, 1, 50),
-        "text_mask": (1, 192, 1, 1),
-    }
-    for value in model.graph.input:
-        if value.name not in input_shapes:
-            continue
-        for dim, size in zip(value.type.tensor_type.shape.dim, input_shapes[value.name]):
-            dim.ClearField("dim_param")
-            dim.dim_value = size
-
-    # Generate rotary angles directly as [B,D/2,1,L].
-    increments_name = "vector_estimator.tts.ttl.vector_field.main_blocks.3.attn.increments"
-    theta_name = "vector_estimator.tts.ttl.vector_field.main_blocks.3.attn.theta"
-    increments = initializer_array[increments_name].transpose(0, 1, 3, 2)
-    theta = initializer_array[theta_name].transpose(0, 3, 1, 2)
-    for name, array in ((increments_name, increments), (theta_name, theta)):
-        index = next(i for i, value in enumerate(model.graph.initializer) if value.name == name)
-        model.graph.initializer[index].CopyFrom(numpy_helper.from_array(array, name=name))
-    for slice_name in (
-        "/vector_estimator/vector_field/main_blocks.3/attn/Slice",
-        "/vector_estimator/vector_field/main_blocks.3/attn/Slice_3",
-    ):
-        slice_node = by_name[slice_name]
-        axes_name = slice_node.input[3]
-        index = next(i for i, value in enumerate(model.graph.initializer) if value.name == axes_name)
-        model.graph.initializer[index].CopyFrom(
-            numpy_helper.from_array(np.asarray([3], dtype=np.int64), name=axes_name)
-        )
 
     remove_names.add("/vector_estimator/vector_field/main_blocks.3/Transpose_1")
 
@@ -1864,15 +1737,6 @@ def fuse_time_projections(model: onnx.ModelProto) -> Counter:
     )
 
 
-def prune_initializers(model: onnx.ModelProto) -> int:
-    used = {value for node in model.graph.node for value in node.input}
-    old = len(model.graph.initializer)
-    kept = [value for value in model.graph.initializer if value.name in used]
-    del model.graph.initializer[:]
-    model.graph.initializer.extend(kept)
-    return old - len(kept)
-
-
 def optimize(source: Path, output: Path) -> dict[str, object]:
     model = onnx.load(source)
     source_node_count = len(model.graph.node)
@@ -1882,13 +1746,14 @@ def optimize(source: Path, output: Path) -> dict[str, object]:
     singleton = remove_singleton_reshape_transpose_fanouts(model)
     heads = replace_head_pack_and_merge(model)
     masks = simplify_attention_masks(model)
-    attention = rewrite_attention_like_llima(model)
+    context_inputs = use_channel_first_context_inputs(model)
+    attention = rewrite_attention_channel_first(model)
     time_encoder = rewrite_time_encoder_channel_first(model)
     time_projections = fuse_time_projections(model)
     edge_padding = make_edge_padding_mask_aware(model)
     edge_pad_decomposition = replace_edge_pads_with_constant_padding(model)
     singleton_reductions = specialize_singleton_reductions(model)
-    removed_initializers = prune_initializers(model)
+    removed_initializers = prune(model)["initializers"]
     del model.graph.value_info[:]
     inferred = shape_inference.infer_shapes(model, strict_mode=True, data_prop=True)
     checker.check_model(inferred, full_check=True)
@@ -1937,6 +1802,7 @@ def optimize(source: Path, output: Path) -> dict[str, object]:
         "removed_singleton_fanout": dict(singleton),
         "head_rewrites": dict(heads),
         "mask_rewrites": dict(masks),
+        "context_input_rewrite": dict(context_inputs),
         "attention_rewrite": dict(attention),
         "time_encoder_rewrite": dict(time_encoder),
         "time_projection_rewrite": dict(time_projections),
@@ -1989,26 +1855,6 @@ def intermediate_session(model: onnx.ModelProto, names: list[str]) -> Any:
             sess_options=options,
             providers=["CPUExecutionProvider"],
         )
-
-
-def prune_dead_graph(model: onnx.ModelProto) -> tuple[int, int]:
-    needed = {value.name for value in model.graph.output}
-    kept_reversed: list[onnx.NodeProto] = []
-    for node in reversed(model.graph.node):
-        if any(output in needed for output in node.output):
-            kept_reversed.append(node)
-            needed.update(value for value in node.input if value)
-    kept = list(reversed(kept_reversed))
-    removed_nodes = len(model.graph.node) - len(kept)
-    del model.graph.node[:]
-    model.graph.node.extend(kept)
-
-    used = {value for node in model.graph.node for value in node.input}
-    initializers = [value for value in model.graph.initializer if value.name in used]
-    removed_initializers = len(model.graph.initializer) - len(initializers)
-    del model.graph.initializer[:]
-    model.graph.initializer.extend(initializers)
-    return removed_nodes, removed_initializers
 
 
 def ort_session(path: Path) -> Any:
@@ -2128,7 +1974,8 @@ def externalize(
         numpy_helper.from_array(np.asarray([32, 32, 32, 32], dtype=np.int64), name=split_sizes_name)
     )
 
-    removed_nodes, removed_initializers = prune_dead_graph(modified)
+    removed = prune(modified)
+    removed_nodes, removed_initializers = removed["nodes"], removed["initializers"]
     del modified.graph.value_info[:]
     modified = shape_inference.infer_shapes(modified, strict_mode=True, data_prop=True)
     checker.check_model(modified, full_check=True)
@@ -2175,7 +2022,7 @@ def externalize(
                         "text_length": int(feeds["text_mask"].sum()),
                         "step": step,
                         "branch": ("conditional" if conditional else "unconditional"),
-                        **metrics(reference, candidate),
+                        **compare(reference, candidate),
                     }
                 )
 
@@ -2208,9 +2055,9 @@ def externalize(
         ),
         "validation": {
             "comparisons": comparisons,
-            "max_abs": max(value["max_abs"] for value in comparisons),
+            "max_absolute_error": max(value["max_absolute_error"] for value in comparisons),
             "max_relative_l2": max(value["relative_l2"] for value in comparisons),
-            "min_cosine": min(value["cosine"] for value in comparisons),
+            "min_cosine_similarity": min(value["cosine_similarity"] for value in comparisons),
         },
     }
     return report

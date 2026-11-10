@@ -7,12 +7,12 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+from graph_tools import compare
 from runtime_inputs import MAX_SEQUENCE_LENGTH, ROPE_TABLE_KEY, build_time_table, pack_rope_input
 from vector_transforms import (
     externalize,
     extract,
     lift,
-    metrics,
     optimize,
     ort_session,
     source_constants,
@@ -35,13 +35,13 @@ from vocoder_surgery import (
 
 COMPONENTS = ("vector_estimator", "vocoder")
 SURGERY_SEED = 1101
-VECTOR_GRAPH_SHA256 = "79f6c51e73f4c8c20450fcede73fccbc183f4b22e5e20b78d64bc3aa585def5a"
-VOCODER_GRAPH_SHA256 = "b6d233bb3cd6062f613fcc2e8b9192b1447408db06995b215f1da0d66f1a9684"
+VECTOR_GRAPH_SHA256 = "697b0fd8822df9201f7c571b7cb3c3e7d8d8ca38094d4b556b95c32969b5e8a2"
+VOCODER_GRAPH_SHA256 = "de3e27e80b53193ebc5186b54060bbd9dc8c440fd606f13c72f4154eebdf3987"
 # Natural (latent, text) lengths and steps at which the derived graph must reproduce Supertone's own.
 SOURCE_CHECK_LENGTHS = ((1, 1), (24, 18), (160, 128), (192, 192))
 SOURCE_CHECK_STEPS = (0, 3, 7)
 # The derived graph measured at most 1.7e-5 max abs and 1.3e-6 relative L2 from the source graph.
-SOURCE_TOLERANCE = {"max_abs": 1e-4, "relative_l2": 1e-5, "min_cosine": 0.9999999}
+SOURCE_TOLERANCE = {"max_absolute_error": 1e-4, "relative_l2": 1e-5, "min_cosine_similarity": 0.9999999}
 
 
 def sha256(path: Path) -> str:
@@ -134,17 +134,19 @@ def validate_against_source(source: Path, derived: Path, runtime_data: Path, ste
             )
             actual = latent + (4.0 * conditional - 3.0 * unconditional) / steps
             comparisons.append({
-                "latent_length": latent_length, "text_length": text_length, "step": step, **metrics(expected, actual)
+                "latent_length": latent_length, "text_length": text_length, "step": step, **compare(expected, actual)
             })
+    if not all(item["shape_equal"] and item["finite"] for item in comparisons):
+        raise RuntimeError("derived vector estimator output has the wrong shape or a non-finite value")
     worst = {
-        "max_abs": max(item["max_abs"] for item in comparisons),
+        "max_absolute_error": max(item["max_absolute_error"] for item in comparisons),
         "relative_l2": max(item["relative_l2"] for item in comparisons),
-        "min_cosine": min(item["cosine"] for item in comparisons),
+        "min_cosine_similarity": min(item["cosine_similarity"] for item in comparisons),
     }
     if (
-        worst["max_abs"] > SOURCE_TOLERANCE["max_abs"]
+        worst["max_absolute_error"] > SOURCE_TOLERANCE["max_absolute_error"]
         or worst["relative_l2"] > SOURCE_TOLERANCE["relative_l2"]
-        or worst["min_cosine"] < SOURCE_TOLERANCE["min_cosine"]
+        or worst["min_cosine_similarity"] < SOURCE_TOLERANCE["min_cosine_similarity"]
     ):
         raise RuntimeError(f"derived vector estimator departs from the source: {worst}, allowed {SOURCE_TOLERANCE}")
     return {"comparisons": comparisons, "worst": worst, "tolerance": SOURCE_TOLERANCE}
