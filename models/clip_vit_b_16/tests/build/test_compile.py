@@ -17,10 +17,10 @@ from PIL import Image
 
 MODEL_DIR = Path(__file__).resolve().parents[2]
 # W8A16 CI on 50 ImageNet images and 64 prompts measured 0.99303 image,
-# 0.99962 logits and 0.99899 text cosine. Keep margin for compiler rounding.
+# 0.99899 text cosine. Keep margin for compiler rounding.
 FIDELITY_MIN_COSINE = {
-    "w16a16": {"image_embeds": 0.99, "logits": 0.99, "text_embeds": 0.99},
-    "w8a16": {"image_embeds": 0.99, "logits": 0.999, "text_embeds": 0.995},
+    "w16a16": {"image_embeds": 0.99, "text_embeds": 0.99},
+    "w8a16": {"image_embeds": 0.99, "text_embeds": 0.995},
 }
 
 
@@ -183,7 +183,7 @@ def test_fidelity_checks_every_output_without_calibration(load_script: Callable[
     recipe = load_script("compile")
     metadata = recipe.load_metadata(MODEL_DIR)
     fidelity = metadata["numerical_fidelity"]
-    assert fidelity["outputs"] == ["image_embeds", "logits", "text_embeds"]
+    assert fidelity["outputs"] == ["image_embeds", "text_embeds"]
     assert fidelity["selection"]["offset"] == 0
     assert not metadata.get("calibrations")
 
@@ -200,12 +200,12 @@ def test_fidelity_error_sums_match_the_metrics_over_all_samples(load_script: Cal
     recipe = load_script("compile")
     rng = np.random.default_rng(0)
     expected, actual = rng.normal(size=(2, 3, 5)), rng.normal(size=(2, 3, 5))
-    error = recipe._OutputError("logits")
+    error = recipe._OutputError("image_embeds")
     for want, got in zip(expected, actual):
         error.add(want, got)
     summary = error.summary()
     difference = actual - expected
-    assert summary["name"] == "logits"
+    assert summary["name"] == "image_embeds"
     assert summary["cosine_similarity"] == pytest.approx(
         np.dot(expected.ravel(), actual.ravel()) / (np.linalg.norm(expected) * np.linalg.norm(actual))
     )
@@ -274,7 +274,7 @@ def _check_fidelity(fidelity: dict, build_profile: str) -> None:
 
 
 @pytest.mark.parametrize("profile", ["w16a16", "w8a16"])
-@pytest.mark.parametrize("output", ["image_embeds", "logits", "text_embeds"])
+@pytest.mark.parametrize("output", ["image_embeds", "text_embeds"])
 def test_fidelity_gate_rejects_drift_in_each_output(profile: str, output: str) -> None:
     fidelity = {"metrics": [{"name": name, "cosine_similarity": 1.0} for name in FIDELITY_MIN_COSINE[profile]]}
     _check_fidelity(fidelity, profile)

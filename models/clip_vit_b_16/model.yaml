@@ -5,7 +5,7 @@ tasks: [image_text_embedding]
 
 modalities:
   inputs: [image, text]
-  outputs: [embeddings, class_scores]
+  outputs: [embeddings]
 
 architecture: clip
 
@@ -61,7 +61,7 @@ numerical_fidelity:
   dataset: {id: imagenet-2012, variant: cal, sha256: e6c18b281f5ac5fc7cf6d36ef9a5f486ce95eb43ead99ee8523bd8162bc49a6f, size_bytes: 112710756}
   # Fifty images for output comparison only; text fidelity covers 64 fixed prompts.
   selection: {method: seeded_random_without_replacement, seed: 42, offset: 0, samples: 50}
-  outputs: [image_embeds, logits, text_embeds]
+  outputs: [image_embeds, text_embeds]
 
 accuracy:
   datasets:
@@ -73,5 +73,5 @@ reference_metrics:
 - source: https://arxiv.org/pdf/2103.00020v1
   dataset: {id: imagenet-2012, split: val}
   conditions: 224x224, zero-shot
-  note: Zero-shot top-1 of CLIP ViT-B/16 in Table 11 of the CLIP paper, with OpenAI's 80 prompt templates per class, as surgery builds its class embeddings. The paper prints no top-5.
+  note: Published zero-shot top-1 of CLIP ViT-B/16 in Table 11. Accuracy uses OpenAI's 80-template ImageNet recipe, generating class vectors with the compiled text encoder at evaluation startup. The paper prints no top-5.
   metrics: {top1_accuracy: 0.686}

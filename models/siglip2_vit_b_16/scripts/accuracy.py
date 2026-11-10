@@ -1,11 +1,15 @@
-"""Measure SigLIP 2 ViT-B/16 zero-shot ImageNet top-1 and top-5 accuracy with its MPKs on a Modalix board.
+"""Measure zero-shot ImageNet top-1 and top-5 with the two compiled encoders.
 
-Surgery bakes the 1,000 ImageNet class embeddings (OpenAI's class names and 7 selected prompt templates, run
-through the text encoder in FP32) into the image encoder's logits output, so zero-shot classification runs the image
-encoder alone. The text encoder is checked first, as an application runs it. The board has no tokenizer, so
-text_encoder_check.npz holds 7 tokenized prompts, the token embedding rows they use, and each prompt's text embedding
-from the FP32 ONNX (surgery.py --text-check writes it). The CPU looks each prompt's rows up, the text encoder's MPK
-embeds it, and the stage fails when any embedding's cosine similarity with the ONNX's is below MIN_TEXT_COSINE.
+At evaluation startup, encode the upstream ImageNet class prompts with the compiled text encoder.
+Normalize each prompt embedding, average within each class and normalize again. Keep the resulting
+1,000 class vectors in memory and rank their cosine similarities to each compiled image embedding.
+Text tokenization and embedding-table lookup run on CPU. Source assets are fetched from the pinned
+upstream checkpoint, or read from --checkpoint-dir; generated class vectors are never persisted.
+
+Recipe: Big Vision commit 0127fb6b337ee2a27bf4e54dea79cff176527356, configs/proj/image_text/common.py
+get_disclf(224) and evaluators/proj/image_text/discriminative_classifier.py defaults: canonicalized
+clip_paper templates, first class alias, normalized prompt ensemble and cosine ranking. The release
+does not publish the exact evaluation config for its paper score; reproducing 78.2% is unverified.
 """
 
 from __future__ import annotations
@@ -14,6 +18,8 @@ import argparse
 import hashlib
 import io
 import json
+import re
+import string
 import sys
 import time
 from collections import deque
@@ -24,10 +30,24 @@ from pathlib import Path
 import model_report
 import numpy as np
 import pyneat
-from calibration import CLASSES, VALIDATION_SPLIT, preprocess_image, validation_labels
+from calibration import (
+    CLASS_NAMES,
+    TEMPLATES,
+    VALIDATION_SPLIT,
+    validation_labels,
+)
+from calibration import (
+    preprocess_validation_image as preprocess_image,
+)
 
 COMPONENTS = {"image_encoder", "text_encoder"}
 EMBED_DIM = 768
+SOURCE_REPOSITORY = "google/siglip2-base-patch16-224"
+SOURCE_REVISION = "75de2d55ec2d0b4efc50b3e9ad70dba96a7b2fa2"
+WEIGHTS_FILE = "model.safetensors"
+TOKEN_EMBEDDING = "text_model.embeddings.token_embedding.weight"
+TEXT_LENGTH = 64
+
 # Images decode on worker threads while the MPK runs; Pillow releases the GIL while it decodes and resizes.
 WORKERS = 4
 PREFETCH = 8
@@ -71,13 +91,85 @@ def parse_mpks(values: list[str]) -> dict[str, Path]:
     return {name: Path(path) for name, path in mpks.items()}
 
 
-def class_logits(outputs: list[pyneat.Tensor]) -> np.ndarray:
-    """The logits output, told apart from the image embedding by its size."""
-    arrays = [output.to_numpy(copy=False).reshape(-1) for output in outputs]
-    sizes = sorted(array.size for array in arrays)
-    if sizes != [EMBED_DIM, CLASSES]:
-        raise ValueError(f"expected the image embedding and {CLASSES} logits, found output sizes {sizes}")
-    return next(array for array in arrays if array.size == CLASSES)
+def normalize(values: np.ndarray) -> np.ndarray:
+    norms = np.linalg.norm(values, axis=-1, keepdims=True)
+    if not np.isfinite(values).all() or not np.isfinite(norms).all() or np.any(norms <= 0):
+        raise ValueError("invalid embedding: values and norms must be finite and norms positive")
+    return values / norms
+
+
+def class_scores(outputs: list[pyneat.Tensor], classes: np.ndarray) -> np.ndarray:
+    if len(outputs) != 1:
+        raise ValueError("expected one image embedding output")
+    embedding = outputs[0].to_numpy(copy=False).reshape(-1)
+    if embedding.shape != (EMBED_DIM,):
+        raise ValueError(f"expected an image embedding of {EMBED_DIM} values, found {embedding.shape}")
+    return classes @ normalize(embedding)
+
+
+def load_text_inputs(checkpoint_dir: Path | None = None):
+    """Load the tokenizer and CPU lookup table, without loading a CPU transformer."""
+    from huggingface_hub import hf_hub_download
+    from tokenizers import Tokenizer
+
+    def asset(name):
+        return (
+            checkpoint_dir / name
+            if checkpoint_dir is not None
+            else Path(hf_hub_download(SOURCE_REPOSITORY, name, revision=SOURCE_REVISION))
+        )
+
+    tokenizer = Tokenizer.from_file(str(asset("tokenizer.json")))
+    tokenizer.enable_truncation(max_length=TEXT_LENGTH)
+    tokenizer.enable_padding(length=TEXT_LENGTH, pad_id=0, pad_token="<pad>")
+    from safetensors import safe_open
+
+    with safe_open(asset(WEIGHTS_FILE), framework="np") as weights:
+        table = weights.get_tensor(TOKEN_EMBEDDING)
+    if table.shape != (256000, EMBED_DIM) or table.dtype != np.float32:
+        raise ValueError(f"unexpected token embedding table: {table.shape}, {table.dtype}")
+    return tokenizer, table
+
+
+def class_prompts(name: str) -> list[str]:
+    # Big Vision canonicalizes names and templates before formatting, and uses the first class alias.
+    def canonicalize(text, keep):
+        punctuation = str.maketrans("", "", string.punctuation)
+        text = keep.join(part.translate(punctuation) for part in text.replace("_", " ").split(keep))
+        return re.sub(r"\s+", " ", text.lower()).strip()
+
+    name = canonicalize(name, ",").split(",")[0]
+    return [canonicalize(template, "{}").format(name) for template in TEMPLATES]
+
+
+def build_class_embeddings(mpk: Path, tokenizer, table: np.ndarray, class_names=CLASS_NAMES) -> np.ndarray:
+    """Prepare every class once using the compiled text encoder; retain only the class vectors."""
+    model = pyneat.Model(str(mpk), tensor_options())
+    runner = None
+    classes = []
+    started = time.monotonic()
+    try:
+        for index, name in enumerate(class_names, start=1):
+            features = []
+            for encoded in tokenizer.encode_batch(class_prompts(name)):
+                ids = np.asarray(encoded.ids, np.int32)
+                embeddings = table[ids][None]
+                tensor = pyneat.Tensor.from_numpy(
+                    embeddings, copy=True, memory=pyneat.TensorMemory.EV74, layout=pyneat.TensorLayout.HWC
+                )
+                if runner is None:
+                    runner = model.build([tensor])
+                (output,) = runner.run([tensor], timeout_ms=120000)
+                feature = output.to_numpy(copy=False).reshape(EMBED_DIM)
+                features.append(normalize(feature))
+            classes.append(normalize(np.mean(features, axis=0)))
+            if index == 1 or index % 100 == 0 or index == len(class_names):
+                log(f"text encoder: {index}/{len(class_names)} classes, {len(TEMPLATES)} templates/class")
+    finally:
+        if runner is not None:
+            runner.close()
+    log(f"Prepared class vectors in {time.monotonic() - started:.1f} s")
+    return np.stack(classes).astype(np.float32)
 
 
 def log(*values: object) -> None:
@@ -107,8 +199,12 @@ def check_text_encoder(mpk: Path) -> list[float]:
     cosines = []
     for index, (prompt, expected) in enumerate(zip(check["prompts"].tolist(), check["text_embeds"])):
         # Tagged HWC like performance.py's prompt: Neat sizes the text input as height 1, width 64 and depth 768.
-        tensor = pyneat.Tensor.from_numpy(prompt_embeds(check, index)[None], copy=True,
-                                          memory=pyneat.TensorMemory.EV74, layout=pyneat.TensorLayout.HWC)
+        tensor = pyneat.Tensor.from_numpy(
+            prompt_embeds(check, index)[None],
+            copy=True,
+            memory=pyneat.TensorMemory.EV74,
+            layout=pyneat.TensorLayout.HWC,
+        )
         if runner is None:
             runner = model.build([tensor])
         (output,) = runner.run([tensor], timeout_ms=TIMEOUT_MS)
@@ -119,8 +215,10 @@ def check_text_encoder(mpk: Path) -> list[float]:
     # A NaN fails as well.
     if not all(cosine >= MIN_TEXT_COSINE for cosine in cosines):
         found = ", ".join(f"{cosine:.5f}" for cosine in cosines)
-        raise ValueError(f"the text encoder strays from the FP32 ONNX: cosine similarities {found}, "
-                         f"each must be at least {MIN_TEXT_COSINE}")
+        raise ValueError(
+            f"the text encoder strays from the FP32 ONNX: cosine similarities {found}, "
+            f"each must be at least {MIN_TEXT_COSINE}"
+        )
     return cosines
 
 
@@ -129,6 +227,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--mpk", action="append", required=True, help="component=<path>, for each component")
     parser.add_argument("--dataset", required=True, help="imagenet-2012-val=<extracted directory>")
     parser.add_argument("--output", type=Path, required=True, help="directory for model-report.json")
+    parser.add_argument(
+        "--checkpoint-dir", type=Path, help="local pinned tokenizer.json and checkpoint; default: HF cache/download"
+    )
     parser.add_argument("--limit", type=int, help="measure the first images only (local runs only)")
     args = parser.parse_args(argv)
     dataset_id, dataset_dir = args.dataset.split("=", 1)
@@ -140,6 +241,9 @@ def main(argv: list[str] | None = None) -> int:
     available = sorted(labels)
     names = available[: args.limit] if args.limit else available
 
+    tokenizer, table = load_text_inputs(args.checkpoint_dir)
+    classes = build_class_embeddings(mpks["text_encoder"], tokenizer, table)
+    del tokenizer, table
     model = pyneat.Model(str(mpks["image_encoder"]), tensor_options())
     runner = None
     top1 = top5 = 0
@@ -149,7 +253,7 @@ def main(argv: list[str] | None = None) -> int:
         tensor = pyneat.Tensor.from_numpy(image, copy=False)
         if runner is None:
             runner = model.build([tensor])
-        logits = class_logits(runner.run([tensor], timeout_ms=TIMEOUT_MS))
+        logits = class_scores(runner.run([tensor], timeout_ms=TIMEOUT_MS), classes)
         if not np.isfinite(logits).all():
             raise ValueError(f"non-finite logits for {name}")
         ranked = np.argsort(-logits, kind="stable")[:5]
@@ -158,16 +262,26 @@ def main(argv: list[str] | None = None) -> int:
         if count == 1 or count % 500 == 0 or count == len(names):
             log(f"{count}/{len(names)} images, {(time.monotonic() - started) / count * 1000:.0f} ms/image")
 
-    report = model_report.from_accuracy({
-        dataset_id: {
-            "metrics": {
-                "top1_accuracy": top1 / len(names),
-                "top5_accuracy": top5 / len(names),
+    runner.close()
+    report = model_report.from_accuracy(
+        {
+            dataset_id: {
+                "metrics": {
+                    "top1_accuracy": top1 / len(names),
+                    "top5_accuracy": top5 / len(names),
+                },
+                "split": VALIDATION_SPLIT,
+                "evaluated_samples": len(names),
+                "available_samples": len(available),
+                "details": {
+                    "inference_seconds": round(time.monotonic() - started, 1),
+                    "classes": len(CLASS_NAMES),
+                    "templates_per_class": len(TEMPLATES),
+                    "text_reference": "compiled text encoder",
+                },
             },
-            "split": VALIDATION_SPLIT, "evaluated_samples": len(names), "available_samples": len(available),
-            "details": {"inference_seconds": round(time.monotonic() - started, 1)},
-        },
-    })
+        }
+    )
     report.save(args.output)
     measured = report.document["datasets"][dataset_id]["metrics"]
     print(json.dumps({name: round(value, 4) for name, value in measured.items()}))

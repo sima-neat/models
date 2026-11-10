@@ -148,7 +148,7 @@ def benchmark_encoders(mpks: dict[str, Path], dataset_id: str, dataset: Path, ou
         options.include_mla_stage_stats = True
         workload = (
             f"{dataset_id} {path.name} in a 1280x720 RGB frame; Neat resize and SigLIP 2 normalization, "
-            "image encoder with fixed 1000-class ImageNet head and tensor conversions"
+            "image encoder returning its embedding and tensor conversions"
             if is_image
             else "One prompt padded to 64 tokens; prepared FP32 token embeddings, "
             "text encoder with a pooled 768-value output and tensor conversions; "

@@ -18,6 +18,10 @@ class _Tensor:
     def to_numpy(self, copy: bool = True) -> np.ndarray:
         return self.array.copy() if copy else self.array
 
+    @classmethod
+    def from_numpy(cls, array, copy=True, **options):
+        return cls(array.copy() if copy else array, **options)
+
 
 class _TextEncoder:
     """Stands in for pyneat.Model and its runner: returns the next of the given embeddings for each prompt it runs,
@@ -59,15 +63,24 @@ def test_mpk_arguments_name_exactly_both_encoders(load_script: Callable[[str], M
         script.parse_mpks(["model=/data/siglip2_mpk.tar.gz"])
 
 
-def test_class_logits_are_told_apart_from_the_embedding_by_size(load_script: Callable[[str], ModuleType]) -> None:
+def test_class_scores_compare_the_image_embedding_against_every_class(load_script):
     script = load_script("accuracy")
-    logits = np.arange(1000, dtype=np.float32)
+    rng = np.random.default_rng(0)
+    image = rng.normal(size=script.EMBED_DIM).astype(np.float32)
+    classes = script.normalize(rng.normal(size=(1000, script.EMBED_DIM)).astype(np.float32))
+    scores = script.class_scores([_Tensor(image[None] * 3)], classes)
+    assert scores.shape == (1000,)
+    np.testing.assert_allclose(scores, classes @ (image / np.linalg.norm(image)), rtol=1e-4, atol=1e-6)
+    with pytest.raises(ValueError, match="one image embedding"):
+        script.class_scores([_Tensor(image), _Tensor(np.zeros(1000))], classes)
+    with pytest.raises(ValueError, match="expected an image embedding"):
+        script.class_scores([_Tensor(np.zeros(1000))], classes)
 
-    for outputs in ([_Tensor(np.zeros((1, 768), np.float32)), _Tensor(logits[None])],
-                    [_Tensor(logits[None]), _Tensor(np.zeros((1, 768), np.float32))]):
-        np.testing.assert_array_equal(script.class_logits(outputs), logits)
-    with pytest.raises(ValueError, match="output sizes"):
-        script.class_logits([_Tensor(logits[None])])
+
+@pytest.mark.parametrize("values", [[0, 0], [float("nan"), 1], [float("inf"), 1]])
+def test_normalization_rejects_invalid_embeddings(values, load_script):
+    with pytest.raises(ValueError, match="invalid embedding"):
+        load_script("accuracy").normalize(np.array(values, np.float32))
 
 
 def test_prefetched_images_keep_their_order(load_script: Callable[[str], ModuleType]) -> None:
@@ -132,8 +145,16 @@ def test_a_stray_text_encoder_stops_the_stage_before_any_image(
 ) -> None:
     script = load_script("accuracy")
     encoder = _text_encoder(script, monkeypatch, -script.load_text_check()["text_embeds"])
-    arguments = ["--mpk", "image_encoder=image.tar.gz", "--mpk", "text_encoder=text.tar.gz",
-                 "--dataset", f"imagenet-2012-val={tmp_path}", "--output", str(tmp_path / "report")]
+    arguments = [
+        "--mpk",
+        "image_encoder=image.tar.gz",
+        "--mpk",
+        "text_encoder=text.tar.gz",
+        "--dataset",
+        f"imagenet-2012-val={tmp_path}",
+        "--output",
+        str(tmp_path / "report"),
+    ]
     # The dataset folder is empty, so reading it would fail otherwise: the check ran first.
     with pytest.raises(ValueError, match="strays from the FP32 ONNX"):
         script.main(arguments)
@@ -143,3 +164,66 @@ def test_a_stray_text_encoder_stops_the_stage_before_any_image(
 
 def test_accuracy_meets_its_expected_values(accuracy: dict[str, Any], model_dir: Path, build_profile: str) -> None:
     assert measured_shortfalls(model_dir, "accuracy", build_profile, accuracy) == []
+
+
+def test_class_vectors_are_generated_with_the_compiled_encoder_and_normalized_per_prompt(monkeypatch, load_script):
+    from types import SimpleNamespace
+
+    script = load_script("accuracy")
+    monkeypatch.setattr(script, "EMBED_DIM", 3)
+    monkeypatch.setattr(script, "TEXT_LENGTH", 4)
+    monkeypatch.setattr(script, "TEMPLATES", ("photo {}", "drawing {}"))
+    table = np.zeros((100, 3), np.float32)
+    table[:4, 0] = np.arange(4)
+    features = np.array([[4, 0, 0], [0, 1, 0], [-3, 0, 0], [0, 0, 9]], np.float32)
+    given = []
+
+    class Tokenizer:
+        def encode_batch(self, texts):
+            given.extend(texts)
+            offset = 0 if texts[0].endswith("cat") else 2
+            return [SimpleNamespace(ids=[offset + i, 99, 99, 99]) for i in range(2)]
+
+    class Runner:
+        closed = False
+
+        def run(self, inputs, timeout_ms):
+            (tensor,) = inputs
+            assert tensor.options["layout"] == script.pyneat.TensorLayout.HWC
+            feature = features[int(tensor.array[0, 0, 0])]
+            return [_Tensor(feature[None])]
+
+        def close(self):
+            self.closed = True
+
+    runner = Runner()
+    monkeypatch.setattr(script.pyneat, "Tensor", _Tensor)
+    monkeypatch.setattr(script.pyneat, "Model", lambda *args: SimpleNamespace(build=lambda inputs: runner))
+    monkeypatch.setattr(script, "tensor_options", lambda: None)
+    actual = script.build_class_embeddings(Path("text.tar.gz"), Tokenizer(), table, ("cat", "dog"))
+    np.testing.assert_allclose(actual, np.array([[1, 1, 0], [-1, 0, 1]]) / np.sqrt(2), atol=1e-6)
+    assert given == ["photo cat", "drawing cat", "photo dog", "drawing dog"]
+    assert runner.closed
+
+
+def test_accuracy_checkpoint_matches_the_pinned_model_source(load_script):
+    from model_registry.model import load_model
+
+    script = load_script("accuracy")
+    metadata = load_model(Path(__file__).resolve().parents[2])
+    source = metadata["conversion"]["default"]["source"]
+    assert source["files"][0]["uri"] == (
+        f"hf://models/{script.SOURCE_REPOSITORY}@{script.SOURCE_REVISION}/{script.WEIGHTS_FILE}"
+    )
+    assert script.WEIGHTS_FILE == source["entrypoint"]
+    assert len(script.CLASS_NAMES) == 1000
+    assert script.CLASS_NAMES[0] == "tench" and script.CLASS_NAMES[-1] == "toilet paper"
+
+
+def test_accuracy_uses_big_visions_81_canonicalized_imagenet_templates(load_script):
+    script = load_script("accuracy")
+    assert len(script.TEMPLATES) == 81
+    texts = script.class_prompts("American robin, Turdus migratorius")
+    assert "a photo of a american robin" in texts
+    assert texts[-1] == "american robin"
+    assert not any("." in text or "," in text for text in texts)

@@ -8,16 +8,16 @@ SigLIP 2 ViT-B/16 is Google's image-text model, trained with a sigmoid loss.
 It embeds images and text in one 768-value space, so an image and a caption
 that match get similar embeddings. It runs as two components: an image
 encoder, which takes a 224×224 RGB image, and a text encoder, which takes a
-64-token prompt. The image encoder also returns zero-shot scores for the 1,000
-ImageNet classes, built from OpenAI's class names and 7 prompt templates, so an
-application can classify those classes without the text encoder. Use the text
-encoder to compare images with prompts of your own.
+64-token prompt. Each component returns embeddings that an application can use
+for image-text search or zero-shot classification. Encode a set of class
+descriptions once and reuse those text embeddings for each image, or encode new
+descriptions as the application needs them.
 
 ## Inputs and outputs
 
 **Image input.** Resize the image straight to 224×224 with bilinear
 resampling, without keeping its aspect ratio or cropping. Scale the RGB values
-to 0–1, subtract 0.5, and divide by 0.5. The accuracy script passes this image
+to 0–1, subtract 0.5, and divide by 0.5. Pass this image
 as a 224×224×3 (height, width, channel) float tensor, with Neat's resize, color
 conversion, and normalization turned off.
 
@@ -30,15 +30,13 @@ embedding table, `text_model.embeddings.token_embedding.weight`. This gives the
 width, channel (HWC) axes.
 
 **Outputs.** `image_embeds` is the image's 768-value embedding, and
-`text_embeds` is the prompt's. `logits` holds 1,000 ImageNet class scores: the
-model's logit scale times the cosine similarity between the image and each
-class, plus its logit bias.
+`text_embeds` is the prompt's 768-value embedding.
 
 1. Divide `image_embeds` and `text_embeds` by their lengths and take their dot product, the cosine similarity. A higher value means a better match.
-2. To classify ImageNet classes, apply a sigmoid to each of the `logits` for that class's probability, and take the highest.
+2. For zero-shot classification, encode descriptions for each candidate class and select the class with the highest similarity. To ensemble several descriptions of one class, normalize each text embedding, average them, then normalize the average.
 
-Class index i is the i-th ImageNet-1k WordNet ID in sorted order, which is the
-standard ImageNet-1k class order.
+The encoders have no fixed class list. ImageNet evaluation uses all 1,000
+classes in the standard order of sorted WordNet IDs.
 
 ## Building applications
 

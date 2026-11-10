@@ -5,7 +5,7 @@ tasks: [image_text_embedding]
 
 modalities:
   inputs: [image, text]
-  outputs: [embeddings, class_scores]
+  outputs: [embeddings]
 
 architecture: siglip
 
@@ -69,7 +69,7 @@ numerical_fidelity:
   # The 50 images after the 50 calibration images. text_embeds compares the pooled embeddings of the 32
   # embedded prompts the text encoder does not calibrate on.
   selection: {method: seeded_random_without_replacement, seed: 42, offset: 50, samples: 50}
-  outputs: [image_embeds, logits, text_embeds]
+  outputs: [image_embeds, text_embeds]
 
 accuracy:
   datasets:
@@ -81,5 +81,5 @@ reference_metrics:
 - source: https://arxiv.org/pdf/2502.14786v1
   dataset: {id: imagenet-2012, split: val}
   conditions: 224x224, zero-shot
-  note: Zero-shot top-1 of SigLIP 2 B/16 at 224x224 in Table 1 of the SigLIP 2 paper. Surgery builds its class embeddings from OpenAI's ImageNet class names and the 7 prompt templates OpenAI selected. The paper prints no top-5.
+  note: Published zero-shot top-1 of SigLIP 2 B/16 at 224x224 in Table 1. Accuracy follows Big Vision's public ImageNet evaluator defaults, with 81 canonicalized clip_paper templates per class and a 256x256 resize followed by a 224x224 center crop. Class vectors are generated with the compiled text encoder at evaluation startup. The release does not specify the exact evaluation config behind 78.2%; matching that score remains unverified. The paper prints no top-5.
   metrics: {top1_accuracy: 0.782}

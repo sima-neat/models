@@ -62,6 +62,30 @@ def test_preprocessing_resizes_straight_to_the_model_input(load_script: Callable
         np.testing.assert_allclose(result[row, 112], expected, atol=1e-5)
 
 
+def test_accuracy_preprocessing_uses_the_big_vision_resize_and_center_crop(load_script):
+    calibration = load_script("calibration")
+    # At 256x256 the resize is identity. Cropping removes the border, rather than squeezing it into the image.
+    pixels = np.zeros((256, 256, 3), np.uint8)
+    pixels[16:240, 16:240] = (128, 192, 255)
+    stream = io.BytesIO()
+    Image.fromarray(pixels).save(stream, format="PNG")
+    result = calibration.preprocess_validation_image(stream.getvalue())
+    assert result.shape == (224, 224, 3) and result.dtype == np.float32
+    expected = np.broadcast_to((np.array([128, 192, 255], np.float32) / 255 - 0.5) / 0.5, result.shape)
+    np.testing.assert_allclose(result, expected, atol=1e-6)
+
+
+def test_accuracy_resize_does_not_antialias_before_sampling(load_script):
+    calibration = load_script("calibration")
+    # At 768 -> 256, half-pixel bilinear centers land exactly on source pixels 1, 4, 7, ... .
+    # An antialiasing filter would average these with their neighbors.
+    pixels = np.zeros((768, 768, 3), np.uint8)
+    pixels[1::3, 1::3] = 255
+    stream = io.BytesIO()
+    Image.fromarray(pixels).save(stream, format="PNG")
+    np.testing.assert_array_equal(calibration.preprocess_validation_image(stream.getvalue()), np.ones((224, 224, 3)))
+
+
 def test_selection_is_seeded_and_reads_an_archive(tmp_path: Path, load_script: Callable[[str], ModuleType]) -> None:
     calibration = load_script("calibration")
     names = [f"imagenet/cal2012/n01440764_{index:02d}.JPEG" for index in range(10)]
@@ -169,7 +193,7 @@ def test_fidelity_compares_every_output_after_the_calibration_images(load_script
     recipe = load_script("compile")
     metadata = recipe.load_metadata(MODEL_DIR)
     fidelity = metadata["numerical_fidelity"]
-    assert fidelity["outputs"] == ["image_embeds", "logits", "text_embeds"]
+    assert fidelity["outputs"] == ["image_embeds", "text_embeds"]
     counts = [
         int(binding["parameters"]["calibration_samples"])
         for profile in metadata["build_profiles"]
@@ -184,12 +208,12 @@ def test_fidelity_error_sums_match_the_metrics_over_all_samples(load_script: Cal
     recipe = load_script("compile")
     rng = np.random.default_rng(0)
     expected, actual = rng.normal(size=(2, 3, 5)), rng.normal(size=(2, 3, 5))
-    error = recipe._OutputError("logits")
+    error = recipe._OutputError("image_embeds")
     for want, got in zip(expected, actual):
         error.add(want, got)
     summary = error.summary()
     difference = actual - expected
-    assert summary["name"] == "logits"
+    assert summary["name"] == "image_embeds"
     assert summary["cosine_similarity"] == pytest.approx(
         np.dot(expected.ravel(), actual.ravel()) / (np.linalg.norm(expected) * np.linalg.norm(actual))
     )
@@ -261,7 +285,7 @@ def test_build_holds_both_encoders_and_bf16_matches_the_onnx(
     for item in outputs["outputs"]:
         recipe.audit_mpk(compiled / item["mpk_path"], item["component_id"])
     fidelity = json.loads((compiled / "fidelity.json").read_text(encoding="utf-8"))
-    assert [metric["name"] for metric in fidelity["metrics"]] == ["image_embeds", "logits", "text_embeds"]
+    assert [metric["name"] for metric in fidelity["metrics"]] == ["image_embeds", "text_embeds"]
     if build_profile == "w16a16":
         # BF16 keeps every output within rounding of the ONNX; a broken operator shows up as a low cosine.
         assert all(metric["cosine_similarity"] > 0.99 for metric in fidelity["metrics"]), fidelity["metrics"]
@@ -279,17 +303,8 @@ def exporter(load_script: Callable[[str], ModuleType]) -> ModuleType:
 def test_prompt_tables_are_openais_imagenet_classes_and_templates(exporter: ModuleType):
     assert len(exporter.CLASS_NAMES) == exporter.CLASS_COUNT == 1000
     assert (exporter.CLASS_NAMES[0], exporter.CLASS_NAMES[-1]) == ("tench", "toilet paper")
-    assert exporter.TEMPLATES[0] == "itap of a {}." and len(exporter.TEMPLATES) == 7
-    assert all(template.count("{}") == 1 for template in exporter.TEMPLATES)
-
-
-def test_prompts_are_lowercased_class_by_class(exporter: ModuleType):
-    assert exporter.prompts(["American robin", "tench"], ["a photo of a {}.", "art of the {}."]) == [
-        "a photo of a american robin.",
-        "art of the american robin.",
-        "a photo of a tench.",
-        "art of the tench.",
-    ]
+    assert exporter.PROBE_TEMPLATES[0] == "itap of a {}." and len(exporter.PROBE_TEMPLATES) == 7
+    assert all(template.count("{}") == 1 for template in exporter.PROBE_TEMPLATES)
 
 
 def test_the_text_check_prompts_use_each_template_on_classes_the_embedded_prompts_leave_out(exporter: ModuleType):
@@ -297,7 +312,7 @@ def test_the_text_check_prompts_use_each_template_on_classes_the_embedded_prompt
     assert len(embedded) == exporter.CALIBRATION_PROMPTS
     assert embedded[:2] == ["itap of a tench.", "a bad photo of the american robin."]
     check = exporter.check_prompts()
-    assert len(check) == len(exporter.TEMPLATES) and check[0] == "itap of a goldfish."
+    assert len(check) == len(exporter.PROBE_TEMPLATES) and check[0] == "itap of a goldfish."
     assert not set(check) & set(embedded)
     embedded_classes = {index * exporter.CLASS_COUNT // len(embedded) for index in range(len(embedded))}
     assert not embedded_classes & set(exporter.CHECK_CLASSES)
