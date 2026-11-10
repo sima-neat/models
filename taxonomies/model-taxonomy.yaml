@@ -77,6 +77,10 @@ architectures:
     display_name: LightGlue
     paradigm: transformer
     allowed_model_types: [vision]
+  lightstereo:
+    display_name: LightStereo
+    paradigm: cnn
+    allowed_model_types: [vision]
   llama:
     display_name: Llama
     paradigm: transformer

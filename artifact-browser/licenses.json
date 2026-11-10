@@ -29,6 +29,11 @@
     "summary": "Noncommercial research use only. The license does not permit redistribution, so SiMa.ai does not offer this model for download.",
     "downloadable": false
   },
+  "LicenseRef-OpenStereo-Academic": {
+    "name": "OpenStereo academic use terms",
+    "summary": "Academic use only, never commercial, and no license grants redistribution, so SiMa.ai does not offer this model for download.",
+    "downloadable": false
+  },
   "MIT": {
     "name": "MIT License",
     "summary": "Permissive license. Redistribution must include the copyright notice and the license text.",
