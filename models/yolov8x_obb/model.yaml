@@ -47,11 +47,6 @@ build_profiles:
       model:
         parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 50}
 
-  w8a16:
-    components:
-      model:
-        parameters: {precision: w8a16}
-
 accuracy:
   datasets:
   - {id: dota-v1-0, variant: val, sha256: abeff63703f14da97d8e2033c67accacb88b732ce4ada940feddfeeac8f94a37, size_bytes: 327598055}
