@@ -5,7 +5,7 @@ import json
 import tarfile
 from collections.abc import Callable
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 import numpy as np
 import onnx
@@ -199,6 +199,96 @@ def test_synthetic_frame_shifts_the_right_view_by_a_seeded_disparity(surgery: Mo
     assert np.array_equal(surgery.synthetic_frame(123), stereo)
 
 
+def _readout_export(path: Path) -> Path:
+    """A convolution, then the read-out's shape: a softmax regressed by a convolution, times a second softmax."""
+    helper = onnx.helper
+    nodes = [
+        helper.make_node("Conv", ["stereo", "kernel"], ["features"], name="features"),
+        helper.make_node("Softmax", ["features"], ["bins"], name="bins"),
+        helper.make_node("Conv", ["bins", "kernel"], ["regressed"], name="regression"),
+        helper.make_node("Softmax", ["features"], ["blend"], name="weights"),
+        helper.make_node("Mul", ["regressed", "blend"], ["disparity"], name="product"),
+    ]
+    values = [
+        helper.make_tensor_value_info(name, onnx.TensorProto.FLOAT, [1, 1, 2, 2]) for name in ("stereo", "disparity")
+    ]
+    kernel = onnx.numpy_helper.from_array(np.ones((1, 1, 1, 1), np.float32), "kernel")
+    onnx.save(helper.make_model(helper.make_graph(nodes, "fixture", values[:1], values[1:], [kernel])), path)
+    return path
+
+
+def test_readout_region_marks_the_softmaxes_and_everything_after_them_bf16(tmp_path: Path, surgery: ModuleType) -> None:
+    source = _readout_export(tmp_path / "model.onnx")
+
+    assert surgery.annotate_bf16_regions(source, tmp_path / "marked.onnx", ["readout"]) == 4
+
+    marked = onnx.load(tmp_path / "marked.onnx")
+    marks = [node for node in marked.graph.node if node.op_type == "AnnotatePrecision"]
+    # The convolution before the softmaxes stays INT8; each read-out operation is followed by its mark, which
+    # keeps the operation's value name, so the graph still returns "disparity".
+    assert [node.name for node in marks] == [
+        f"{name}/AnnotatePrecision" for name in ("bins", "regression", "weights", "product")
+    ]
+    assert {(node.domain, onnx.helper.get_attribute_value(node.attribute[0])) for node in marks} == {
+        ("ai.sima", b"bfloat16")
+    }
+    assert marks[-1].output == ["disparity"] and [output.name for output in marked.graph.output] == ["disparity"]
+    assert ("ai.sima", 1) in {(item.domain, item.version) for item in marked.opset_import}
+    # The source stays unmarked: numerical fidelity runs it in ONNX Runtime.
+    assert not [node for node in onnx.load(source).graph.node if node.op_type == "AnnotatePrecision"]
+    with pytest.raises(ValueError, match="unknown BF16 regions"):
+        surgery.annotate_bf16_regions(source, tmp_path / "marked.onnx", ["backbone"])
+
+
+@pytest.mark.parametrize(
+    ("build_id", "parameters", "error"),
+    [
+        ("w8a8_mixed", {"precision": "w8a8", "bf16_regions": ["readout"]}, None),
+        ("w8a8", {"precision": "w8a8"}, None),
+        ("w8a8", {"precision": "w8a8", "bf16_regions": ["readout"]}, "mixed token"),
+        ("w8a8_mixed", {"precision": "w8a8"}, "mixed token"),
+        ("w16a16_mixed", {"precision": "w16a16", "bf16_regions": ["readout"]}, "W8A8 build"),
+    ],
+)
+def test_bf16_regions_belong_to_a_w8a8_profile_named_mixed(
+    build_id: str,
+    parameters: dict,
+    error: str | None,
+    load_script: Callable[[str], ModuleType],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    compile_module = load_script("compile")
+    monkeypatch.setattr(compile_module, "_parameters", lambda _: parameters)
+
+    if error is None:
+        assert compile_module._bf16_regions(build_id) == parameters.get("bf16_regions", [])
+    else:
+        with pytest.raises(ValueError, match=error):
+            compile_module._bf16_regions(build_id)
+
+
+@pytest.mark.parametrize(("bf16_softmaxes", "accepted"), [(2, True), (1, False), (0, False)])
+def test_mixed_build_fails_when_the_compiler_ignores_the_bf16_marks(
+    bf16_softmaxes: int, accepted: bool, load_script: Callable[[str], ModuleType]
+) -> None:
+    compile_module = load_script("compile")
+    bf16 = compile_module.QuantizationPrecision.BFLOAT_16
+
+    def node(operation: str, precision: object) -> SimpleNamespace:
+        config = SimpleNamespace(quantization_precision=SimpleNamespace(value=precision))
+        return SimpleNamespace(ir=SimpleNamespace(operation=type(operation, (), {})(), quant_config=config))
+
+    nodes = [node("SoftmaxOp", bf16 if index < bf16_softmaxes else "int8") for index in range(2)]
+    nodes += [node("ConvOp", bf16), node("ConvOp", "int8"), SimpleNamespace(ir=SimpleNamespace(operation=object()))]
+    quantized = SimpleNamespace(_net=SimpleNamespace(iter_nodes_recursive=lambda: nodes))
+
+    if accepted:
+        compile_module._require_bf16_readout(quantized)
+    else:
+        with pytest.raises(RuntimeError, match="both read-out softmaxes"):
+            compile_module._require_bf16_readout(quantized)
+
+
 def _mpk_manifest(compile_module: ModuleType) -> dict:
     """A plugin chain of the compiled MPK: a cast of the frame, the MLA, then a slice and a cast back."""
     return {
@@ -292,7 +382,7 @@ def test_every_precision_calibrates_its_histogram_ranges(
 def test_model_calibrates_every_profile_and_compares_disparity_on_scene_flow() -> None:
     model = load_metadata(MODEL_DIR)
     assert model["components"][0]["interface"]["format"] == "onnx"
-    assert [profile["id"] for profile in model["build_profiles"]] == ["w8a8", "w16a16"]
+    assert [profile["id"] for profile in model["build_profiles"]] == ["w8a8", "w16a16", "w8a8_mixed"]
     assert {profile["components"][0]["calibration"] for profile in model["build_profiles"]} == {"scene-flow-cal"}
     largest = max(profile["components"][0]["parameters"]["calibration_samples"] for profile in model["build_profiles"])
     fidelity = model["numerical_fidelity"]

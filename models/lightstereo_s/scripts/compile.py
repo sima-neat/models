@@ -19,6 +19,7 @@ import os
 import shutil
 import tarfile
 import tempfile
+from collections import Counter
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -34,12 +35,13 @@ from afe.apis.defines import (
 )
 from afe.apis.loaded_net import load_model
 from afe.apis.model import L2CachingMode
+from afe.core.configs import QuantizationPrecision
 from afe.core.utils import convert_data_generator_to_iterable
 from afe.load.importers.general_importer import onnx_source
 from model_registry.model import load_model as load_metadata
 from scene_flow import INPUT, end_point_error, read_pairs, selected_pairs
 from sima_utils.data.data_generator import DataGenerator
-from surgery import INTERFACE, OUTPUT, export_network
+from surgery import INTERFACE, OUTPUT, annotate_bf16_regions, export_network
 
 # Importing afe leaves the root logger at WARNING, so the recipe logs through its own INFO logger.
 LOG = logging.getLogger("lightstereo_s.compile")
@@ -61,6 +63,17 @@ def _parameters(profile_id: str) -> dict[str, Any]:
     if len(profiles) != 1:
         raise ValueError(f"model.yaml declares no build profile {profile_id!r}")
     return next(item["parameters"] for item in profiles[0]["components"] if item["id"] == COMPONENT_ID)
+
+
+def _bf16_regions(profile_id: str) -> list[str]:
+    """Return the regions the build profile runs BF16, checking that its ID marks it mixed."""
+    parameters = _parameters(profile_id)
+    regions = parameters.get("bf16_regions", [])
+    if regions and (parameters["precision"] != "w8a8" or len(set(regions)) != len(regions)):
+        raise ValueError(f"bf16_regions must name distinct regions of a W8A8 build: {regions}")
+    if bool(regions) != ("mixed" in profile_id.split("_")):
+        raise ValueError(f"build profile {profile_id!r} must have the mixed token exactly when it has bf16_regions")
+    return regions
 
 
 def _quantization(parameters: dict[str, Any]) -> QuantizationParams:
@@ -92,6 +105,20 @@ def _quantization(parameters: dict[str, Any]) -> QuantizationParams:
             weight_quantization_scheme=bfloat16_scheme(),
         )
     raise ValueError(f"unsupported precision: {precision}")
+
+
+def _require_bf16_readout(quantized: Any) -> None:
+    """Fail when the Model Compiler ignored the read-out's BF16 marks, which would silently build plain W8A8."""
+    # The quantized model keeps its network private, and the compiler renames every node, so count by operation.
+    counts = Counter(
+        type(node.ir.operation).__name__
+        for node in quantized._net.iter_nodes_recursive()
+        if getattr(node.ir, "quant_config", None) is not None
+        and node.ir.quant_config.quantization_precision.value == QuantizationPrecision.BFLOAT_16
+    )
+    LOG.info("BF16 operations: %s", dict(sorted(counts.items())))
+    if counts["SoftmaxOp"] != 2:
+        raise RuntimeError(f"expected both read-out softmaxes in BF16, found {dict(counts)}")
 
 
 def _read_mpk_manifest(archive: Path) -> tuple[list[str], dict[str, Any]]:
@@ -269,9 +296,17 @@ def main() -> int:
     fidelity = _metadata()["numerical_fidelity"]
     output_dir = args.output_dir.expanduser().resolve()
     seed = int(fidelity["selection"]["seed"])
+    regions = _bf16_regions(args.build_profile)
     with tempfile.TemporaryDirectory(prefix=f"{MODEL_ID}-onnx-", dir=os.environ.get("RUNNER_TEMP")) as temporary:
         source = export_network(weights, Path(temporary) / "model.onnx")
-        quantized = quantize(source, args.build_profile, args.dataset.expanduser().resolve(), seed)
+        # Fidelity runs the unmarked export in ONNX Runtime, so the marks go on a copy.
+        graph = source
+        if regions:
+            graph = Path(temporary) / "model-bf16-regions.onnx"
+            LOG.info("Marked %d operations BF16 for %s", annotate_bf16_regions(source, graph, regions), regions)
+        quantized = quantize(graph, args.build_profile, args.dataset.expanduser().resolve(), seed)
+        if regions:
+            _require_bf16_readout(quantized)
         LOG.info("Measuring numerical fidelity on %d pairs", fidelity["selection"]["samples"])
         report = measure_fidelity(
             source, quantized, args.fidelity_dataset.expanduser().resolve(), fidelity, args.build_profile

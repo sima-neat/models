@@ -19,6 +19,7 @@ from typing import Any
 
 import numpy as np
 import onnx
+from onnx import helper
 from scene_flow import HEIGHT, INPUT, WIDTH
 
 # cfgs/lightstereo/lightstereo_s_sceneflow.yaml pads each view to 544x960 above its first row (RightTopPad).
@@ -44,6 +45,9 @@ FORBIDDEN_OPS = {
     "Pad",
     "InstanceNormalization",
 }
+# The parts of the network an INT8 build can run BF16. The read-out is the two softmaxes and every operation after
+# them: the disparity regression over the 48 bins and the context upsampling to full resolution.
+BF16_REGIONS = ("readout",)
 SEEDS = range(123, 128)
 # The rewrites reorder float sums; on real pairs they differ from upstream by under 0.005 px, a hundredth of the
 # model's own error there.
@@ -327,6 +331,58 @@ def validate_export(path: Path) -> None:
         raise ValueError(f"Export still holds operators the rewrite removes: {forbidden}")
     if any(tensor.data_location == onnx.TensorProto.EXTERNAL for tensor in model.graph.initializer):
         raise ValueError("The export must be one self-contained ONNX file")
+
+
+def readout_operations(graph: onnx.GraphProto) -> list[onnx.NodeProto]:
+    """The two softmaxes and every operation after them, in graph order."""
+    readers: dict[str, list[onnx.NodeProto]] = {}
+    for node in graph.node:
+        for name in node.input:
+            readers.setdefault(name, []).append(node)
+    pending = [node for node in graph.node if node.op_type == "Softmax"]
+    names = {node.name for node in pending}
+    while pending:
+        for name in pending.pop().output:
+            for reader in readers.get(name, []):
+                if reader.name not in names:
+                    names.add(reader.name)
+                    pending.append(reader)
+    return [node for node in graph.node if node.name in names]
+
+
+def annotate_bf16_regions(source: Path, output: Path, regions: list[str]) -> int:
+    """Write a copy of the export whose regions run BF16 in an INT8 build; return the number of marked operations.
+
+    The Model Compiler gives an ai.sima AnnotatePrecision's precision to the operation that produces its input, and
+    to that operation's constants. The read-out runs to the graph output, so no INT8 mark has to end it. ONNX
+    Runtime cannot run the marked copy.
+    """
+    unknown = sorted(set(regions) - set(BF16_REGIONS))
+    if unknown:
+        raise ValueError(f"unknown BF16 regions {unknown}; choose from {list(BF16_REGIONS)}")
+    model = onnx.load(source)
+    marked = {node.name for node in readout_operations(model.graph)} if "readout" in regions else set()
+    nodes = []
+    for node in model.graph.node:
+        nodes.append(node)
+        if node.name in marked:
+            (value,) = node.output
+            node.output[0] = f"{value}/unannotated"
+            nodes.append(
+                helper.make_node(
+                    "AnnotatePrecision",
+                    [node.output[0]],
+                    [value],
+                    name=f"{node.name}/AnnotatePrecision",
+                    domain="ai.sima",
+                    precision="bfloat16",
+                )
+            )
+    del model.graph.node[:]
+    model.graph.node.extend(nodes)
+    model.opset_import.append(helper.make_opsetid("ai.sima", 1))
+    onnx.save(model, output)
+    return len(marked)
 
 
 def fold_constants(path: Path) -> None:
