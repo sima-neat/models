@@ -125,6 +125,10 @@ architectures:
     display_name: YOLO26-det
     paradigm: cnn
     allowed_model_types: [vision]
+  yolo26_obb:
+    display_name: YOLO26-obb
+    paradigm: cnn
+    allowed_model_types: [vision]
   yolo26_pose:
     display_name: YOLO26-pose
     paradigm: cnn
@@ -187,6 +191,9 @@ tasks:
   object_detection:
     display_name: Object Detection
     allowed_model_types: [vision, vlm]
+  oriented_object_detection:
+    display_name: Oriented Object Detection
+    allowed_model_types: [vision]
   pose_estimation:
     display_name: Pose Estimation
     allowed_model_types: [vision]
