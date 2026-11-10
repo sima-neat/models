@@ -15,7 +15,7 @@ from .artifact import deployment_files, verify_artifact
 from .errors import SourcePolicyError, ValidationError
 from .fetch import Fetcher, sha256_file
 from .mla_stage_simulation import SIMULATION_FILE
-from .model import _expand_source, load_and_validate_model, source_members
+from .model import _expand_source, load_and_validate_model, mpk_filename, source_members
 from .runner_approval import runner_provenance
 from .source import source_identity
 
@@ -99,10 +99,19 @@ def validate_package_resources(model: dict[str, Any]) -> None:
             raise ValidationError(
                 f"{model['id']}: resource {resource['id']}: main_file {source['entrypoint']!r} is not one of its files"
             )
-    try:
-        _reject_overlapping_paths([path for resource in resources for path in _resource_paths(resource)])
-    except ValidationError as exc:
-        raise ValidationError(f"{model['id']}: resources: {exc}") from exc
+    if not resources:
+        return
+    resource_paths = [path for resource in resources for path in _resource_paths(resource)]
+    # Every package of the model installs all resources beside its components' archives.
+    archives_by_profile = [
+        [mpk_filename(model, profile["id"], item["id"]) for item in profile["components"]]
+        for profile in model.get("build_profiles", [])
+    ]
+    for archives in archives_by_profile or [[]]:
+        try:
+            _reject_overlapping_paths([*archives, *resource_paths])
+        except ValidationError as exc:
+            raise ValidationError(f"{model['id']}: resources: {exc}") from exc
 
 
 def fetch_package_resources(model: dict[str, Any], output_dir: Path, cache_dir: Path | None = None) -> Path | None:

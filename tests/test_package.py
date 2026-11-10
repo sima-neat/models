@@ -265,6 +265,27 @@ def test_resources_that_install_onto_each_other_fail_validation(second_install_p
         validate_package_resources(model)
 
 
+@pytest.mark.parametrize(("install_path", "message"), (
+    ("resnet_50_w16a16_mpk.tar.gz", "declared more than once: resnet_50_w16a16_mpk.tar.gz"),
+    ("resnet_50_w16a16_mpk.tar.gz/runtime", "paths overlap: resnet_50_w16a16_mpk.tar.gz/runtime/tables.json"),
+))
+def test_a_resource_cannot_install_onto_a_component_archive(install_path: str, message: str) -> None:
+    files = {"tables.json": {"sha256": "b" * 64, "size_bytes": 1}}
+    source = (
+        {"uri": "https://huggingface.co/example/runtime/resolve/" + "0" * 40 + "/tables.json",
+         "sha256": "b" * 64, "size_bytes": 1}
+        if install_path.endswith(".tar.gz")
+        else {"repository": "example/runtime", "revision": "0" * 40, "main_file": "tables.json", "files": files}
+    )
+    model = {
+        "id": "resnet_50",
+        "build_profiles": [{"id": "w16a16", "components": [{"id": "model"}]}],
+        "resources": {"runtime": {"source": source, "install_path": install_path}},
+    }
+    with pytest.raises(ValidationError, match=message):
+        validate_package_resources(model)
+
+
 def test_package_with_resources_and_runtime_files_is_a_flat_deterministic_zip(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
