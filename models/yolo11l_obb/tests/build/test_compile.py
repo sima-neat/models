@@ -185,15 +185,13 @@ def test_surgery_cuts_at_the_nine_raw_heads_in_order(tmp_path: Path, load_script
     assert [node.op_type for node in cut.graph.node] == ["Conv"] * 9
 
 
-def test_surgery_folds_static_values(tmp_path: Path, load_script: Callable[[str], ModuleType]) -> None:
+def test_surgery_requires_a_folded_source(tmp_path: Path, load_script: Callable[[str], ModuleType]) -> None:
     surgery = load_script("surgery")
     source = tmp_path / "source.onnx"
     onnx.save(_source_graph(load_script, constant_weight=True), source)
 
-    cut = onnx.load(surgery.prepare_model(source, tmp_path / "out"))
-
-    assert {node.op_type for node in cut.graph.node} == {"Conv"}
-    assert list(value.name for value in cut.graph.output) == surgery.OUTPUTS
+    with pytest.raises(ValueError, match="fold the source with onnxsim first"):
+        surgery.prepare_model(source, tmp_path / "out")
 
 
 def _mpk_manifest(compile_module: ModuleType) -> dict:

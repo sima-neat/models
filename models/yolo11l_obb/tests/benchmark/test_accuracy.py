@@ -117,8 +117,8 @@ def test_decode_returns_nothing_when_no_score_clears_the_threshold(load_script: 
     accuracy = load_script("accuracy")
     outputs = _board_outputs(accuracy)
     assert accuracy.decode_tile(outputs).shape == (0, 7)
-    # sigmoid(-6.95) is just below SCORE_THRESHOLD.
-    outputs[5][0, :2, :2, 3] = -6.95
+    # sigmoid(-4.65) is about 0.00947, just below the OBB validator's 0.01 default.
+    outputs[5][0, :2, :2, 3] = -4.65
 
     assert accuracy.decode_tile(outputs).shape == (0, 7)
 
@@ -139,7 +139,7 @@ def _ultralytics_validation(accuracy: ModuleType, outputs: list[np.ndarray]) -> 
     )
     boxes = np.column_stack([centres * accuracy.ANCHOR_STRIDES,
                              (distances[:, :2] + distances[:, 2:]) * accuracy.ANCHOR_STRIDES, angles])
-    anchor, label = np.nonzero(scores > 0.001)
+    anchor, label = np.nonzero(scores > 0.01)
     found = np.column_stack([boxes[anchor], scores[anchor, label], label])
     found = found[np.argsort(-found[:, 5], kind="stable")][:30000]
     shifted = found[:, :5].copy()

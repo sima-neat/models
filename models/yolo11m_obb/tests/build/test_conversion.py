@@ -97,7 +97,8 @@ def test_fixed_onnx_interface(tmp_path, case, converter: ModuleType):
 
 def test_source_must_be_the_pinned_checkpoint(converter: ModuleType):
     model = load_metadata(ROOT / "models/yolo11m_obb")
-    converter.validate_source(model["conversion"]["default"]["source"])
+    source = model["conversion"]["default"]["source"]
+    converter.validate_source(source)
     for other in ("yolo11m.pt", "yolov8m-obb.pt"):
         with pytest.raises(ValueError, match="yolo11m-obb.pt"):
-            converter.validate_source({"type": "file", "uri": f"hf://models/simaai/yolo-obb@main/{other}"})
+            converter.validate_source({**source, "uri": source["uri"].rsplit("/", 1)[0] + f"/{other}"})

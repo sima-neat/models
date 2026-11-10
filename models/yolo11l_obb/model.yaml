@@ -14,9 +14,6 @@ license:
   redistribution: restricted
   attribution: YOLO11 is developed by Ultralytics and distributed under AGPL-3.0.
 
-# Conversion exports the original Ultralytics .pt checkpoint. Its release asset
-# is not yet available through a registry-approved source; retain the verified
-# upstream file hash and size until that source pin is resolved (#519).
 upstream:
   repository: https://github.com/ultralytics/assets
   revision: 0f20d143ac8f9e01322f85dcb5c10dc9b7ca1153
@@ -24,8 +21,7 @@ upstream:
 
 conversion:
   source:
-    # TODO(#519): replace this placeholder with an approved URI for the original checkpoint.
-    uri: hf://models/simaai/TODO@TODO/yolo11l-obb.pt
+    uri: https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11l-obb.pt
     sha256: 92dcf9face59a821cd4ee93828f4c19b51f6dee9b842b23c1dacab7aa89039fc
     size_bytes: 53120908
 

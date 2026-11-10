@@ -1,4 +1,4 @@
-"""Benchmark one compiled MPK on a DOTA image with Neat's YoloV8Obb decoder (it covers YOLO11); save its report."""
+"""Benchmark one compiled MPK with Neat's YOLO11 oriented-box decoder on a DOTA image and save its report."""
 
 import argparse
 import random
@@ -51,14 +51,14 @@ options = pyneat.ModelOptions()
 # Neat letterboxes, normalizes, quantizes and tessellates the frame inside the measured pipeline.
 options.preprocess.kind = pyneat.InputKind.Image
 options.preprocess.enable = pyneat.AutoFlag.On
-options.preprocess.input_max_width = FRAME_WIDTH
-options.preprocess.input_max_height = FRAME_HEIGHT
 options.preprocess.resize.enable = pyneat.AutoFlag.On
 options.preprocess.resize.mode = pyneat.ResizeMode.Letterbox
 options.preprocess.normalize.enable = pyneat.AutoFlag.On
+# Size Neat's input buffers for the benchmark frame, not the 1920x1080 default.
+options.preprocess.input_max_width = FRAME_WIDTH
+options.preprocess.input_max_height = FRAME_HEIGHT
 options.decode_type = pyneat.BoxDecodeType.YoloV8Obb
-# An application's decoder keeps a few confident detections, not every candidate, after rotated NMS at
-# Ultralytics' prediction IoU.
+# An application's decoder keeps a few confident detections, not every candidate.
 options.top_k = 10
 options.score_threshold = 0.25
 options.nms_iou_threshold = 0.7
@@ -77,7 +77,7 @@ report = model_report.from_performance(
     {"model": model},
     workload=(
         f"{dataset_id} {image.name} in a {FRAME_WIDTH}x{FRAME_HEIGHT} RGB frame, Neat preprocessing, "
-        f"YoloV8Obb box decoder, top 10 above 0.25 after NMS IoU 0.7, {postprocess} post-processing"
+        f"YoloV8Obb box decoder, top 10 above 0.25, NMS IoU 0.7, {postprocess} post-processing"
     ),
 )
 report.save(args.output)

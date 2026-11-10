@@ -51,6 +51,20 @@ def validate_export(path):
         raise ValueError("This conversion workflow requires one self-contained ONNX file")
 
 
+def fold_constants(path):
+    from onnxsim import simplify
+
+    model, valid = simplify(
+        onnx.load(path),
+        perform_optimization=False,
+        overwrite_input_shapes={"images": INTERFACE["images"]},
+        dynamic_input_shape=False,
+    )
+    if not valid:
+        raise RuntimeError("onnxsim could not validate the folded YOLO11 OBB export")
+    onnx.save(model, path)
+
+
 def with_head_outputs(path):
     """Also return the raw head tensors, located by tensor name."""
     model = onnx.load(path)
@@ -111,10 +125,11 @@ def convert(source, output_dir):
             nms=False,
         )
         shutil.move(exported, output)
+        fold_constants(output)
         validate_export(output)
 
         reference = estimator.model.cpu().eval()
-        # OBB then also returns its raw box, class and angle logits instead of only the decoded anchors.
+        # OBB also returns its box and class logits and decoded angles for the head comparison.
         reference.model[-1].export = False
         model, heads = with_head_outputs(output)
         options = ort.SessionOptions()

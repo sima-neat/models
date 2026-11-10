@@ -53,7 +53,7 @@ def _quantization(precision: str, calibration_bins: int | None) -> QuantizationP
     """The compiler's activation and weight formats for a precision. Only INT8 activations need calibration."""
     if precision == "w8a8":
         return QuantizationParams(
-            # Histogram MSE picks each activation range from the calibration images.
+            # Histogram MSE picks each activation range from the calibration tiles.
             calibration_method=HistogramMSEMethod(calibration_bins),
             activation_quantization_scheme=quantization_scheme(asymmetric=True, per_channel=False, bits=8),
             weight_quantization_scheme=quantization_scheme(asymmetric=False, per_channel=True, bits=8),
