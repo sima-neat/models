@@ -1,0 +1,46 @@
+build-on-demand: true
+display_name: Llama 3.2 3B Instruct
+description: Generates text from instructions and conversation history.
+model_type: llm
+tasks: [text_generation]
+
+modalities:
+  inputs: [text]
+  outputs: [text]
+
+architecture: llama
+
+license:
+  spdx: LicenseRef-Llama-3.2-Community
+  redistribution: restricted
+  attribution: Built with Llama. Llama 3.2 is licensed under the Llama 3.2 Community License, Copyright © Meta Platforms, Inc. All Rights Reserved. Derived from meta-llama/Llama-3.2-3B-Instruct; AutoRound checkpoint provided by SiMa.ai.
+
+upstream:
+  repository: https://huggingface.co/simaai/Llama-3.2-3B-Instruct-Autoround-Safetensors
+  revision: 42e27c2fa3a6950317d20687ce710b486b277e7c
+  derived_from: https://huggingface.co/meta-llama/Llama-3.2-3B-Instruct
+
+compilation:
+  format: huggingface
+  source:
+    repository: simaai/Llama-3.2-3B-Instruct-Autoround-Safetensors
+    revision: 42e27c2fa3a6950317d20687ce710b486b277e7c
+    main_file: config.json
+    files:
+      LICENSE.txt: {sha256: 0b4284c1f87029e67654c7953afa16279961632cf73dcfe33374c4c2f298fa35, size_bytes: 7712}
+      Notice.txt: {sha256: 3bc2d1a6b360a03d172058198631b931c9aadf01650892fb0d25b93c6b8f0025, size_bytes: 116}
+      chat_template.jinja: {sha256: 5816fce10444e03c2e9ee1ef8a4a1ea61ae7e69e438613f3b17b69d0426223a4, size_bytes: 3827}
+      config.json: {sha256: 1dfce7d295cb594e86c8ba26f2a2c27f7d7f92757e8defd20e680db88151d883, size_bytes: 2403}
+      generation_config.json: {sha256: 986f6be5036784161c539c46a8788b8ed1f05a2500692850300dd6073fa205bc, size_bytes: 184}
+      model.safetensors: {sha256: d31662328d49caf339d1f07eff20835a6444a1a373af46301f3427ca4043c712, size_bytes: 2419817584}
+      special_tokens_map.json: {sha256: 6f38c73729248f6c127296386e3cdde96e254636cc58b4169d3fd32328d9a8ec, size_bytes: 296}
+      tokenizer.json: {sha256: 6b9e4e7fb171f92fd137b777cc2714bf87d11576700a1dcd7a399e7bbe39537b, size_bytes: 17209920}
+      tokenizer_config.json: {sha256: 06cf8bb52c93bb82c7f8e416646cb1e01fe48e5df5ce509377637b9eca0037f5, size_bytes: 324}
+  entrypoint: generate
+
+build_profiles:
+  w4a16:
+    runner_class: expensive
+    components:
+      model:
+        parameters: {precision: a16w4, max_num_tokens: 4096, language_group_size: 128}

@@ -17,7 +17,7 @@ import {
   apiText, profileGroups, variantPackage, modelPackArtifacts, catalogModelForRun,
   compilerFilteredBuilds, documentationHeroUrl, documentationHeroFallbackUrl,
 } from "./api.js";
-import { packageFormat, artifactDelivery, deploymentSize, huggingFaceLocation } from "./downloads.js";
+import { packageFormat, artifactDelivery, deploymentSize, downloadOffered, huggingFaceLocation } from "./downloads.js";
 
 function githubModelUrl(run, modelId, sourceCommit = run.commit_sha) {
   const organization = String(state.repository.organization || "");
@@ -895,11 +895,14 @@ function fidelityPanel(tests, runId) {
   </div>`;
 }
 
-function licensePanel(license) {
+// `listed` is the license's entry in licenses.json: its name, and what it asks of someone who redistributes
+// the model.
+function licensePanel(license, listed) {
   if (!license?.spdx) return "";
   const redistribution = license.redistribution ? `Redistribution ${license.redistribution}` : "Redistribution not recorded";
   return `<section id="license-section" class="license-section" tabindex="-1"><div class="detail-section-title"><h3>License</h3></div>
-    <p class="license-line"><strong>${escapeHtml(license.spdx)}</strong><span>${escapeHtml(redistribution)}</span></p>
+    <p class="license-line"><strong>${escapeHtml(license.spdx)}</strong>${listed ? `<span>${escapeHtml(listed.name)}</span>` : ""}<span>${escapeHtml(redistribution)}</span></p>
+    ${listed ? `<p class="license-summary">${escapeHtml(listed.summary)}</p>` : ""}
     ${license.attribution ? `<p class="license-attribution">${escapeHtml(license.attribution)}</p>` : ""}
   </section>`;
 }
@@ -1052,7 +1055,10 @@ export function renderDetail(variant) {
       ? keyValue("Maximum context", `${parameters.max_num_tokens.toLocaleString("en-US")} tokens (input + output)`) : "",
     hasImageResolution ? keyValue("Image input resolution", `${parameters.input_height} × ${parameters.input_width} pixels`) : "",
   ].join("") : "";
-  const license = run.metadata?.license;
+  // The catalog carries the license model.yaml declares now. A build's own metadata keeps the license it
+  // was compiled with.
+  const license = catalogModel?.license || run.metadata?.license;
+  const offered = downloadOffered(license?.spdx, variant.licenses);
   // CI reuses a build until its compile inputs change, so the build's commit can predate the scripts
   // that measured it. The source link opens the commit the model card comes from; Build provenance
   // keeps the build's own commit.
@@ -1073,7 +1079,8 @@ export function renderDetail(variant) {
   const singleComponent = details.length === 1;
   const order = pipelineOrder(variant);
   const backLabel = elements["result-title"].textContent || "Models";
-  const downloadAction = fullPackage
+  const downloadAction = !offered ? `<span class="download-unavailable">${icons.license}Not available for download</span>`
+    : fullPackage
     ? `<button class="download-action" type="button" data-download="package" data-run-id="${escapeHtml(fullPackage.run_id)}">${icons.download}<span>${downloadLabel}</span>${packageArtifact ? `<small>${escapeHtml(formatBytes(deploymentSize(packageArtifact)))}</small>` : ""}</button>`
     : hasArtifacts ? `<button class="download-action" type="button" data-download-variant="${escapeHtml(run.id)}" data-run-id="${escapeHtml(run.id)}">${icons.download}<span>${downloadLabel}</span></button>` : "";
   const sections = [
@@ -1113,7 +1120,7 @@ export function renderDetail(variant) {
     ${accuracyMarkup}
 
     ${customerView ? "" : `<section id="details-section" class="details-section" tabindex="-1"><div class="detail-section-title"><h3>Details</h3></div>
-      ${packageCard(variant, fullPackage, packageArtifact, hasArtifacts, singleComponent)}
+      ${offered ? packageCard(variant, fullPackage, packageArtifact, hasArtifacts, singleComponent) : ""}
       ${fullPackage ? fidelityPanel(variant.packageTests?.test_results || [], fullPackage.run_id) : ""}
       <div class="disclosure-list">
         ${disclosure("provenance", "Build provenance", `<dl class="key-grid">
@@ -1128,7 +1135,7 @@ export function renderDetail(variant) {
       </div>
     </section>`}
 
-    ${licensePanel(license)}
+    ${licensePanel(license, variant.licenses?.[license?.spdx])}
   </div>`;
   loadModelCard();
 }
