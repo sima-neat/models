@@ -74,7 +74,10 @@ Remove a selected variant using the × in its table heading or its chart label.
 The chart labels only selected variants plotted against its current dataset and metric.
 Selections without matching accuracy or throughput appear only in the comparison table.
 The graph, table and model selector update together. The link
-preserves the task and selected variants. LLM, VLM and audio comparisons show **TBD**.
+preserves the task and selected variants. Tasks containing only LLM, VLM or audio models
+show **TBD**. Multimodal detectors can still join a vision-task comparison. A build with
+independent component performance retains its accuracy in the table, with no combined
+throughput to plot.
 
 On a phone, the section navigation shortens **Developer docs** to **Docs**.
 

@@ -65,8 +65,11 @@ shown below the chart title, with a Dataset & metric selector when multiple grou
 are available. A point popup identifies its model, variant and measurements. Muted points become colored when selected; a
 compact table below aligns up to three selections. A compact Add model selector supports keyboard and mobile selection, including
 variants with missing measurements. The graph legend includes plotted selections only;
-variants without matching measurements remain in the table. Selection colors use the shared SiMa blue,
-green and orange palette. LLM/VLM comparisons remain TBD.
+variants without matching measurements remain in the table. Independent-component
+builds retain their accuracy in that table without a combined performance reading.
+Selection colors use the shared SiMa blue, green and orange palette. Tasks containing
+only non-vision models remain TBD; a multimodal detector does not disable an existing
+vision-task comparison.
 
 The model page reads at a glance first and expands on request.
 The header pairs its title, description and Download action with a compact model

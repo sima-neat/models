@@ -1552,7 +1552,7 @@ def test_compare_bolds_the_best_whole_model_value() -> None:
     metrics = _browser_source("metrics.js").replace("export ", "")
     script = _browser_source("compare-view.js")
     # measuredText and bestValue, without the model report reader between them.
-    measured = script[script.index("function measuredText("):script.index("// Each build's performance measures")]
+    measured = script[script.index("function measuredText("):script.index("function variantMeasurements(")]
     best = script[script.index("function bestValue("):script.index("function performanceCell(")]
 
     def build(latency: float | None, throughput: float | None = None) -> dict:

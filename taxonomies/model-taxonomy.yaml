@@ -45,6 +45,10 @@ architecture_paradigms:
 # A family is the upstream model line, named without size (YOLO26-det, not
 # YOLO26n-det). The model's id and display_name carry the size.
 architectures:
+  yolo_world:
+    display_name: YOLO-World
+    paradigm: cnn
+    allowed_model_types: [vlm]
   clip:
     display_name: CLIP
     paradigm: transformer

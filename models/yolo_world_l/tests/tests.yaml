@@ -1,0 +1,19 @@
+conversion:
+  run_tests: true
+compile:
+  run_tests: true
+accuracy:
+  run_tests: true
+  expected:
+    w8a8_mixed_w16a16:
+      coco-2017-val:
+        coco_map: 0.0
+performance:
+  run_tests: true
+  expected:
+    w8a8_mixed_w16a16:
+      components:
+        text_encoder:
+          throughput_fps: 1.0
+        detector:
+          throughput_fps: 1.0
