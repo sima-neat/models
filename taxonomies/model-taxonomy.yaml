@@ -53,6 +53,10 @@ architectures:
     display_name: DepthART
     paradigm: transformer
     allowed_model_types: [vision]
+  dla:
+    display_name: DLA
+    paradigm: cnn
+    allowed_model_types: [vision]
   gemma:
     display_name: Gemma
     paradigm: transformer
