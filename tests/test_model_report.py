@@ -210,7 +210,8 @@ def test_the_package_needs_only_the_standard_library():
         "print(sorted(third_party - {'model_report', '__main__'}))"
     )
     result = subprocess.run(
-        [sys.executable, "-I", "-c", f"import sys; sys.path.insert(0, {str(REPOSITORY / 'tools')!r}); {probe}"],
+        # Exclude site packages and system sitecustomize; the package promises a standard-library-only import.
+        [sys.executable, "-I", "-S", "-c", f"import sys; sys.path.insert(0, {str(REPOSITORY / 'tools')!r}); {probe}"],
         capture_output=True, text=True, check=True,
     )
     assert result.stdout.strip() == "[]"
@@ -437,7 +438,12 @@ def test_every_single_component_script_benchmarks_a_dataset_image(script, monkey
     assert report["components"]["model"]["mla_stage_stats"] == CORE_REPORT["mla_stage_stats"]
 
 
-@pytest.mark.parametrize("script", performance_scripts(components=True), ids=lambda path: path.parents[1].name)
+@pytest.mark.parametrize(
+    "script", [path for path in performance_scripts(components=True)
+               if yaml.safe_load((path.parents[1] / "model.yaml").read_text())["performance"].get("scope")
+               != "components"],
+    ids=lambda path: path.parents[1].name,
+)
 def test_every_multi_component_script_keeps_cores_mla_stats(script, monkeypatch):
     requests = []
 
@@ -466,7 +472,12 @@ def test_every_multi_component_script_keeps_cores_mla_stats(script, monkeypatch)
     assert (layer_stats, stage_stats) == (CORE_REPORT["mla_layer_stats"], CORE_REPORT["mla_stage_stats"])
 
 
-@pytest.mark.parametrize("script", performance_scripts(components=True), ids=lambda path: path.parents[1].name)
+@pytest.mark.parametrize(
+    "script", [path for path in performance_scripts(components=True)
+               if yaml.safe_load((path.parents[1] / "model.yaml").read_text())["performance"].get("scope")
+               != "components"],
+    ids=lambda path: path.parents[1].name,
+)
 def test_every_multi_component_script_feeds_its_backbone_a_dataset_frame(script, monkeypatch, tmp_path):
     monkeypatch.setitem(sys.modules, "pyneat", types.SimpleNamespace(
         ModelOptions=ModelOptions, Tensor=Tensor, **SCRIPT_PYNEAT,
@@ -476,13 +487,21 @@ def test_every_multi_component_script_feeds_its_backbone_a_dataset_frame(script,
     image = functions["sample_image"](benchmark_dataset(tmp_path))
     frame = functions["frame_tensor"](image)
 
-    assert image.parent.name == "val2017"
+    metadata = yaml.safe_load((script.parents[1] / "model.yaml").read_text(encoding="utf-8"))
+    splits = {"coco-2017": "val2017", "imagenet-2012": "val2012"}
+    assert image.parent.name == splits[metadata["accuracy"]["datasets"][0]["id"]]
     assert_letterboxed_frame(frame)
     assert frame.options["memory"] == "EV74"
     options = functions["image_options"]()
-    assert (options.preprocess.kind, options.preprocess.resize.mode, options.preprocess.preset) == (
-        "Image", "Stretch", "ImageNet"
-    )
+    assert (options.preprocess.kind, options.preprocess.resize.mode) == ("Image", "Stretch")
+    # The first component normalizes with the ImageNet preset, or with the mean and std of its own preprocessing.
+    normalize = options.preprocess.normalize
+    if getattr(normalize, "has_explicit_stats", False):
+        calibration = runpy.run_path(str(script.parent / "calibration.py"))
+        assert list(normalize.mean) == pytest.approx(calibration["MEAN"].tolist())
+        assert list(normalize.stddev) == pytest.approx(calibration["STD"].tolist())
+    else:
+        assert options.preprocess.preset == "ImageNet"
     height, width = frame.array.shape[:2]
     assert (options.preprocess.input_max_width, options.preprocess.input_max_height) == (width, height)
 
@@ -497,3 +516,31 @@ def test_model_code_uses_cores_mla_stats_names():
         if name in path.read_text(encoding="utf-8")
     ]
     assert uses == []
+
+
+def test_independent_components_keep_their_own_metrics_telemetry_and_evidence(tmp_path):
+    image = model_report.from_performance(Saved(CORE_REPORT), {"image_encoder": Model("image")}, workload="image")
+    text_core = {**CORE_REPORT, "fps": 600.0, "latency_ms": 2.0,
+                 "telemetry": {**CORE_REPORT["telemetry"], "power_som_watts": {
+                     **CORE_REPORT["telemetry"]["power_som_watts"], "mean": 4.0}}}
+    text = model_report.from_performance(Saved(text_core), {"text_encoder": Model("text")}, workload="text")
+    model_report.from_component_performance({"image_encoder": image, "text_encoder": text}).save(tmp_path)
+    report = saved_report(tmp_path)
+    assert report["scope"] == "components" and "metrics" not in report and "telemetry" not in report
+    for name, expected in (("image_encoder", image), ("text_encoder", text)):
+        component = report["components"][name]
+        for key in ("metrics", "telemetry", "workload"):
+            assert component[key] == expected.document[key]
+        assert (tmp_path / f"{name}-benchmark-report.json").is_file()
+    assert report["components"]["text_encoder"]["metrics"]["energy_per_inference_joules"] == pytest.approx(4 / 600)
+
+
+def test_component_reports_reject_wrong_components_and_mixed_runtimes():
+    image = model_report.from_performance(Saved(CORE_REPORT), {"image": Model("image")}, workload="image")
+    with pytest.raises(ValueError, match="exactly that component"):
+        model_report.from_component_performance({"text": image})
+    image.document["runtime"]["pyneat"] = "another-runtime"
+    with pytest.raises(ValueError, match="same runtime"):
+        model_report.from_component_performance({"image": image})
+    with pytest.raises(ValueError, match="at least one component"):
+        model_report.from_component_performance({})

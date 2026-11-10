@@ -36,7 +36,7 @@
   },
   "MIT": {
     "name": "MIT License",
-    "summary": "Permissive license. Redistribution must include the copyright notice and the license text.",
+    "summary": "Permissive license. Redistribution must include the copyright and permission notices.",
     "downloadable": true
   }
 }

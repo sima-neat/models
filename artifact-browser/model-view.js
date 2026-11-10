@@ -328,7 +328,8 @@ function performanceCsv(performance) {
   const telemetry = performance.telemetry;
   const seconds = (milliseconds) => Number.isFinite(milliseconds) && (milliseconds / 1000).toFixed(1);
   [
-    ["Model", performance.modelId], ["Build", performance.buildProfileId], ["Workload", performance.workload],
+    ["Model", performance.modelId], ["Build", performance.buildProfileId],
+    ...(performance.componentId ? [["Component", performance.componentId]] : []), ["Workload", performance.workload],
     ["CPU cores", performance.cpuCores.length], ["Measured", performance.timestamp], ["Board telemetry", telemetry?.status],
     ["Sentinel", telemetry?.sentinelVersion], ["Telemetry samples", telemetry?.samples],
     ["Telemetry interval", seconds(telemetry?.intervalMs), "s"], ["Runtime", performance.tool],
@@ -368,7 +369,7 @@ function csvDataUrl(csv) {
 }
 
 function csvFileName(performance) {
-  const name = [performance.modelId, performance.buildProfileId].filter(Boolean).join("-") || "model";
+  const name = [performance.modelId, performance.buildProfileId, performance.componentId].filter(Boolean).join("-") || "model";
   return `${name.replace(/[^A-Za-z0-9._-]+/g, "_")}-performance.csv`;
 }
 
@@ -580,12 +581,12 @@ export function highlightLayerLegend(event) {
 }
 
 // The KPI tiles, the context line, and Performance details of one performance result.
-function performanceSummary(performance, run, modelId) {
+function performanceSummary(performance, run, modelId, componentId = "") {
   const tiles = KPI_METRICS.map((key) => kpiTile(key, performance.measurements[key])).join("");
   const details = performanceDetails(performance, run);
   return `${tiles ? `<div class="kpis">${tiles}</div>` : ""}
     <p class="performance-context">${escapeHtml(performanceContext(performance))}${measurementSource(run, modelId)}</p>
-    ${disclosure(`performance:${run.id}`, "Performance Details", details.markup, details.titles.join(" · "))}`;
+    ${disclosure(`performance:${run.id}${componentId ? `:${componentId}` : ""}`, "Performance Details", details.markup, details.titles.join(" · "))}`;
 }
 
 // Component and role ids read as words: "feature_extractor" becomes "Feature extractor".
@@ -664,13 +665,19 @@ function renderMlaUtilization(components, simulation, precisions, throughputFps,
 // execution graph.
 function modelPerformance(variant, modelId) {
   const benchmarkRun = variant.performance;
-  const result = readPerformance(benchmarkRun, pipelineOrder(variant) || []);
+  const order = pipelineOrder(variant) || variant.details.map((detail) => detail.summary.run.metadata.component_id);
+  const result = readPerformance(benchmarkRun, order);
   if (result.kind === "missing") return `<p class="muted-message">Not measured at this revision.</p>`;
   if (result.kind === "unsupported") return `<p class="muted-message">This result format is not supported by this browser.</p>`;
   const { run } = benchmarkRun;
   const components = result.value.components.map((component) => ({ ...component, label: humanize(component.id) }));
+  const summary = result.value.scope === "components"
+    ? componentPanels(components.map(({ label }) => label), components.map((component) =>
+      performanceSummary({ ...result.value, ...component, componentId: component.id, components: [component] },
+        run, modelId, component.id)))
+    : performanceSummary(result.value, run, modelId);
   return `<div class="component-performance">
-    ${performanceSummary(result.value, run, modelId)}
+    ${summary}
     ${layerAnalysisSection(components.map(({ label, layerAnalysis }) => ({ label, analysis: layerAnalysis })), run.id)}
     ${renderMlaUtilization(components, mlaStageSimulation(variant.packageTests?.test_results), componentPrecisions(variant),
       result.value.measurements.throughput_fps?.value, run.id)}
@@ -1112,7 +1119,9 @@ export function renderDetail(variant) {
     ${overviewMarkup}
 
     <section id="components-section" class="component-section" tabindex="-1"><div class="detail-section-title"><h3>Performance on ${escapeHtml(targetName(run))}</h3></div>
-      ${singleComponent ? "" : `<p class="section-lede">This model runs as ${details.length} components, measured running together.</p>`}
+      ${singleComponent ? "" : `<p class="section-lede">${variant.performance?.report?.scope === "components"
+        ? "Each component is benchmarked independently. Select a component to view its measurements."
+        : `This model runs as ${details.length} components, measured running together.`}</p>`}
       ${order ? pipelineStrip(variant.pipeline) : ""}
       ${modelPerformance(variant, model)}
     </section>

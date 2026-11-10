@@ -152,8 +152,11 @@ not the MPK alone:
    YOLO26 resizes with `ResizeMode.Letterbox` and keeps Neat's default
    scaling of pixels to [0, 1]. ResNet-50 and RF-DETR's backbone resize with
    `ResizeMode.Stretch` and set `preprocess.preset =
-   NormalizePreset.ImageNet`; without a preset, Neat applies no mean or
-   standard deviation.
+   NormalizePreset.ImageNet`. CLIP ViT-B/16 and SigLIP 2 ViT-B/16 also stretch,
+   and set their own mean and standard deviation in
+   `preprocess.normalize.mean` and `stddev` with
+   `normalize.has_explicit_stats = True`. Without a preset or explicit
+   statistics, Neat applies no mean or standard deviation.
 
 The report's `workload` names the dataset, the image, the frame, and the
 decoder settings. Preprocessing is part of the measurement and can bound
@@ -218,6 +221,49 @@ model's; component numbers are never added together.
 Throughput cannot exceed `1 / (1 / backbone_fps + 1 / decoder_fps)` for
 component rates measured on the same board, because the MLA runs one MPK at a
 time. A result well below that rate points at the pipeline, not the model.
+
+### Independent components
+
+Components that can run independently, such as CLIP's image and text encoders,
+use this declaration instead of a composed pipeline benchmark:
+
+```yaml
+performance:
+  scope: components
+```
+
+Omitting `scope` keeps the whole-model behavior (`scope: model`), including for
+RF-DETR. Both modes publish one performance run per build profile and require
+all declared components. Independent components are measured one at a time;
+their timings, power, memory and energy are not added or averaged.
+
+The script builds each component's result with the existing helper, then saves
+one report:
+
+```python
+reports[component] = model_report.from_performance(
+    model.benchmark(options), {component: model}, workload=workload,
+)
+model_report.from_component_performance(reports).save(output)
+```
+
+A component report has `scope: components` and a `components` map. Every entry
+contains its own `metrics`, `workload`, `telemetry`, execution plan and MLA stats.
+There are no top-level combined metrics. The required metrics and regression
+limits apply to every component; `tests/tests.yaml` declares expectations under
+`performance.expected.<profile>.components.<component>.throughput_fps`.
+Core's evidence files are named `<component>-benchmark-report.json`.
+
+Publication keeps the shared model package as the parent run and identifies
+measurements by `component_id`; model-level measurements retain their existing
+identity. The model page shows a component selector and the selected component's
+metric cards. The catalog table lists each component separately. CSV downloads
+identify the selected component and contain its readings.
+
+For CLIP, the image benchmark includes Neat preprocessing of a 720p RGB frame.
+The text benchmark uses prepared 77-token embeddings. Tokenization, CPU token
+lookup and image/text similarity scoring happen outside these independent
+encoder measurements; each workload states that boundary.
 
 ## MLA profiling
 
