@@ -527,9 +527,10 @@ shutil.copytree(os.environ["DEPLOYMENT_SOURCE"], sys.argv[2])
 
 
 @pytest.mark.parametrize("future_mask, log_probe", [(True, True), (False, True), (True, False)])
-def test_whisper_recipe_and_saved_script_preserve_settings(tmp_path, future_mask, log_probe):
+@pytest.mark.parametrize("model_id", ["whisper_small", "whisper_medium", "whisper_large_v3_turbo"])
+def test_whisper_recipe_and_saved_script_preserve_settings(tmp_path, future_mask, log_probe, model_id):
     work = tmp_path / "source with spaces"
-    checkpoint = work / "whisper-small"
+    checkpoint = work / model_id.replace("_", "-")
     checkpoint.mkdir(parents=True)
     output = tmp_path / "compiled output"
     tools = tmp_path / "bin"
@@ -579,16 +580,16 @@ class WhisperModel:
         f"--{'' if future_mask else 'no-'}use_future_token_mask",
         f"--{'' if log_probe else 'no-'}enable_log_probe",
     ]
-    recipe = ROOT / "models/whisper_small/scripts/compile.sh"
+    recipe = ROOT / "models" / model_id / "scripts/compile.sh"
     for script, arguments, destination in (
         (recipe, [str(checkpoint), str(output), *options], output),
-        (output / "compile.sh", [], work / "whisper-small-a16w8"),
+        (output / "compile.sh", [], work / f"{checkpoint.name}-a16w8"),
     ):
         subprocess.run(["bash", str(script), *arguments], cwd=work, env=env,
                        check=True, capture_output=True, text=True)
         calls = json.loads(captured.read_text())
         assert (work / calls["source"]["hf_cache_path"]).resolve() == checkpoint
-        assert calls["source"]["model_name"] == "whisper-small"
+        assert calls["source"]["model_name"] == checkpoint.name
         assert (work / calls["source"]["sima_path"]).resolve() == destination / "sima_files"
         assert calls["source"]["use_future_token_mask"] is future_mask
         assert calls["source"]["enable_log_probe"] is log_probe
@@ -598,9 +599,9 @@ class WhisperModel:
         assert calls["generation"]["part"] == "all"
         assert calls["generation"]["resume"] is True
         if script == recipe:
-            source = load_and_validate_model(ROOT / "models/whisper_small")["components"][0]["source"]
+            source = load_and_validate_model(ROOT / "models" / model_id)["components"][0]["source"]
             config = next(item for item in source["files"] if item["path"] == source["entrypoint"])
-            save_llima_recipe(recipe.parent, output, [checkpoint.name, "whisper-small-a16w8", *options],
+            save_llima_recipe(recipe.parent, output, [checkpoint.name, f"{checkpoint.name}-a16w8", *options],
                               {checkpoint.name: config["uri"]})
     assert os.access(output / "compile.sh", os.X_OK)
     assert (output / "compile.py").read_bytes() == recipe.with_suffix(".py").read_bytes()
