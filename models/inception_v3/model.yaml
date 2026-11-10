@@ -10,9 +10,9 @@ modalities:
 architecture: inception
 
 license:
-  spdx: BSD-3-Clause
+  spdx: Apache-2.0
   redistribution: allowed
-  attribution: Derived from torchvision's Inception v3 ImageNet weights (IMAGENET1K_V1) as published in timm/inception_v3.tv_in1k, and distributed under BSD-3-Clause.
+  attribution: Derived from Google's Inception v3 ImageNet weights as ported by torchvision (IMAGENET1K_V1, BSD-3-Clause) and published in timm/inception_v3.tv_in1k, and distributed under Apache-2.0.
 
 upstream:
   repository: https://huggingface.co/timm/inception_v3.tv_in1k
