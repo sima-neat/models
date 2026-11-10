@@ -1194,7 +1194,7 @@ def test_performance_and_accuracy_name_the_commit_and_workflow_that_measured_the
     assert r"/^[a-f0-9]{40}$/i.test(commit)" in measurement_source
     assert 'target="_blank" rel="noreferrer"' in measurement_source
     assert "${measurementSource(run, modelId)}</p>" in script
-    assert "${performanceSummary(result.value, run, modelId)}" in script
+    assert "performanceSummary(result.value, run, modelId)" in script
     assert "measurementSource(variant.accuracy.run, modelId)" in script
     assert "${escapeHtml(dataset.split || \"\")}${sourceMarkup}</p>" in script
     assert ".measurement-link {" in styles
@@ -1329,7 +1329,7 @@ def test_performance_rendering_reads_the_model_report_and_is_charted() -> None:
     assert '<p class="muted-message">Not measured at this revision.</p>' in script
     # Each headline tile shows one number; Performance Details has three cards on the left and two on the right.
     assert "KPI_METRICS.map((key) => kpiTile(key, performance.measurements[key]))" in script
-    assert 'disclosure(`performance:${run.id}`, "Performance Details", details.markup' in script
+    assert '"Performance Details", details.markup' in script
     for card in ['["performance", "Performance"', '["heat", "Heat"', '["cpu", "CPU"', '["power", "Power"',
                  '["memory", "Memory"']:
         assert card in script

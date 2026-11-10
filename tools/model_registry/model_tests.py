@@ -77,6 +77,20 @@ def measured_shortfalls(model_dir: str | Path, stage: str, profile_id: str, repo
     if not expected:
         return [f"{TESTS_FILE} expects no {stage} values of {profile_id}"]
     if stage == "performance":
+        if "components" in expected:
+            if report.get("scope") != "components":
+                return ["performance scope must be components"]
+            return [
+                shortfall
+                for component, values in expected["components"].items()
+                for shortfall in (
+                    _shortfalls(
+                        f"{component}: ", values, report["components"][component]["metrics"], PERFORMANCE_ALLOWED_DROP
+                    )
+                    if component in report.get("components", {})
+                    else [f"{component} was not measured"]
+                )
+            ]
         return _shortfalls("", expected, report["metrics"], PERFORMANCE_ALLOWED_DROP)
     measured = report["datasets"]
     return [
@@ -167,6 +181,21 @@ def _require_expected_values(path: Path, stage: str, expected: dict[str, Any], m
     for profile in profiles:
         values = expected.get(profile, {})
         if stage == "performance":
+            if model[stage].get("scope") == "components":
+                components = {component["id"] for component in model["components"]}
+                if set(values.get("components", {})) != components:
+                    raise ValidationError(
+                        f"{path}: performance.expected.{profile}.components must name {sorted(components)}"
+                    )
+                for component in components:
+                    _require_metric_values(
+                        path,
+                        stage,
+                        f"performance.expected.{profile}.components.{component}",
+                        values["components"][component],
+                        ["throughput_fps"],
+                    )
+                continue
             _require_metric_values(path, stage, f"{stage}.expected.{profile}", values, ["throughput_fps"])
             continue
         datasets = model["accuracy"]["datasets"]

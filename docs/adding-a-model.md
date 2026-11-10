@@ -310,7 +310,7 @@ is always benchmarked again.
 | the Convert workflow, `scripts/run_model_conversion.sh`, or the registry's conversion, fetch or source code | nothing. When the change alters converted output, raise `FINGERPRINT_VERSION` in `conversion.py`, and every conversion-backed model then needs Convert again. |
 | a model's tests, or `scripts/run_model_tests.sh` | nothing. The changed test runs the next time its stage runs. |
 | a model's `fp32_baseline_accuracy.py` | nothing; no stage runs it |
-| a model's `performance.py` or `performance` declaration | that model's performance stages |
+| a model's `performance.py` or `performance` declaration, including `scope` | that model's performance stages |
 | a profile's `benchmark_baseline` | that profile's performance; no compilation |
 | `accuracy.py`, its requirements, the `accuracy` datasets, or one of their pins | that model's accuracy stages |
 | a task's entry in `datasets/<id>.yaml` | the accuracy stages of models with that task that evaluate the dataset |
