@@ -16,6 +16,7 @@ SLOTS = 80
 COMPONENTS = ("text_encoder", "detector")
 DETECTOR_INPUTS = {"images": (1, 3, 640, 640), "text_embeddings": (1, SLOTS, 512), "prompt_mask": (1, SLOTS)}
 TEXT_INPUTS = {"token_embeddings": (1, 512, 1, 77), "eos_selector": (1, 1, 1, 96)}
+CALIBRATION_PROMPT_ROWS = 32
 BF16_MAX = np.float32(3.3895313892515355e38)
 
 
@@ -90,6 +91,11 @@ def prepare_model(source: Path, directory: Path):
     encoder = TextEncoder(state)
     text_path = directory / "text_encoder.onnx"
     export(encoder, text_inputs, ["text_embeddings"], text_path)
+    # Simulation-only graph: independent prompts occupy rows, keeping batch one.
+    # The separately compiled text_encoder.onnx and its application contract stay unchanged.
+    calibration_inputs = {name: np.repeat(value, CALIBRATION_PROMPT_ROWS, axis=2)
+                          for name, value in text_inputs.items()}
+    export(encoder, calibration_inputs, ["text_embeddings"], directory / "text_calibration.onnx")
     np.save(directory / "token_embedding_table.npy", table, allow_pickle=False)
     for name, value in assets.items():
         destination = directory / Path(name).name

@@ -38,7 +38,8 @@ def pack_heads(x):
 
 
 def merge_heads(x):
-    return torch.cat(torch.split(x, 1, dim=2), dim=1)
+    # Each head retains every independent prompt row. The deployed graph has one row.
+    return torch.cat(torch.split(x, x.shape[2] // HEADS, dim=2), dim=1)
 
 
 class Block(nn.Module):

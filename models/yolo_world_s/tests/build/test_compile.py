@@ -53,6 +53,42 @@ def test_bf16_text_configuration_skips_calibration(load_script, monkeypatch):
     assert config["per_token_quant"] is False
 
 
+def test_prompt_rows_preserve_order_and_share_a_content_bound_cache(tmp_path, load_script, monkeypatch):
+    import contextlib
+    import sys
+    from types import SimpleNamespace
+
+    calibration = load_script("calibration")
+    monkeypatch.setitem(sys.modules, "jax", SimpleNamespace(default_matmul_precision=lambda _: contextlib.nullcontext()))
+    monkeypatch.setattr(sys.modules["afe.apis.defines"], "InputName", str)
+    prompts = [str(i) for i in range(65)]
+    table = np.zeros((1, 512), np.float32)
+    graph, tokenizer = tmp_path / "text.onnx", tmp_path / "tokenizer.json"
+    graph.write_bytes(b"first-graph")
+    tokenizer.write_bytes(b"tokenizer")
+    monkeypatch.setattr(calibration, "tokenize", lambda *args: (
+        np.arange(len(prompts), dtype=np.float32)[:, None, None, None], np.zeros((len(prompts), 1, 96, 1), np.float32)))
+    calls = []
+
+    class Encoder:
+        def execute(self, *, inputs, use_jax):
+            values = next(iter(inputs.values()))
+            assert values.shape == (1, 32, 1, 1) and use_jax
+            calls.append(values.copy())
+            return [np.eye(512, dtype=np.float32)[values.reshape(-1).astype(int)][None, :, None, :]]
+
+    arguments = (prompts, graph, tokenizer, table, Encoder)
+    first = calibration.cached_prompt_vectors(*arguments, cache_dir=tmp_path / "cache")
+    np.testing.assert_array_equal(first, np.eye(512, dtype=np.float32)[:65])
+    assert len(calls) == 3
+    np.testing.assert_array_equal(calls[-1].reshape(-1), np.full(32, 64))
+    np.testing.assert_array_equal(calibration.cached_prompt_vectors(*arguments, cache_dir=tmp_path / "cache"), first)
+    assert len(calls) == 3  # A second model never executes the shared encoder.
+    graph.write_bytes(b"changed-graph")
+    calibration.cached_prompt_vectors(*arguments, cache_dir=tmp_path / "cache")
+    assert len(calls) == 6
+
+
 def test_compiled_components_are_entirely_on_mla(compiled: Path, load_script):
     compiler = load_script("compile")
     manifests = {}

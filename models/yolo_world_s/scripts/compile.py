@@ -94,14 +94,21 @@ def compile_prepared(directory, output, profile_id, dataset=None, quantized_outp
         raise ValueError("this recipe requires the qualified 80-slot projection_attention profile and 128 samples")
     output.mkdir(parents=True, exist_ok=False)
     table = np.load(directory / "token_embedding_table.npy", allow_pickle=False)
+
+    def create_text_calibrator():
+        loaded = load_model(onnx_source(str(directory / "text_calibration.onnx"), layout="NCHW", flexible_batch_size=False),
+                            target=gen2_target)
+        return loaded.quantize(calibration_data=None, quantization_config=quantization("text_encoder", parameters["text_encoder"]),
+                               model_name="yolo_world_text_calibration", log_level=logging.INFO)
+
     with tempfile.TemporaryDirectory(prefix=metadata["id"] + "-compile-") as temporary:
         build = Path(temporary)
-        text = None
         for component in COMPONENTS:
             name = f"{metadata['id']}_{profile_id}_{component}"
             loaded = load_model(onnx_source(str(directory / (component + ".onnx")), layout="NCHW", flexible_batch_size=False),
                                 target=gen2_target)
-            data = (calibration_inputs(dataset, text, directory / "tokenizer.json", table)
+            data = (calibration_inputs(dataset, directory / "text_calibration.onnx", directory / "tokenizer.json", table,
+                                       create_text_calibrator)
                     if component == "detector" else None)
             quantized = loaded.quantize(calibration_data=data, quantization_config=quantization(component, parameters[component]),
                                         model_name=name, log_level=logging.INFO)
@@ -114,7 +121,6 @@ def compile_prepared(directory, output, profile_id, dataset=None, quantized_outp
             audit_mpk(archive)
             if component == "text_encoder":
                 add_prompt_assets(archive, directory)
-                text = quantized
             destination = output / component
             destination.mkdir()
             shutil.copyfile(archive, destination / archive.name)
