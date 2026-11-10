@@ -19,16 +19,19 @@ def _png(width: int, height: int, color: tuple[int, int, int]) -> bytes:
     return stream.getvalue()
 
 
-def test_preprocessing_stretches_to_the_input_and_normalizes_with_imagenet_statistics(
+def test_preprocessing_letterboxes_to_the_input_and_normalizes_with_imagenet_statistics(
     load_script: Callable[[str], ModuleType],
 ) -> None:
     calibration = load_script("calibration")
 
+    # A 4:3 image fills the 720-pixel height at 960 pixels wide, centered between 160 padding columns on each side.
     result = calibration.preprocess_image(_png(500, 375, (255, 0, 0)))
 
-    assert result.shape == (640, 640, 3)
+    assert result.shape == (720, 1280, 3)
     assert result.dtype == np.float32
-    np.testing.assert_allclose(result[320, 320], (np.array([1.0, 0.0, 0.0]) - calibration.MEAN) / calibration.STD)
+    red, padding = ((np.array(pixel) / 255 - calibration.MEAN) / calibration.STD for pixel in ([255, 0, 0], [114] * 3))
+    for column, expected in ((159, padding), (160, red), (1119, red), (1120, padding)):
+        np.testing.assert_allclose(result[400, column], expected, rtol=1e-6)
 
 
 def test_calibration_draws_a_seeded_sample_from_cal2017_only(
@@ -205,7 +208,7 @@ def test_surgery_requires_the_folded_interface(tmp_path: Path, load_script: Call
 
 def _mpk_manifest(compile_module: ModuleType) -> dict:
     return {
-        "input_nodes": [{"name": "input", "size": 1 * 3 * 640 * 640 * 4}],
+        "input_nodes": [{"name": "input", "size": 1 * 3 * 720 * 1280 * 4}],
         "plugins": [
             {"sequence": 0, "processor": "EV74", "config_params": {"kernel": "quantize"}},
             {"sequence": 1, "processor": "MLA", "config_params": {}},
@@ -255,8 +258,10 @@ def test_mpk_audit_requires_one_mla_segment_and_the_declared_interface(
     ("profile_id", "expected"),
     [
         ("w16a16", {"precision": "w16a16"}),
-        ("w8a16", {"precision": "w8a16", "per_token": True}),
-        ("w8a8", {"precision": "w8a8", "calibration_bins": 2048, "calibration_samples": 50}),
+        (
+            "w8a8_mixed",
+            {"precision": "w8a8", "calibration_bins": 2048, "calibration_samples": 50, "bf16_regions": ["heads"]},
+        ),
     ],
 )
 def test_compile_reads_the_declared_build_parameters(
@@ -265,39 +270,136 @@ def test_compile_reads_the_declared_build_parameters(
     assert load_script("compile")._parameters(profile_id) == expected
 
 
-@pytest.mark.parametrize(
-    ("precision", "calibrates", "per_token"), [("w8a8", True, False), ("w8a16", False, True), ("w16a16", False, False)]
-)
+def test_bf16_regions_belong_to_a_w8a8_profile_marked_mixed(load_script: Callable[[str], ModuleType]) -> None:
+    recipe = load_script("compile")
+    assert recipe._bf16_regions("w8a8_mixed", {"precision": "w8a8", "bf16_regions": ["heads"]}) == ["heads"]
+    assert recipe._bf16_regions("w16a16", {"precision": "w16a16"}) == []
+
+    for profile_id, parameters, error in [
+        ("w8a8", {"precision": "w8a8", "bf16_regions": ["heads"]}, "mixed token"),
+        ("w8a8_mixed", {"precision": "w8a8"}, "mixed token"),
+        ("w16a16_mixed", {"precision": "w16a16", "bf16_regions": ["heads"]}, "W8A8 build"),
+        ("w8a8_mixed", {"precision": "w8a8", "bf16_regions": ["heads", "heads"]}, "distinct regions"),
+        ("w8a8_mixed", {"precision": "w8a8", "bf16_regions": ["decoder"]}, "unknown BF16 regions"),
+    ]:
+        with pytest.raises(ValueError, match=error):
+            recipe._bf16_regions(profile_id, parameters)
+
+
+@pytest.mark.parametrize(("precision", "calibrates"), [("w8a8", True), ("w16a16", False)])
 def test_quantization_calibrates_only_int8_activations(
-    load_script: Callable[[str], ModuleType], precision: str, calibrates: bool, per_token: bool
+    load_script: Callable[[str], ModuleType], precision: str, calibrates: bool
 ) -> None:
     recipe = load_script("compile")
 
-    recipe._quantization(precision, 2048 if calibrates else None, per_token)
+    recipe._quantization(precision, 2048 if calibrates else None)
 
     arguments = recipe.QuantizationParams.call_args.kwargs
     calibration = recipe.HistogramMSEMethod.return_value if calibrates else recipe.SkipCalibration.return_value
     assert arguments["calibration_method"] is calibration
-    assert arguments.get("per_token_quant", False) is per_token
 
 
-@pytest.mark.parametrize("precision", ["w16a16", "w8a16", "w8a8"])
-def test_only_the_int8_build_quantizes_with_calibration_data_and_only_bf16_keeps_fp32_layer_norms(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, load_script: Callable[[str], ModuleType], precision: str
+def _heads_graph(extra_relu: bool = False) -> onnx.ModelProto:
+    """The decoder's last LayerNorm feeding the class Linear and the three-layer box MLP, as the export names them."""
+    rng = np.random.default_rng(4)
+    helper = onnx.helper
+    box = ["MatMul", "Add", "Relu", "MatMul", "Add", "Relu", "MatMul", "Add", "Sigmoid"]
+    if extra_relu:
+        box.insert(2, "Relu")
+    nodes = [
+        helper.make_node("LayerNormalization", ["h", "gamma", "beta"], ["normed"], name="norm", axis=-1),
+        helper.make_node("MatMul", ["normed", "class_w"], ["class_mm"], name="class_mm"),
+        helper.make_node("Add", ["class_mm", "class_b"], ["logits"], name="class_add"),
+    ]
+    initializers = {
+        "gamma": np.ones(8, np.float32),
+        "beta": np.zeros(8, np.float32),
+        "class_w": rng.standard_normal((8, 5), dtype=np.float32),
+        "class_b": rng.standard_normal(5, dtype=np.float32),
+    }
+    previous, layer = "normed", 0
+    for index, kind in enumerate(box):
+        name = f"box_{index}"
+        if kind == "MatMul":
+            layer += 1
+            width = 4 if layer == 3 else 8
+            initializers[f"box_w{layer}"] = rng.standard_normal((8, width), dtype=np.float32)
+            initializers[f"box_b{layer}"] = rng.standard_normal(width, dtype=np.float32)
+            inputs = [previous, f"box_w{layer}"]
+        elif kind == "Add":
+            inputs = [previous, f"box_b{layer}"]
+        else:
+            inputs = [previous]
+        output = "pred_boxes" if index == len(box) - 1 else name
+        nodes.append(helper.make_node(kind, inputs, [output], name=name))
+        previous = output
+    return _model(nodes, {"h": [1, 3, 8]}, {"logits": [1, 3, 5], "pred_boxes": [1, 3, 4]}, initializers)
+
+
+def test_heads_annotation_marks_each_head_operation_bf16_and_keeps_the_outputs(
+    tmp_path: Path, load_script: Callable[[str], ModuleType]
+) -> None:
+    surgery = load_script("surgery")
+    graph = tmp_path / "rewritten.onnx"
+    onnx.save(_heads_graph(), graph)
+
+    assert surgery.annotate_bf16_regions(graph, ["heads"]) == surgery.HEAD_OPERATIONS
+
+    annotated = onnx.load(graph)
+    producers = {output: node for node in annotated.graph.node for output in node.output}
+    marks = [node for node in annotated.graph.node if node.op_type == "AnnotatePrecision"]
+    assert len(marks) == surgery.HEAD_OPERATIONS
+    assert all(node.domain == "ai.sima" and node.attribute[0].s == b"bfloat16" for node in marks)
+    assert {producers[node.input[0]].name for node in marks} == {
+        node.name for node in _heads_graph().graph.node if node.op_type != "LayerNormalization"
+    }
+    assert {producers[name].op_type for name in ("logits", "pred_boxes")} == {"AnnotatePrecision"}
+    assert ("ai.sima", 1) in {(opset.domain, opset.version) for opset in annotated.opset_import}
+
+
+def test_heads_annotation_rejects_an_unexpected_head(tmp_path: Path, load_script: Callable[[str], ModuleType]) -> None:
+    surgery = load_script("surgery")
+    graph = tmp_path / "rewritten.onnx"
+    onnx.save(_heads_graph(extra_relu=True), graph)
+    with pytest.raises(ValueError, match="expected 11 head operations, found 12"):
+        surgery.annotate_bf16_regions(graph, ["heads"])
+
+
+@pytest.mark.parametrize(
+    ("profile_id", "parameters"),
+    [
+        ("w16a16", {"precision": "w16a16"}),
+        (
+            "w8a8_mixed",
+            {"precision": "w8a8", "calibration_bins": 2048, "calibration_samples": 2, "bf16_regions": ["heads"]},
+        ),
+    ],
+)
+def test_only_the_int8_build_calibrates_and_marks_bf16_heads_and_only_bf16_keeps_fp32_layer_norms(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    load_script: Callable[[str], ModuleType],
+    profile_id: str,
+    parameters: dict,
 ) -> None:
     recipe = load_script("compile")
-    parameters = {"precision": precision}
-    if precision == "w8a8":
-        parameters |= {"calibration_bins": 2048, "calibration_samples": 2}
     monkeypatch.setattr(recipe, "_parameters", lambda profile_id: parameters)
-    monkeypatch.setattr(recipe, "calibration_images", lambda dataset, count: np.zeros((count, 640, 640, 3), np.float32))
+    monkeypatch.setattr(
+        recipe, "calibration_images", lambda dataset, count: np.zeros((count, 720, 1280, 3), np.float32)
+    )
     monkeypatch.setattr(recipe, "prepare_model", lambda source, output_dir: output_dir / "rewritten.onnx")
+    annotated, checked = [], []
+    monkeypatch.setattr(recipe, "annotate_bf16_regions", lambda graph, regions: annotated.append(regions) or 11)
+    monkeypatch.setattr(recipe, "_require_bf16_operations", checked.append)
 
     with pytest.raises(RuntimeError, match="expected one MPK"):
-        recipe.compile_model(tmp_path / "model.onnx", tmp_path / "out", precision, tmp_path / "coco.tgz")
+        recipe.compile_model(tmp_path / "model.onnx", tmp_path / "out", profile_id, tmp_path / "coco.tgz")
 
+    int8 = parameters["precision"] == "w8a8"
     quantize = recipe.load_model.return_value.quantize
     data = quantize.call_args.kwargs["calibration_data"]
-    assert (data is recipe.convert_data_generator_to_iterable.return_value) is (precision == "w8a8")
+    assert (data is recipe.convert_data_generator_to_iterable.return_value) is int8
+    assert annotated == ([["heads"]] if int8 else [])
+    assert checked == ([quantize.return_value] if int8 else [])
     compile_options = quantize.return_value.compile.call_args.kwargs
-    assert compile_options["layer_norm_use_fp32_intermediates"] is (precision != "w8a8")
+    assert compile_options["layer_norm_use_fp32_intermediates"] is not int8

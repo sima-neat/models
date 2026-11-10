@@ -43,19 +43,16 @@ build_profiles:
       model:
         parameters: {precision: w16a16}
 
-  w8a8:
+  w8a8_mixed:
     calibration_dataset: coco-2017-cal
     components:
       model:
-        parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 50}
-
-  w8a16:
-    components:
-      model:
-        parameters: {precision: w8a16, per_token: true}
+        # INT8 everywhere except the class and box heads, which run BF16.
+        parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 50, bf16_regions: [heads]}
 
 accuracy:
-  # The reference resizes the shortest side to 800 and masks the padding; accuracy.py stretches to a square 640x640 input.
+  # The reference resizes the shortest side to 800, caps the longest at 1333 and masks the padding. accuracy.py
+  # letterboxes into a fixed 1280x720 input with unmasked padding.
   datasets:
   - {id: coco-2017, variant: val, sha256: a40de1caf42b47c5a8976eb97efe3c83f3a41337c4d16d318eb15d65c293f2da, size_bytes: 898368520}
 

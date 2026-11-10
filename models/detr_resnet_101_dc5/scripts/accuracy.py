@@ -1,8 +1,9 @@
 """Score one compiled DETR ResNet-101 DC5 MPK on COCO val2017 and save its accuracy report.
 
-Each image is stretched to 640x640 and ImageNet-normalized on the CPU, as calibration.preprocess_image
-does. Every one of the 100 queries becomes one detection, as DETR's own COCO evaluation scores them:
-the class with the highest softmax probability, excluding "no object", and its box scaled to the image.
+Each image is letterboxed into the 1280x720 input and ImageNet-normalized on the CPU, as
+calibration.preprocess_image does. Every one of the 100 queries becomes one detection, as DETR's own COCO
+evaluation scores them: the class with the highest softmax probability, excluding "no object", and its box
+mapped back to the image.
 """
 
 from __future__ import annotations
@@ -18,12 +19,12 @@ from collections import deque
 from collections.abc import Callable, Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import Any
 
 import cv2
 import model_report
 import numpy as np
-import pyneat
-from calibration import IMAGE_SIZE, MEAN, STD
+from calibration import INPUT_HEIGHT, INPUT_WIDTH, MEAN, STD, letterbox, letterbox_geometry
 from faster_coco_eval import COCO, COCOeval_faster
 from PIL import Image
 
@@ -53,6 +54,8 @@ MAX_DETECTIONS = [1, 10, 100]
 # Images decode on worker threads while the MPK runs; Pillow releases the GIL while it decodes and resizes.
 WORKERS = 4
 PREFETCH = 8
+# Runs one preprocessed HWC image and returns its (logits, pred_boxes).
+Inference = Callable[[np.ndarray], tuple[np.ndarray, np.ndarray]]
 # calibration.preprocess_image's per-channel arithmetic, tabulated for every uint8 value and laid out HWC.
 NORMALIZE = ((np.arange(256, dtype=np.float32)[:, None] / 255.0 - MEAN) / STD).reshape(1, 256, 3)
 
@@ -60,8 +63,8 @@ NORMALIZE = ((np.arange(256, dtype=np.float32)[:, None] / 255.0 - MEAN) / STD).r
 def preprocess(content: bytes) -> np.ndarray:
     """Return the same values as calibration.preprocess_image, in the MPK's HWC layout."""
     with Image.open(io.BytesIO(content)) as image:
-        resized = image.convert("RGB").resize((IMAGE_SIZE, IMAGE_SIZE), Image.Resampling.BILINEAR)
-    return cv2.LUT(np.asarray(resized), NORMALIZE)
+        letterboxed = letterbox(image.convert("RGB"))
+    return cv2.LUT(np.asarray(letterboxed), NORMALIZE)
 
 
 def prefetched(load: Callable, items: Sequence) -> Iterator:
@@ -85,11 +88,15 @@ def decode(logits: np.ndarray, boxes: np.ndarray, image_id: int, width: int, hei
     probabilities = shifted / shifted.sum(axis=1, keepdims=True)
     categories = probabilities[:, :-1].argmax(axis=1)
     scores = probabilities[np.arange(QUERY_COUNT), categories]
-    # Boxes are (center x, center y, width, height) as fractions of the stretched input, so of the image too.
+    # Boxes are (center x, center y, width, height) as fractions of the letterboxed input. Remove the padding
+    # and undo the resize to reach image pixels.
+    (resized_width, resized_height), (left, top) = letterbox_geometry(width, height)
+    scale_x, scale_y = resized_width / width, resized_height / height
     cx, cy, w, h = boxes[0].T
-    x1, y1 = (cx - w / 2) * width, (cy - h / 2) * height
+    x1 = ((cx - w / 2) * INPUT_WIDTH - left) / scale_x
+    y1 = ((cy - h / 2) * INPUT_HEIGHT - top) / scale_y
     ids = np.full(QUERY_COUNT, image_id)
-    return np.stack([ids, x1, y1, w * width, h * height, scores, categories], axis=1)
+    return np.stack([ids, x1, y1, w * INPUT_WIDTH / scale_x, h * INPUT_HEIGHT / scale_y, scores, categories], axis=1)
 
 
 def coco_stats(scorer: COCOeval_faster) -> dict[str, float]:
@@ -115,32 +122,37 @@ def log(*values: object) -> None:
     print(*values, file=sys.stderr, flush=True)
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--mpk", action="append", required=True, help="model=<path>")
-    parser.add_argument("--dataset", required=True, help="coco-2017-val=<extracted directory>")
-    parser.add_argument("--output", type=Path, required=True, help="directory for model-report.json")
-    parser.add_argument("--limit", type=int, help="measure a seeded sample of images (local runs only)")
-    args = parser.parse_args(argv)
-    dataset_id, dataset_dir = args.dataset.split("=", 1)
-    dataset = Path(dataset_dir)
+def mpk_inference(mpk: Path) -> Inference:
+    """Run the compiled model through PyNeat, building its runner from the first image."""
+    import pyneat
 
-    with contextlib.redirect_stdout(io.StringIO()):
-        ground_truth = COCO(str(dataset / ANNOTATIONS))
-    available = sorted(ground_truth.getImgIds())
-    image_ids = sorted(random.Random(0).sample(available, args.limit)) if args.limit else available
-    records = ground_truth.loadImgs(image_ids)
-
-    model = pyneat.Model(str(parse_mpks(args.mpk)))
+    model = pyneat.Model(str(mpk))
     runner = None
-    rows: list[np.ndarray] = []
-    started = time.monotonic()
-    images = prefetched(lambda record: preprocess((dataset / IMAGES / record["file_name"]).read_bytes()), records)
-    for count, (record, image) in enumerate(zip(records, images), start=1):
+
+    def infer(image: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        nonlocal runner
         tensors = [pyneat.Tensor.from_numpy(image, copy=False)]
         if runner is None:
             runner = model.build(tensors)
         logits, boxes = (output.to_numpy(copy=False) for output in runner.run(tensors, timeout_ms=120000))
+        return logits, boxes
+
+    return infer
+
+
+def evaluate(dataset: Path, infer: Inference, limit: int | None = None) -> dict[str, Any]:
+    """Score infer on COCO val2017, or on a seeded sample of limit images, as model_report expects a dataset."""
+    with contextlib.redirect_stdout(io.StringIO()):
+        ground_truth = COCO(str(dataset / ANNOTATIONS))
+    available = sorted(ground_truth.getImgIds())
+    image_ids = sorted(random.Random(0).sample(available, limit)) if limit else available
+    records = ground_truth.loadImgs(image_ids)
+
+    rows: list[np.ndarray] = []
+    started = time.monotonic()
+    images = prefetched(lambda record: preprocess((dataset / IMAGES / record["file_name"]).read_bytes()), records)
+    for count, (record, image) in enumerate(zip(records, images), start=1):
+        logits, boxes = infer(image)
         rows.append(decode(logits, boxes, record["id"], record["width"], record["height"]))
         if count == 1 or count % 250 == 0 or count == len(records):
             log(f"{count}/{len(records)} images, {(time.monotonic() - started) / count * 1000:.0f} ms/image")
@@ -156,23 +168,30 @@ def main(argv: list[str] | None = None) -> int:
     scorer.accumulate()
     scorer.summarize()
     stats = coco_stats(scorer)
-    scoring_seconds = time.monotonic() - started
+    return {
+        "metrics": stats,
+        "split": IMAGES,
+        "evaluated_samples": len(image_ids),
+        "available_samples": len(available),
+        "details": {
+            "detections": len(detections),
+            "inference_seconds": round(inference_seconds, 1),
+            "scoring_seconds": round(time.monotonic() - started, 1),
+        },
+    }
 
-    report = model_report.from_accuracy(
-        {
-            dataset_id: {
-                "metrics": stats,
-                "split": IMAGES,
-                "evaluated_samples": len(image_ids),
-                "available_samples": len(available),
-                "details": {
-                    "detections": len(detections),
-                    "inference_seconds": round(inference_seconds, 1),
-                    "scoring_seconds": round(scoring_seconds, 1),
-                },
-            },
-        }
-    )
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--mpk", action="append", required=True, help="model=<path>")
+    parser.add_argument("--dataset", required=True, help="coco-2017-val=<extracted directory>")
+    parser.add_argument("--output", type=Path, required=True, help="directory for model-report.json")
+    parser.add_argument("--limit", type=int, help="measure a seeded sample of images (local runs only)")
+    args = parser.parse_args(argv)
+    dataset_id, dataset_dir = args.dataset.split("=", 1)
+
+    result = evaluate(Path(dataset_dir), mpk_inference(parse_mpks(args.mpk)), args.limit)
+    report = model_report.from_accuracy({dataset_id: result})
     report.save(args.output)
     measured = report.document["datasets"][dataset_id]["metrics"]
     print(json.dumps({name: round(value, 4) for name, value in measured.items()}))

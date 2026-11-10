@@ -1,4 +1,4 @@
-"""Stretch and normalize images the way DETR's Hugging Face processor does, and select the INT8 calibration images."""
+"""Letterbox and normalize images the way Neat does for DETR, and select the INT8 calibration images."""
 
 from __future__ import annotations
 
@@ -11,7 +11,11 @@ from pathlib import Path, PurePosixPath
 import numpy as np
 from PIL import Image
 
-IMAGE_SIZE = 640
+# The input is a 720p camera frame, so Neat feeds frames without resizing them. Its 720-pixel short side is
+# within DETR's training scales of 480 to 800.
+INPUT_HEIGHT, INPUT_WIDTH = 720, 1280
+# Neat's default letterbox padding value.
+FILL = 114
 IMAGE_SUFFIXES = (".jpg", ".jpeg", ".webp")
 MEAN = np.asarray([0.485, 0.456, 0.406], dtype=np.float32)
 STD = np.asarray([0.229, 0.224, 0.225], dtype=np.float32)
@@ -20,11 +24,25 @@ CALIBRATION_SPLIT = "cal2017"
 CALIBRATION_SEED = 20260930
 
 
+def letterbox_geometry(width: int, height: int) -> tuple[tuple[int, int], tuple[int, int]]:
+    """Return Neat's letterbox resized (width, height) and (left, top) padding for an image of this size."""
+    scale = min(INPUT_WIDTH / width, INPUT_HEIGHT / height)
+    resized = (int(width * scale + 0.5), int(height * scale + 0.5))
+    return resized, ((INPUT_WIDTH - resized[0]) // 2, (INPUT_HEIGHT - resized[1]) // 2)
+
+
+def letterbox(image: Image.Image) -> Image.Image:
+    """Scale an RGB image to fit the input, keeping its aspect ratio, and center it on FILL padding."""
+    resized, offset = letterbox_geometry(*image.size)
+    canvas = Image.new("RGB", (INPUT_WIDTH, INPUT_HEIGHT), (FILL, FILL, FILL))
+    canvas.paste(image.resize(resized, Image.Resampling.BILINEAR), offset)
+    return canvas
+
+
 def preprocess_image(content: bytes) -> np.ndarray:
-    """Return the model input for one encoded image: RGB stretched to IMAGE_SIZE, ImageNet-normalized, HWC float32."""
+    """Return the model input for one encoded image: RGB letterboxed, ImageNet-normalized, HWC float32."""
     with Image.open(io.BytesIO(content)) as image:
-        resized = image.convert("RGB").resize((IMAGE_SIZE, IMAGE_SIZE), Image.Resampling.BILINEAR)
-        array = np.asarray(resized, dtype=np.float32) / np.float32(255)
+        array = np.asarray(letterbox(image.convert("RGB")), dtype=np.float32) / np.float32(255)
     return (array - MEAN) / STD
 
 

@@ -12,14 +12,16 @@ from PIL import Image
 
 MODEL_DIR = Path(__file__).resolve().parents[1]
 
-IMAGE_SIZE = 640
+# The input is a 720p camera frame, so Neat feeds frames without resizing them. Its 720-pixel short side is
+# within DETR's training scales of 480 to 800.
+INPUT_HEIGHT, INPUT_WIDTH = 720, 1280
 QUERY_COUNT = 100
 # 91 COCO category slots plus the "no object" class.
 CLASS_COUNT = 92
 BACKBONE = "resnet50"
 DILATION = True
 INTERFACE = {
-    "input": [1, 3, IMAGE_SIZE, IMAGE_SIZE],
+    "input": [1, 3, INPUT_HEIGHT, INPUT_WIDTH],
     "logits": [1, QUERY_COUNT, CLASS_COUNT],
     "pred_boxes": [1, QUERY_COUNT, 4],
 }
@@ -118,16 +120,16 @@ def convert(source, output_dir):
 
     def synthetic(seed):
         image = Image.fromarray(
-            np.random.RandomState(seed).randint(0, 256, (IMAGE_SIZE, IMAGE_SIZE, 3), dtype=np.uint8)
+            np.random.RandomState(seed).randint(0, 256, (INPUT_HEIGHT, INPUT_WIDTH, 3), dtype=np.uint8)
         )
-        size = {"height": IMAGE_SIZE, "width": IMAGE_SIZE}
+        size = {"height": INPUT_HEIGHT, "width": INPUT_WIDTH}
         return processor(images=image, size=size, return_tensors="pt")["pixel_values"]
 
     detector = detector.cpu().float().eval()
     samples = [synthetic(seed) for seed in SEEDS]
     # Tracing leaves the eager model returning different outputs, so the references come first. The reference
     # passes the all-ones mask explicitly; the export derives the same mask from the input shape.
-    mask = torch.ones(1, IMAGE_SIZE, IMAGE_SIZE, dtype=torch.long)
+    mask = torch.ones(1, INPUT_HEIGHT, INPUT_WIDTH, dtype=torch.long)
     with torch.inference_mode():
         references = [detector(pixel_values=sample, pixel_mask=mask) for sample in samples]
     expected = [[result.logits.numpy(), result.pred_boxes.numpy()] for result in references]

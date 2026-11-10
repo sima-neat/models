@@ -19,7 +19,7 @@ import numpy as np
 import onnx
 from onnx import helper, numpy_helper
 
-IMAGE_SIZE = 640
+INPUT_HEIGHT, INPUT_WIDTH = 720, 1280
 QUERY_COUNT = 100
 CLASS_COUNT = 92
 # The ResNet-101 backbone's 104 convolutions each carry a frozen batch norm.
@@ -32,7 +32,7 @@ MASKED_ATTENTIONS = ENCODER_LAYERS + DECODER_LAYERS
 ATTENTIONS = ENCODER_LAYERS + 2 * DECODER_LAYERS - 1
 
 INPUT = "input"
-INPUT_SHAPE = [1, 3, IMAGE_SIZE, IMAGE_SIZE]
+INPUT_SHAPE = [1, 3, INPUT_HEIGHT, INPUT_WIDTH]
 OUTPUT_SHAPES = {"logits": [1, QUERY_COUNT, CLASS_COUNT], "pred_boxes": [1, QUERY_COUNT, 4]}
 OUTPUTS = list(OUTPUT_SHAPES)
 VALIDATION_SEED = 123
@@ -40,6 +40,11 @@ VALIDATION_SEED = 123
 # stay below 2e-3 in the logits and 5e-4 in the box fractions, and every confident detection keeps its class.
 LOGITS_TOLERANCE = 3e-3
 BOXES_TOLERANCE = 1e-3
+# Regions a W8A8 build can run BF16. In a host fake-quant screen at 640x640, keeping the heads float recovered 11
+# of the 13 mAP points W8A8 lost, with almost none of the MACs.
+BF16_REGIONS = ("heads",)
+# The class Linear (MatMul, Add) and the box MLP (three MatMul and Add, two Relu, Sigmoid).
+HEAD_OPERATIONS = 11
 
 
 def _shape(value: onnx.ValueInfoProto) -> list[int]:
@@ -296,6 +301,55 @@ def _optimize_attention(model: onnx.ModelProto, expected: int) -> onnx.ModelProt
     del model.graph.node[:]
     model.graph.node.extend(nodes)
     return _prune_and_check(model)
+
+
+def _head_operations(model: onnx.ModelProto) -> list[onnx.NodeProto]:
+    """Every operation between the decoder's last LayerNorm and the two outputs."""
+    graph = _index(model)
+    found: dict[str, onnx.NodeProto] = {}
+    pending = list(OUTPUTS)
+    while pending:
+        node = graph.producers.get(pending.pop())
+        if node is None or node.name in found or node.op_type == "LayerNormalization":
+            continue
+        found[node.name] = node
+        pending.extend(node.input)
+    _require(len(found) == HEAD_OPERATIONS, f"expected {HEAD_OPERATIONS} head operations, found {len(found)}")
+    return [node for node in model.graph.node if node.name in found]
+
+
+def annotate_bf16_regions(graph: Path, regions: list[str]) -> int:
+    """Mark each region's operations BF16 for AFE, in place, and return how many were marked.
+
+    AFE gives an AnnotatePrecision's precision to the operation producing its input. The heads end at the
+    graph outputs, so no INT8 mark is needed to close the region, and both outputs leave in BF16.
+    """
+    _require(list(regions) == ["heads"], f"unknown BF16 regions {regions}; choose from {list(BF16_REGIONS)}")
+    model = onnx.load(graph)
+    marked = {node.name for node in _head_operations(model)}
+    nodes = []
+    for node in model.graph.node:
+        nodes.append(node)
+        if node.name in marked:
+            _require(len(node.output) == 1, f"one output to annotate at {node.name}")
+            value = node.output[0]
+            node.output[0] = f"{value}/unannotated"
+            nodes.append(
+                helper.make_node(
+                    "AnnotatePrecision",
+                    [node.output[0]],
+                    [value],
+                    name=f"{node.name}/AnnotatePrecision",
+                    domain="ai.sima",
+                    precision="bfloat16",
+                )
+            )
+    del model.graph.node[:]
+    model.graph.node.extend(nodes)
+    model.opset_import.append(helper.make_opsetid("ai.sima", 1))
+    onnx.checker.check_model(model)
+    onnx.save(model, graph)
+    return len(marked)
 
 
 def validate_rewrite(source: Path, rewritten: Path, inputs: np.ndarray) -> None:

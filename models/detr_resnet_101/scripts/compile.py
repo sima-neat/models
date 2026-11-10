@@ -11,6 +11,7 @@ import os
 import shutil
 import tarfile
 import tempfile
+from collections import Counter
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -26,12 +27,13 @@ from afe.apis.defines import (
 )
 from afe.apis.loaded_net import load_model
 from afe.apis.model import L2CachingMode
+from afe.core.configs import QuantizationPrecision
 from afe.core.utils import convert_data_generator_to_iterable
 from afe.load.importers.general_importer import onnx_source
 from calibration import calibration_images
 from model_registry.model import load_model as load_metadata
 from sima_utils.data.data_generator import DataGenerator
-from surgery import INPUT, INPUT_SHAPE, OUTPUT_SHAPES, OUTPUTS, prepare_model
+from surgery import BF16_REGIONS, INPUT, INPUT_SHAPE, OUTPUT_SHAPES, OUTPUTS, annotate_bf16_regions, prepare_model
 
 MODEL_DIR = Path(__file__).resolve().parents[1]
 MODEL_ID = "detr_resnet_101"
@@ -39,7 +41,6 @@ COMPONENT_ID = "model"
 # MPK manifests record each public tensor's size in bytes; the MPK keeps the ONNX float32 interface.
 INPUT_BYTES = {INPUT: math.prod(INPUT_SHAPE) * 4}
 OUTPUT_BYTES = [math.prod(OUTPUT_SHAPES[name]) * 4 for name in OUTPUTS]
-A16_PRECISIONS = ("w8a16", "w16a16")
 
 
 def _parameters(profile_id: str) -> dict[str, Any]:
@@ -50,7 +51,34 @@ def _parameters(profile_id: str) -> dict[str, Any]:
     return next(item["parameters"] for item in profiles[0]["components"] if item["id"] == COMPONENT_ID)
 
 
-def _quantization(precision: str, calibration_bins: int | None, per_token: bool) -> QuantizationParams:
+def _bf16_regions(profile_id: str, parameters: dict[str, Any]) -> list[str]:
+    """Return the regions the build profile runs BF16, checking that its ID marks it mixed."""
+    regions = list(parameters.get("bf16_regions", []))
+    if regions and (parameters["precision"] != "w8a8" or len(set(regions)) != len(regions)):
+        raise ValueError(f"bf16_regions must name distinct regions of a W8A8 build: {regions}")
+    unknown = sorted(set(regions) - set(BF16_REGIONS))
+    if unknown:
+        raise ValueError(f"unknown BF16 regions {unknown}; choose from {list(BF16_REGIONS)}")
+    if bool(regions) != ("mixed" in profile_id.split("_")):
+        raise ValueError(f"build profile {profile_id!r} must have the mixed token exactly when it has bf16_regions")
+    return regions
+
+
+def _require_bf16_operations(quantized: Any) -> None:
+    """Fail when AFE ignored the BF16 annotations, which would silently build an all-INT8 model."""
+    # The quantized model keeps its network private, and AFE renames every node, so count by operation.
+    counts = Counter(
+        type(node.ir.operation).__name__
+        for node in quantized._net.iter_nodes_recursive()
+        if getattr(node.ir, "quant_config", None) is not None
+        and node.ir.quant_config.quantization_precision.value == QuantizationPrecision.BFLOAT_16
+    )
+    logging.info("BF16 operations: %s", dict(sorted(counts.items())))
+    if not counts:
+        raise RuntimeError("expected the BF16 regions to quantize BF16, found no BF16 operations")
+
+
+def _quantization(precision: str, calibration_bins: int | None) -> QuantizationParams:
     """The compiler's activation and weight formats for a precision. Only INT8 activations need calibration."""
     if precision == "w8a8":
         return QuantizationParams(
@@ -59,14 +87,6 @@ def _quantization(precision: str, calibration_bins: int | None, per_token: bool)
             activation_quantization_scheme=quantization_scheme(asymmetric=True, per_channel=False, bits=8),
             weight_quantization_scheme=quantization_scheme(asymmetric=False, per_channel=True, bits=8),
             biascorr_type=BiasCorrectionType.REGULAR,
-        )
-    if precision == "w8a16":
-        return QuantizationParams(
-            calibration_method=SkipCalibration(),
-            activation_quantization_scheme=bfloat16_scheme(),
-            weight_quantization_scheme=quantization_scheme(asymmetric=False, per_channel=True, bits=8),
-            # Each token's activations get their own INT8 scale before an INT8-weight operation.
-            per_token_quant=per_token,
         )
     if precision == "w16a16":
         return QuantizationParams(
@@ -121,7 +141,8 @@ def compile_model(source: Path, output_dir: Path, profile_id: str, dataset: Path
     parameters = _parameters(profile_id)
     precision = str(parameters["precision"])
     calibration_bins = int(parameters["calibration_bins"]) if precision == "w8a8" else None
-    quantization = _quantization(precision, calibration_bins, bool(parameters.get("per_token", False)))
+    quantization = _quantization(precision, calibration_bins)
+    regions = _bf16_regions(profile_id, parameters)
     calibration_data = None
     if precision == "w8a8":
         if dataset is None:
@@ -135,6 +156,9 @@ def compile_model(source: Path, output_dir: Path, profile_id: str, dataset: Path
     with tempfile.TemporaryDirectory(prefix=f"{MODEL_ID}-", dir=os.environ.get("RUNNER_TEMP")) as temporary:
         build_dir = Path(temporary)
         graph = prepare_model(source, build_dir / "graphs")
+        if regions:
+            # ONNX Runtime cannot run the annotations, so they go in after prepare_model's numerical check.
+            logging.info("Marked %d operations BF16 for %s", annotate_bf16_regions(graph, regions), regions)
         importer = onnx_source(
             str(graph), shape_dict={INPUT: tuple(INPUT_SHAPE)}, layout="NCHW", flexible_batch_size=True
         )
@@ -145,6 +169,8 @@ def compile_model(source: Path, output_dir: Path, profile_id: str, dataset: Path
             model_name=f"{MODEL_ID}_{profile_id}",
             log_level=logging.INFO,
         )
+        if regions:
+            _require_bf16_operations(quantized)
         quantized.compile(
             output_path=str(build_dir / "mpk"),
             batch_size=1,
@@ -154,8 +180,8 @@ def compile_model(source: Path, output_dir: Path, profile_id: str, dataset: Path
             l2_caching_mode=L2CachingMode.NONE,
             deployable=True,
             # The option applies to every layer norm and INT8 ones reject it,
-            # so only BF16 builds keep FP32 intermediates.
-            layer_norm_use_fp32_intermediates=precision in A16_PRECISIONS,
+            # so only the BF16 build keeps FP32 intermediates.
+            layer_norm_use_fp32_intermediates=precision == "w16a16",
         )
         archives = sorted((build_dir / "mpk").glob("*_mpk.tar.gz"))
         if len(archives) != 1:
