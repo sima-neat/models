@@ -17,17 +17,18 @@ license:
 
 upstream:
   repository: https://huggingface.co/simaai/Llama-3.1-8B-Instruct-GPTQ-Safetensors
-  revision: 1a68b8a99dcf44ea15b831bfc582f9b71004a92e
+  revision: 0d200c7702b5197600c94a58895642c19c870d84
   derived_from: https://huggingface.co/meta-llama/Llama-3.1-8B-Instruct
 
 compilation:
   format: huggingface
   source:
     repository: simaai/Llama-3.1-8B-Instruct-GPTQ-Safetensors
-    revision: 1a68b8a99dcf44ea15b831bfc582f9b71004a92e
+    revision: 0d200c7702b5197600c94a58895642c19c870d84
     main_file: config.json
     files:
       LICENSE.txt: {uri: hf://models/meta-llama/Llama-3.1-8B-Instruct@0e9e39f249a16976918f6564b8830bc894c89659/LICENSE, sha256: 64e1b2889b7892e6bbe7a7ed5bfe6ff793c61f9d584345f8f41cf9f5cb30a369, size_bytes: 7627}
+      Notice.txt: {sha256: 9b4ce1898c6fdbefd6d0ca4d40a55cb994ed86ae3fd56166866b988bee7a6464, size_bytes: 116}
       chat_template.jinja: {sha256: e10ca381b1ccc5cf9db52e371f3b6651576caee0a630b452e2816b2d404d4b65, size_bytes: 4614}
       config.json: {sha256: df511be289b7f0653d8a2118f4e61617f58ef4a3487b6f6fdf7fe0d07839a719, size_bytes: 1821}
       generation_config.json: {sha256: 986f6be5036784161c539c46a8788b8ed1f05a2500692850300dd6073fa205bc, size_bytes: 184}

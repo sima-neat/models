@@ -10,4 +10,5 @@ def test_deployment_contains_the_language_model(compiled):
     assert "devkit/tokenizer.json" in names
     assert "devkit/vlm_config.json" in names
     assert "devkit/LICENSE.txt" in names
+    assert "devkit/Notice.txt" in names
     assert "compile.sh" in names
