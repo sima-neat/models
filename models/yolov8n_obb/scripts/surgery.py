@@ -78,15 +78,10 @@ def prepare_model(source: Path, output_dir: Path) -> Path:
         onnx.helper.make_tensor_value_info(name, onnx.TensorProto.FLOAT, shape) for name, shape in OUTPUT_SHAPES.items()
     )
     _prune(model)
-    del model.graph.value_info[:]
-    # Compiler-specific constant folding belongs with the graph cut, not the upstream conversion.
-    if any(node.op_type in {"Constant", "Shape"} for node in model.graph.node):
-        from onnxsim import simplify
-
-        model, valid = simplify(model, perform_optimization=False, overwrite_input_shapes={INPUT: INPUT_SHAPE})
-        _require(valid, "onnxsim could not validate constant folding")
+    # convert.py folds the export with onnxsim; the kept graph must hold no static-value computation.
     unfolded = sorted({node.op_type for node in model.graph.node} & {"Constant", "Shape"})
-    _require(not unfolded, f"heads still depend on {unfolded} nodes after constant folding")
+    _require(not unfolded, f"heads still depend on {unfolded} nodes; fold the source with onnxsim first")
+    del model.graph.value_info[:]
     model = onnx.shape_inference.infer_shapes(model, strict_mode=True)
     onnx.checker.check_model(model, full_check=True)
     path = output_dir / "yolov8n_obb_heads.onnx"

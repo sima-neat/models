@@ -29,15 +29,15 @@ CLASSES = (
 STRIDES = (8, 16, 32)
 # Each box side is a distribution over DFL_BINS distances (in grid cells); the box uses its expected value.
 DFL_BINS = 16
-# Ultralytics' validation NMS settings: every anchor/class pair scoring above 0.001 (multi-label), at most 30000
+# Ultralytics' OBB validation NMS settings: every anchor/class pair scoring above 0.01 (multi-label), at most 30000
 # of them by score, class-aware Fast-NMS on probabilistic IoU at 0.7, then the best 300.
-SCORE_THRESHOLD = 0.001
+SCORE_THRESHOLD = 0.01
 MAX_NMS = 30000
 NMS_IOU = 0.7
 MAX_DET = 300
-# sigmoid(-7) is about 0.00091, below SCORE_THRESHOLD, so a logit at or below LOGIT_FLOOR is never kept and the
+# sigmoid(-4.6) is about 0.00995, below SCORE_THRESHOLD, so a logit at or below LOGIT_FLOOR is never kept and the
 # decoder skips its sigmoid.
-LOGIT_FLOOR = -7.0
+LOGIT_FLOOR = -4.6
 # Ultralytics merges the tiles of an image with Fast-NMS on probabilistic IoU at 0.3, one class at a time.
 MERGE_IOU = 0.3
 # Fast-NMS compares at most this many boxes at a time against every higher-scoring box, to bound memory.
@@ -266,11 +266,11 @@ def score(detections: dict[str, np.ndarray], label_dir: Path) -> tuple[dict[str,
         difficult_flags.append(difficult)
         positives += np.bincount(labels[~difficult], minlength=len(CLASSES))
         for label in range(len(CLASSES)):
-            mine, theirs = boxes[boxes[:, 6] == label], np.flatnonzero(labels == label)
-            best, index = best_overlaps(corners(mine), polygons[theirs])
-            truth = np.full(len(mine), -1)
-            truth[index >= 0] = theirs[index[index >= 0]] + offset
-            found[label].append(np.column_stack([mine[:, 5], best, truth]))
+            class_detections, class_truths = boxes[boxes[:, 6] == label], np.flatnonzero(labels == label)
+            best, index = best_overlaps(corners(class_detections), polygons[class_truths])
+            truth = np.full(len(class_detections), -1)
+            truth[index >= 0] = class_truths[index[index >= 0]] + offset
+            found[label].append(np.column_stack([class_detections[:, 5], best, truth]))
         offset += len(labels)
     truth_difficult = np.concatenate(difficult_flags)
     table = np.zeros((len(CLASSES), len(IOU_THRESHOLDS)))
@@ -319,7 +319,7 @@ def main(argv: list[str] | None = None) -> int:
     images = prefetched(lambda name: decode_image((image_dir / name).read_bytes()), names)
     for count, (name, image) in enumerate(zip(names, images), start=1):
         height, width = image.shape[:2]
-        found = []
+        tile_detections = []
         for window in tile_windows(width, height):
             x0, y0, x1, y1 = window
             tile = image[y0:y1, x0:x1]
@@ -327,9 +327,9 @@ def main(argv: list[str] | None = None) -> int:
             if runner is None:
                 runner = model.build([tensor])
             outputs = [output.to_numpy(copy=False) for output in runner.run([tensor], timeout_ms=120000)]
-            found.append(image_detections(decode_tile(outputs), window, tile.shape[1], tile.shape[0]))
-        tiles += len(found)
-        detections[name] = merge(np.concatenate(found))
+            tile_detections.append(image_detections(decode_tile(outputs), window, tile.shape[1], tile.shape[0]))
+        tiles += len(tile_detections)
+        detections[name] = merge(np.concatenate(tile_detections))
         if count == 1 or count % 50 == 0 or count == len(names):
             elapsed = time.monotonic() - started
             log(f"{count}/{len(names)} images, {tiles} tiles, {elapsed / tiles * 1000:.0f} ms/tile")

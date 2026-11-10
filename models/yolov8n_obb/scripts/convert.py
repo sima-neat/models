@@ -45,6 +45,20 @@ def validate_export(path):
         raise ValueError("This conversion workflow requires one self-contained ONNX file")
 
 
+def fold_constants(path):
+    from onnxsim import simplify
+
+    model, valid = simplify(
+        onnx.load(path),
+        perform_optimization=False,
+        overwrite_input_shapes={"images": INTERFACE["images"]},
+        dynamic_input_shape=False,
+    )
+    if not valid:
+        raise RuntimeError("onnxsim could not validate the folded YOLOv8 export")
+    onnx.save(model, path)
+
+
 def compare_outputs(expected, actual):
     """Check the complete upstream prediction tensor, before compiler-specific surgery."""
     if actual.shape != expected.shape or not np.isfinite(actual).all():
@@ -82,6 +96,7 @@ def convert(source, output_dir):
             nms=False,
         )
         shutil.move(exported, output)
+        fold_constants(output)
         validate_export(output)
 
         reference = detector.model.cpu().eval()

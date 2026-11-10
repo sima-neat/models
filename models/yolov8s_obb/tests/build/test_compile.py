@@ -186,14 +186,14 @@ def test_surgery_cuts_at_the_nine_raw_heads_in_order(tmp_path: Path, load_script
     assert [node.op_type for node in cut.graph.node] == ["Conv"] * 9
 
 
-def test_surgery_folds_static_computation_and_preserves_head_values(
+def test_surgery_preserves_head_values(
     tmp_path: Path, load_script: Callable[[str], ModuleType]
 ) -> None:
     import onnxruntime as ort
 
     surgery = load_script("surgery")
-    model = _source_graph(load_script, constant_weight=True)
-    # Different nonzero weights make this a numerical test of the cut and constant folding.
+    model = _source_graph(load_script)
+    # Different nonzero weights make this a numerical test of the graph cut.
     for index, initializer in enumerate(model.graph.initializer):
         array = onnx.numpy_helper.to_array(initializer)
         initializer.CopyFrom(onnx.numpy_helper.from_array(np.full_like(array, (index + 1) / 100), initializer.name))
@@ -217,6 +217,15 @@ def test_surgery_folds_static_computation_and_preserves_head_values(
     sample = np.random.default_rng(352).uniform(0, 1, surgery.INPUT_SHAPE).astype(np.float32)
     for original, rewritten in zip(before.run(None, {"images": sample}), after.run(None, {"images": sample})):
         np.testing.assert_allclose(rewritten, original, rtol=1e-6, atol=1e-6)
+
+
+def test_surgery_requires_a_folded_source(tmp_path: Path, load_script: Callable[[str], ModuleType]) -> None:
+    surgery = load_script("surgery")
+    source = tmp_path / "source.onnx"
+    onnx.save(_source_graph(load_script, constant_weight=True), source)
+
+    with pytest.raises(ValueError, match="fold the source with onnxsim first"):
+        surgery.prepare_model(source, tmp_path / "out")
 
 
 def _mpk_manifest(compile_module: ModuleType) -> dict:

@@ -30,7 +30,7 @@ off. For image input, let Neat perform these steps.
 3. The box is left + right wide and top + bottom high, centered half of (right − left, bottom − top) from the cell center, rotated by the angle. Multiply by the stride.
 4. Keep scores above your threshold, then apply per-class rotated non-maximum suppression.
 5. Undo the letterbox and add the window offset.
-6. Per class, drop boxes overlapping a higher-scoring box from another window by 0.3 or more.
+6. Per class, drop boxes overlapping a higher-scoring box from any window by 0.3 or more.
 
 Classes 0 to 14 are plane, ship, storage-tank, baseball-diamond,
 tennis-court, basketball-court, ground-track-field, harbor, bridge,
