@@ -98,8 +98,18 @@ and may add a display-only `pipeline`. Preprocessing, decoding and surgery
 belong in executable code and the README; ownership belongs in `CODEOWNERS`.
 Do not add maturity compatibility fields to new authored YAML.
 
-Performance and accuracy measure each build profile's whole model: every
-component's MPK and the CPU work between them. `model.yaml` declares only
+Performance defaults to each build profile's whole model: every component's
+MPK and the CPU work between them. Independent components such as CLIP's image
+and text encoders may declare `performance: {scope: components}` instead. Their
+script benchmarks each component separately with Core's benchmark API and merges
+its single-component `from_performance()` reports using
+`model_report.from_component_performance()`. Each component keeps its own
+metrics, workload, telemetry, execution plan and MLA stats; the report has no
+combined metrics. Every component must satisfy the required performance metrics,
+and `tests.yaml` uses `performance.expected.<profile>.components.<component>`.
+Composed pipelines such as RF-DETR keep `performance: {}` and one whole-model
+result. Accuracy remains model-level and declares its evaluated datasets.
+`model.yaml` declares only
 `performance`, `accuracy.datasets` (Dataset Registry pins) and optional
 `build_profiles`. Every performance report holds the metrics
 `tools/model_report/metrics.json` marks `required`. The metrics an accuracy
@@ -357,9 +367,10 @@ change.
   `profileGroups` in `api.js` sets this, not the `model.yaml` profile order.
 - Keep the glance-first page: key facts in the section, the rest in one row.
   Actions are icon buttons; blue text with ↗ is only for external links.
-- Benchmarks are whole-model, per build profile. Show a component's layer
-  timings and execution plan per component; never add component numbers up
-  or mark one component best against a different component.
+- Benchmarks default to the whole model, per build profile. Independent-component
+  performance keeps separate measurements when `performance.scope: components`.
+  Show layer timings and execution plans per component; never add component
+  numbers up or mark one component best against a different component.
 - Render the current model report version, and let unknown metrics fall
   through to Other measurements rather than hiding them.
 - Keep the preview data-driven. `preview.py` builds its catalog from
