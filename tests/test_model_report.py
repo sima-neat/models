@@ -253,7 +253,7 @@ PYNEAT_ENUMS = {
     "NormalizePreset": ("ImageNet",),
     "PixelFormat": ("RGB",),
     "TensorMemory": ("EV74",),
-    "BoxDecodeType": ("YoloV8", "YoloV26", "YoloV26Pose", "YoloV26Seg", "YoloV26Obb", "SuperPoint"),
+    "BoxDecodeType": ("YoloV8", "YoloV26", "YoloV26Pose", "YoloV26Seg", "YoloV8Obb", "YoloV26Obb", "SuperPoint"),
     "SuperPointProfile": ("MagicLeapDemoV1", "LightGlueV1"),
 }
 SCRIPT_PYNEAT = {
@@ -400,11 +400,13 @@ def test_every_single_component_script_benchmarks_a_dataset_image(script, monkey
         # Box decoders take a probability threshold, in [0, 1).
         assert_letterboxed_frame(frame)
         assert (options.preprocess.resize.mode, options.top_k, options.score_threshold) == ("Letterbox", 10, 0.25)
-        if options.decode_type == "YoloV8":
+        if options.decode_type in {"YoloV8", "YoloV8Obb"}:
             assert options.nms_iou_threshold == 0.7
             assert "NMS IoU 0.7" in report["workload"]
         # Pose accuracy scores only images with a labelled person; oriented boxes measure DOTA's aerial images.
-        expected = {"YoloV26Pose": "000000000002.jpg", "YoloV26Obb": "P0003.jpg"}.get(options.decode_type, ".jpg")
+        expected = {
+            "YoloV26Pose": "000000000002.jpg", "YoloV8Obb": "P0003.jpg", "YoloV26Obb": "P0003.jpg",
+        }.get(options.decode_type, ".jpg")
         assert expected in report["workload"]
     elif first_accuracy_dataset(script) == "coco-2017" and not hasattr(options, "decode_type"):
         # A COCO detector without a Neat box decoder, such as DETR, stretches the frame to its input with the

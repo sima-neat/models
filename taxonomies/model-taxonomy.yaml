@@ -57,10 +57,14 @@ architectures:
     display_name: DETR
     paradigm: transformer
     allowed_model_types: [vision]
-  gemma:
-    display_name: Gemma
+  dla:
+    display_name: DLA
+    paradigm: cnn
+    allowed_model_types: [vision]
+  gemma4:
+    display_name: Gemma4
     paradigm: transformer
-    allowed_model_types: [llm]
+    allowed_model_types: [llm, vlm]
   lfm:
     display_name: LFM
     paradigm: transformer
@@ -85,8 +89,8 @@ architectures:
     display_name: Phi
     paradigm: transformer
     allowed_model_types: [llm]
-  qwen:
-    display_name: Qwen
+  qwen3_5:
+    display_name: Qwen3.5
     paradigm: transformer
     allowed_model_types: [llm, vlm]
   resnet:
@@ -121,6 +125,10 @@ architectures:
     display_name: YOLO11-det
     paradigm: cnn
     allowed_model_types: [vision]
+  yolo11_obb:
+    display_name: YOLO11-obb
+    paradigm: cnn
+    allowed_model_types: [vision]
   yolo26_det:
     display_name: YOLO26-det
     paradigm: cnn
@@ -139,6 +147,10 @@ architectures:
     allowed_model_types: [vision]
   yolov8_det:
     display_name: YOLOv8-det
+    paradigm: cnn
+    allowed_model_types: [vision]
+  yolov8_obb:
+    display_name: YOLOv8-obb
     paradigm: cnn
     allowed_model_types: [vision]
 
