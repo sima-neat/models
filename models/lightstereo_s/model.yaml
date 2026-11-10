@@ -45,17 +45,20 @@ build_profiles:
       model:
         parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 16}
 
-  w8a16:
-    calibration_dataset: scene-flow-cal
-    components:
-      model:
-        parameters: {precision: w8a16, calibration_bins: 2048, calibration_samples: 16}
-
   w16a16:
     calibration_dataset: scene-flow-cal
     components:
       model:
         parameters: {precision: w16a16, calibration_bins: 2048, calibration_samples: 16}
+
+  # No w8a16: its run-time INT8 conversions cost more MLA time than its INT8 weights save, and it keeps the INT8
+  # disparity regression that limits w8a8. On CI's DevKit it ran at 32.9 FPS against w16a16's 41.1 and scored
+  # 1.383 px EPE against w8a8's 1.332, so it offers no trade-off. compile.py keeps its recipe.
+  # w8a16:
+  #   calibration_dataset: scene-flow-cal
+  #   components:
+  #     model:
+  #       parameters: {precision: w8a16, calibration_bins: 2048, calibration_samples: 16}
 
 numerical_fidelity:
   # Mean absolute error of the disparity output is its end-point error against the ONNX source, in pixels.

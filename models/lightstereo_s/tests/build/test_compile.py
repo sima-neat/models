@@ -253,13 +253,13 @@ def test_mpk_audit_requires_one_mla_segment_and_the_stereo_interface(
 def test_compile_reads_the_declared_build_parameters(load_script: Callable[[str], ModuleType]) -> None:
     compile_module = load_script("compile")
 
-    assert compile_module._parameters("w8a16") == {
-        "precision": "w8a16",
+    assert compile_module._parameters("w16a16") == {
+        "precision": "w16a16",
         "calibration_bins": 2048,
         "calibration_samples": 16,
     }
     with pytest.raises(ValueError, match="no build profile"):
-        compile_module._parameters("w32a32")
+        compile_module._parameters("w8a16")
     with pytest.raises(ValueError, match="unsupported precision"):
         compile_module._quantization({"precision": "w4a16", "calibration_bins": 2048})
 
@@ -292,7 +292,7 @@ def test_every_precision_calibrates_its_histogram_ranges(
 def test_model_calibrates_every_profile_and_compares_disparity_on_scene_flow() -> None:
     model = load_metadata(MODEL_DIR)
     assert model["components"][0]["interface"]["format"] == "onnx"
-    assert [profile["id"] for profile in model["build_profiles"]] == ["w8a8", "w8a16", "w16a16"]
+    assert [profile["id"] for profile in model["build_profiles"]] == ["w8a8", "w16a16"]
     assert {profile["components"][0]["calibration"] for profile in model["build_profiles"]} == {"scene-flow-cal"}
     largest = max(profile["components"][0]["parameters"]["calibration_samples"] for profile in model["build_profiles"])
     fidelity = model["numerical_fidelity"]
