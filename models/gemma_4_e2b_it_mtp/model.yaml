@@ -56,3 +56,5 @@ build_profiles:
           draft_model_path: gemma-4-E2B-it-assistant
           speculative_method: gemma4_mtp
           draft_precision: a16w8
+
+performance: {}

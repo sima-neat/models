@@ -54,3 +54,5 @@ build_profiles:
           speculative_method: dflash
           draft_precision: a16w8
           speculative_block_size: 8
+
+performance: {}

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import math
@@ -382,3 +383,12 @@ def run_benchmark(deployment: Path, output: Path, baseline: Path | None = None) 
     installed = subprocess.check_output(["dpkg-query", "-W", "-f=${Version}", "sima-lmm-core"], text=True).strip()
     from_generation(report, {"llima": installed, "mole": report["runtime"]["mole_version"], "build": {}}).save(output)
     return report
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Measure a compiled LLM/VLM with MoLE performance workloads.")
+    parser.add_argument("--deployment", required=True, type=Path)
+    parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--baseline", type=Path, help="staged ordinary benchmark baseline receipt")
+    args = parser.parse_args()
+    run_benchmark(args.deployment, args.output, args.baseline)

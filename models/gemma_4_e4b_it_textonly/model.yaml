@@ -42,3 +42,5 @@ build_profiles:
     components:
       model:
         parameters: {precision: a16w4, max_num_tokens: 4096, language_group_size: 128}
+
+performance: {}
