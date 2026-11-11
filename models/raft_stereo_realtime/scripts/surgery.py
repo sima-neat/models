@@ -51,6 +51,12 @@ PAD = 2
 PADDED_HEIGHT = HEIGHT + 2 * PAD
 LEVELS, RADIUS = 4, 4
 HIDDEN = 128
+# conv2's output channels: the depth of the correlation features.
+DEPTH = 256
+# The export reads no tensor shape at run time, so the graph holds no Shape node for the compiler environment's
+# onnxsim to fold: the 1/16 GRU state is upsampled by a factor of 2, which equals net[0]'s size because the padded
+# views are multiples of 32 rows and 16 columns, and the correlation reshapes use the sizes below.
+FEATURE_HEIGHT, FEATURE_WIDTH = PADDED_HEIGHT // 8, WIDTH // 8
 OUTPUT = "disparity"
 INTERFACE = {INPUT: [1, 3, HEIGHT, 2 * WIDTH], OUTPUT: [1, 1, HEIGHT, WIDTH]}
 # Edge Pad does not compile for the MLA, InstanceNormalization is written out, and Abs, which the compiler has no
@@ -193,7 +199,7 @@ def build_network() -> Any:
 
         def forward(self, net: list[torch.Tensor], inp: list[list[torch.Tensor]], corr: Any, flow: Any) -> Any:
             net = self.slow(net, inp)
-            upsampled = F.interpolate(net[1], net[0].shape[2:], mode="bilinear", align_corners=True)
+            upsampled = F.interpolate(net[1], scale_factor=2, mode="bilinear", align_corners=True)
             h08 = self.gru08(net[0], *inp[0], self.encoder(flow, corr), upsampled)
             return [h08, net[1]], 0.25 * self.mask(h08), self.flow_head(h08)
 
@@ -203,7 +209,7 @@ def build_network() -> Any:
             self.cnet = MultiBasicEncoder()
             self.update_block = UpdateBlock()
             self.context_zqr_convs = nn.ModuleList([nn.Conv2d(HIDDEN, 3 * HIDDEN, 3, padding=1) for _ in range(2)])
-            self.conv2 = nn.Sequential(ResidualBlock(128, 128, "instance"), nn.Conv2d(128, 256, 3, padding=1))
+            self.conv2 = nn.Sequential(ResidualBlock(128, 128, "instance"), nn.Conv2d(128, DEPTH, 3, padding=1))
 
         def context(self, left_features: torch.Tensor) -> tuple[list[torch.Tensor], list[list[torch.Tensor]]]:
             outputs08 = [head(left_features) for head in self.cnet.outputs08]
@@ -270,7 +276,7 @@ def static_graph(model: Any) -> Any:
     import torch.nn.functional as F
     from torch import nn
 
-    height, width = PADDED_HEIGHT // 8, WIDTH // 8
+    height, width = FEATURE_HEIGHT, FEATURE_WIDTH
 
     class Static(nn.Module):
         def __init__(self) -> None:
@@ -310,13 +316,12 @@ def static_graph(model: Any) -> Any:
             right = self.model.cnet.features(image[..., WIDTH:])
             net, inp = self.model.context(left)
             fmap1, fmap2 = self.model.conv2(left), self.model.conv2(right)
-            depth = fmap1.shape[1]
-            rows = fmap1.reshape(depth, height, width).permute(1, 2, 0)  # [H, W, D]
+            rows = fmap1.reshape(DEPTH, height, width).permute(1, 2, 0)  # [H, W, D]
             shifted = []
             for level in range(LEVELS):
                 pooled = F.avg_pool2d(fmap2, [1, 2**level], stride=[1, 2**level]) if level else fmap2
                 columns = width // 2**level
-                corr = rows @ pooled.reshape(depth, height, columns).permute(1, 0, 2) / depth**0.5  # [H, W, columns]
+                corr = rows @ pooled.reshape(DEPTH, height, columns).permute(1, 0, 2) / DEPTH**0.5  # [H, W, columns]
                 corr = corr.permute(2, 0, 1).reshape(1, columns, height, width)
                 # Zero columns, computed from the input like the first flow below, pad the volume by twice the radius.
                 zeros = corr[:, : 2 * RADIUS] * 0
@@ -342,16 +347,41 @@ def static_graph(model: Any) -> Any:
     return Static().eval()
 
 
+def known_shapes(model: onnx.ModelProto) -> dict[str, list[int]]:
+    inferred = onnx.shape_inference.infer_shapes(model).graph
+    shapes = {}
+    for value in [*inferred.value_info, *inferred.input, *inferred.output]:
+        dims = value.type.tensor_type.shape.dim
+        if dims and all(dim.HasField("dim_value") for dim in dims):
+            shapes[value.name] = [dim.dim_value for dim in dims]
+    return shapes
+
+
 def fold_constants(path: Path) -> None:
-    """Fold the export to a static graph: the index arithmetic of the slices, reshapes and the bilinear resize
-    becomes constants, and the Shape nodes behind it disappear."""
+    """Fold the export to a static graph. Should an exporter still write a Shape node of a tensor whose shape is
+    known, it becomes a constant and the graph is folded again, until none is left."""
     from onnxsim import simplify
 
     model, valid = simplify(
         onnx.load(path), perform_optimization=False, overwrite_input_shapes={INPUT: INTERFACE[INPUT]}
     )
-    if not valid:
-        raise RuntimeError("onnxsim could not validate the folded RAFT-Stereo export")
+    for _ in range(8):
+        if not valid:
+            raise RuntimeError("onnxsim could not validate the folded RAFT-Stereo export")
+        shapes = known_shapes(model)
+        replaced = 0
+        for index, node in enumerate(model.graph.node):
+            if node.op_type == "Shape" and node.input[0] in shapes:
+                attributes = {item.name: onnx.helper.get_attribute_value(item) for item in node.attribute}
+                value = shapes[node.input[0]][attributes.get("start", 0) : attributes.get("end")]
+                constant = onnx.numpy_helper.from_array(np.asarray(value, np.int64))
+                model.graph.node[index].CopyFrom(
+                    onnx.helper.make_node("Constant", [], list(node.output), value=constant)
+                )
+                replaced += 1
+        if not replaced:
+            break
+        model, valid = simplify(model, perform_optimization=False)
     onnx.save(model, path)
 
 
