@@ -1,0 +1,26 @@
+conversion:
+  run_tests: true
+compile:
+  run_tests: true
+accuracy:
+  run_tests: true
+  expected:
+    w8a8:
+      coco-2017-val:
+        coco_map: 0.4923
+        coco_ap50: 0.6777
+        coco_ap75: 0.5353
+        coco_ap_small: 0.3216
+        coco_ap_medium: 0.5445
+        coco_ap_large: 0.6466
+        coco_ar1: 0.3765
+        coco_ar10: 0.6090
+        coco_ar100: 0.6483
+        coco_ar_small: 0.4749
+        coco_ar_medium: 0.7023
+        coco_ar_large: 0.7970
+performance:
+  run_tests: true
+  expected:
+    w8a8:
+      throughput_fps: 221.06

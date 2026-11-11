@@ -1,0 +1,40 @@
+build-on-demand: true
+display_name: LFM2.5-1.2B Instruct
+description: Generates text from instructions and conversation history.
+model_type: llm
+tasks: [text_generation]
+
+modalities:
+  inputs: [text]
+  outputs: [text]
+
+architecture: lfm2_5
+
+license:
+  spdx: LicenseRef-LFM-Open-1.0
+  redistribution: restricted
+  attribution: Derived from LiquidAI/LFM2.5-1.2B-Instruct under the LFM Open License v1.0; AutoRound checkpoint provided by SiMa.ai.
+
+compilation:
+  format: huggingface
+  source:
+    repository: simaai/LFM2.5-1.2B-Instruct-Autoround-Safetensors
+    revision: 685e69c74323e05783860eaf602cdccfb151dca2
+    main_file: config.json
+    files:
+      LICENSE.txt: {uri: hf://models/LiquidAI/LFM2.5-1.2B-Instruct@6314d2b7cf28a6ae9de9d3e77dcfcd9c9f281c77/LICENSE, sha256: 5188f2b355da20647257a3156db5834c794e5fb5e6d8dc4d4cdbb3180e75b85b, size_bytes: 10596}
+      chat_template.jinja: {sha256: f05bf4b967dc993bdc7a2fe6e43759ee218eb0eb340d68b063e1c4f8ad148176, size_bytes: 1783}
+      config.json: {sha256: b163d7dda192b402d63e5e3f3adfc991bafbb447007a9b3b27d10ce9a998a3fd, size_bytes: 2795}
+      generation_config.json: {sha256: 57c35e9fd5cc70da212feb1d83cd1d31b8f2c9b7d3fe0c1c2b0c77631be849e0, size_bytes: 132}
+      model.safetensors: {sha256: 89e248239ce717a9bfe9c1148b27eb252615b38c450b649bfad2527b4cd2fcf3, size_bytes: 862981440}
+      special_tokens_map.json: {sha256: 742aefe2b7dec496e8caffdba03a75d0c1a9925d53bd3f3e0d388c96b591b6f4, size_bytes: 434}
+      tokenizer.json: {sha256: df1d8d5ec5d091b460562ffd545e4a5e91d17d4a0db7ebe733be34ed374377bd, size_bytes: 4733389}
+      tokenizer_config.json: {sha256: 0b3d79111ef4ed919081f3fc0b82f2ce7e46dc3eb1abcfa8a29b9520560c2ba4, size_bytes: 518}
+  entrypoint: generate
+
+build_profiles:
+  w4a16:
+    runner_class: expensive
+    components:
+      model:
+        parameters: {precision: a16w4, max_num_tokens: 4096, language_group_size: 128}

@@ -381,6 +381,37 @@ def test_check_report_records_the_devkit_beside_the_checked_report(monkeypatch, 
     assert capsys.readouterr().out == "Checked the performance report: latency_avg_ms, throughput_fps\n"
 
 
+def test_check_report_accepts_independent_components_without_top_level_metrics(monkeypatch, tmp_path, capsys):
+    fixture = json.loads((ROOT / "artifact-browser/fixtures/model-report-performance.json").read_text())
+    report = {key: fixture[key] for key in ("schema", "schema_version", "stage", "runtime")}
+    report.update(scope="components", components={
+        name: {
+            **fixture["components"]["model"],
+            "metrics": {**fixture["metrics"], "throughput_fps": rate},
+            "workload": name,
+            "telemetry": {},
+        }
+        for name, rate in (("image_encoder", 230.5), ("text_encoder", 643.9))
+    })
+    path = tmp_path / "model-report.json"
+    content = json.dumps(report)
+    path.write_text(content)
+    monkeypatch.setattr("model_registry.report_publication.runner_environment", lambda: {"board_model": "Modalix"})
+
+    assert main([
+        "check-report", str(tmp_path), "--repository", str(ROOT), "--stage", "performance",
+        "--model", "clip_vit_b_16", "--build-profile", "w8a16",
+    ]) == 0
+
+    assert path.read_text() == content
+    assert json.loads((tmp_path / "environment.json").read_text()) == {"board_model": "Modalix"}
+    metrics = ", ".join(sorted(fixture["metrics"]))
+    assert capsys.readouterr().out.splitlines() == [
+        f"Checked the performance report for image_encoder: {metrics}",
+        f"Checked the performance report for text_encoder: {metrics}",
+    ]
+
+
 def test_matrix_rejects_unknown_manual_model(capsys) -> None:
     result = main(["matrix", "--repository", str(ROOT), "--models", "does_not_exist"])
     assert result == 2
@@ -507,7 +538,8 @@ def test_publishing_a_report_requires_a_test_outcome(monkeypatch, extra: tuple[s
     ("argument", "base_branches"),
     [(None, []), ("", []), ("develop", ["develop"]), ("develop,release-1.0", ["develop", "release-1.0"])],
 )
-def test_publish_catalog_passes_optional_base_branches(monkeypatch, argument, base_branches) -> None:
+@pytest.mark.parametrize("force_rebuild_all", [False, True])
+def test_publish_catalog_passes_optional_base_branches(monkeypatch, argument, base_branches, force_rebuild_all) -> None:
     calls = []
 
     def publish(**kwargs):
@@ -521,9 +553,12 @@ def test_publish_catalog_passes_optional_base_branches(monkeypatch, argument, ba
         "--git-sha", "a" * 40, "--bucket", "model-artifacts",
         "--environment", "staging",
     ]
+    if force_rebuild_all:
+        args.append("--force-rebuild-all")
     if argument is not None:
         args.extend(["--base-branches", argument])
     assert main(args) == 0
+    assert calls[0]["force_rebuild_all"] == force_rebuild_all
     assert calls[0]["base_branches"] == base_branches
     assert calls[0]["branch"] == "feat/names"
     assert calls[0]["bucket"] == "model-artifacts"

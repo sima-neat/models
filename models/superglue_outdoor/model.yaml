@@ -1,5 +1,5 @@
 display_name: SuperGlue Outdoor
-description: Matches SuperPoint keypoints between two outdoor images.
+description: Matches keypoints between two outdoor images, taking SuperPoint keypoints and descriptors as input.
 model_type: vision
 tasks: [feature_matching]
 
@@ -9,9 +9,10 @@ modalities:
 
 architecture: superglue
 
-# Upstream terms are noncommercial research only; this entry is approved for internal use only.
+# The Magic Leap license allows noncommercial research only and no redistribution. This entry is approved
+# for internal use only.
 license:
-  spdx: LicenseRef-SiMa-Internal
+  spdx: LicenseRef-MagicLeap-Noncommercial-Research
   redistribution: restricted
   attribution: SuperGlue is developed by Magic Leap, Inc.; internal use only, under SiMa.ai's approval of the Magic Leap terms.
 
@@ -31,16 +32,40 @@ compilation:
   format: onnx
   source: conversion
 
+calibrations:
+- id: yfcc100m-keypoints-cal
+  dataset: {id: yfcc100m-keypoints, variant: cal, sha256: 086ab34feec1f7aa364d56d7e71fc4ba5c0269af5bc708ba3ed3d4eb6bf0592a, size_bytes: 120522685}
+
 build_profiles:
+  # W8A8 whose attention, residual sums, keypoint encoders and final scores run BF16; surgery.BF16_REGIONS lists
+  # each region's operations. The remaining convolutions keep INT8 weights and activations.
+  w8a8_mixed:
+    calibration_dataset: yfcc100m-keypoints-cal
+    components:
+      model:
+        parameters:
+          precision: w8a8
+          calibration_bins: 2048
+          calibration_samples: 32
+          bf16_regions: [attention, residual, encoder, outputs]
+
   w16a16:
     components:
       model:
         parameters: {precision: w16a16}
 
-  # No w8a8: INT8 activations in the attention layers fail the compile gate (91.4% of FP32's best matches) and
-  # lose 7.5-13.4% of each YFCC metric on 200 test pairs. W8A16 passes the gate (96.9%), but Model Compiler
-  # 3.0.0's simulator check rejects it ("Check FAILED", no MPK) with per-token quantization on, and every push
-  # would retry the failing compile. compile.py keeps its recipe; uncomment the profile once the check passes.
+  # No w8a8: it keeps 64.1% of FP32's best matches at the compile gate against w8a8_mixed's 92.6%, and on CI's DevKit
+  # it ran no faster, 151.4 FPS against 150.8. Its accuracy run took about 600 ms a pair against w16a16's 185 ms and
+  # did not finish within the benchmark job's 45 minutes. compile.py keeps its recipe.
+  # w8a8:
+  #   calibration_dataset: yfcc100m-keypoints-cal
+  #   components:
+  #     model:
+  #       parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 32}
+
+  # W8A16 passes the compile gate (96.9% of FP32's best matches), but Model Compiler 3.0.0's simulator check rejects
+  # it ("Check FAILED", no MPK) with per-token quantization on, and every push would retry the failing compile.
+  # compile.py keeps its recipe; uncomment the profile once the check passes.
   # w8a16:
   #   components:
   #     model:

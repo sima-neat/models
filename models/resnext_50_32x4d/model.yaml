@@ -7,7 +7,7 @@ modalities:
   inputs: [image]
   outputs: [class_scores]
 
-architecture: resnet
+architecture: resnext
 
 license:
   spdx: BSD-3-Clause

@@ -18,7 +18,7 @@ byte size, and SHA-256.
 | --- | --- |
 | Model-owned `scripts/compile.py` | Reads its build profile from `model.yaml`, emits one MPK per compiled component, and writes the profile's numerical fidelity report when declared. |
 | Model-owned `scripts/compile.sh` | Calls `llima-compile`; receives checkpoint/output paths, the profile's compiler options and `BUILD_PROFILE_ID`. |
-| Model-owned `scripts/performance.py` | Measures a build profile's whole model on a Modalix DevKit with Neat Core and writes its report with `tools/model_report`, when declared. |
+| Model-owned `scripts/performance.py` | Measures a build profile's whole model, or each independent component when `performance.scope: components`, on a Modalix DevKit with Neat Core and writes its report with `tools/model_report`, when declared. |
 | Model-owned `scripts/accuracy.py` | Measures a build profile's whole-model task accuracy on a Modalix DevKit and writes its report with `tools/model_report`, when declared. |
 | `tools/model_report` | Board-side report writer, standard library only: builds `model-report.json` from what Core returned, with the metric vocabulary in `metrics.json`. |
 | Runner scripts in `scripts/` | Run each stage the same way locally and in CI: `run_model_compilation.sh`, `run_llima_compilation.sh`, `run_model_performance.sh`, `run_model_accuracy.sh`, and `run_model_conversion.sh`. |
@@ -33,7 +33,7 @@ byte size, and SHA-256.
 
 ```text
 .github/workflows/         Compile, build, DevKit-stage, conversion, tool, and branch workflows
-artifact-browser/          Model browser and its local preview server (preview.py)
+artifact-browser/          Model browser, its local preview server (preview.py), and licenses.json
 deps/                      Repository-wide toolchain and DevKit runtime pins
 design-doc/                Architecture and lifecycle design documents
 docs/                      Developer contribution guides
@@ -83,17 +83,17 @@ this table. Modules marked CI only are removed from the author package by
 | `stage_plan.py` | which builds compile and which benchmarks run on a push or explicit on-demand dispatch (`plan_stages`), the registry reads that decision needs, and base-branch resolution |
 | `registry_http.py` | HTTP transport and authenticated read-only access shared with the author package. |
 | `registry.py` | publishing compile runs, packages (with their MLA stage simulation), model documentation, and the branch catalog the browser reads (CI only) |
-| `promotions.py` | pinned environment-specific Develop requests, inspection, decisions, receipts and review summaries (CI only) |
+| `promotions.py` | pinned environment/target-specific Develop and production Main requests, inspection, decisions, receipts and review summaries (CI only) |
 | `candidates.py` | complete model/profile candidate contracts, run publication and binding, finalization, feature selection and retry receipts (CI only) |
 | `benchmark_declarations.py` | the `performance` and `accuracy` declarations: the profiles each benchmarks, their scripts and required metrics, and validating `reference_metrics`, which the portal ships |
-| `report_publication.py` | the MPKs a benchmark runs, checking a `model-report.json` against `model.yaml`, and publishing it as one whole-model run under the profile's package run (CI only) |
+| `report_publication.py` | the MPKs a benchmark runs, checking a `model-report.json` against `model.yaml`, and publishing one benchmark run under the profile's package run, with whole-model measurements by default or separate component measurements identified by `component_id` (CI only) |
 | `artifact.py` | compile outputs, MPK/deployed LLiMa verification, reproduction recipes, and deployment file indexes |
 | `mla_stage_simulation.py` | after an MPK compile, the Model Compiler simulator's operation counts and latency for each MLA stage (`simulate-mla-stages`) |
 | `package.py` | assembling a profile's `default` package from component MPKs or a complete native deployment folder, with its numerical fidelity report and MLA stage simulation |
 | `dependencies.py` | resolving the Model Compiler and DevKit runtime pins in `deps/` |
 | `fetch.py` | verified downloads, the cache, and dataset resolution |
 | `conversion.py` | conversion fingerprints, declared outputs, validated bundles, publication, durable plan selections and exact downloads; author CLI exposes only saved-selection fetching |
-| `source.py` | source identity and URL redaction |
+| `source.py` | the approved source hosts and their URL checks, source identity, and URL redaction |
 | `taxonomy.py` | loading the taxonomy and validating model categories |
 | `documentation.py` | loading a model's README and hero image |
 | `runner_approval.py` | authorizing requested compile runner classes/markets and selecting optional runner audit fields for durable publication |
@@ -137,11 +137,34 @@ reruns](../docs/adding-a-model.md#9-know-what-a-change-reruns).
 
 ## CI flow
 
+| Workflow | Trigger | What it does |
+| --- | --- | --- |
+| `Target Branch Checks` | pull request | Runs `python -m pytest`, builds the `model-registry` package, and builds, browser-tests, and smoke-tests the model browser on the merge result. Contributor code never reaches a self-hosted runner. |
+| `Vulcan Model Orchestrator` | every push, manual dispatch | Plans each stage against the registry, runs `Vulcan Model Compile` for each changed build and the benchmark workflow for each reused build that lacks a benchmark, and publishes the branch catalog. Each build's jobs are grouped under the build's name. A newer push cancels the running orchestrator with its compiles and benchmarks. A push that changes no fingerprint only publishes the catalog. On `main` and `develop`, it also publishes the model browser it checked to staging, independently of `VULCAN_ENV`. |
+| `Vulcan Model Compile` | called by the orchestrator | Compiles one build, runs the model's compile tests on it, publishes it, and benchmarks it. |
+| `Vulcan Model Benchmarking` | called by `Vulcan Model Compile` and the orchestrator, manual dispatch | Runs the requested `performance` and `accuracy` stages of one build on a Modalix DevKit, runs the model's benchmark tests on each result, and publishes each result with its test outcome. |
+| `Vulcan Model Convert` | manual dispatch | Runs `scripts/run_model_conversion.sh` and the model's conversion tests, publishes a validated ONNX bundle and its provenance to Vulcan. |
+| `Build and Publish Model Registry` | push, manual dispatch | Runs `python -m pytest`, builds the `model-registry` package with `packaging/model-registry/build.sh`, publishes it, and moves the branch's `latest` tag. |
+| `Model branch lifecycle` | branch create or delete | Cancels a deleted branch's unfinished runs and purges or restores its registry state. |
+
+### Registry release state
+
+[`state.json`](../state.json) defines the release experience consumed by the SDK's
+Palette SDK component: `current_state` accepts `GA`, `Beta`, or `Alpha`, and
+`default_branch` accepts `develop` or `main`. Initial values are `Alpha` and
+`develop`, allowing the consumer to display `Current Release: Alpha`. Palette SDK
+integration must fetch this file; it is not implemented here. This file does not
+participate in model compilation or fingerprints.
+
 Registry release state is a separate production workflow: changes to `state.json`,
 `scripts/publish_registry_state.sh`, or `vulcan-model-state.yml` on `main` publish
 `models/state.json`. Manual runs also require `main`; both jobs and the upload
 script enforce this restriction. Runs share one production concurrency group
 and verify the uploaded file. Merging to `develop` does not deploy this state.
+Publication validates both fields and sets JSON content type and `Cache-Control:
+no-store`. CDN configuration must honor that cache policy.
+
+### Other workflows
 
 Manual **Deploy Model Browser & Docs** is independent of model builds and tooling
 publication. From `main` or `develop`, select `staging` or `production` and the
@@ -169,10 +192,15 @@ Manual **Promote model** takes a model ID and build profile, resolves the newest
 GitHub candidate receipt, and verifies its identity with Vulcan. It runs independently of
 compilation: prepare and persist a request plan →
 create the protected backend request and issue summary → mention model owners and send
-a Slack approval reminder → protected `<VULCAN_ENV>-promote-develop`
+a Slack approval reminder → protected `<VULCAN_ENV>-promote-<target_branch>`
 review → approve the exact request → report backend state and notify Slack of the outcome. Only trusted Develop workflow code
 runs; a separate approver role decides requests. Status/cancel use publisher credentials; explicit
-reject uses the same protected gate. See [promotion operations](../docs/model-promotion.md) for
+reject uses the matching target's protected gate. Main is production-only, keeps
+S3 storage, and uses a separate Main-only approver identity. It pins a completed
+Develop approval for the exact candidate and digest before its own review. The target branch,
+environment, endpoints and canonical snapshot are pinned in the immutable plan;
+retries cannot reinterpret a Develop request as Main. Publish the target's own
+metadata before requesting selection. See [promotion operations](../docs/model-promotion.md) for
 configuration, retries, and the staging acceptance boundary.
 
 ```text
@@ -387,16 +415,28 @@ Vulcan PRs #248, #250 and #253 provide the staging backend. The protected GitHub
 approval workflow is tracked separately in [#315](https://github.com/sima-neat/models/issues/315).
 Candidate finalization does not approve or promote a build. Approver roles and
 end-to-end producer acceptance are required before routine approval. Develop is
-the only implemented promotion target; Main/HF release remains follow-up work.
+supported in staging and production. Main is supported only in production through
+its own protected gate and branch-scoped approver role. Both select the same
+immutable production candidate in independently pinned target catalogs. Each
+selection holds its own retention reference, so replacing Develop cannot release
+Main's artifacts or the reverse. Main metadata comes from its chosen source
+revision, not from an implicit copy of Develop.
 
-Develop approval retains S3 storage. The future Develop → Main flow in
-[#315](https://github.com/sima-neat/models/issues/315) and
-[#293](https://github.com/sima-neat/models/issues/293) needs a separate release
-gate and backend. It must transfer the same approved deployment to Hugging Face,
-verify every file at an immutable revision, and only then update Main's selection
-and active download location. S3 cleanup must preserve other references,
-including Develop. Pushes never upload to Hugging Face. The backend resolves
-approved roots; the CLI downloads and verifies files.
+Production Main registry selection retains S3 storage and active S3 downloads.
+The earlier combined Main/Hugging Face plan is split: Hugging Face transfer,
+immutable revision verification and any later download-host switch remain a
+separate release operation under [#293](https://github.com/sima-neat/models/issues/293).
+This promotion workflow never uploads to Hugging Face. The backend resolves
+approved roots; the CLI downloads and verifies their files.
+
+Manual **Publish Main model metadata** executes trusted Develop workflow code,
+checks out Main's exact release revision, installs its matching producer, and
+runs `publish-catalog` against production Main with Main as the only base branch.
+It publishes metadata and documentation without compiling, benchmarking or
+approving artifacts. The job uses publisher credentials and saves the source SHA
+and receipt. Its independent metadata-only path supports Main's older source
+schema without copying newer Develop model definitions or requiring a build.
+Main still needs its own on-demand profile requirements before candidate approval.
 
 ## LLiMa builds
 
@@ -425,6 +465,17 @@ upload limit. Aggregate deployment size has no limit.
 Empty benchmark declarations schedule no benchmarks. Qwen's defaults
 and the separate performance and accuracy follow-ups are in the
 [author guide](../docs/adding-a-model.md#llima-language-and-vision-language-models).
+
+### Forced rebuilds of published packages
+
+`force_rebuild_all` recompiles the selected builds. Once a selected automatic
+build's package is published in the current catalog revision, dispatch the
+forced rebuild from a new Git commit. Catalog packages cannot be removed or
+replaced within that revision, even by initialization. The orchestrator passes
+`--force-rebuild-all` to `publish-catalog`, which rejects this conflict before
+compile jobs start instead of silently discarding the rebuild selection.
+An ordinary initialization retry preserves packages already published in the
+revision. On-demand candidate publication follows its separate deployment flow.
 
 ## Converted ONNX inputs
 

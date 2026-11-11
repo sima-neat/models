@@ -170,7 +170,14 @@ def check_report(
             measured = report["datasets"][name]["metrics"]
             _check_metrics(f"{report_path}: {name}", stage, measured, dataset["required_metrics"])
         return report
-    _check_metrics(str(report_path), stage, report["metrics"], REQUIRED_PERFORMANCE_METRICS)
+    scope = model["performance"].get("scope", "model")
+    if report.get("scope", "model") != scope:
+        raise ValidationError(f"{report_path}: performance scope must be {scope}")
+    if scope == "components":
+        for name, component in report["components"].items():
+            _check_metrics(f"{report_path}: {name}", stage, component["metrics"], REQUIRED_PERFORMANCE_METRICS)
+    else:
+        _check_metrics(str(report_path), stage, report["metrics"], REQUIRED_PERFORMANCE_METRICS)
     components = [component["id"] for component in model["components"]]
     if list(report["components"]) != components:
         raise ValidationError(f"{report_path}: the report must describe the components {components}, in order")
@@ -301,8 +308,10 @@ def publish_report(
             "operating_system": board["kernel_release"],
             "properties": {
                 "vulcan_environment": environment,
-                **{key: board[key] for key in ("machine", "cpu_count", "cpu_governor", "mla_frequency_hz",
-                                               "cpu_frequency_khz")},
+                **{
+                    key: board[key]
+                    for key in ("machine", "cpu_count", "cpu_governor", "mla_frequency_hz", "cpu_frequency_khz")
+                },
             },
         },
         "metadata": {**subject, "stage": stage, "package_run_id": package_run_id},
@@ -338,13 +347,30 @@ def publish_report(
     files = {"model-report": (REPORT_FILE, "model-report", "application/json")}
     if (output / CORE_REPORT_FILE).is_file():
         files["core-benchmark-report"] = (CORE_REPORT_FILE, "benchmark-report", "application/json")
+    if report.get("scope") == "components":
+        for component in report["components"]:
+            filename = f"{component}-{CORE_REPORT_FILE}"
+            if (output / filename).is_file():
+                files[f"core-benchmark-report-{component.replace('_', '-')}"] = (
+                    filename,
+                    "benchmark-report",
+                    "application/json",
+                )
     if (output / f"{stage}.log").is_file():
         files[f"{stage}-log"] = (f"{stage}.log", "log", "text/plain")
     artifacts = {
         name: _put_file(
-            client, store, output / filename, run_id=run_id, name=name, artifact_type=artifact_type,
-            media_type=media_type, bucket=bucket, s3_key=f"{prefix}/{report_digest}/{filename}",
-            metadata={**subject, "stage": stage}, stable_key=stable_key,
+            client,
+            store,
+            output / filename,
+            run_id=run_id,
+            name=name,
+            artifact_type=artifact_type,
+            media_type=media_type,
+            bucket=bucket,
+            s3_key=f"{prefix}/{report_digest}/{filename}",
+            metadata={**subject, "stage": stage},
+            stable_key=stable_key,
         )
         for name, (filename, artifact_type, media_type) in files.items()
     }
@@ -359,12 +385,23 @@ def publish_report(
     client.request("PUT", f"/v1/runs/{run_id}/test-results/{stage}/model", test_body, f"{stable_key}-test-result")
     measurements = (
         [
-            _measurement(f"{fingerprint}-{dataset}-{name}", name, value, result["evaluated_samples"],
-                         {**subject, "dataset": dataset})
+            _measurement(
+                f"{fingerprint}-{dataset}-{name}",
+                name,
+                value,
+                result["evaluated_samples"],
+                {**subject, "dataset": dataset},
+            )
             for dataset, result in sorted(report["datasets"].items())
             for name, value in sorted(result["metrics"].items())
         ]
         if stage == "accuracy"
+        else [
+            _measurement(f"{fingerprint}-{component}-{name}", name, value, 1, {**subject, "component_id": component})
+            for component, result in report["components"].items()
+            for name, value in sorted(result["metrics"].items())
+        ]
+        if report.get("scope") == "components"
         else [
             _measurement(f"{fingerprint}-{name}", name, value, 1, subject)
             for name, value in sorted(report["metrics"].items())

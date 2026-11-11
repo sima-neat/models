@@ -302,6 +302,24 @@ def test_compile_fingerprint_ignores_display_name_and_description(model_reposito
     assert _fingerprint(model_repository, "alpha", "2.1.3") == first
 
 
+RELICENSED = {
+    "spdx": "LicenseRef-MagicLeap-Noncommercial-Research",
+    "redistribution": "restricted",
+    "attribution": "Relicensed fixture.",
+}
+
+
+def test_compile_fingerprint_ignores_the_license(model_repository: Path) -> None:
+    manifest = model_repository / "models" / "alpha" / "model.yaml"
+    first = _fingerprint(model_repository, "alpha", "2.1.3")
+    model = yaml.safe_load(manifest.read_text(encoding="utf-8"))
+    assert model["license"] != RELICENSED
+    model["license"] = RELICENSED
+    manifest.write_text(yaml.safe_dump(model), encoding="utf-8")
+
+    assert _fingerprint(model_repository, "alpha", "2.1.3") == first
+
+
 RF_DETR_BUILDS = {
     component_id: {"run_id": f"run-{component_id}", "artifact_sha256": "a" * 64}
     for component_id in ("backbone", "decoder")
@@ -314,6 +332,16 @@ def test_benchmark_fingerprints_ignore_display_name_and_description(stage: str) 
     renamed = {**model, "display_name": "Renamed", "description": "A rewritten one-line catalog description."}
 
     assert benchmark_fingerprint(ROOT, renamed, "w8a8_w16a16", RF_DETR_BUILDS, stage) == benchmark_fingerprint(
+        ROOT, model, "w8a8_w16a16", RF_DETR_BUILDS, stage
+    )
+
+
+@pytest.mark.parametrize("stage", ["performance", "accuracy"])
+def test_benchmark_fingerprints_ignore_the_license(stage: str) -> None:
+    model = load_and_validate_model(ROOT / "models" / "rf_detr_small", SCHEMA)
+    relicensed = {**model, "license": RELICENSED}
+
+    assert benchmark_fingerprint(ROOT, relicensed, "w8a8_w16a16", RF_DETR_BUILDS, stage) == benchmark_fingerprint(
         ROOT, model, "w8a8_w16a16", RF_DETR_BUILDS, stage
     )
 
@@ -531,12 +559,15 @@ def test_compile_fingerprint_ignores_board_stage_and_conversion_files(model_repo
     assert _fingerprint(model_repository, "alpha", "2.1.3") == first
 
 
-def test_compile_fingerprint_ignores_performance_and_accuracy_declarations(model_repository: Path) -> None:
+@pytest.mark.parametrize("scope", [None, "components"])
+def test_compile_fingerprint_ignores_performance_and_accuracy_declarations(
+    model_repository: Path, scope: str | None,
+) -> None:
     manifest = model_repository / "models" / "alpha" / "model.yaml"
     first = _fingerprint(model_repository, "alpha", "2.1.3")
 
     model = yaml.safe_load(manifest.read_text(encoding="utf-8"))
-    model["performance"] = {}
+    model["performance"] = {"scope": scope} if scope else {}
     model["accuracy"] = {"datasets": [dict(DATASET)]}
     manifest.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
     (manifest.parent / "scripts" / "performance.py").write_text("report = model.benchmark()\n", encoding="utf-8")
@@ -689,6 +720,18 @@ def test_benchmark_baseline_changes_only_its_profiles_performance_fingerprint():
     assert benchmark_fingerprint(ROOT, model, "w8a8_w16a16", builds, "accuracy") == accuracy
     model["build_profiles"][0].pop("benchmark_baseline")
     assert benchmark_fingerprint(ROOT, model, "w8a8_w16a16", builds, "performance") == before
+
+
+def test_performance_scope_changes_performance_fingerprint_without_changing_accuracy():
+    model = load_and_validate_model(ROOT / "models/rf_detr_small")
+    builds = {name: {"run_id": name, "artifact_sha256": "a" * 64} for name in ("backbone", "decoder")}
+    before = benchmark_fingerprint(ROOT, model, "w8a8_w16a16", builds, "performance")
+    accuracy = benchmark_fingerprint(ROOT, model, "w8a8_w16a16", builds, "accuracy")
+
+    model["performance"]["scope"] = "components"
+
+    assert benchmark_fingerprint(ROOT, model, "w8a8_w16a16", builds, "performance") != before
+    assert benchmark_fingerprint(ROOT, model, "w8a8_w16a16", builds, "accuracy") == accuracy
 
 
 def test_yolo26x_pose_requests_moderate_on_demand():

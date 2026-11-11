@@ -42,8 +42,8 @@ architecture_paradigms:
   transformer:
     display_name: Transformer
 
-# A family is the upstream model line, named without generation or size
-# (YOLO, not YOLO26n). The model's id and display_name carry those.
+# A family is the upstream model line, named without size (YOLO26-det, not
+# YOLO26n-det). The model's id and display_name carry the size.
 architectures:
   clip:
     display_name: CLIP
@@ -53,14 +53,46 @@ architectures:
     display_name: DepthART
     paradigm: transformer
     allowed_model_types: [vision]
-  gemma:
-    display_name: Gemma
+  dla:
+    display_name: DLA
+    paradigm: cnn
+    allowed_model_types: [vision]
+  gemma4:
+    display_name: Gemma4
+    paradigm: transformer
+    allowed_model_types: [llm, vlm]
+  gpt_oss:
+    display_name: GPT-OSS
     paradigm: transformer
     allowed_model_types: [llm]
+  hrnet:
+    display_name: HRNet
+    paradigm: cnn
+    allowed_model_types: [vision]
+  inception:
+    display_name: Inception
+    paradigm: cnn
+    allowed_model_types: [vision]
   lfm:
     display_name: LFM
     paradigm: transformer
     allowed_model_types: [llm]
+  lfm2_5:
+    display_name: LFM2.5
+    paradigm: transformer
+    allowed_model_types: [llm]
+  lfm2_5_vl:
+    display_name: LFM2.5-VL
+    paradigm: transformer
+    allowed_model_types: [vlm]
+  lightglue:
+    display_name: LightGlue
+    paradigm: transformer
+    allowed_model_types: [vision]
+  lightstereo:
+    display_name: LightStereo
+    paradigm: cnn
+    allowed_model_types: [vision]
   llama:
     display_name: Llama
     paradigm: transformer
@@ -77,12 +109,28 @@ architectures:
     display_name: Phi
     paradigm: transformer
     allowed_model_types: [llm]
-  qwen:
-    display_name: Qwen
+  phi4:
+    display_name: Phi4
+    paradigm: transformer
+    allowed_model_types: [llm]
+  qwen3:
+    display_name: Qwen3
+    paradigm: transformer
+    allowed_model_types: [llm]
+  qwen3_5:
+    display_name: Qwen3.5
     paradigm: transformer
     allowed_model_types: [llm, vlm]
+  qwen3_vl:
+    display_name: Qwen3-VL
+    paradigm: transformer
+    allowed_model_types: [vlm]
   resnet:
     display_name: ResNet
+    paradigm: cnn
+    allowed_model_types: [vision]
+  resnext:
+    display_name: ResNeXt
     paradigm: cnn
     allowed_model_types: [vision]
   rf_detr:
@@ -101,12 +149,52 @@ architectures:
     display_name: SuperGlue
     paradigm: transformer
     allowed_model_types: [vision]
+  vgg:
+    display_name: VGG
+    paradigm: cnn
+    allowed_model_types: [vision]
   whisper:
     display_name: Whisper
     paradigm: transformer
     allowed_model_types: [audio]
-  yolo:
-    display_name: YOLO
+  wide_resnet:
+    display_name: Wide ResNet
+    paradigm: cnn
+    allowed_model_types: [vision]
+  yolo11_det:
+    display_name: YOLO11-det
+    paradigm: cnn
+    allowed_model_types: [vision]
+  yolo11_obb:
+    display_name: YOLO11-obb
+    paradigm: cnn
+    allowed_model_types: [vision]
+  yolo26_det:
+    display_name: YOLO26-det
+    paradigm: cnn
+    allowed_model_types: [vision]
+  yolo26_obb:
+    display_name: YOLO26-obb
+    paradigm: cnn
+    allowed_model_types: [vision]
+  yolo26_pose:
+    display_name: YOLO26-pose
+    paradigm: cnn
+    allowed_model_types: [vision]
+  yolo26_seg:
+    display_name: YOLO26-seg
+    paradigm: cnn
+    allowed_model_types: [vision]
+  yolov8_det:
+    display_name: YOLOv8-det
+    paradigm: cnn
+    allowed_model_types: [vision]
+  yolov8_obb:
+    display_name: YOLOv8-obb
+    paradigm: cnn
+    allowed_model_types: [vision]
+  yolox:
+    display_name: YOLOX
     paradigm: cnn
     allowed_model_types: [vision]
 
@@ -159,6 +247,9 @@ tasks:
   object_detection:
     display_name: Object Detection
     allowed_model_types: [vision, vlm]
+  oriented_object_detection:
+    display_name: Oriented Object Detection
+    allowed_model_types: [vision]
   pose_estimation:
     display_name: Pose Estimation
     allowed_model_types: [vision]
@@ -173,6 +264,9 @@ tasks:
     allowed_model_types: [llm, vlm]
   image_captioning:
     display_name: Image Captioning
+    allowed_model_types: [vlm]
+  image_text_embedding:
+    display_name: Image-Text Embedding
     allowed_model_types: [vlm]
   multimodal_chat:
     display_name: Multimodal Chat

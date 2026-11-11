@@ -282,7 +282,13 @@ Publish job; models with multiple invocations join them in the orchestrator's
 `publish-candidates` job before publication.
 Each complete candidate publishes independently of failures in other models
 or profiles.
-Develop and Main still require separate approval and promotion.
+Develop and Main require separate approval and promotion. Use the manual
+[Promote model workflow](model-promotion.md) from Develop, choosing the target;
+Main is production-only, uses a separate protected gate and retains S3 storage.
+Use **Publish Main model metadata** from Develop to publish the Main source
+revision's model/profile metadata without compiling. Main requires a completed
+Develop approval of the same candidate before its separate review.
+Hugging Face publication is a separate release operation.
 
 ## Review and merge expectations
 
@@ -309,6 +315,10 @@ If trusted compilation exposes a model-specific failure, update the recipe or
 manifest with reproducible evidence and tests. Use `status: unsupported` only
 after a combination is proven unusable, not as a shortcut around an unresolved
 failure.
+
+Forced rebuilds of packages already published in the current catalog revision
+require a new Git commit. Initialization rejects the conflict before compilation;
+see [forced rebuilds](https://github.com/sima-neat/models/blob/develop/design-doc/model-registry-architecture.md#forced-rebuilds-of-published-packages).
 
 Converted ONNX models resolve a validated registry output before compile reuse is
 checked. Deploy the Vulcan contract and publish matching conversions before
