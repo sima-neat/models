@@ -433,6 +433,18 @@ def _performance_report(model: dict, profile_id: str) -> dict[str, Any]:
             "mla_layer_stats": {"status": "ok", "layers": layers},
             "mla_stage_stats": {"status": "ok", "stages": stages},
         }
+    if model.get("performance", {}).get("scope") == "components":
+        for index, (name, component) in enumerate(report["components"].items(), 1):
+            measured = copy.deepcopy(metrics)
+            measured["throughput_fps"] *= index
+            for key in ("latency_avg_ms", "latency_p50_ms", "latency_p95_ms", "latency_p99_ms"):
+                measured[key] /= index
+            measured["energy_per_inference_joules"] = measured["avg_power_watts"] / measured["throughput_fps"]
+            component.update(metrics=measured, telemetry=copy.deepcopy(report["telemetry"]),
+                             workload=f"Independent {name.replace('_', ' ')} benchmark; illustrative preview data")
+        for key in ("metrics", "telemetry", "workload"):
+            del report[key]
+        report["scope"] = "components"
     # The registry stores the report as PostgreSQL jsonb, which orders keys shorter first, then bytewise.
     report["components"] = dict(sorted(report["components"].items(), key=lambda item: (len(item[0]), item[0])))
     # The rest of the board telemetry keeps the template's DevKit readings.

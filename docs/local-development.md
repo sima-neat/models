@@ -111,13 +111,17 @@ model-registry fetch-calibration models/<model-id> \
   --build-profile <profile-id> --component <component-id>
 model-registry fetch-fidelity-dataset models/<model-id> \
   --build-profile <profile-id> --component <component-id>
+model-registry fetch-resources models/<model-id> --output-dir <directory>
 ```
 
 `fetch` checks the exact byte size and SHA-256 before installing the source
 into a checksum-addressed cache. `fetch-calibration` does the same for a
 `ready` calibration, which belongs to the profile's first component, and
 `fetch-fidelity-dataset` for the `numerical_fidelity` dataset. Both report
-`kind: none` when the build needs no such input.
+`kind: none` when the build needs no such input. `fetch-resources` verifies a
+model's pinned `resources` and lays them out under the directory as its package
+installs them, then prints the directory; it prints nothing for a model without
+resources.
 
 The default cache is `~/.cache/model-registry`. For an isolated cache, use
 either form:

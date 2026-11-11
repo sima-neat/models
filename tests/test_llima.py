@@ -43,6 +43,7 @@ from model_registry.source import source_identity
 ROOT = Path(__file__).resolve().parents[1]
 MODEL = "qwen3_5_0_8b"
 MTP_MODEL = "gemma_4_e2b_it_textonly_mtp"
+DFLASH_MODEL = "qwen3_4b_dflash"
 PROFILE = "w4a16"
 
 
@@ -350,25 +351,26 @@ def test_candidate_upload_retry_reuses_saved_exact_s3_version(tmp_path, monkeypa
 
 
 @pytest.mark.parametrize("model_id, image_input, group_size", [
-    (MODEL, True, 64), (MODEL, False, 128), (MTP_MODEL, False, 128),
+    (MODEL, True, 64), (MODEL, False, 128), (MTP_MODEL, False, 128), (DFLASH_MODEL, False, 128),
 ])
 def test_llima_runner_passes_yaml_settings_to_the_recipe(tmp_path, model_id, image_input, group_size):
     root = tmp_path / "repository"
     for folder in ("schemas", "taxonomies", "deps", "scripts", "tools", f"models/{model_id}"):
         shutil.copytree(ROOT / folder, root / folder, ignore=shutil.ignore_patterns("__pycache__"))
-    if model_id == MTP_MODEL:
-        shutil.copytree(ROOT / "models/gemma_4_e2b_it_textonly", root / "models/gemma_4_e2b_it_textonly")
     model_dir = root / "models" / model_id
     path = model_dir / "model.yaml"
     model = yaml.safe_load(path.read_text())
+    if baseline := model["build_profiles"][PROFILE].get("benchmark_baseline"):
+        shutil.copytree(ROOT / "models" / baseline["model_id"], root / "models" / baseline["model_id"])
     parameters = model["build_profiles"][PROFILE]["components"]["model"]["parameters"]
+    speculative = "draft_model_path" in parameters
     parameters.update(max_num_tokens=8192, language_group_size=group_size)
     if image_input:
         parameters.update(input_height=512, input_width=640)
     else:
         parameters.pop("input_height", None)
         parameters.pop("input_width", None)
-    if model_id == MTP_MODEL:
+    if speculative:
         model["upstream"]["revision"] = "a" * 40
         for path_name, member in model["compilation"]["source"]["files"].items():
             repository, revision_path = member["uri"].split("@", 1)
@@ -381,15 +383,15 @@ def test_llima_runner_passes_yaml_settings_to_the_recipe(tmp_path, model_id, ima
     config = json.loads(config_path.read_text())
     config["pipeline_cfg"].update(max_num_tokens=8192, input_token_group_size=group_size)
     config["vm_cfg"]["image_size"] = [512, 640] if image_input else 448
-    if model_id == MTP_MODEL:
-        config["lm_cfg"]["speculative_decoding_cfg"] = {"is_draft": False, "method": "gemma4_mtp"}
+    if speculative:
+        config["lm_cfg"]["speculative_decoding_cfg"] = {"is_draft": False, "method": parameters["speculative_method"]}
     config_path.write_text(json.dumps(config))
     checkpoint = tmp_path / "source-sets/9f" / ("9f" + "a" * 62)
     checkpoint_config = checkpoint / model["components"][0]["source"]["entrypoint"]
     checkpoint_config.parent.mkdir(parents=True)
     checkpoint_config.write_text("{}")
     checkpoint = checkpoint_config.parent
-    if model_id == MTP_MODEL:
+    if speculative:
         target_name = Path(model["upstream"]["repository"]).name
         target = source / target_name
         target.mkdir()
@@ -399,7 +401,7 @@ def test_llima_runner_passes_yaml_settings_to_the_recipe(tmp_path, model_id, ima
         draft_name = parameters["draft_model_path"]
         draft = deployment(source / draft_name)
         draft_config = json.loads((draft / "devkit/vlm_config.json").read_text())
-        draft_config["lm_cfg"]["speculative_decoding_cfg"] = {"is_draft": True, "method": "gemma4_mtp"}
+        draft_config["lm_cfg"]["speculative_decoding_cfg"] = {"is_draft": True, "method": parameters["speculative_method"]}
         (draft / "devkit/vlm_config.json").write_text(json.dumps(draft_config))
         (checkpoint.parent / draft_name).mkdir()
         (checkpoint.parent / draft_name / "config.json").write_text("{}")
@@ -450,6 +452,8 @@ shutil.copytree(os.environ["DEPLOYMENT_SOURCE"], sys.argv[2])
     assert not Path(arguments[0]).exists()
     assert (checkpoint / "config.json").read_text() == "{}"
     assert arguments[arguments.index("--max_num_tokens") + 1] == "8192"
+    if model_id == DFLASH_MODEL:
+        assert arguments[arguments.index("--speculative_block_size") + 1] == "16"
     if group_size == 128:
         assert "--language_group_size" not in arguments
     else:
@@ -465,7 +469,8 @@ shutil.copytree(os.environ["DEPLOYMENT_SOURCE"], sys.argv[2])
     executable = tools / "llima-compile"
     executable.write_text(f"#!{sys.executable}\nimport json, os, runpy, sys\n"
                           'if "-c" in sys.argv:\n'
-                          '    configure = runpy.run_path(sys.argv[sys.argv.index("-c") + 1])["get_layer_configuration"]\n'
+                          '    configure = runpy.run_path(sys.argv[sys.argv.index("-c") + 1])'
+                          '["get_layer_configuration"]\n'
                           '    assert configure({"is_draft_model": True}, {}) == {"precision": "A_BF16_W_INT8"}\n'
                           'open(os.environ["COMPILE_ARGUMENTS"], "w").write(json.dumps(sys.argv[1:]))\n')
     subprocess.run(["bash", str(replay)], cwd=tmp_path, check=True, env={
@@ -476,9 +481,9 @@ shutil.copytree(os.environ["DEPLOYMENT_SOURCE"], sys.argv[2])
     assert "set --" not in replay.read_text()
     checkpoint_name = Path(model["upstream"]["repository"]).name
     assert recorded[0] == checkpoint_name
-    assert recorded[1:3] == ["-o", checkpoint_name.removesuffix("-Safetensors") +
-                           ("-MTP" if model_id == MTP_MODEL else "")]
-    if model_id == MTP_MODEL:
+    suffix = "-DFlash" if model_id == DFLASH_MODEL else "-MTP" if speculative else ""
+    assert recorded[1:3] == ["-o", checkpoint_name.removesuffix("-Safetensors") + suffix]
+    if speculative:
         recipe = replay.read_text()
         for name, config in ((checkpoint_name, model["components"][0]["source"]["entrypoint"]),
                              (parameters["draft_model_path"], parameters["draft_model_path"] + "/config.json")):
@@ -498,7 +503,7 @@ shutil.copytree(os.environ["DEPLOYMENT_SOURCE"], sys.argv[2])
     assert recorded[3:] == arguments[3:]
     manifest = json.loads((replay.parent.parent / "deployment-manifest.json").read_text())
     assert "compile.sh" in {item["path"] for item in manifest["files"]}
-    if model_id == MTP_MODEL:
+    if speculative:
         assert "config.py" in {item["path"] for item in manifest["files"]}
     compiler = resolve_model_compiler(root)
     verify_artifact(output / model_id / PROFILE / "model", write_manifest=True, provenance={
@@ -512,9 +517,9 @@ shutil.copytree(os.environ["DEPLOYMENT_SOURCE"], sys.argv[2])
     assert prepared[0]["compiled_parameters"] == {
         "max_num_tokens": 8192, "language_group_size": group_size,
         "input_height": 512 if image_input else 448, "input_width": 640 if image_input else 448,
-        **({"speculative_method": "gemma4_mtp"} if model_id == MTP_MODEL else {}),
+        **({"speculative_method": parameters["speculative_method"]} if speculative else {}),
     }
-    if model_id == MTP_MODEL:
+    if speculative:
         registry = Registry()
         candidate = publish_candidate(repository=root, dist_dir=output, output_dir=tmp_path / "candidate",
                                       model_id=model_id, build_profile_id=PROFILE, **registry.args())
@@ -527,9 +532,10 @@ shutil.copytree(os.environ["DEPLOYMENT_SOURCE"], sys.argv[2])
 
 
 @pytest.mark.parametrize("future_mask, log_probe", [(True, True), (False, True), (True, False)])
-def test_whisper_recipe_and_saved_script_preserve_settings(tmp_path, future_mask, log_probe):
+@pytest.mark.parametrize("model_id", ["whisper_small", "whisper_medium", "whisper_large_v3_turbo"])
+def test_whisper_recipe_and_saved_script_preserve_settings(tmp_path, future_mask, log_probe, model_id):
     work = tmp_path / "source with spaces"
-    checkpoint = work / "whisper-small"
+    checkpoint = work / model_id.replace("_", "-")
     checkpoint.mkdir(parents=True)
     output = tmp_path / "compiled output"
     tools = tmp_path / "bin"
@@ -579,16 +585,16 @@ class WhisperModel:
         f"--{'' if future_mask else 'no-'}use_future_token_mask",
         f"--{'' if log_probe else 'no-'}enable_log_probe",
     ]
-    recipe = ROOT / "models/whisper_small/scripts/compile.sh"
+    recipe = ROOT / "models" / model_id / "scripts/compile.sh"
     for script, arguments, destination in (
         (recipe, [str(checkpoint), str(output), *options], output),
-        (output / "compile.sh", [], work / "whisper-small-a16w8"),
+        (output / "compile.sh", [], work / f"{checkpoint.name}-a16w8"),
     ):
         subprocess.run(["bash", str(script), *arguments], cwd=work, env=env,
                        check=True, capture_output=True, text=True)
         calls = json.loads(captured.read_text())
         assert (work / calls["source"]["hf_cache_path"]).resolve() == checkpoint
-        assert calls["source"]["model_name"] == "whisper-small"
+        assert calls["source"]["model_name"] == checkpoint.name
         assert (work / calls["source"]["sima_path"]).resolve() == destination / "sima_files"
         assert calls["source"]["use_future_token_mask"] is future_mask
         assert calls["source"]["enable_log_probe"] is log_probe
@@ -598,9 +604,9 @@ class WhisperModel:
         assert calls["generation"]["part"] == "all"
         assert calls["generation"]["resume"] is True
         if script == recipe:
-            source = load_and_validate_model(ROOT / "models/whisper_small")["components"][0]["source"]
+            source = load_and_validate_model(ROOT / "models" / model_id)["components"][0]["source"]
             config = next(item for item in source["files"] if item["path"] == source["entrypoint"])
-            save_llima_recipe(recipe.parent, output, [checkpoint.name, "whisper-small-a16w8", *options],
+            save_llima_recipe(recipe.parent, output, [checkpoint.name, f"{checkpoint.name}-a16w8", *options],
                               {checkpoint.name: config["uri"]})
     assert os.access(output / "compile.sh", os.X_OK)
     assert (output / "compile.py").read_bytes() == recipe.with_suffix(".py").read_bytes()
@@ -649,9 +655,14 @@ def test_mpk_candidate_binds_every_component_before_finalizing(tmp_path, monkeyp
         outputs.append({"component_id": component, "mpk_path": f"{component}/{archive.name}",
                         "mpk_sha256": hashlib.sha256(archive.read_bytes()).hexdigest()})
     (invocation / "compile-timing.json").write_text(COMPILE_TIMING)
+    runtime_files = []
+    for name in ("backbone/tokenizer.json", "vocabulary.txt"):
+        path = invocation / name
+        path.write_bytes(b"supporting-file")
+        runtime_files.append({"path": name, "sha256": hashlib.sha256(path.read_bytes()).hexdigest()})
     (invocation / "compile-outputs.json").write_text(json.dumps({
         "model_id": "fixture_model", "build_profile_id": "fixture", "compile_invocation_id": "fixture",
-        "outputs": outputs,
+        "outputs": outputs, "runtime_files": runtime_files,
         "derived_graphs": [{"component_id": component, "sha256": "a" * 64} for component in ("backbone", "decoder")],
     }))
     from model_registry import stage_plan
@@ -673,6 +684,15 @@ def test_mpk_candidate_binds_every_component_before_finalizing(tmp_path, monkeyp
     arguments = {**registry.args(), "environment": environment}
     result = publish_candidate(repository=root, dist_dir=tmp_path / "invocations", output_dir=tmp_path / "candidate",
                                model_id="fixture_model", build_profile_id="fixture", **arguments)
+    from model_registry.runtime_files import read_runtime_files
+
+    assert read_runtime_files(tmp_path / "candidate/compiled/fixture_model/fixture") == runtime_files
+    package = next((tmp_path / "candidate/packages").rglob("*.zip"))
+    import zipfile
+
+    with zipfile.ZipFile(package) as archive:
+        for item in runtime_files:
+            assert archive.read(item["path"]) == b"supporting-file"
     assert result["state"] == "finalized"
     assert set(registry.bindings) == {"compile-backbone", "compile-decoder", "package-default"}
     finalization = next(index for index, (method, path, _) in enumerate(registry.calls)

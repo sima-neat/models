@@ -11,6 +11,7 @@ from typing import Any
 
 from .errors import ValidationError
 from .fetch import sha256_file
+from .runtime_files import validate_runtime_files
 from .source import HF_URI_RE
 
 
@@ -67,7 +68,8 @@ def validate_compile_outputs(
     fields = {"model_id", "build_profile_id", "compile_invocation_id", "outputs"}
     if grouped:
         fields.add("derived_graphs")
-    if not isinstance(manifest, dict) or set(manifest) != fields:
+    # runtime_files lists CPU assets, including tables derived during graph surgery.
+    if not isinstance(manifest, dict) or set(manifest) - {"runtime_files"} != fields:
         raise ValidationError(f"{manifest_file}: compile outputs must contain {sorted(fields)}")
     identity = {
         "model_id": model_id,
@@ -135,6 +137,8 @@ def validate_compile_outputs(
         raise ValidationError(f"{manifest_file}: output tree contains undeclared MPK archives")
 
     result = {**identity, "outputs": resolved}
+    if "runtime_files" in manifest:
+        result["runtime_files"] = validate_runtime_files(manifest["runtime_files"], root)
     if grouped:
         graphs = manifest["derived_graphs"]
         if not isinstance(graphs, list) or len(graphs) != len(component_ids):

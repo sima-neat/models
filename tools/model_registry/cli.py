@@ -26,6 +26,7 @@ AUTHOR_COMMANDS = frozenset(
         "fetch",
         "fetch-calibration",
         "fetch-fidelity-dataset",
+        "fetch-resources",
         "matrix",
         "record-compile-outputs",
         "authorize-runner-matrix",
@@ -86,6 +87,13 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     fetch.add_argument("--cache-dir", type=Path)
     fetch.add_argument("--component", help="component ID; optional when the model contains one component")
     fetch.add_argument("--json", action="store_true", dest="json_output")
+
+    resources = subcommands.add_parser(
+        "fetch-resources", help="download a model's pinned resources, laid out as its package installs them"
+    )
+    resources.add_argument("model_dir", type=Path)
+    resources.add_argument("--output-dir", type=Path, required=True)
+    resources.add_argument("--cache-dir", type=Path)
 
     calibration = subcommands.add_parser(
         "fetch-calibration", help="download and verify a model's immutable calibration snapshot"
@@ -165,6 +173,11 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     )
     benchmark_runtime.add_argument("--repository", type=Path, default=Path.cwd())
 
+    core = subcommands.add_parser("ensure-neat-core", help="verify or install the selected benchmark Core artifact")
+    core.add_argument("--repository", type=Path, default=Path.cwd())
+    core.add_argument("--environment", default="production")
+    core.add_argument("--artifacts-base-url", help="Core artifact index for the selected environment")
+
     devkit_accuracy = subcommands.add_parser(
         "resolve-devkit-accuracy", help="resolve each DevKit accuracy dataset of a build profile into the cache"
     )
@@ -180,6 +193,13 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     inputs.add_argument("--repository", type=Path, default=Path.cwd())
     inputs.add_argument("--model", required=True)
     inputs.add_argument("--build-profile", required=True)
+
+    resources = subcommands.add_parser(
+        "model-runtime-directory", help="print the verified supporting-file root, or nothing when no files are declared"
+    )
+    resources.add_argument("compiled_dir", type=Path)
+    resources.add_argument("--model", required=True)
+    resources.add_argument("--build-profile", required=True)
 
     check = subcommands.add_parser(
         "check-report", help="check a model report against model.yaml and record the DevKit it ran on"
@@ -253,6 +273,7 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     package.add_argument("--build-profile")
     package.add_argument("--package")
     package.add_argument("--all", action="store_true", dest="all_packages")
+    package.add_argument("--resource-cache-dir", type=Path, help="where pinned package resources are cached")
     package.add_argument("--json", action="store_true", dest="json_output")
 
     publish = subcommands.add_parser("publish", help="publish completed model compilations to the Vulcan registry")
@@ -400,16 +421,22 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
 
 
 def _validate(args: argparse.Namespace) -> int:
+    from .package import validate_package_resources
+
     model = load_and_validate_model(args.model_dir, args.schema)
+    validate_package_resources(model)
     result = {"model_id": model["id"], "model_dir": str(args.model_dir.resolve()), "valid": True}
     print(json.dumps(result, sort_keys=True) if args.json_output else f"Valid model: {model['id']}")
     return 0
 
 
 def _validate_models(args: argparse.Namespace) -> int:
+    from .package import validate_package_resources
+
     repository = args.repository.expanduser().resolve()
     models = load_models(repository)
     for model_id, model in sorted(models.items()):
+        validate_package_resources(model)
         load_model_documentation(
             repository / "models" / model_id,
             model["display_name"],
@@ -446,6 +473,16 @@ def _selected_component(model: dict[str, object], component_id: str | None) -> d
             raise ModelRegistryError("--component is required when the model contains multiple components")
         return components[0]
     return component_for(model, component_id)
+
+
+def _fetch_resources(args: argparse.Namespace) -> int:
+    from .package import fetch_package_resources
+
+    model = load_and_validate_model(args.model_dir)
+    output = fetch_package_resources(model, args.output_dir.expanduser().resolve(), args.cache_dir)
+    if output is not None:
+        print(output)
+    return 0
 
 
 def _fetch(args: argparse.Namespace) -> int:
@@ -692,6 +729,7 @@ def _assemble_package(args: argparse.Namespace) -> int:
             repository=args.repository,
             compiled_dir=args.compiled_dir,
             output_dir=args.output_dir,
+            resource_cache_dir=args.resource_cache_dir,
         )
     else:
         if any(value is None for value in explicit):
@@ -704,6 +742,7 @@ def _assemble_package(args: argparse.Namespace) -> int:
                 model_id=args.model,
                 build_profile_id=args.build_profile,
                 package_id=args.package,
+                resource_cache_dir=args.resource_cache_dir,
             )
         ]
     payload = {"count": len(results), "packages": results}
@@ -821,6 +860,9 @@ def _check_report(args: argparse.Namespace) -> int:
     if args.stage == "accuracy":
         for name, result in report["datasets"].items():
             print(f"Checked the accuracy report on {name}: {', '.join(sorted(result['metrics']))}")
+    elif report.get("scope") == "components":
+        for name, result in report["components"].items():
+            print(f"Checked the performance report for {name}: {', '.join(sorted(result['metrics']))}")
     else:
         print(f"Checked the {args.stage} report: {', '.join(sorted(report['metrics']))}")
     return 0
@@ -948,6 +990,8 @@ def _main(argv: Sequence[str] | None, *, author_safe: bool) -> int:
             return 0
         if args.command == "fetch":
             return _fetch(args)
+        if args.command == "fetch-resources":
+            return _fetch_resources(args)
         if args.command == "fetch-calibration":
             return _fetch_calibration(args)
         if args.command == "fetch-fidelity-dataset":
@@ -968,12 +1012,26 @@ def _main(argv: Sequence[str] | None, *, author_safe: bool) -> int:
             return _resolve_compiler(args)
         if args.command == "resolve-benchmark-runtime":
             return _resolve_benchmark_runtime(args)
+        if args.command == "ensure-neat-core":
+            from .neat_core import ensure_neat_core
+
+            ensure_neat_core(
+                args.repository, environment=args.environment, artifacts_base_url=args.artifacts_base_url,
+            )
+            return 0
         if args.command == "resolve-devkit-accuracy":
             return _resolve_devkit_accuracy(args)
         if args.command == "model-component-mpks":
             from .report_publication import model_component_mpks
 
             print("\n".join(model_component_mpks(args.compiled_dir, args.repository, args.model, args.build_profile)))
+            return 0
+        if args.command == "model-runtime-directory":
+            from .runtime_files import read_runtime_files
+
+            profile_dir = args.compiled_dir.resolve() / args.model / args.build_profile
+            if read_runtime_files(profile_dir):
+                print(profile_dir)
             return 0
         if args.command == "check-report":
             return _check_report(args)

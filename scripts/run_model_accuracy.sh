@@ -54,6 +54,12 @@ listed="$("$REGISTRY_PYTHON" -m model_registry model-component-mpks "$COMPILED_D
 mpks=()
 while IFS= read -r input; do mpks+=(--mpk "$input"); done <<< "$listed"
 
+# Supporting files travel with the compiled package and are verified before the model script reads them.
+resources=()
+runtime_dir="$("$REGISTRY_PYTHON" -m model_registry model-runtime-directory "$COMPILED_DIR" \
+  --model "$MODEL_ID" --build-profile "$BUILD_PROFILE_ID")"
+if [[ -n "$runtime_dir" ]]; then resources+=(--resources "$runtime_dir"); fi
+
 # Unpack each cached archive, looking through a single top-level directory. The script takes each dataset as
 # <name>=<path>, named as in model.yaml.
 trap 'rm -rf "$WORK_DIR"' EXIT
@@ -80,6 +86,6 @@ if [[ -f "$REQUIREMENTS" ]]; then
 fi
 
 PYTHONPATH="$REPOSITORY/tools:$site" PYTHONDONTWRITEBYTECODE=1 "$PYNEAT_PYTHON" "$SCRIPT" "${mpks[@]}" \
-  "${datasets[@]}" --output "$OUTPUT_DIR" 2>&1 | tee "$OUTPUT_DIR/accuracy.log"
+  "${datasets[@]}" "${resources[@]}" --output "$OUTPUT_DIR" 2>&1 | tee "$OUTPUT_DIR/accuracy.log"
 "$REGISTRY_PYTHON" -m model_registry check-report "$OUTPUT_DIR" --repository "$REPOSITORY" \
   --stage accuracy --model "$MODEL_ID" --build-profile "$BUILD_PROFILE_ID"

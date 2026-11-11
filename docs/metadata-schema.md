@@ -19,7 +19,7 @@ model
 ├── pipeline ─────────────── optional run order, for the model browser
 ├── numerical_fidelity ───── compiled outputs compared during compilation
 ├── accuracy ─────────────── whole-model DevKit accuracy
-├── performance ──────────── whole-model DevKit performance
+├── performance ──────────── whole-model or independent-component DevKit performance
 └── reference_metrics ────── scores the source model's authors published
 ```
 
@@ -274,6 +274,45 @@ manifest in `package-result.json`, validated against
 [`package-manifest.schema.json`](https://github.com/sima-neat/models/blob/develop/schemas/package-manifest.schema.json);
 the manifest is not shipped inside the package.
 
+An ONNX model whose application also runs files on the CPU, such as CPU-side
+ONNX graphs, tokenizer tables or voice data, lists them in `resources`. Pin
+each resource like a source, but without `main_file`, because no recipe opens
+a resource file. Give each resource its own `repository` and `revision`, even
+when they match the compile source, so a resource can come from another
+repository. Every package of the model installs each resource's files under
+its `install_path`, and the package is then a ZIP even with one component:
+
+```yaml
+resources:
+  supertone_runtime:
+    source:
+      repository: Supertone/supertonic-3
+      revision: 724fb5abbf5502583fb520898d45929e62f02c0b
+      files:
+        onnx/text_encoder.onnx: {sha256: c7befd5e..., size_bytes: 36416150}
+    install_path: supertonic-3
+```
+
+`model-registry validate` and `validate-models` hold each resource's source to
+the rules of a compile source, before any compile runs. When a model's CPU code
+must match its compiled graphs, as Supertonic's text encoder must match its
+vector estimator, the model's build test checks that the two pins name the
+same revision.
+
+A file the compile recipe derives for the CPU, such as tables from graph
+surgery, goes in `compile-outputs.json` as `runtime_files`: a list of `path`,
+relative to the profile's output directory, and `sha256`. The package carries
+it at that path, beside the MPKs it was derived with. A resource is a compile
+input, so changing one recompiles the model; LLiMa packages ship their
+deployment folder and take neither.
+
+CLIP and SigLIP use this same `runtime_files` contract for
+`text_encoder/tokenizer.json` and `text_encoder/token_embeddings.npy`. Surgery
+extracts both from the verified conversion bundle; the shared packager ships
+them beside the encoder MPKs. Registry restoration restores the same checked
+files, and the accuracy runner passes their profile root as `--resources`.
+Class embeddings are generated during accuracy evaluation and are not packaged.
+
 A multi-component model can add `pipeline` so the model browser shows the
 order its components run in. List each component once, in run order, and
 name any CPU step between them:
@@ -340,8 +379,18 @@ Measured on a DevKit by `scripts/performance.py` in the performance stage:
 performance: {}
 ```
 
-It takes only the optional `build_profiles`, as `accuracy` does. Every report
-must hold the metrics
+The optional `build_profiles` selects the measured profiles, as for `accuracy`.
+The optional `scope` is `model` by default: one measurement of the whole model,
+including composed pipelines such as RF-DETR. Independent encoders declare:
+
+```yaml
+performance:
+  scope: components
+```
+
+Each component then has separate metrics, workload, telemetry and execution
+statistics in the report's `components` map, with no combined metrics. Both
+scopes publish one performance run per profile. Every measured result must hold the metrics
 [`metrics.json`](../tools/model_report/metrics.json) marks `required`. Decoder selection and measurement settings stay in the script, which
 customers can copy and run with PyNeat; YAML does not duplicate them.
 

@@ -39,6 +39,14 @@ Each stage's registry run carries its fingerprint, and CI runs a stage only
 when no completed run carries the current fingerprint. A change therefore
 reruns exactly the stages whose inputs it touches.
 
+When an application needs supporting files derived from the converted source,
+write them under the profile output and declare their relative `path` and
+`sha256` in `compile-outputs.json`'s optional `runtime_files` list. The shared
+packager includes them beside the component MPKs, and retained-build restoration
+restores them too. Accuracy scripts receive the verified profile root as
+`--resources`; they must use those local files instead of downloading checkpoints.
+See [Ship supporting files](docs/adding-a-model.md#ship-supporting-files).
+
 A tooling change reruns a stage only when the changed file is in that stage's
 tooling list in `fingerprints.py`. No shared file is a conversion input: a
 conversion reruns only when the model's checkpoint, `convert.py` and the
@@ -51,7 +59,7 @@ then fails until Vulcan Model Convert reruns for every conversion-backed model.
 |---|---|---|---|
 | compile (ONNX) | Model Compiler | `scripts/compile.py` | `scripts/run_model_compilation.sh` |
 | compile (LLiMa) | Model Compiler | `scripts/compile.sh` | `scripts/run_llima_compilation.sh` |
-| performance | DevKit | `scripts/performance.py` | `scripts/run_model_performance.sh` |
+| performance | DevKit | `scripts/performance.py` + `requirements-performance.txt` | `scripts/run_model_performance.sh` |
 | accuracy | DevKit | `scripts/accuracy.py` + `requirements-accuracy.txt` | `scripts/run_model_accuracy.sh` |
 
 `compile_fingerprint` and `benchmark_fingerprint` in
@@ -98,8 +106,18 @@ and may add a display-only `pipeline`. Preprocessing, decoding and surgery
 belong in executable code and the README; ownership belongs in `CODEOWNERS`.
 Do not add maturity compatibility fields to new authored YAML.
 
-Performance and accuracy measure each build profile's whole model: every
-component's MPK and the CPU work between them. `model.yaml` declares only
+Performance defaults to each build profile's whole model: every component's
+MPK and the CPU work between them. Independent components such as CLIP's image
+and text encoders may declare `performance: {scope: components}` instead. Their
+script benchmarks each component separately with Core's benchmark API and merges
+its single-component `from_performance()` reports using
+`model_report.from_component_performance()`. Each component keeps its own
+metrics, workload, telemetry, execution plan and MLA stats; the report has no
+combined metrics. Every component must satisfy the required performance metrics,
+and `tests.yaml` uses `performance.expected.<profile>.components.<component>`.
+Composed pipelines such as RF-DETR keep `performance: {}` and one whole-model
+result. Accuracy remains model-level and declares its evaluated datasets.
+`model.yaml` declares only
 `performance`, `accuracy.datasets` (Dataset Registry pins) and optional
 `build_profiles`. Every performance report holds the metrics
 `tools/model_report/metrics.json` marks `required`. The metrics an accuracy
@@ -119,7 +137,8 @@ dataset pair as a side-by-side frame instead. A model whose
 inputs are not images benchmarks one `random.Random(0)` validation sample as tensors on the
 tensor route, and each timed sample runs the CPU steps that produce the model's result.
 `run_model_performance.sh` passes only the first dataset, and only for a profile
-accuracy measures. A model without an accuracy dataset builds a fixed input in its script;
+accuracy measures. A model with `resources` also takes `--resources <directory>`,
+laid out as its package installs them. A model without an accuracy dataset builds a fixed input in its script;
 do not benchmark Core's synthetic inputs ([Benchmark
 input](docs/benchmarking.md#benchmark-input)). `performance.py`
 and `accuracy.py` write `model-report.json` with `model_report.from_performance()`
@@ -250,6 +269,7 @@ in the same commit.
 | the set of model scripts a benchmark or conversion runs | `SCRIPTS` in `benchmark_declarations.py` or `CONVERSION_FILES` in `model.py`, which make up `NON_COMPILE_SCRIPTS` in `fingerprints.py` with `FP32_BASELINE_SCRIPT`; every other `.py`/`.sh` under `scripts/` is an ONNX compile input |
 | board-only code | keep it inside `performance.py` or `accuracy.py`; a helper module under `scripts/` is an ONNX compile input, so editing it recompiles and then remeasures the model |
 | how `performance.py` gets its input | `scripts/run_model_performance.sh`, the dataset steps in `vulcan-model-benchmarking.yml`, [Benchmark input](docs/benchmarking.md#benchmark-input), and `tests/test_model_report.py` and `tests/test_benchmark_workflow.py` |
+| what a package holds besides MPKs: `resources` (pinned files with no `main_file`) or a compile's `runtime_files` | `package.py`, `candidates.py` and `runtime_files.py`, `validate_compile_outputs` in `artifact.py`, the compile fingerprint in `fingerprints.py`, `source_identity` in `source.py`, `resourceSource` in `model.schema.json`, [Packages and pipeline](docs/metadata-schema.md#packages-and-pipeline), and `tests/test_package.py`, `tests/test_artifact.py`, `tests/test_compile_matrix.py` and `tests/test_source.py` |
 | a custom `performance.py` | start from the [canonical script](docs/benchmarking.md#the-performance-script), and for a multi-component model the [multi-component script](docs/benchmarking.md#multi-component-models): hand Core's `BenchmarkReport`, board telemetry, and each component's Model to `model_report.from_performance()` |
 | a metric: a Core benchmark reading or an accuracy score the registry should publish | a row in `tools/model_report/metrics.json` with its Vulcan measurement name (`registry_name`), and its entry in the browser's `metrics.js` or `accuracy-metrics.js`, and for a telemetry reading in `TELEMETRY_METRICS` in `model-report.js`, which tests keep in step; for a performance metric, its row in `DETAIL_CARDS` in `model-view.js` when a Performance details card should show it, and the metric table in [benchmarking](docs/benchmarking.md#workload-and-measurements) |
 | a `datasets/<id>.yaml` requirement | `dataset-requirements.schema.json` when its shape changes, and the `accuracy.py` and `tests.yaml` expectations of every model with that task that evaluates the dataset |
@@ -276,7 +296,11 @@ in the same commit.
   `developer-docs.yml` checks the model browser.
   `PR Sanitization` checks the pull request's description. Contributor code
   never runs on self-hosted runners for a pull request.
-- **Push.** Every push runs `Vulcan Model Orchestrator`. Its `portal` job builds and smoke-tests the model browser (`developer-docs.yml`); `plan` waits for it, so a portal failure stops the run. On `main` and `develop`, `publish-model-browser` publishes that checked portal to staging. The `plan` job runs `model-registry plan-stages`, which reads the
+- **Push.** Every push runs `Vulcan Model Orchestrator`. Its `portal` job builds and
+  smoke-tests the model browser (`developer-docs.yml`) independently of model processing.
+  Planning waits for model validation and registry configuration. On `main` and `develop`,
+  `publish-model-browser` publishes the portal to staging only after its checks pass.
+  The `plan` job runs `model-registry plan-stages`, which reads the
   branch's prior catalog (its own, merged with its base branches' on a feature
   branch; see `design-doc/model-registry-architecture.md`) and resolves each
   fingerprint against the registry. `compile` calls
@@ -296,6 +320,13 @@ in the same commit.
   outcome. A failed test fails its check job after publication; the completed
   run is not benchmarked again. On-demand builds are not benchmarked.
   A manual dispatch of the same workflow resolves its own config and runner.
+- Benchmark setup uses `neat-core.install_target` from the measured source's
+  `deps/manifest.json`. `ensure-neat-core` resolves floating targets once and
+  skips installation only when Core's channel/tag/environment and the artifact's
+  Runner/Scheduler versions match
+  `neat --json`. Unverifiable state installs;
+  an unresolved floating target fails. Both paths report PyNeat and packages.
+  Core's production artifact source is independent of the Model Registry environment.
 - Workflow YAML only orchestrates: triggers, jobs, permissions, inputs, and
   the order of steps. A step that needs more than one command calls a named,
   executable script with a usage header: under `scripts/`, or beside the code
@@ -330,9 +361,10 @@ in the same commit.
 Conventions the code relies on:
 
 - Model scripts receive verified local paths (`--model`, `--dataset`,
-  `--fidelity-dataset`, `--mpk`); data enters only through the dataset registry
-  declared in `model.yaml`. Benchmark scripts run without registry
-  credentials.
+  `--fidelity-dataset`, `--mpk`, and `--resources` when supporting files are
+  declared). Evaluation datasets come through the Dataset Registry declared
+  in `model.yaml`; supporting files travel with the verified model package.
+  Benchmark scripts run without registry credentials.
 - When a model declares `conversion.outputs`, every script reads those names
   with `conversion_outputs()` and never hard-codes one, so renaming a file only
   changes `model.yaml`.
@@ -357,9 +389,10 @@ change.
   `profileGroups` in `api.js` sets this, not the `model.yaml` profile order.
 - Keep the glance-first page: key facts in the section, the rest in one row.
   Actions are icon buttons; blue text with ↗ is only for external links.
-- Benchmarks are whole-model, per build profile. Show a component's layer
-  timings and execution plan per component; never add component numbers up
-  or mark one component best against a different component.
+- Benchmarks default to the whole model, per build profile. Independent-component
+  performance keeps separate measurements when `performance.scope: components`.
+  Show layer timings and execution plans per component; never add component
+  numbers up or mark one component best against a different component.
 - Render the current model report version, and let unknown metrics fall
   through to Other measurements rather than hiding them.
 - Keep the preview data-driven. `preview.py` builds its catalog from

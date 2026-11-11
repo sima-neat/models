@@ -1,0 +1,43 @@
+build-on-demand: true
+display_name: Llama 3.1 Swallow 8B Instruct v0.5
+description: Generates text from instructions and conversation history.
+model_type: llm
+tasks: [text_generation]
+
+modalities:
+  inputs: [text]
+  outputs: [text]
+
+architecture: llama
+
+license:
+  spdx: LicenseRef-Swallow-Llama-Gemma
+  redistribution: restricted
+  attribution: Built with Llama. Llama 3.1 is licensed under the Llama 3.1 Community License, Copyright © Meta Platforms, Inc. All Rights Reserved. Derived from tokyotech-llm/Llama-3.1-Swallow-8B-Instruct-v0.5; upstream Llama and Gemma terms apply. GPTQ checkpoint provided by SiMa.ai.
+
+compilation:
+  format: huggingface
+  source:
+    repository: simaai/Llama-3.1-Swallow-8B-Instruct-v0.5-GPTQ-Safetensors
+    revision: 9cc2b899cacb6f42cf401c5018292f3a75efd040
+    main_file: config.json
+    files:
+      GEMMA_TERMS_OF_USE.txt: {uri: hf://models/simaai/Llama-3.1-Swallow-8B-Instruct-v0.5-GPTQ-Safetensors@9cc2b899cacb6f42cf401c5018292f3a75efd040/GEMMA_TERMS_OF_USE.md, sha256: ad70549d0beca82c6b99f81f7b30e017ec5b7de4aa589befd7212ca1ebf19172, size_bytes: 8369}
+      LICENSE.txt: {uri: hf://models/simaai/Llama-3.1-Swallow-8B-Instruct-v0.5-GPTQ-Safetensors@9cc2b899cacb6f42cf401c5018292f3a75efd040/LICENSE, sha256: 64e1b2889b7892e6bbe7a7ed5bfe6ff793c61f9d584345f8f41cf9f5cb30a369, size_bytes: 7627}
+      Notice.txt: {uri: hf://models/simaai/Llama-3.1-Swallow-8B-Instruct-v0.5-GPTQ-Safetensors@9cc2b899cacb6f42cf401c5018292f3a75efd040/Notice, sha256: 8f7acba0437de09fab27974f06e8774b2cbc972f9988ca132eff522503ee90c6, size_bytes: 212}
+      USE_POLICY.txt: {uri: hf://models/simaai/Llama-3.1-Swallow-8B-Instruct-v0.5-GPTQ-Safetensors@9cc2b899cacb6f42cf401c5018292f3a75efd040/USE_POLICY.md, sha256: e58d188e20f19b81a7c344cfdb37c688cbcd5f812e07ecab69152170a4984bcf, size_bytes: 6018}
+      chat_template.jinja: {sha256: ab5a74b4b8e9bdd9e7a76ae59001de3dcdeef37987baceb26910805822a99f57, size_bytes: 862}
+      config.json: {sha256: 784b91911b67a94ce5289f54500b1edb4a141a494e5d4072e6e8443f49e67f86, size_bytes: 1822}
+      generation_config.json: {sha256: 1446366446680717e1b042152cf2f66196fdc2b74557339583e802c2b2d7d521, size_bytes: 214}
+      model.safetensors: {sha256: 4b22f3048be9215bfa351c2aeced22e33ce8031606d78ea4a8a3c2252876872b, size_bytes: 4862253160}
+      special_tokens_map.json: {sha256: 94e708c3f5e64acf85bbe5ad01467a1248faadb73e83b41793087ecced586e8f, size_bytes: 454}
+      tokenizer.json: {sha256: 268aef6511a866fd03104209ff6592ded093172c0cdaf8885ff9c97d62e32869, size_bytes: 17209958}
+      tokenizer_config.json: {sha256: 9aad4ba4ebcbaed05c747d94be763415c8a924d48d5def1f32b3b4b3394cca08, size_bytes: 423}
+  entrypoint: generate
+
+build_profiles:
+  w4a16:
+    runner_class: expensive
+    components:
+      model:
+        parameters: {precision: a16w4, max_num_tokens: 4096, language_group_size: 128}

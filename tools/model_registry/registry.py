@@ -22,8 +22,12 @@ from urllib.request import urlopen
 from jsonschema import Draft202012Validator
 
 from .artifact import (
-    compile_output_fields, deployment_files, llima_compiled_parameters,
-    validate_compile_outputs, verify_artifact, verify_llima,
+    compile_output_fields,
+    deployment_files,
+    llima_compiled_parameters,
+    validate_compile_outputs,
+    verify_artifact,
+    verify_llima,
 )
 from .compile_matrix import build_matrix
 from .dependencies import resolve_model_compiler
@@ -37,6 +41,7 @@ from .package import FIDELITY_FILE
 from .registry_http import RegistryPublicationError, SigV4RegistryClient
 from .registry_http import read_registry_json_authenticated as _public_registry_json
 from .runner_approval import runner_provenance
+from .runtime_files import restore_runtime_files
 from .source import source_identity
 from .stage_plan import merge_catalog_sources, read_catalog_sources, read_current_catalog
 from .taxonomy import (
@@ -584,6 +589,9 @@ def build_catalog_snapshot(
         if model["id"] not in deferred:
             continue
         entry = dict(model)
+        # Categories follow this checkout's taxonomy, which may have renamed IDs
+        # since the carried entry was published.
+        entry["categories"] = validate_model_categorization(all_models[model["id"]], taxonomy)
         if documentation_receipts is not None:
             documentation = documentation_receipts.get(model["id"])
             if not isinstance(documentation, dict):
@@ -1074,6 +1082,34 @@ def stage_catalog_build(
             }
         )
     profile_dir = output / model_id / build_profile_id
+    runtime_files = []
+    package = next((
+        item for item in catalog_model.get("packages", [])
+        if isinstance(item, dict) and (item.get("build_profile_id"), item.get("package_id")) == (
+            build_profile_id, "default"
+        )
+    ), None)
+    if package is not None:
+        response = read(f"{base_url}/v1/runs/{package['run_id']}/artifacts/package")
+        artifact = response.get("artifact")
+        if not isinstance(artifact, dict):
+            raise ValidationError("artifact registry returned no package metadata")
+        metadata = artifact.get("metadata") or {}
+        if not isinstance(metadata, dict):
+            raise ValidationError("artifact registry returned invalid package metadata")
+        if "runtime_files" in metadata:
+            component_runs = {item["component_id"]: item["run_id"] for item in staged_outputs}
+            if (artifact.get("sha256") != package.get("artifact_sha256")
+                    or artifact.get("size_bytes") != package.get("size_bytes")
+                    or not isinstance(artifact.get("download_url"), str)
+                    or metadata.get("component_run_ids") != component_runs
+                    or package.get("component_run_ids") != component_runs):
+                raise ValidationError("runtime-file package does not match the current catalog build")
+            with tempfile.TemporaryDirectory(prefix="restore-package-", dir=profile_dir) as temporary:
+                archive = Path(temporary) / "package.zip"
+                _download_registry_file(artifact["download_url"], archive, artifact, download_request)
+                runtime_files = metadata["runtime_files"]
+                restore_runtime_files(archive, runtime_files, profile_dir)
     # The same manifest a compile writes, so later stages read restored and fresh builds alike.
     (profile_dir / "compile-outputs.json").write_text(
         json.dumps({
@@ -1083,20 +1119,18 @@ def stage_catalog_build(
             "outputs": [
                 {key: item[key] for key in ("component_id", *compile_output_fields(item))} for item in staged_outputs
             ],
+            **({"runtime_files": runtime_files} if runtime_files else {}),
         }, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
     # A benchmark runs under the profile's package run, as after a fresh build's publish-package.
-    for package in catalog_model.get("packages", []):
-        if isinstance(package, dict) and (package.get("build_profile_id"), package.get("package_id")) == (
-            build_profile_id, "default"
-        ):
-            receipt = profile_dir / "packages" / "default" / "registry-publication.json"
-            receipt.parent.mkdir(parents=True, exist_ok=True)
-            receipt.write_text(
-                json.dumps({"packages": [{"model_id": model_id, **package}]}, indent=2, sort_keys=True) + "\n",
-                encoding="utf-8",
-            )
+    if package is not None:
+        receipt = profile_dir / "packages" / "default" / "registry-publication.json"
+        receipt.parent.mkdir(parents=True, exist_ok=True)
+        receipt.write_text(
+            json.dumps({"packages": [{"model_id": model_id, **package}]}, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
     return {"count": len(staged_outputs), "outputs": staged_outputs}
 
 
@@ -1924,6 +1958,16 @@ def publish_packages(
             "manifest_sha256": manifest_sha, "component_run_ids": component_runs,
             **({"build_on_demand": True} if on_demand else {}),
         }
+        if not native:
+            component_paths = {item["path"] for item in components}
+            resource_paths = {path for resource in manifest["resources"] for path in resource["paths"]}
+            runtime_files = [
+                {"path": item["path"], "sha256": item["sha256"]}
+                for item in manifest["files"]
+                if item["path"] not in component_paths and item["path"] not in resource_paths
+            ]
+            if runtime_files:
+                artifact_metadata["runtime_files"] = runtime_files
         if native:
             _publish_deployment_files(
                 client, store, run_id=run_id, stable_key=stable_key, bucket=bucket,

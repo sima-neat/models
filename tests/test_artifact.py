@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import tarfile
@@ -257,3 +258,84 @@ def test_validate_compile_outputs_requires_derived_graphs_exactly_for_grouped_in
             compile_invocation_id="w8a8_w16a16",
             component_ids=components,
         )
+
+
+def test_compile_outputs_support_verified_runtime_files(tmp_path):
+    component = tmp_path / "model"
+    component.mkdir()
+    archive = component / "test_mpk.tar.gz"
+    _archive(archive, ["model.elf", "model_mpk.json"])
+    tokenizer = component / "tokenizer.json"
+    tokenizer.write_text("{}")
+    files = [{"path": "model/tokenizer.json", "sha256": sha256_file(tokenizer)[0]}]
+    manifest = tmp_path / "compile-outputs.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "model_id": "test",
+                "build_profile_id": "w16a16",
+                "compile_invocation_id": "w16a16",
+                "outputs": [_output("model", archive)],
+                "runtime_files": files,
+            }
+        )
+    )
+    result = validate_compile_outputs(
+        manifest,
+        tmp_path,
+        model_id="test",
+        build_profile_id="w16a16",
+        compile_invocation_id="w16a16",
+        component_ids=["model"],
+    )
+    assert result["runtime_files"] == files
+
+
+def _grouped_outputs_with_runtime_file(tmp_path: Path, runtime_files: list[dict[str, str]]) -> Path:
+    for component in ("backbone", "decoder"):
+        directory = tmp_path / component
+        directory.mkdir()
+        _archive(directory / f"{component}_mpk.tar.gz", [f"{component}/model.elf", f"{component}/model_mpk.json"])
+    (tmp_path / "tables.npz").write_bytes(b"tables")
+    manifest = tmp_path / "compile-outputs.json"
+    manifest.write_text(json.dumps({
+        **_grouped_manifest([
+            _output("backbone", tmp_path / "backbone" / "backbone_mpk.tar.gz"),
+            _output("decoder", tmp_path / "decoder" / "decoder_mpk.tar.gz"),
+        ]),
+        "runtime_files": runtime_files,
+    }), encoding="utf-8")
+    return manifest
+
+
+def _validate_grouped(manifest: Path) -> dict[str, object]:
+    return validate_compile_outputs(
+        manifest, manifest.parent, model_id="rf_detr_small", build_profile_id="w8a8_w16a16",
+        compile_invocation_id="w8a8_w16a16", component_ids=["backbone", "decoder"],
+    )
+
+
+def test_validate_compile_outputs_keeps_verified_runtime_files(tmp_path: Path) -> None:
+    runtime_files = [{"path": "tables.npz", "sha256": hashlib.sha256(b"tables").hexdigest()}]
+    manifest = _grouped_outputs_with_runtime_file(tmp_path, runtime_files)
+
+    assert _validate_grouped(manifest)["runtime_files"] == runtime_files
+
+
+@pytest.mark.parametrize(
+    "runtime_files, message",
+    [
+        ([{"path": "tables.npz", "sha256": "0" * 64}], "SHA-256 does not match"),
+        ([{"path": "../tables.npz", "sha256": "0" * 64}], "unsafe runtime file path"),
+        ([{"path": "extra_mpk.tar.gz", "sha256": "0" * 64}], "unsafe runtime file path"),
+        ([{"path": "tables.npz"}], "must contain path and sha256"),
+        ([], "non-empty list"),
+    ],
+)
+def test_validate_compile_outputs_rejects_unverified_runtime_files(
+    tmp_path: Path, runtime_files: list[dict[str, str]], message: str
+) -> None:
+    manifest = _grouped_outputs_with_runtime_file(tmp_path, runtime_files)
+
+    with pytest.raises(ValidationError, match=message):
+        _validate_grouped(manifest)
