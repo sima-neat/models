@@ -242,6 +242,20 @@ def test_core_source_stays_production_when_model_registry_uses_staging(setup, mo
     assert _installer_calls(setup)[0][3:5] == ["--env", "production"]
 
 
+@pytest.mark.parametrize("argument", [None, "https://other-environment.test/core"])
+def test_production_source_ignores_artifact_index_overrides(setup, monkeypatch, argument):
+    monkeypatch.setenv("NEAT_ARTIFACTS_BASE_URL", "https://other-environment.test/core")
+
+    setup.ensure(artifacts_base_url=argument)
+
+    assert setup.urls == [
+        f"{neat_core.PRODUCTION_ARTIFACTS}/develop/{TAG}/metadata-minimal.json",
+        f"{neat_core.PRODUCTION_ARTIFACTS}/develop/{TAG}/{neat_core.DEPENDENCIES_FILE}",
+    ]
+    assert _installer_calls(setup) == []
+    _assert_reporting(setup)
+
+
 @pytest.mark.parametrize("index", [None, neat_core.PRODUCTION_ARTIFACTS])
 def test_nonproduction_needs_appropriate_explicit_index_to_skip(setup, index):
     setup.status["components"]["core"]["provenance"]["vulcanEnvironment"] = "stg"

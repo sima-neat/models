@@ -114,9 +114,10 @@ def ensure_neat_core(
     branch, tag = _target_parts(target)
     explicit_base = artifacts_base_url or os.environ.get("NEAT_ARTIFACTS_BASE_URL")
     # As in Apps, a non-production environment needs its own explicitly configured index.
-    base = explicit_base or (PRODUCTION_ARTIFACTS if normalized_environment == "prod" else None)
+    base = PRODUCTION_ARTIFACTS if normalized_environment == "prod" else explicit_base
     if normalized_environment != "prod" and base and base.rstrip("/") == PRODUCTION_ARTIFACTS:
         base = None
+    # Vulcan stores an encoded ref key; URL transport escapes it again to preserve slashes in the ref.
     artifact_branch = quote(quote(branch, safe=""), safe="")
     index = f"{base.rstrip('/')}/{artifact_branch}" if base else None
     if tag == "latest":

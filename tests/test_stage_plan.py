@@ -521,6 +521,17 @@ def test_artifact_verification_change_reruns_nothing(stage_repository: Path) -> 
     assert plan["benchmark"]["include"] == []
 
 
+def test_runtime_file_validation_change_measures_accuracy_only(stage_repository: Path) -> None:
+    document = _published_catalog(stage_repository)
+    registry = FakeRegistry({BRANCH: document}, _published_runs(document))
+    _edit(stage_repository, "../../tools/model_registry/runtime_files.py")
+
+    plan = _plan(stage_repository, registry)
+
+    assert plan["compile"]["include"] == []
+    assert _selected(plan, "benchmark") == [("w8a16", ["accuracy"]), ("w8a8", ["accuracy"])]
+
+
 def test_shared_compile_runner_change_compiles_every_build(stage_repository: Path) -> None:
     document = _published_catalog(stage_repository)
     registry = FakeRegistry({BRANCH: document}, _published_runs(document))

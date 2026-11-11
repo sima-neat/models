@@ -33,9 +33,11 @@ def runtime_file_path(root: Path, name: str) -> Path:
         }
     ):
         raise ValidationError(f"unsafe runtime file path: {name!r}")
-    path = root.joinpath(*relative.parts)
-    if any(parent.is_symlink() for parent in (path, *path.parents)):
-        raise ValidationError(f"unsafe runtime file path: {name!r}")
+    path = root.resolve()
+    for part in relative.parts:
+        path = path / part
+        if path.is_symlink():
+            raise ValidationError(f"unsafe runtime file path: {name!r}")
     return path
 
 
