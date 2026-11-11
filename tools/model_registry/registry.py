@@ -4,25 +4,36 @@ import base64
 import hashlib
 import json
 import math
+import random
+import re
 import subprocess
 import tempfile
+import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from urllib.error import HTTPError
 from urllib.parse import quote
 from urllib.request import Request as UrlRequest
 from urllib.request import urlopen
 
 from jsonschema import Draft202012Validator
 
-from .artifact import compile_output_fields, deployment_files, validate_compile_outputs, verify_artifact, verify_llima
+from .artifact import (
+    compile_output_fields,
+    deployment_files,
+    llima_compiled_parameters,
+    validate_compile_outputs,
+    verify_artifact,
+    verify_llima,
+)
 from .compile_matrix import build_matrix
 from .dependencies import resolve_model_compiler
 from .documentation import load_model_documentation
-from .errors import ValidationError
+from .errors import ModelRegistryError, ValidationError
 from .fetch import sha256_file
 from .fingerprints import benchmark_fingerprint, compile_fingerprint
 from .mla_stage_simulation import SIMULATION_FILE
@@ -31,6 +42,7 @@ from .package import FIDELITY_FILE
 from .registry_http import RegistryPublicationError, SigV4RegistryClient
 from .registry_http import read_registry_json_authenticated as _public_registry_json
 from .runner_approval import runner_provenance
+from .runtime_files import restore_runtime_files
 from .source import source_identity
 from .stage_plan import merge_catalog_sources, read_catalog_sources, read_current_catalog
 from .taxonomy import (
@@ -63,10 +75,13 @@ class S3Object:
 
 
 class S3ArtifactStore:
-    def __init__(self, bucket: str, *, kms_key_id: str | None = None, receipt_dir: Path | None = None) -> None:
+    def __init__(
+        self, bucket: str, *, kms_key_id: str | None = None, receipt_dir: Path | None = None, s3_client=None
+    ) -> None:
         self.bucket = bucket
         self.kms_key_id = (kms_key_id or "").strip()
         self.receipt_dir = receipt_dir
+        self._s3 = s3_client
 
     def _record(self, stored: S3Object) -> S3Object:
         if self.receipt_dir is not None:
@@ -87,6 +102,7 @@ class S3ArtifactStore:
         sha256: str,
         *,
         media_type: str = "application/gzip",
+        previous_object: tuple[str, str | None] | None = None,
     ) -> S3Object:
         expected_checksum = base64.b64encode(bytes.fromhex(sha256)).decode("ascii")
         saved = None
@@ -97,20 +113,35 @@ class S3ArtifactStore:
                 if (saved.get("sha256"), saved.get("size_bytes")) != (sha256, path.stat().st_size):
                     raise RegistryPublicationError(f"saved upload differs from {key}; start a new candidate")
         head = self._head(key, saved["s3_version_id"]) if saved else self._head(key)
-        if (
-            head.get("ChecksumSHA256") == expected_checksum
-            and head.get("ContentLength") == path.stat().st_size
-            and isinstance(head.get("VersionId"), str)
-            and head["VersionId"]
-        ):
-            return self._record(S3Object(key, str(head["VersionId"]), sha256, path.stat().st_size))
+        size = path.stat().st_size
+        if _matches_s3_object(head, expected_checksum, size):
+            return self._record(S3Object(key, head["VersionId"], sha256, size))
         if saved:
             raise RegistryPublicationError(
                 f"saved S3 version is unavailable or changed for {key}; start a new candidate"
             )
+        if previous_object:
+            previous_key, previous_version = previous_object
+            prior = self._head(previous_key, previous_version)
+            if _matches_s3_object(prior, expected_checksum, size):
+                return self._record(S3Object(previous_key, prior["VersionId"], sha256, size))
 
-        if path.stat().st_size > 5 * 1024**3:
+        if size > 5 * 1024**3:
             raise RegistryPublicationError(f"registry artifact exceeds the 5 GiB single-upload limit: {path}")
+        if self._s3 is None:
+            version_id = self._put_cli(path, key, expected_checksum, media_type)
+        else:
+            version_id = self._put_sdk(path, key, expected_checksum, media_type)
+        if not isinstance(version_id, str) or not version_id:
+            raise RegistryPublicationError(f"S3 versioning did not return a version for {key}")
+        verified = self._head(key, version_id)
+        if verified.get("ChecksumSHA256") != expected_checksum:
+            raise RegistryPublicationError(f"S3 native SHA-256 verification failed for {key}")
+        if verified.get("ContentLength") != size:
+            raise RegistryPublicationError(f"S3 object size does not match the packaged artifact for {key}")
+        return self._record(S3Object(key, version_id, sha256, size))
+
+    def _put_cli(self, path: Path, key: str, expected_checksum: str, media_type: str) -> str | None:
         command = [
             "aws",
             "s3api",
@@ -142,17 +173,57 @@ class S3ArtifactStore:
             uploaded = json.loads(completed.stdout)
         except json.JSONDecodeError as exc:
             raise RegistryPublicationError(f"Could not parse S3 upload response for {key}") from exc
-        version_id = uploaded.get("VersionId") if isinstance(uploaded, dict) else None
-        if not isinstance(version_id, str) or not version_id:
-            raise RegistryPublicationError(f"S3 versioning did not return a version for {key}")
-        verified = self._head(key, version_id)
-        if verified.get("ChecksumSHA256") != expected_checksum:
-            raise RegistryPublicationError(f"S3 native SHA-256 verification failed for {key}")
-        if verified.get("ContentLength") != path.stat().st_size:
-            raise RegistryPublicationError(f"S3 object size does not match the packaged artifact for {key}")
-        return self._record(S3Object(key, version_id, sha256, path.stat().st_size))
+        return uploaded.get("VersionId") if isinstance(uploaded, dict) else None
+
+    def _put_sdk(self, path: Path, key: str, checksum: str, media_type: str) -> str | None:
+        from botocore.exceptions import BotoCoreError, ClientError
+
+        arguments = {
+            "Bucket": self.bucket,
+            "Key": key,
+            "ChecksumAlgorithm": "SHA256",
+            "ChecksumSHA256": checksum,
+            "ContentType": media_type,
+            "ServerSideEncryption": "aws:kms",
+            "IfNoneMatch": "*",
+        }
+        if self.kms_key_id:
+            arguments["SSEKMSKeyId"] = self.kms_key_id
+        for attempt in range(3):
+            try:
+                with path.open("rb") as body:
+                    return self._s3.put_object(Body=body, **arguments).get("VersionId")
+            except ClientError as exc:
+                code = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+                if code in {409, 412}:
+                    current = self._head(key)
+                    if _matches_s3_object(current, checksum, path.stat().st_size):
+                        return current["VersionId"]
+                    if code == 409 and attempt < 2:
+                        continue
+                raise RegistryPublicationError(f"Could not publish immutable s3://{self.bucket}/{key}: {exc}") from exc
+            except BotoCoreError as exc:
+                raise RegistryPublicationError(f"Could not upload s3://{self.bucket}/{key}: {exc}") from exc
+        raise AssertionError("unreachable")
 
     def _head(self, key: str, version_id: str | None = None) -> JsonObject:
+        if self._s3 is not None:
+            from botocore.exceptions import BotoCoreError, ClientError
+
+            arguments = {"Bucket": self.bucket, "Key": key, "ChecksumMode": "ENABLED"}
+            if version_id:
+                arguments["VersionId"] = version_id
+            try:
+                return self._s3.head_object(**arguments)
+            except ClientError as exc:
+                code = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+                # Without ListBucket, the publisher sees 403 on a missing key. A conditional
+                # PUT can create the object, but cannot replace an existing inaccessible object.
+                if not version_id and code in {403, 404}:
+                    return {}
+                raise RegistryPublicationError(f"Could not verify s3://{self.bucket}/{key}: {exc}") from exc
+            except BotoCoreError as exc:
+                raise RegistryPublicationError(f"Could not verify s3://{self.bucket}/{key}: {exc}") from exc
         command = [
             "aws",
             "s3api",
@@ -176,6 +247,15 @@ class S3ArtifactStore:
         except json.JSONDecodeError as exc:
             raise RegistryPublicationError(f"S3 returned invalid metadata for {key}") from exc
         return value if isinstance(value, dict) else {}
+
+
+def _matches_s3_object(head: JsonObject, checksum: str, size: int) -> bool:
+    return (
+        head.get("ChecksumSHA256") == checksum
+        and head.get("ContentLength") == size
+        and isinstance(head.get("VersionId"), str)
+        and bool(head["VersionId"])
+    )
 
 
 def _publish_deployment_files(
@@ -578,6 +658,9 @@ def build_catalog_snapshot(
         if model["id"] not in deferred:
             continue
         entry = dict(model)
+        # Categories follow this checkout's taxonomy, which may have renamed IDs
+        # since the carried entry was published.
+        entry["categories"] = validate_model_categorization(all_models[model["id"]], taxonomy)
         if documentation_receipts is not None:
             documentation = documentation_receipts.get(model["id"])
             if not isinstance(documentation, dict):
@@ -602,6 +685,48 @@ def build_catalog_snapshot(
     return document
 
 
+def _previous_documentation_object(
+    read: ReadRequest, read_api_url: str, run_id: str, bucket: str, content: JsonObject, branch_key: str,
+) -> tuple[str, str] | None:
+    artifact_name = content["artifact_name"]
+    try:
+        result = read(f"{read_api_url.rstrip('/')}/v1/runs/{quote(run_id, safe='')}/artifacts/{artifact_name}")
+    except ModelRegistryError as exc:
+        if any(f"HTTP {status} " in str(exc) for status in (401, 403, 404, 410)):
+            return None
+        raise
+    artifact = result.get("artifact")
+    if not isinstance(artifact, dict):
+        return None
+    key, version = artifact.get("s3_key"), artifact.get("s3_version_id")
+    if (
+        artifact.get("s3_bucket") == bucket
+        and isinstance(key, str) and key.startswith(f"models/{branch_key}/")
+        and isinstance(version, str) and version
+        and artifact.get("sha256") == content["artifact_sha256"]
+        and artifact.get("size_bytes") == content["size_bytes"]
+    ):
+        return key, version
+    return None
+
+
+def _store_documentation_file(
+    store: S3ArtifactStore, path: Path, content: JsonObject, prior: JsonObject, branch_key: str,
+    model_id: str, publication_commit: str | None, resolve_previous: Callable[[JsonObject], tuple[str, str] | None],
+) -> S3Object:
+    digest = content["artifact_sha256"]
+    key = f"models/{branch_key}/documentation/{model_id}/{digest}/{path.name}"
+    options = {"media_type": content["media_type"]}
+    if (publication_commit and prior.get("artifact_sha256") == digest
+            and prior.get("size_bytes") == content["size_bytes"]):
+        previous_object = resolve_previous(content)
+        if previous_object is None:
+            # Older publishers keyed objects by the original publication commit.
+            previous_object = (f"models/{branch_key}/{publication_commit}/documentation/{model_id}/{path.name}", None)
+        options["previous_object"] = previous_object
+    return store.ensure_native_sha256(path, key, digest, **options)
+
+
 def publish_model_documentation(
     *,
     repository: str | Path,
@@ -615,50 +740,100 @@ def publish_model_documentation(
     github_run_url: str | None = None,
     request: Request | None = None,
     artifact_store: S3ArtifactStore | None = None,
+    read_api_url: str | None = None,
+    read_request: ReadRequest | None = None,
+    previous_receipts: dict[str, JsonObject] | None = None,
 ) -> dict[str, JsonObject]:
     root = Path(repository).expanduser().resolve()
-    if len(git_sha) != 40 or any(character not in "0123456789abcdef" for character in git_sha.lower()):
+    if not re.fullmatch(r"[0-9a-fA-F]{40}", git_sha):
         raise ValidationError("git SHA must contain exactly 40 hexadecimal characters")
     if not branch.strip() or not environment.strip():
         raise ValidationError("branch and environment must not be empty")
     models = load_models(root)
     client = SigV4RegistryClient(api_url, aws_region, request=request)
-    store = artifact_store or S3ArtifactStore(bucket, kms_key_id=kms_key_id)
+    read = read_request or _public_registry_json
+    store = artifact_store
+    previous_receipts = previous_receipts or {}
+    git_sha = git_sha.lower()
     branch_key = quote(branch, safe="")
     branch_identity = hashlib.sha256(branch.encode()).hexdigest()[:16]
     receipts: dict[str, JsonObject] = {}
     for model_id, model in sorted(models.items()):
+        prior = previous_receipts.get(model_id, {})
+        if prior.get("source_commit") == git_sha:
+            # Incremental catalog updates must preserve the current revision's receipt verbatim.
+            receipts[model_id] = prior
+            continue
         documentation = load_model_documentation(root / "models" / model_id, model["display_name"], repository=root)
-        on_demand = model.get("build-on-demand", False)
-        digest = documentation["readme_sha256"]
-        stored = store.ensure_native_sha256(
-            documentation["path"],
-            f"models/{branch_key}/{git_sha.lower()}/documentation/{model_id}/README.md",
-            digest,
-            media_type="text/markdown; charset=utf-8",
+        hero = documentation["hero"]
+        hero_content = {
+            "artifact_name": hero["artifact_name"],
+            "markdown_path": hero["markdown_path"],
+            "alt_text": hero["alt_text"],
+            "artifact_sha256": hero["sha256"],
+            "size_bytes": hero["path"].stat().st_size,
+            "media_type": hero["media_type"],
+            "source_path": hero["source_path"],
+        }
+        content = {
+            "format": "markdown",
+            "overview_markdown": documentation["overview_markdown"],
+            "artifact_name": "readme",
+            "artifact_sha256": documentation["readme_sha256"],
+            "size_bytes": documentation["path"].stat().st_size,
+            "media_type": "text/markdown; charset=utf-8",
+            "source_path": documentation["source_path"],
+            "hero": hero_content,
+        }
+        original_commit = prior.get("publication_commit", prior.get("source_commit"))
+        if not isinstance(original_commit, str) or not re.fullmatch(r"[0-9a-f]{40}", original_commit):
+            original_commit = None
+        if original_commit and isinstance(prior.get("run_id"), str) and all(
+            prior.get(field) == value for field, value in content.items()
+        ):
+            receipts[model_id] = {
+                **content,
+                "run_id": prior["run_id"],
+                "source_commit": git_sha,
+                "publication_commit": original_commit,
+            }
+            continue
+
+        if store is None:
+            import boto3
+
+            store = S3ArtifactStore(bucket, kms_key_id=kms_key_id, s3_client=boto3.client("s3", region_name=aws_region))
+        def previous_object(file_content: JsonObject) -> tuple[str, str] | None:
+            if not read_api_url or not isinstance(prior.get("run_id"), str):
+                return None
+            return _previous_documentation_object(
+                read, read_api_url, prior["run_id"], bucket, file_content, branch_key,
+            )
+
+        stored = _store_documentation_file(
+            store, documentation["path"], content, prior, branch_key, model_id, original_commit,
+            previous_object,
+        )
+        prior_hero = prior.get("hero")
+        stored_hero = _store_documentation_file(
+            store, hero["path"], hero_content, prior_hero if isinstance(prior_hero, dict) else {},
+            branch_key, model_id, original_commit, previous_object,
         )
         parameters = {
             "schema_version": 2,
             "model_id": model_id,
-            "source_path": documentation["source_path"],
-            "source_commit": git_sha.lower(),
-            "readme_sha256": digest,
-            "overview_markdown": documentation["overview_markdown"],
-        }
-        hero = documentation["hero"]
-        stored_hero = store.ensure_native_sha256(
-            hero["path"],
-            f"models/{branch_key}/{git_sha.lower()}/documentation/{model_id}/{hero['markdown_path']}",
-            hero["sha256"],
-            media_type=hero["media_type"],
-        )
-        parameters["hero"] = {
-            "source_path": hero["source_path"],
-            "markdown_path": hero["markdown_path"],
-            "alt_text": hero["alt_text"],
-            "sha256": stored_hero.sha256,
-            "size_bytes": stored_hero.size_bytes,
-            "media_type": hero["media_type"],
+            "source_path": content["source_path"],
+            "source_commit": git_sha,
+            "readme_sha256": stored.sha256,
+            "overview_markdown": content["overview_markdown"],
+            "hero": {
+                "source_path": hero_content["source_path"],
+                "markdown_path": hero_content["markdown_path"],
+                "alt_text": hero_content["alt_text"],
+                "sha256": stored_hero.sha256,
+                "size_bytes": stored_hero.size_bytes,
+                "media_type": hero_content["media_type"],
+            },
         }
         run_fingerprint = canonical_sha256(parameters)
         environment_document = {
@@ -668,7 +843,7 @@ def publish_model_documentation(
         }
         create_body = {
             "run_type": "model_documentation",
-            "commit_sha": git_sha.lower(),
+            "commit_sha": git_sha,
             "git_ref": f"refs/heads/{branch}",
             "ci_provider": "github-actions",
             "ci_run_url": github_run_url,
@@ -685,12 +860,12 @@ def publish_model_documentation(
                 "artifact_kind": "model-readme",
                 "source_path": documentation["source_path"],
                 "hero_source_path": hero["source_path"],
-                **({"build_on_demand": True} if on_demand else {}),
+                **({"build_on_demand": True} if model.get("build-on-demand", False) else {}),
             },
         }
         invocation_identity = canonical_sha256(create_body)[:16]
         stable_key = (
-            f"model-documentation-{branch_identity}-{git_sha.lower()}-{model_id}-"
+            f"model-documentation-{branch_identity}-{git_sha}-{model_id}-"
             f"{run_fingerprint[:16]}-{invocation_identity}"
         )
         create = client.request("POST", "/v1/runs", create_body, f"{stable_key}-create")
@@ -711,7 +886,7 @@ def publish_model_documentation(
             "metadata": {
                 "model_id": model_id,
                 "source_path": documentation["source_path"],
-                "source_commit": git_sha.lower(),
+                "source_commit": git_sha,
             },
         }, f"{stable_key}-artifact")
         client.request("PUT", f"/v1/runs/{run_id}/artifacts/{hero['artifact_name']}", {
@@ -726,30 +901,11 @@ def publish_model_documentation(
             "metadata": {
                 "model_id": model_id,
                 "source_path": hero["source_path"],
-                "source_commit": git_sha.lower(),
+                "source_commit": git_sha,
             },
         }, f"{stable_key}-hero-artifact")
         client.request("POST", f"/v1/runs/{run_id}/finalize", {"status": "completed"}, f"{stable_key}-finalize")
-        receipts[model_id] = {
-            "format": "markdown",
-            "overview_markdown": documentation["overview_markdown"],
-            "run_id": run_id,
-            "artifact_name": "readme",
-            "artifact_sha256": stored.sha256,
-            "size_bytes": stored.size_bytes,
-            "media_type": "text/markdown; charset=utf-8",
-            "source_path": documentation["source_path"],
-            "source_commit": git_sha.lower(),
-            "hero": {
-                "artifact_name": hero["artifact_name"],
-                "markdown_path": hero["markdown_path"],
-                "alt_text": hero["alt_text"],
-                "artifact_sha256": stored_hero.sha256,
-                "size_bytes": stored_hero.size_bytes,
-                "media_type": hero["media_type"],
-                "source_path": hero["source_path"],
-            },
-        }
+        receipts[model_id] = {**content, "run_id": run_id, "source_commit": git_sha}
     return receipts
 
 
@@ -764,6 +920,7 @@ def publish_catalog(
     compiled_dir: str | Path | None = None,
     package_dir: str | Path | None = None,
     selected_matrix: str | Path | None = None,
+    force_rebuild_all: bool = False,
     base_branches: list[str] | None = None,
     bucket: str | None = None,
     kms_key_id: str | None = None,
@@ -779,29 +936,71 @@ def publish_catalog(
     if bucket is not None:
         if not environment:
             raise ValidationError("environment is required when publishing model documentation")
-        # The registry rejects model metadata changes within a revision, and each
-        # workflow run creates new documentation run IDs, so a re-dispatch on a
-        # cataloged commit keeps the receipts already in that revision's catalog.
-        documentation_receipts = _revision_documentation_receipts(read, read_api_url, branch, git_sha)
-    if bucket is not None and documentation_receipts is None:
-        documentation_receipts = publish_model_documentation(
-            repository=repository,
-            api_url=api_url,
-            aws_region=aws_region,
-            bucket=bucket,
-            kms_key_id=kms_key_id,
-            environment=environment,
-            branch=branch,
-            git_sha=git_sha,
-            github_run_url=github_run_url,
-            request=request,
-            artifact_store=artifact_store,
-        )
+        record, document = read_current_catalog(read, read_api_url, branch)
+        catalog_models = document.get("models", []) if document else []
+        previous_receipts = {
+            model["id"]: model["documentation"]
+            for model in catalog_models
+            if isinstance(model.get("documentation"), dict)
+        }
+        if (record and record.get("catalog_revision") == git_sha.lower()
+                and previous_receipts and len(previous_receipts) == len(catalog_models)):
+            documentation_receipts = previous_receipts
+        else:
+            documentation_receipts = publish_model_documentation(
+                repository=repository,
+                api_url=api_url,
+                aws_region=aws_region,
+                bucket=bucket,
+                kms_key_id=kms_key_id,
+                environment=environment,
+                branch=branch,
+                git_sha=git_sha,
+                github_run_url=github_run_url,
+                request=request,
+                artifact_store=artifact_store,
+                read_api_url=read_api_url,
+                read_request=read,
+                previous_receipts=previous_receipts,
+            )
     # Read the catalog last so another publisher has the least time to replace it
     # before the compare-and-swap POST below.
     root = Path(repository).expanduser().resolve()
     target_catalog, sources = read_catalog_sources(read, read_api_url, branch, base_branches)
+    target_revision = target_catalog.get("catalog_revision") if isinstance(target_catalog, dict) else None
+    continuing_revision = target_revision == git_sha.lower()
+    if continuing_revision and documentation_receipts is not None and sources:
+        # A concurrent publisher may have initialized this revision while we were preparing it.
+        documentation_receipts.update({
+            model["id"]: model["documentation"]
+            for model in sources[0].get("models", [])
+            if isinstance(model.get("documentation"), dict)
+        })
+    if continuing_revision and force_rebuild_all:
+        selected = _selected_invocation_keys(
+            Path(selected_matrix).expanduser().resolve() if selected_matrix else None
+        )
+        selected_profiles = {(model_id, profile_id) for model_id, profile_id, _ in selected}
+        published_profiles = {
+            (model["id"], package["build_profile_id"])
+            for model in target_catalog["document"].get("models", [])
+            for package in model.get("packages", [])
+            if not model.get("build_on_demand", False)
+        }
+        conflicts = sorted(selected_profiles & published_profiles)
+        if conflicts:
+            profiles = ", ".join(f"{model}/{profile}" for model, profile in conflicts)
+            raise ValidationError(
+                f"cannot force rebuild published packages in current catalog revision {git_sha}: {profiles}. "
+                "Publish the forced rebuild from a new Git revision; packages are immutable within a revision. "
+                "For an initialization retry, omit --force-rebuild-all."
+            )
+    # Base branches seed a new revision only. During progress publication they
+    # could restore a deliberately withheld package, or replace a published one
+    # when a base branch finishes rebuilding before this branch does.
     models = load_models(root)
+    # Apply the same revision boundary when carrying deferred conversion entries.
+    sources = sources[:1] if continuing_revision else sources
     previous = merge_catalog_sources(sources, _head_matrix(root, models))
     deferred = set(models) - set(_catalog_models(models))
     if deferred:
@@ -820,12 +1019,11 @@ def publish_catalog(
         git_sha=git_sha,
         compiled_dir=compiled_dir,
         package_dir=package_dir,
-        selected_matrix=selected_matrix,
+        selected_matrix=None if continuing_revision else selected_matrix,
         previous=previous,
         incremental=True,
         documentation_receipts=documentation_receipts,
     )
-    target_revision = target_catalog.get("catalog_revision") if isinstance(target_catalog, dict) else None
     previous_snapshot = target_catalog.get("canonical_sha256") if isinstance(target_catalog, dict) else None
     snapshot = {
         "initialize": target_revision != git_sha.lower(),
@@ -845,22 +1043,21 @@ def publish_catalog(
     return {"catalog": document, "registry": result}
 
 
-def _revision_documentation_receipts(
-    read: ReadRequest, read_api_url: str, branch: str, git_sha: str
-) -> dict[str, JsonObject] | None:
-    record, document = read_current_catalog(read, read_api_url, branch)
-    if record is None or document is None or record.get("catalog_revision") != git_sha.lower():
-        return None
-    receipts = {model.get("id"): model.get("documentation") for model in document.get("models", [])}
-    if not receipts or not all(isinstance(receipt, dict) for receipt in receipts.values()):
-        return None
-    return receipts
-
-
-
-
 def _download_registry_file(url: str, destination: Path, artifact: JsonObject,
                             download: DownloadRequest | None = None) -> None:
+    # An orchestrator run stages every build's benchmark at once, so retry a dropped or throttled download.
+    for attempt in range(1, 6):
+        try:
+            return _download_registry_file_once(url, destination, artifact, download)
+        except RegistryPublicationError as exc:
+            cause = exc.__cause__
+            if isinstance(cause, HTTPError) and cause.code not in {429, 502, 503, 504} or attempt == 5:
+                raise
+        time.sleep(2 ** (attempt - 1) + random.uniform(0, 1))
+
+
+def _download_registry_file_once(url: str, destination: Path, artifact: JsonObject,
+                                 download: DownloadRequest | None = None) -> None:
     """Stream into a temporary file and install only after size and checksum verification."""
     destination.parent.mkdir(parents=True, exist_ok=True)
     digest = hashlib.sha256()
@@ -1029,6 +1226,34 @@ def stage_catalog_build(
             }
         )
     profile_dir = output / model_id / build_profile_id
+    runtime_files = []
+    package = next((
+        item for item in catalog_model.get("packages", [])
+        if isinstance(item, dict) and (item.get("build_profile_id"), item.get("package_id")) == (
+            build_profile_id, "default"
+        )
+    ), None)
+    if package is not None:
+        response = read(f"{base_url}/v1/runs/{package['run_id']}/artifacts/package")
+        artifact = response.get("artifact")
+        if not isinstance(artifact, dict):
+            raise ValidationError("artifact registry returned no package metadata")
+        metadata = artifact.get("metadata") or {}
+        if not isinstance(metadata, dict):
+            raise ValidationError("artifact registry returned invalid package metadata")
+        if "runtime_files" in metadata:
+            component_runs = {item["component_id"]: item["run_id"] for item in staged_outputs}
+            if (artifact.get("sha256") != package.get("artifact_sha256")
+                    or artifact.get("size_bytes") != package.get("size_bytes")
+                    or not isinstance(artifact.get("download_url"), str)
+                    or metadata.get("component_run_ids") != component_runs
+                    or package.get("component_run_ids") != component_runs):
+                raise ValidationError("runtime-file package does not match the current catalog build")
+            with tempfile.TemporaryDirectory(prefix="restore-package-", dir=profile_dir) as temporary:
+                archive = Path(temporary) / "package.zip"
+                _download_registry_file(artifact["download_url"], archive, artifact, download_request)
+                runtime_files = metadata["runtime_files"]
+                restore_runtime_files(archive, runtime_files, profile_dir)
     # The same manifest a compile writes, so later stages read restored and fresh builds alike.
     (profile_dir / "compile-outputs.json").write_text(
         json.dumps({
@@ -1038,20 +1263,18 @@ def stage_catalog_build(
             "outputs": [
                 {key: item[key] for key in ("component_id", *compile_output_fields(item))} for item in staged_outputs
             ],
+            **({"runtime_files": runtime_files} if runtime_files else {}),
         }, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
     # A benchmark runs under the profile's package run, as after a fresh build's publish-package.
-    for package in catalog_model.get("packages", []):
-        if isinstance(package, dict) and (package.get("build_profile_id"), package.get("package_id")) == (
-            build_profile_id, "default"
-        ):
-            receipt = profile_dir / "packages" / "default" / "registry-publication.json"
-            receipt.parent.mkdir(parents=True, exist_ok=True)
-            receipt.write_text(
-                json.dumps({"packages": [{"model_id": model_id, **package}]}, indent=2, sort_keys=True) + "\n",
-                encoding="utf-8",
-            )
+    if package is not None:
+        receipt = profile_dir / "packages" / "default" / "registry-publication.json"
+        receipt.parent.mkdir(parents=True, exist_ok=True)
+        receipt.write_text(
+            json.dumps({"packages": [{"model_id": model_id, **package}]}, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
     return {"count": len(staged_outputs), "outputs": staged_outputs}
 
 
@@ -1385,23 +1608,9 @@ def _preflight_compilations(
             raise ValidationError(f"{result_path}: archive checksum or size does not match")
 
         compiled_parameters = {}
-        if native and any(name in binding["parameters"] for name in (
-            "max_num_tokens", "language_group_size", "input_height", "input_width"
-        )):
-            config = json.loads((archive.parent / "deployment/devkit/vlm_config.json").read_text(encoding="utf-8"))
-            compiled_parameters = {
-                name: config["pipeline_cfg"][field]
-                for name, field in (("max_num_tokens", "max_num_tokens"),
-                                    ("language_group_size", "input_token_group_size"))
-                if field in config["pipeline_cfg"]
-            }
-            image_size = (config.get("vm_cfg") or {}).get("image_size")
-            if type(image_size) is int and image_size > 0:
-                image_size = [image_size, image_size]
-            if (isinstance(image_size, list) and len(image_size) == 2
-                    and all(type(value) is int and value > 0 for value in image_size)):
-                compiled_parameters.update(input_height=image_size[0], input_width=image_size[1])
-            for name in ("max_num_tokens", "language_group_size", "input_height", "input_width"):
+        if native:
+            compiled_parameters = llima_compiled_parameters(archive.parent / "deployment")
+            for name in ("max_num_tokens", "language_group_size", "input_height", "input_width", "speculative_method"):
                 if name in binding["parameters"] and compiled_parameters.get(name) != binding["parameters"][name]:
                     raise ValidationError(f"{result_path}: compiled {name} does not match model.yaml")
 
@@ -1450,10 +1659,11 @@ def _preflight_compilations(
     return prepared
 
 
-def _conversion_input(source):
+def _conversion_input(source, source_metadata):
     from .conversion import input_record
 
-    return input_record(source)
+    record = input_record(source)
+    return {**record, "metadata": {**source_metadata, **record["metadata"]}}
 
 
 def publish_compilations(
@@ -1615,7 +1825,7 @@ def publish_compilations(
                 ),
                 "media_type": _component_source_media_type(source),
                 "metadata": source_metadata,
-                **(_conversion_input(source) if source["type"] == "conversion" else {}),
+                **(_conversion_input(source, source_metadata) if source["type"] == "conversion" else {}),
             },
             f"{stable_key}-input",
         )
@@ -1704,12 +1914,8 @@ def publish_compilations(
 
 
 def _package_media_type(archive_name: str) -> str | None:
-    """Return the media type of a single-component model's MPK package or a ZIP package, or None otherwise."""
-    if archive_name.endswith("_mpk.tar.gz"):
-        return "application/gzip"
-    if archive_name.endswith(".zip"):
-        return "application/zip"
-    return None
+    """Return the media type of a ZIP package, or None for any other archive."""
+    return "application/zip" if archive_name.endswith(".zip") else None
 
 
 def publish_packages(
@@ -1843,8 +2049,8 @@ def publish_packages(
             "component_run_ids": component_runs,
         }
         run_fingerprint = canonical_sha256({**parameters, "artifact_sha256": artifact_sha})
-        # Single-component packages publish the MPK without an embedded manifest;
-        # retain its provenance in the durable package run as well.
+        # Packages publish without an embedded manifest; retain its provenance
+        # in the durable package run as well.
         parameters["provenance"] = manifest.get("provenance", {})
         environment_document = {
             "vulcan_environment": environment,
@@ -1892,6 +2098,16 @@ def publish_packages(
             "manifest_sha256": manifest_sha, "component_run_ids": component_runs,
             **({"build_on_demand": True} if on_demand else {}),
         }
+        if not native:
+            component_paths = {item["path"] for item in components}
+            resource_paths = {path for resource in manifest["resources"] for path in resource["paths"]}
+            runtime_files = [
+                {"path": item["path"], "sha256": item["sha256"]}
+                for item in manifest["files"]
+                if item["path"] not in component_paths and item["path"] not in resource_paths
+            ]
+            if runtime_files:
+                artifact_metadata["runtime_files"] = runtime_files
         if native:
             _publish_deployment_files(
                 client, store, run_id=run_id, stable_key=stable_key, bucket=bucket,

@@ -1,0 +1,28 @@
+conversion:
+  run_tests: true
+compile:
+  run_tests: true
+accuracy:
+  run_tests: true
+  expected:
+    w16a16:
+      yfcc100m-keypoints-val:
+        pose_auc_5: 0.2850
+        pose_auc_10: 0.4925
+        pose_auc_20: 0.6806
+        match_precision: 0.9724
+        matching_score: 0.2762
+    w8a8_mixed:
+      yfcc100m-keypoints-val:
+        pose_auc_5: 0.2820
+        pose_auc_10: 0.4845
+        pose_auc_20: 0.6710
+        match_precision: 0.9613
+        matching_score: 0.2628
+performance:
+  run_tests: true
+  expected:
+    w16a16:
+      throughput_fps: 112.5
+    w8a8_mixed:
+      throughput_fps: 150.8

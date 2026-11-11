@@ -13,10 +13,66 @@ compilation:
   source: conversion
 ```
 
+The checkpoint is a pinned Hugging Face file or a release file of a public
+GitHub repository. [Pin every input](adding-a-model.md#3-pin-every-input)
+lists the approved forms.
+
 Keep upstream pins and exporter dependencies in Git. Do not copy the output URL,
 checksum, size, or run ID into `model.yaml`. The folder identifies the model and
-the single conversion produces `model.onnx`. Direct file and file-set sources
-continue to work.
+the conversion produces `model.onnx`, unless `conversion.outputs` names other
+files. Direct file and file-set sources continue to work.
+
+## Publish other files
+
+To publish several ONNX models, or a PyTorch checkpoint, list the files under
+`conversion.outputs`:
+
+```yaml
+conversion:
+  source:
+    uri: hf://models/owner/repository@0123456789012345678901234567890123456789/model.pt
+    sha256: <upstream checksum>
+    size_bytes: <upstream size>
+  outputs: [vector_estimator.onnx, vocoder.onnx]
+compilation:
+  format: onnx
+  source: conversion
+  components: [vector_estimator, vocoder]
+```
+
+Each name is a file name you choose, ending in `.onnx`, `.pt` or `.pth`, without
+a folder. Order matters: `compile.py` receives the first file as `--model`, and
+the others sit beside it. The default is `[model.onnx]`, so a model with one ONNX
+leaves the field out.
+
+Scripts read the names from `model.yaml` and never hard-code them. Renaming a
+file then takes one edit in `model.yaml`, followed by a new conversion:
+
+```python
+from model_registry.conversion import conversion_outputs
+
+# convert.py
+estimator, vocoder = conversion_outputs(MODEL_DIR)
+export_estimator(args.output_dir / estimator)
+export_vocoder(args.output_dir / vocoder)
+
+# compile.py
+_, vocoder = conversion_outputs(MODEL_DIR)
+vocoder_path = args.model.with_name(vocoder)
+```
+
+`compile.py` and `surgery.py` can also pick a file for each build profile by
+branching on `--build-profile`.
+
+For graph surgery in PyTorch, publish the checkpoint with `outputs: [weights.pth]`.
+`compile.py` receives `weights.pth`, and `surgery.py` edits the model and exports
+the ONNX to compile, so `compilation.format` stays `onnx`.
+
+Convert fails when a listed file is missing, and runs the ONNX checker on every
+`.onnx` file. Nothing shared checks a `.pt` or `.pth` file, so the model's
+conversion tests must do that. Their `converted` fixture is the first file, and
+the others sit beside it. The bundle keeps the `onnx` artifact name and the
+`model-onnx` type whatever it holds.
 
 ## Publication and selection
 
@@ -26,21 +82,41 @@ the shared configuration resolver returns `stg`/`prod` aliases for infrastructur
 lookup, which must not be used as GitHub environment names. It installs the model's
 exporter requirements, runs conversion and model tests, checks the ONNX, and
 publishes a deterministic bundle under `models/conversions/`. The bundle contains
-`model.onnx`, any referenced external tensor files, and a checked file manifest.
+the declared outputs, any referenced external tensor files, and a checked file
+manifest.
 Skipped or failed model tests do not publish successful conversions.
 
 Vulcan stores ordinary `model_conversion` runs with upstream inputs, parameters,
-validation and the `onnx` artifact. Fingerprint version 1 covers model identity,
-upstream content, exporter code, local helpers, dependency specification and
-validation code and all files under the model's `tests/`, including binary fixtures
-(excluding generated `__pycache__` and `.pytest_cache` directories).
-A changed recipe or fixture needs a new conversion. Shared conversion code
-is also fingerprinted through `CONVERSION_TOOLING` in
-`tools/model_registry/conversion.py`: the conversion workflow and runners,
-fetch/source and model-loading helpers, validation modules and schemas, shared
-pytest fixtures/configuration, and declared package dependencies. Update that list
-when adding a shared execution or validation dependency. This identifies the declared recipe, not a fully locked
-transitive Python environment; pin exporter requirements for reproducibility.
+validation and the `onnx` artifact.
+
+### When to run Convert again
+
+Run **Vulcan Model Convert** again after changing anything that can change the ONNX:
+
+- the upstream pins under `conversion.source`, or `conversion.outputs`
+- `scripts/convert.py`, `scripts/requirements-convert*.txt`, or a module in `scripts/`
+  that `convert.py` imports
+- any other file under `scripts/` that is not a Python module beside `convert.py`,
+  except `requirements-compile.txt` and `requirements-accuracy.txt`
+
+Everything else leaves the conversion valid, including shared tooling, tests,
+compile and benchmark code, and the taxonomy. A changed conversion test runs the
+next time Convert runs.
+
+Shared tooling is not on the list because the checkpoint is verified against its
+pinned SHA-256: where it is hosted and how it is fetched cannot change the output.
+When a shared change does alter converted output, such as a new Python version in
+`scripts/run_model_conversion.sh` or a new bundle layout, raise
+`FINGERPRINT_VERSION` in `tools/model_registry/conversion.py` in the same change.
+Every conversion-backed model then needs Convert again.
+
+Leave a successful conversion alone. Planning selects the latest completed run
+for a fingerprint, so a repeated Convert whose output bytes differ recompiles
+that model on every branch.
+
+Use a normal `import` for helpers, because a module loaded dynamically is not
+detected. Pin exporter requirements too, because packages they pull in indirectly
+are not tracked.
 
 Catalog planning resolves conversion declarations for the requested models (all
 models when no `--models` filter is supplied), including on-demand models,
@@ -95,12 +171,9 @@ conversion publication alone does not delete older outputs. The legacy S3
 sweeper skips the shared `models/conversions/` prefix because it has no branch
 `latest.tag`; registry cleanup owns these versioned objects.
 
-Existing pinned model declarations stay usable while the backend rolls out.
-Publish matching validated outputs in each required environment, then change each
-model's `compilation.source` to `conversion` and update its reproduction section.
-This PR does not claim historical uploads were validated registry conversions
-and does not switch those declarations before outputs exist. No cross-environment
-promotion or automatic conversion scheduler is introduced.
+To move a pinned model to `compilation.source: conversion`, publish its conversion in
+each environment that needs it, then change the source. Conversions are not promoted
+between environments, and nothing runs Convert automatically.
 
 ### Private production reads
 

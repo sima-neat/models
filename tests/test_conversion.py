@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import copy
+import json
+import os
 import shutil
+import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -171,7 +175,7 @@ def test_bundle_rejects_output_collisions_without_changing_model_data(tmp_path, 
     directory = output(tmp_path / "output", external=True, external_location=location)
     original = {p.name: p.read_bytes() for p in directory.iterdir()}
     with pytest.raises(ValidationError, match="would overwrite model data"):
-        conversion.bundle_onnx(directory, directory / filename)
+        conversion.bundle_conversion(directory, directory / filename, ["model.onnx"])
     assert {p.name: p.read_bytes() for p in directory.iterdir()} == original
 
 
@@ -186,7 +190,7 @@ def test_bundle_rejects_output_alias_of_tensor_data(tmp_path, link_type):
         destination.hardlink_to(tensor)
     original = tensor.read_bytes()
     with pytest.raises(ValidationError, match="would overwrite model data"):
-        conversion.bundle_onnx(directory, destination)
+        conversion.bundle_conversion(directory, destination, ["model.onnx"])
     assert tensor.read_bytes() == original
 
 
@@ -194,8 +198,8 @@ def test_bundle_rejects_output_alias_of_tensor_data(tmp_path, link_type):
 @pytest.mark.parametrize("private", [False, True])
 def test_bundle_is_deterministic_and_fetch_checks_exact_version(tmp_path, monkeypatch, external, private):
     directory = output(tmp_path / "output", external)
-    first = conversion.bundle_onnx(directory, tmp_path / "first.tar.gz")
-    second = conversion.bundle_onnx(directory, tmp_path / "second.tar.gz")
+    first = conversion.bundle_conversion(directory, tmp_path / "first.tar.gz", ["model.onnx"])
+    second = conversion.bundle_conversion(directory, tmp_path / "second.tar.gz", ["model.onnx"])
     assert first.read_bytes() == second.read_bytes()
     sha, size = conversion.sha256_file(first)
     source = {
@@ -242,6 +246,125 @@ def test_bundle_is_deterministic_and_fetch_checks_exact_version(tmp_path, monkey
     artifact["s3_version_id"] = "v2"
     with pytest.raises(ValidationError, match="saved plan"):
         conversion.fetch_conversion(source, tmp_path / "cache")
+
+
+def declare_outputs(repository, outputs):
+    path = repository / "models/yolo26x/model.yaml"
+    doc = yaml.safe_load(path.read_text())
+    doc["conversion"]["outputs"] = outputs
+    path.write_text(yaml.safe_dump(doc))
+    return path.parent
+
+
+def fetch_bundle(bundle, cache, monkeypatch):
+    sha, size = conversion.sha256_file(bundle)
+    source = {
+        "type": "conversion", "run_id": "run", "artifact_id": "artifact", "sha256": sha, "size_bytes": size,
+        "s3_bucket": "bucket", "s3_key": "key", "s3_version_id": "v1", "media_type": "application/gzip",
+        "read_api_url": "https://registry.test",
+    }
+    artifact = {
+        **source, "id": "artifact", "artifact_type": "model-onnx", "object_status": "available",
+        "metadata": {"validation": "passed"}, "download_url": bundle.as_uri(),
+    }
+    monkeypatch.delenv("MODEL_REGISTRY_IAM_READ_API_URL", raising=False)
+    monkeypatch.setattr("model_registry.fetch.read_registry_json", lambda _: {"artifact": artifact})
+    return conversion.fetch_conversion(source, cache)[0]
+
+
+def test_conversion_outputs_default_to_one_onnx(repository):
+    assert conversion.conversion_outputs(repository / "models/yolo26x") == ["model.onnx"]
+
+
+def test_default_bundle_manifest_keeps_its_published_bytes(tmp_path):
+    import json
+    import tarfile
+
+    directory = output(tmp_path / "output")
+    bundle = conversion.bundle_conversion(directory, tmp_path / "bundle.tar.gz", ["model.onnx"])
+    sha, size = conversion.sha256_file(directory / "model.onnx")
+    files = [{"path": "model.onnx", "sha256": sha, "size_bytes": size}]
+    expected = {"version": 1, "entrypoint": "model.onnx", "files": files}
+    with tarfile.open(bundle) as archive:
+        assert archive.getnames() == ["manifest.json", "model.onnx"]
+        assert archive.extractfile("manifest.json").read() == json.dumps(expected, sort_keys=True).encode()
+
+
+def test_bundle_delivers_every_output_beside_the_first(tmp_path, monkeypatch):
+    directory = output(tmp_path / "output", external=True)
+    (directory / "model.onnx").rename(directory / "vector_estimator.onnx")
+    shutil.copyfile(directory / "vector_estimator.onnx", directory / "vocoder.onnx")
+    (directory / "weights.pth").write_bytes(b"checkpoint")
+    (directory / "registry-publication.json").write_text("{}")
+    outputs = ["vector_estimator.onnx", "vocoder.onnx", "weights.pth"]
+    bundle = conversion.bundle_conversion(directory, tmp_path / "bundle.tar.gz", outputs)
+    entrypoint = fetch_bundle(bundle, tmp_path / "cache", monkeypatch)
+    assert entrypoint.name == "vector_estimator.onnx"
+    assert sorted(p.name for p in entrypoint.parent.iterdir() if p.name[0] != ".") == [
+        "manifest.json", "vector_estimator.onnx", "vocoder.onnx", "weights.bin", "weights.pth",
+    ]
+    assert fetch_bundle(bundle, tmp_path / "cache", monkeypatch) == entrypoint
+
+
+def test_pth_only_bundle_needs_no_onnx_package(tmp_path, monkeypatch):
+    directory = tmp_path / "output"
+    directory.mkdir()
+    (directory / "weights.pth").write_bytes(b"checkpoint")
+    monkeypatch.setitem(sys.modules, "onnx", None)
+    bundle = conversion.bundle_conversion(directory, tmp_path / "bundle.tar.gz", ["weights.pth"])
+    assert fetch_bundle(bundle, tmp_path / "cache", monkeypatch).read_bytes() == b"checkpoint"
+
+
+def test_bundle_names_a_declared_output_convert_did_not_write(tmp_path):
+    directory = output(tmp_path / "output")
+    with pytest.raises(ValidationError, match="declared outputs: vocoder.onnx"):
+        conversion.bundle_conversion(directory, tmp_path / "bundle.tar.gz", ["model.onnx", "vocoder.onnx"])
+    assert not (tmp_path / "bundle.tar.gz").exists()
+
+
+def test_bundle_checks_every_onnx_output(tmp_path):
+    directory = output(tmp_path / "output")
+    broken = onnx.load(directory / "model.onnx")
+    broken.graph.node[0].op_type = ""
+    onnx.save(broken, directory / "broken.onnx")
+    with pytest.raises(onnx.checker.ValidationError):
+        conversion.bundle_conversion(directory, tmp_path / "bundle.tar.gz", ["model.onnx", "broken.onnx"])
+
+
+@pytest.mark.parametrize(
+    "outputs",
+    [[], ["model.onnx", "model.onnx"], ["manifest.json"], ["onnx.tar.gz"], ["nested/model.onnx"], ["model.ONNX"],
+     [".model.onnx"]],
+)
+def test_schema_rejects_outputs_a_bundle_cannot_hold(repository, outputs):
+    with pytest.raises(ValidationError):
+        load_and_validate_model(declare_outputs(repository, outputs))
+
+
+def test_publication_records_declared_outputs(repository, tmp_path):
+    directory = output(tmp_path / "output")
+    (directory / "model.onnx").rename(directory / "encoder.onnx")
+    (directory / "weights.pth").write_bytes(b"checkpoint")
+    declare_outputs(repository, ["encoder.onnx", "weights.pth"])
+    registry = Registry()
+    store = SimpleNamespace(ensure_native_sha256=lambda path, key, sha: SimpleNamespace(key=key, version_id="v1"))
+    conversion.publish_conversion(
+        repository, "yolo26x", directory, client=registry, store=store, bucket="bucket", environment="staging",
+        branch="feature", git_sha="a" * 40, workflow="42", validation="passed",
+    )
+    bodies = {call[1].rsplit("/", 1)[-1]: call[2] for call in registry.calls}
+    assert bodies["onnx"]["metadata"]["entrypoint"] == "encoder.onnx"
+    assert bodies["parameters"]["parameters"]["outputs"] == ["encoder.onnx", "weights.pth"]
+    assert bodies["conversion"]["summary"]["onnx_checked"] == ["encoder.onnx"]
+
+
+def test_changing_outputs_invalidates_saved_selection(repository):
+    model = load_and_validate_model(repository / "models/yolo26x")
+    original = conversion.conversion_fingerprint(repository, model)
+    declare_outputs(repository, ["renamed.onnx"])
+    assert conversion.conversion_fingerprint(repository, model) != original
+    with pytest.raises(ValidationError, match="checkout's recipe"):
+        conversion.apply_selection(model, {"yolo26x": {"conversion_fingerprint": original}}, root=repository)
 
 
 def test_publication_completes_only_after_validated_output(repository, tmp_path):
@@ -312,11 +435,11 @@ def test_planning_resolves_before_compile_reuse(repository, monkeypatch):
 def test_targeted_direct_source_plan_needs_no_conversion_credentials(repository):
     from model_registry.stage_plan import plan_stages
 
-    shutil.copytree(ROOT / "models/yolo26l", repository / "models/yolo26l")
+    shutil.copytree(ROOT / "models/resnet_50", repository / "models/resnet_50")
     result = plan_stages(repository, compiler_version="test", read=None, read_api_url=None,
-                         branch="feature", model_ids=["yolo26l"])
+                         branch="feature", model_ids=["resnet_50"])
     assert result["conversion_sources"] == {}
-    assert {entry["model_id"] for entry in result["compile"]["include"]} == {"yolo26l"}
+    assert {entry["model_id"] for entry in result["compile"]["include"]} == {"resnet_50"}
 
 
 def test_targeted_conversion_plan_creates_only_selected_plan(repository, monkeypatch):
@@ -361,42 +484,170 @@ def test_conversion_fingerprint_tracks_recipe_and_dependency_pins(repository):
         compile_fingerprint(repository, "yolo26x", "w16a16", "w16a16", "test", conversion_sources={})
 
 
-@pytest.mark.parametrize("name", ["image.png", "array.npy", "tensor.bin", "expected.json", "extensionless"])
-def test_conversion_fixture_changes_invalidate_saved_selection(repository, name):
-    model = load_and_validate_model(repository / "models/yolo26x")
-    baseline = conversion.conversion_fingerprint(repository, model)
-    fixture = repository / "models/yolo26x/tests/fixtures/nested" / name
-    fixture.parent.mkdir(parents=True, exist_ok=True)
-    fixture.write_bytes(b"\x00\x01fixture")
-    added = conversion.conversion_fingerprint(repository, model)
-    assert added != baseline
-    fixture.write_bytes(b"\x00\x02fixture")
-    assert conversion.conversion_fingerprint(repository, model) != added
-    with pytest.raises(ValidationError, match="checkout's recipe"):
-        conversion.apply_selection(model, {"yolo26x": {"conversion_fingerprint": added}}, root=repository)
-    fixture.unlink()
-    assert conversion.conversion_fingerprint(repository, model) == baseline
+@pytest.mark.parametrize(
+    ("nodeps", "fail_install"),
+    [(False, False), (True, False), (True, True)],
+    ids=["normal-requirements", "optional-nodeps", "failed-nodeps-install"],
+)
+def test_conversion_runner_installs_dependencies_before_export(tmp_path, nodeps, fail_install):
+    model = tmp_path / "repo with spaces/models/example"
+    scripts = model / "scripts"
+    scripts.mkdir(parents=True)
+    (scripts / "convert.py").write_text("pass\n")
+    (scripts / "requirements-convert.txt").write_text("core==1.0\n")
+    if nodeps:
+        (scripts / "requirements-convert-nodeps.txt").write_text("upstream==1.0\n")
+    calls_file = tmp_path / "calls.jsonl"
+    python = tmp_path / "record-python"
+    python.write_text('''#!/usr/bin/env python3
+import json
+import os
+import sys
+with open(os.environ["MODEL_CONVERSION_TEST_CALLS"], "a") as output:
+    output.write(json.dumps(sys.argv[1:]) + "\\n")
+if "--no-deps" in sys.argv and os.environ["MODEL_CONVERSION_TEST_FAIL"] == "1":
+    sys.exit(7)
+''')
+    python.chmod(0o755)
+    environment = tmp_path / "runner with spaces"
+    (environment / "bin").mkdir(parents=True)
+    (environment / "bin/python").symlink_to(python)
+    cache = tmp_path / "cache with spaces"
+    result = subprocess.run(
+        ["bash", str(ROOT / "scripts/run_model_conversion.sh"), str(model), "default", str(tmp_path / "output")],
+        env={**os.environ, "CONVERSION_PYTHON": str(python), "CONVERSION_VENV": str(environment),
+             "PIP_CACHE_DIR": str(cache), "MODEL_CONVERSION_TEST_CALLS": str(calls_file),
+             "MODEL_CONVERSION_TEST_FAIL": "1" if fail_install else "0"},
+        capture_output=True, text=True,
+    )
+    calls = [json.loads(line) for line in calls_file.read_text().splitlines()]
+    installs = [call for call in calls if "-r" in call]
+    assert [Path(call[-1]).name for call in installs] == ["requirements-convert.txt"] + (
+        ["requirements-convert-nodeps.txt"] if nodeps else []
+    )
+    assert "--no-deps" not in installs[0]
+    for call in installs:
+        assert "--isolated" in call and "--only-binary=:all:" in call
+        assert call[call.index("--cache-dir") + 1] == str(cache)
+    if nodeps:
+        assert "--no-deps" in installs[1]
+    exported = [call for call in calls if str(scripts / "convert.py") in call]
+    if fail_install:
+        assert result.returncode == 7 and not exported
+    else:
+        assert result.returncode == 0, result.stderr
+        assert len(exported) == 1 and calls.index(installs[-1]) < calls.index(exported[0])
 
 
-def test_conversion_fingerprint_ignores_generated_test_caches(repository):
-    model = load_and_validate_model(repository / "models/yolo26x")
-    original = conversion.conversion_fingerprint(repository, model)
-    for relative in ("__pycache__/test_conversion.pyc", ".pytest_cache/v/cache/nodeids"):
-        path = repository / "models/yolo26x/tests" / relative
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(b"generated cache")
-    assert conversion.conversion_fingerprint(repository, model) == original
-
-
-@pytest.mark.parametrize("relative", conversion.CONVERSION_TOOLING)
-def test_shared_conversion_dependency_invalidates_saved_selection(repository, relative):
+@pytest.mark.parametrize(
+    "relative",
+    [
+        "taxonomies/model-taxonomy.yaml",
+        "tools/model_report/metrics.json",
+        "schemas/model.schema.json",
+        "conftest.py",
+        "pyproject.toml",
+        "scripts/run_model_tests.sh",
+        "tools/model_registry/model.py",
+        "models/yolo26x/tests/tests.yaml",
+        "models/yolo26x/tests/build/test_conversion.py",
+        "models/yolo26x/scripts/compile.py",
+        "models/yolo26x/scripts/calibration.py",
+        "models/yolo26x/scripts/surgery.py",
+        "models/yolo26x/scripts/performance.py",
+    ],
+)
+def test_files_that_cannot_change_the_onnx_keep_the_saved_selection(repository, relative):
     model = load_and_validate_model(repository / "models/yolo26x")
     original = conversion.conversion_fingerprint(repository, model)
     path = repository / relative
     path.write_bytes(path.read_bytes() + b"\n")
+    assert conversion.conversion_fingerprint(repository, model) == original
+
+
+def test_other_stage_requirements_keep_the_saved_selection(repository):
+    model = load_and_validate_model(repository / "models/yolo26x")
+    original = conversion.conversion_fingerprint(repository, model)
+    for name in conversion.OTHER_STAGE_REQUIREMENTS:
+        (repository / "models/yolo26x/scripts" / name).write_text("package==1.0\n")
+    assert conversion.conversion_fingerprint(repository, model) == original
+
+
+def test_modules_convert_imports_invalidate_saved_selection(repository):
+    scripts = repository / "models/yolo26x/scripts"
+    model = load_and_validate_model(repository / "models/yolo26x")
+    (scripts / "export_graph.py").write_text("import export_weights\n")
+    (scripts / "export_weights.py").write_text("SCALE = 1\n")
+    unused = conversion.conversion_fingerprint(repository, model)
+    convert = scripts / "convert.py"
+    convert.write_text("from export_graph import rewrite\n" + convert.read_text())
+    imported = conversion.conversion_fingerprint(repository, model)
+    assert imported != unused
+    (scripts / "export_weights.py").write_text("SCALE = 2\n")
+    assert conversion.conversion_fingerprint(repository, model) != imported
+
+
+@pytest.mark.parametrize("relative", ["exporter.patch", "exporter/graph.py", "requirements-convert-nodeps.txt"])
+def test_other_files_under_scripts_invalidate_saved_selection(repository, relative):
+    model = load_and_validate_model(repository / "models/yolo26x")
+    baseline = conversion.conversion_fingerprint(repository, model)
+    path = repository / "models/yolo26x/scripts" / relative
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("content\n")
+    assert conversion.conversion_fingerprint(repository, model) != baseline
+
+
+def test_conversion_fingerprint_ignores_generated_caches(repository):
+    model = load_and_validate_model(repository / "models/yolo26x")
+    original = conversion.conversion_fingerprint(repository, model)
+    path = repository / "models/yolo26x/scripts/__pycache__/convert.pyc"
+    path.parent.mkdir(exist_ok=True)
+    path.write_bytes(b"generated cache")
+    assert conversion.conversion_fingerprint(repository, model) == original
+
+
+def test_conversion_fingerprint_names_an_unparsable_recipe(repository):
+    model = load_and_validate_model(repository / "models/yolo26x")
+    (repository / "models/yolo26x/scripts/convert.py").write_text("def broken(\n")
+    with pytest.raises(ValidationError, match="convert.py: cannot read its imports"):
+        conversion.conversion_fingerprint(repository, model)
+
+
+@pytest.mark.parametrize(
+    "relative",
+    [
+        ".github/workflows/vulcan-model-convert.yml",
+        "scripts/run_model_conversion.sh",
+        "tools/model_registry/conversion.py",
+        "tools/model_registry/fetch.py",
+        "tools/model_registry/source.py",
+    ],
+)
+def test_shared_conversion_tooling_keeps_the_saved_selection(repository, relative):
+    model = load_and_validate_model(repository / "models/yolo26x")
+    original = conversion.conversion_fingerprint(repository, model)
+    path = repository / relative
+    path.write_bytes(path.read_bytes() + b"\n")
+    assert conversion.conversion_fingerprint(repository, model) == original
+
+
+def test_raising_the_fingerprint_version_invalidates_saved_selection(repository, monkeypatch):
+    model = load_and_validate_model(repository / "models/yolo26x")
+    original = conversion.conversion_fingerprint(repository, model)
+    monkeypatch.setattr(conversion, "FINGERPRINT_VERSION", conversion.FINGERPRINT_VERSION + 1)
     assert conversion.conversion_fingerprint(repository, model) != original
     with pytest.raises(ValidationError, match="checkout's recipe"):
         conversion.apply_selection(model, {"yolo26x": {"conversion_fingerprint": original}}, root=repository)
+
+
+def test_another_checkpoint_invalidates_saved_selection(repository):
+    original = conversion.conversion_fingerprint(repository, load_and_validate_model(repository / "models/yolo26x"))
+    path = repository / "models/yolo26x/model.yaml"
+    doc = yaml.safe_load(path.read_text())
+    doc["conversion"]["source"]["sha256"] = "0" * 64
+    path.write_text(yaml.safe_dump(doc))
+    repinned = load_and_validate_model(repository / "models/yolo26x")
+    assert conversion.conversion_fingerprint(repository, repinned) != original
 
 
 def test_saved_selection_rejects_a_different_recipe(repository, monkeypatch):
@@ -453,7 +704,7 @@ def test_bundle_rejects_reserved_directory_prefix(tmp_path, reserved):
     onnx.save(model, directory / "model.onnx")
     shutil.copyfile(other / "weights.bin", directory / reserved / "weights.bin")
     with pytest.raises(ValidationError, match="reserved ONNX bundle path"):
-        conversion.bundle_onnx(directory, tmp_path / "bundle.tar.gz")
+        conversion.bundle_conversion(directory, tmp_path / "bundle.tar.gz", ["model.onnx"])
     assert not (tmp_path / "bundle.tar.gz").exists()
 
 
@@ -486,10 +737,12 @@ def test_targeted_plan_publishes_catalog_with_unselected_conversion(
     matrix.write_text(json.dumps(result["compile"]))
     prior = {"id": "yolo26x", "builds": [], "packages": [],
              "build_on_demand": not deferred_pending, "build_requirements": {"unchanged": "requirements"},
-             "documentation": {"source_commit": "b" * 40}}
+             "documentation": {"source_commit": "b" * 40},
+             # Published under an older taxonomy whose architecture ID was since renamed.
+             "categories": {"architecture": {"id": "yolo", "paradigm": "cnn"}}}
     documentation = {model_id: {"source_commit": "a" * 40, "run_id": model_id + "-docs"}
                      for model_id in ("yolo26x", "yolo26l")}
-    monkeypatch.setattr(publication, "_revision_documentation_receipts", lambda *args: None)
+    monkeypatch.setattr(publication, "read_current_catalog", lambda *args: (None, None))
     monkeypatch.setattr(publication, "publish_model_documentation", lambda **kwargs: documentation)
     pending = [{"model_id": "yolo26x", "build_profile_id": "w16a16", "compile_invocation_id": "w16a16",
                 "component_ids": ["model"], "compile_fingerprint": "c" * 64}] if deferred_pending else []
@@ -505,7 +758,18 @@ def test_targeted_plan_publishes_catalog_with_unselected_conversion(
         entries = {model["id"]: model for model in published["models"]}
         assert "yolo26l" in entries
         if has_previous:
-            assert entries["yolo26x"] == {**prior, "documentation": documentation["yolo26x"]}
+            from model_registry.model import load_and_validate_model
+            from model_registry.taxonomy import (
+                canonical_taxonomy_document,
+                load_taxonomy,
+                validate_model_categorization,
+            )
+            taxonomy = canonical_taxonomy_document(load_taxonomy(repository / "taxonomies/model-taxonomy.yaml"))
+            categories = validate_model_categorization(
+                load_and_validate_model(repository / "models/yolo26x"), taxonomy
+            )
+            assert categories["architecture"]["id"] != "yolo"
+            assert entries["yolo26x"] == {**prior, "documentation": documentation["yolo26x"], "categories": categories}
         else:
             assert "yolo26x" not in entries
         expected_pending_models = {"yolo26l", "yolo26x"} if has_previous and deferred_pending else {"yolo26l"}
@@ -538,11 +802,11 @@ import resource
 import sys
 from pathlib import Path
 import onnx
-from model_registry.conversion import bundle_onnx
+from model_registry.conversion import bundle_conversion
 _, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
 limit = 64 if hard == resource.RLIM_INFINITY else min(64, hard)
 resource.setrlimit(resource.RLIMIT_NOFILE, (limit, hard))
-bundle_onnx(Path(sys.argv[1]), Path(sys.argv[2]))
+bundle_conversion(Path(sys.argv[1]), Path(sys.argv[2]), ["model.onnx"])
 """, str(directory), str(archive)], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
     with tarfile.open(archive) as bundle:
@@ -574,7 +838,7 @@ def test_bundle_closes_streams_when_archive_write_fails(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, "open", track_open)
     monkeypatch.setattr(tarfile.TarFile, "addfile", fail_tensor_write)
     with pytest.raises(OSError, match="simulated disk failure"):
-        conversion.bundle_onnx(directory, archive)
+        conversion.bundle_conversion(directory, archive, ["model.onnx"])
     assert opened and all(stream.closed for stream in opened)
 
 

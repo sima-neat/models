@@ -4,8 +4,9 @@ The performance stage measures each build profile's whole model on a Modalix
 DevKit: every compiled MPK and the CPU work between them. Each model's
 standalone `scripts/performance.py` contains its benchmark setup, including
 its input: one image from the model's accuracy dataset in a 1280x720 frame,
-which Neat preprocesses inside the measurement (see [Benchmark
-input](#benchmark-input)). Scripts of single-component models load the MPK
+which Neat preprocesses inside the measurement, or one sample as tensors for a
+model whose inputs are not images (see [Benchmark input](#benchmark-input)).
+Scripts of single-component models load the MPK
 with `pyneat.Model` and call Neat Core's benchmark API; RF-DETR, a
 multi-component model, times its pipeline itself in its script. Core owns
 warmup, latency and throughput measurement, board telemetry, and runner
@@ -16,12 +17,29 @@ writes the one report the registry publishes.
 
 The DevKit must run the platform version that `deps/manifest.json` pins, and
 the stage uses the Core package named by `neat-core.install_target` in that
-file. CI checks the platform version, then installs Core with:
+file. CI checks the platform version, then prepares Core with:
 
 ```bash
-sima-cli neat install --env production --type minimal '<neat-core.install_target>'
-~/pyneat/bin/python -c 'import pyneat; print(pyneat.__version__, pyneat.__file__)'
+model-registry ensure-neat-core --repository . --environment production
 ```
+
+The command reads `neat-core.install_target` from that repository's manifest.
+It resolves a floating target such as `core@develop` to the published artifact
+tag once, then compares `neat --json` with that artifact's metadata. The Core
+channel, exact tag and artifact environment must match, as must Runner and
+Scheduler. It compares their installed versions with the Debian
+versions in `resolved-deps-manifest.json`, verified against the checksum in
+`metadata-minimal.json`, the same metadata the minimal installer uses.
+A Core tag republished with newer dependencies therefore installs again.
+An exact match skips installation; missing, invalid or ambiguous status or
+metadata takes the normal `sima-cli neat install --env production --type minimal`
+path with the resolved target. An unresolved floating target fails the job.
+Both paths run the PyNeat import/version check and Debian package reporting.
+
+Core artifacts come from production independently of the Model Registry and
+dataset environment. For a non-production Core setup, supply that environment's
+index with `--artifacts-base-url` or `NEAT_ARTIFACTS_BASE_URL`; production metadata
+cannot justify skipping an install from another environment.
 
 Core's board installer also installs Sentinel, the DevKit telemetry daemon.
 Core's benchmark reads power, temperature, CPU usage, and memory from Sentinel
@@ -55,7 +73,7 @@ needed:
 ```bash
 PYTHONPATH=tools ~/pyneat/bin/python models/resnet_50/scripts/performance.py \
   --mpk /workspace/resnet_50_mpk.tar.gz \
-  --dataset imagenet-2012-mini=/media/nvme/datasets/imagenet-2012-mini \
+  --dataset imagenet-2012-val=/media/nvme/datasets/imagenet-2012-val \
   --output /workspace/performance
 ```
 
@@ -130,8 +148,9 @@ The script runs once per benchmarked build profile, with every component's MPK.
 
 ### Benchmark input
 
-The benchmark repeats one real camera-sized frame, so its throughput is what
-an application gets from a 720p frame to decoded results, not the MPK alone:
+For an image model, the benchmark repeats one real camera-sized frame, so its
+throughput is what an application gets from a 720p frame to decoded results,
+not the MPK alone:
 
 1. The script picks one image from the dataset's validation split with
    `random.Random(0)`, so every run measures the same image. Pose models pick
@@ -144,11 +163,17 @@ an application gets from a 720p frame to decoded results, not the MPK alone:
    `pyneat.Tensor`. The Model uses the image route
    (`preprocess.kind = InputKind.Image`), so Neat's preprocessing resizes,
    normalizes, quantizes and tessellates the frame in every timed inference.
+   It sets `preprocess.input_max_width` and `input_max_height` to the frame
+   size. Otherwise Neat sizes its input buffers for 1920x1080, and the
+   execution plan shows that size as the model's input.
    YOLO26 resizes with `ResizeMode.Letterbox` and keeps Neat's default
    scaling of pixels to [0, 1]. ResNet-50 and RF-DETR's backbone resize with
    `ResizeMode.Stretch` and set `preprocess.preset =
-   NormalizePreset.ImageNet`; without a preset, Neat applies no mean or
-   standard deviation.
+   NormalizePreset.ImageNet`. ViT-B/16, CLIP ViT-B/16 and SigLIP 2 ViT-B/16
+   also stretch, and set their own mean and standard deviation (0.5 for
+   ViT-B/16) in `preprocess.normalize.mean` and `stddev` with
+   `normalize.has_explicit_stats = True`. Without a preset or explicit
+   statistics, Neat applies no mean or standard deviation.
 
 The report's `workload` names the dataset, the image, the frame, and the
 decoder settings. Preprocessing is part of the measurement and can bound
@@ -163,8 +188,39 @@ the right one (1920x540 for Scene Flow). Its Model resizes with
 `ResizeMode.Stretch` and sets the ImageNet preset, and the workload names the
 pair's left image.
 
+A model whose inputs are not images, such as a keypoint matcher, measures one
+sample of its accuracy dataset instead of a frame. The script picks the sample
+from the dataset's validation list with `random.Random(0)` (for SuperGlue, one
+pair of `pairs_val.txt` whose images both hold 512 keypoints), passes its arrays
+to Core as `pyneat.Tensor` inputs on the tensor route (`preprocess.kind =
+InputKind.Tensor`, with resizing, color conversion and normalization off), and
+names the dataset and the sample in `workload`. Each timed sample also runs the
+CPU steps that turn the MPK's outputs into the model's result, such as
+SuperGlue's Sinkhorn iterations and match extraction, so throughput is what an
+application gets from inputs to matches, as for image models. The shared
+dataset-image test in `tests/test_model_report.py` skips a model without an
+image input, so its own `tests/benchmark/test_performance.py` checks the sample,
+the tensors and the CPU steps.
+
 A model without an accuracy dataset builds a fixed, realistic input in its
 own script and takes no `--dataset`.
+
+A model whose application also reads files beyond its MPKs, such as Supertonic's
+text models and voices, declares them as `resources` in `model.yaml`, and its
+script takes `--resources <directory>`. For a standalone run, fetch them in the
+layout the package installs, or extract the package ZIP to the same effect, and
+install the model's `scripts/requirements-performance.txt` beside PyNeat's
+environment, as the stage does:
+
+```bash
+resources="$(model-registry fetch-resources models/supertonic_3 --output-dir /workspace/resources)"
+~/pyneat/bin/python -m pip install --no-deps --only-binary=:all: \
+  --target /workspace/site -r models/supertonic_3/scripts/requirements-performance.txt
+PYTHONPATH=tools:/workspace/site ~/pyneat/bin/python models/supertonic_3/scripts/performance.py \
+  --mpk vector_estimator=/workspace/vector_estimator_mpk.tar.gz \
+  --mpk vocoder=/workspace/vocoder_mpk.tar.gz \
+  --resources "$resources" --output /workspace/performance
+```
 
 ## Multi-component models
 
@@ -199,6 +255,49 @@ model's; component numbers are never added together.
 Throughput cannot exceed `1 / (1 / backbone_fps + 1 / decoder_fps)` for
 component rates measured on the same board, because the MLA runs one MPK at a
 time. A result well below that rate points at the pipeline, not the model.
+
+### Independent components
+
+Components that can run independently, such as CLIP's image and text encoders,
+use this declaration instead of a composed pipeline benchmark:
+
+```yaml
+performance:
+  scope: components
+```
+
+Omitting `scope` keeps the whole-model behavior (`scope: model`), including for
+RF-DETR. Both modes publish one performance run per build profile and require
+all declared components. Independent components are measured one at a time;
+their timings, power, memory and energy are not added or averaged.
+
+The script builds each component's result with the existing helper, then saves
+one report:
+
+```python
+reports[component] = model_report.from_performance(
+    model.benchmark(options), {component: model}, workload=workload,
+)
+model_report.from_component_performance(reports).save(output)
+```
+
+A component report has `scope: components` and a `components` map. Every entry
+contains its own `metrics`, `workload`, `telemetry`, execution plan and MLA stats.
+There are no top-level combined metrics. The required metrics and regression
+limits apply to every component; `tests/tests.yaml` declares expectations under
+`performance.expected.<profile>.components.<component>.throughput_fps`.
+Core's evidence files are named `<component>-benchmark-report.json`.
+
+Publication keeps the shared model package as the parent run and identifies
+measurements by `component_id`; model-level measurements retain their existing
+identity. The model page shows a component selector and the selected component's
+metric cards. The catalog table lists each component separately. CSV downloads
+identify the selected component and contain its readings.
+
+For CLIP, the image benchmark includes Neat preprocessing of a 720p RGB frame.
+The text benchmark uses prepared 77-token embeddings. Tokenization, CPU token
+lookup and image/text similarity scoring happen outside these independent
+encoder measurements; each workload states that boundary.
 
 ## MLA profiling
 
@@ -262,7 +361,8 @@ threshold includes zero-time layers. Stage indices remain visible per layer.
 ## Workload and measurements
 
 The workload is the script's [benchmark input](#benchmark-input) on the image
-route, with the script's model and benchmark options; the report's `workload`
+route, or on the tensor route for a model whose inputs are not images, with the
+script's model and benchmark options; the report's `workload`
 states both. Results measured before scripts took a dataset image used Core's
 synthetic inputs without image preprocessing, and YOLO26 decoded up to 100
 detections at any score. Do not compare those results with current ones.
@@ -334,10 +434,14 @@ the performance stage does not run when that step fails.
    `model-registry resolve-devkit-accuracy` and extracts it under
    `/media/nvme/neat-tests/`, which it removes when it exits; a build profile
    that accuracy does not measure gets no `--dataset`;
-3. sets the MLA and CPU clocks;
-4. runs the model's `performance.py`, which writes `model-report.json` and
+3. fetches the model's pinned `resources` with `model-registry fetch-resources`
+   and passes them as `--resources`, laid out as the package installs them, and
+   installs `scripts/requirements-performance.txt`, when the model has it, in a
+   folder beside PyNeat's environment;
+4. sets the MLA and CPU clocks;
+5. runs the model's `performance.py`, which writes `model-report.json` and
    `benchmark-report.json`, and copies its output to `performance.log`;
-5. runs `model-registry check-report`, which validates the report against
+6. runs `model-registry check-report`, which validates the report against
    [`model-report.schema.json`](../schemas/model-report.schema.json) and the
    `model.yaml` declaration and writes the board's installed packages and
    clocks to `environment.json`.
@@ -360,7 +464,7 @@ failed test still publishes the report and completes its run, then fails the
 workflow run. A failed measurement keeps its workflow evidence and is not
 published. Performance and accuracy publish on their own outcomes: when one
 stage fails, the other's report is still published, and the next push reruns
-only the stage that has no run. A dispatched run stops before measuring when
+only the stage that has no run. A manual dispatch stops before measuring when
 its branch has since changed the tooling the benchmark fingerprints hash; the
 newer push benchmarks that build instead.
 

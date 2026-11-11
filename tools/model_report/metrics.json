@@ -63,11 +63,20 @@
   "coco_mask_ar_large": {"stage": "accuracy", "label": "Mask AR large", "unit": "ratio", "direction": "higher", "registry_name": "model.accuracy.coco_mask_ar_large", "aggregation": "raw", "digits": 3},
   "coco_box_map": {"stage": "accuracy", "label": "Box mAP 50–95", "unit": "ratio", "direction": "higher", "registry_name": "model.accuracy.coco_box_map", "aggregation": "raw", "digits": 3},
   "coco_box_ap50": {"stage": "accuracy", "label": "Box AP50", "unit": "ratio", "direction": "higher", "registry_name": "model.accuracy.coco_box_ap50", "aggregation": "raw", "digits": 3},
-  "abs_rel": {"stage": "accuracy", "label": "AbsRel", "unit": "ratio", "direction": "lower", "registry_name": "model.accuracy.abs_rel", "aggregation": "raw", "digits": 3},
-  "delta1": {"stage": "accuracy", "label": "δ1", "unit": "ratio", "direction": "higher", "registry_name": "model.accuracy.delta1", "aggregation": "raw", "digits": 3},
+  "dota_obb_map50": {"stage": "accuracy", "label": "DOTA mAP50", "unit": "ratio", "direction": "higher", "registry_name": "model.accuracy.dota_obb_map50", "aggregation": "raw", "digits": 3},
+  "dota_obb_map": {"stage": "accuracy", "label": "DOTA mAP 50–95", "unit": "ratio", "direction": "higher", "registry_name": "model.accuracy.dota_obb_map", "aggregation": "raw", "digits": 3},
+  "keypoint_repeatability": {"stage": "accuracy", "label": "Repeatability", "unit": "ratio", "direction": "higher", "registry_name": "model.accuracy.keypoint_repeatability", "aggregation": "raw", "digits": 3},
+  "homography_accuracy": {"stage": "accuracy", "label": "Homography accuracy", "unit": "ratio", "direction": "higher", "registry_name": "model.accuracy.homography_accuracy", "aggregation": "raw", "digits": 3},
+  "pose_auc_5": {"stage": "accuracy", "label": "Pose AUC@5°", "unit": "ratio", "direction": "higher", "registry_name": "model.accuracy.pose_auc_5", "aggregation": "raw", "digits": 3},
+  "pose_auc_10": {"stage": "accuracy", "label": "Pose AUC@10°", "unit": "ratio", "direction": "higher", "registry_name": "model.accuracy.pose_auc_10", "aggregation": "raw", "digits": 3},
+  "pose_auc_20": {"stage": "accuracy", "label": "Pose AUC@20°", "unit": "ratio", "direction": "higher", "registry_name": "model.accuracy.pose_auc_20", "aggregation": "raw", "digits": 3},
+  "match_precision": {"stage": "accuracy", "label": "Match precision", "unit": "ratio", "direction": "higher", "registry_name": "model.accuracy.match_precision", "aggregation": "raw", "digits": 3},
+  "matching_score": {"stage": "accuracy", "label": "Matching score", "unit": "ratio", "direction": "higher", "registry_name": "model.accuracy.matching_score", "aggregation": "raw", "digits": 3},
   "recall_at_1": {"stage": "accuracy", "label": "Recall@1", "unit": "ratio", "direction": "higher", "registry_name": "model.accuracy.recall_at_1", "aggregation": "raw", "digits": 3},
   "recall_at_5": {"stage": "accuracy", "label": "Recall@5", "unit": "ratio", "direction": "higher", "registry_name": "model.accuracy.recall_at_5", "aggregation": "raw", "digits": 3},
   "recall_at_10": {"stage": "accuracy", "label": "Recall@10", "unit": "ratio", "direction": "higher", "registry_name": "model.accuracy.recall_at_10", "aggregation": "raw", "digits": 3},
   "epe": {"stage": "accuracy", "label": "EPE", "unit": "px", "direction": "lower", "registry_name": "model.accuracy.epe", "aggregation": "raw", "digits": 3},
-  "d1_all": {"stage": "accuracy", "label": "D1-all", "unit": "%", "direction": "lower", "registry_name": "model.accuracy.d1_all", "aggregation": "raw", "digits": 3}
+  "d1_all": {"stage": "accuracy", "label": "D1-all", "unit": "%", "direction": "lower", "registry_name": "model.accuracy.d1_all", "aggregation": "raw", "digits": 3},
+  "abs_rel": {"stage": "accuracy", "label": "AbsRel", "unit": "ratio", "direction": "lower", "bounds": [0, null], "display": {"unit": "", "scale": 1}, "registry_name": "model.accuracy.abs_rel", "aggregation": "raw", "digits": 3},
+  "delta1": {"stage": "accuracy", "label": "δ1", "unit": "ratio", "direction": "higher", "registry_name": "model.accuracy.delta1", "aggregation": "raw", "digits": 3}
 }

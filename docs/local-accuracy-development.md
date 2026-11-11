@@ -23,7 +23,7 @@ model with the source model on a fixed sample of a registered dataset:
 ```yaml
 numerical_fidelity:
   status: diagnostic
-  dataset: {id: imagenet-2012, variant: mini, sha256: d769e759…, size_bytes: 356052889}
+  dataset: {id: imagenet-2012, variant: cal, sha256: e6c18b28…, size_bytes: 112710756}
   selection: {method: seeded_random_without_replacement, seed: 42, offset: 0, samples: 50}
   outputs: [logits]
 ```
@@ -58,11 +58,11 @@ on a DevKit with PyNeat, on each dataset `accuracy` names:
 ```yaml
 accuracy:
   datasets:
-  - {id: imagenet-2012, variant: mini, sha256: d769e759…, size_bytes: 356052889}
+  - {id: imagenet-2012, variant: val, sha256: 018bf95e…, size_bytes: 6666407650}
 ```
 
 Each `datasets` entry pins a Dataset Registry archive, which goes by its
-source ID, here `imagenet-2012-mini`. The metrics the report must hold come from
+source ID, here `imagenet-2012-val`. The metrics the report must hold come from
 `datasets/<registry id>.yaml` for the model's `tasks`; see
 [Required accuracy metrics](datasets.md#required-accuracy-metrics).
 Without `build_profiles`, every build profile is measured; see
@@ -80,7 +80,9 @@ into a separate folder beside PyNeat's environment, never into it.
 - `--mpk <component>=<path>` once for each component, `model=<path>` for a
   single-component model;
 - `--dataset <source id>=<directory>` for each dataset `accuracy` pins, the
-  extracted archive; and
+  extracted archive;
+- `--resources <directory>` when the compile declares supporting `runtime_files`,
+  the verified profile root with the same relative asset paths as the package; and
 - `--output <directory>`.
 
 It scores the whole model on each dataset and hands the scores to
@@ -88,7 +90,7 @@ It scores the whole model on each dataset and hands the scores to
 `model-report.json` into the output directory:
 
 ```python
-dataset_id, dataset_dir = args.dataset.split("=", 1)  # imagenet-2012-mini, <directory>
+dataset_id, dataset_dir = args.dataset.split("=", 1)  # imagenet-2012-val, <directory>
 ...
 report = model_report.from_accuracy({
     dataset_id: {
@@ -106,7 +108,8 @@ How the script evaluates each dataset is up to the model. Every score is
 named as an accuracy metric in
 [`tools/model_report/metrics.json`](../tools/model_report/metrics.json) and
 given in that metric's unit: a ratio from 0 to 1 for most metrics, a
-percentage from 0 to 100 for `d1_all`, and pixels for `epe`. Each dataset's
+nonnegative ratio without an upper bound for `abs_rel`, a percentage from 0 to 100
+for `d1_all`, and pixels for `epe`. Each dataset's
 result must hold every metric its requirements file lists for
 the model's tasks. Other known accuracy metrics are allowed. Existing scripts also accept
 `--limit <images>` to evaluate a subset for a quick local check; CI never
@@ -153,12 +156,31 @@ run the script directly:
 
 ```bash
 PYTHONPATH=tools ~/pyneat/bin/python models/resnet_50/scripts/accuracy.py \
-  --mpk model=<path to MPK> --dataset imagenet-2012-mini=<extracted dataset> \
+  --mpk model=<path to MPK> --dataset imagenet-2012-val=<extracted dataset> \
   --output /tmp/resnet50-accuracy --limit 500
 ```
 
 A model whose `accuracy.py` imports another file under `scripts/`, such as
 ResNet-50's `calibration.py`, needs that file beside it.
+
+### FP32 baseline
+
+When no published score matches the package's setup, such as SuperGlue's 512
+keypoints from a 640x480 image, the model page can show an FP32 baseline instead:
+what the unquantized source model scores on the same inputs and protocol. A
+standalone `scripts/fp32_baseline_accuracy.py` measures it on a host. It runs the
+FP32 ONNX the model compiles with ONNX Runtime and scores it with the model's own `accuracy.py`,
+so only the model execution differs from the DevKit stage:
+
+```bash
+PYTHONPATH=tools python models/superglue_outdoor/scripts/fp32_baseline_accuracy.py \
+  --onnx <model.onnx from surgery.py> --dataset yfcc100m-keypoints-val=<extracted dataset> \
+  --output fp32-baseline.json
+```
+
+Copy its metrics into a `reference_metrics` entry with `origin: fp32_baseline`
+([reference metrics](metadata-schema.md#reference-metrics)). No stage runs the
+script and no fingerprint includes it, so adding or editing it reruns nothing.
 
 ### Report and publication
 

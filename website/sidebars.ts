@@ -29,6 +29,7 @@ const sidebars: SidebarsConfig = {
       items: [
         'metadata-schema',
         'conversion-artifacts',
+        {type: 'doc', id: 'model-promotion-operations', label: 'Promotion operations'},
         {type: 'doc', id: 'model-browser', label: 'Model browser'},
         'runner-class-requests',
         'model-taxonomy',

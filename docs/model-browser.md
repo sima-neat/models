@@ -74,7 +74,8 @@ Remove a selected variant using the × in its table heading or its chart label.
 The chart labels only selected variants plotted against its current dataset and metric.
 Selections without matching accuracy or throughput appear only in the comparison table.
 The graph, table and model selector update together. The link
-preserves the task and selected variants. LLM, VLM and audio comparisons show **TBD**.
+preserves the task and selected variants. Tasks containing only LLM, VLM or audio models
+show **TBD**. Multimodal detectors can still join a vision-task comparison.
 
 On a phone, the section navigation shortens **Developer docs** to **Docs**.
 
@@ -93,11 +94,17 @@ use the same layout with extra fields for package identifiers, component counts,
 format, checksums and attribution. Dialogs and action buttons use softly rounded corners.
 The model's License section retains attribution in both views. Dialog actions
 place Cancel on the left, Copy CLI command in the middle and Download on the right.
+A model whose license does not permit redistribution has no download action. Its
+header shows **Not available for download** in that place, and its Details section
+has no package card.
 A model with several build profiles shows
 one tab per profile, labelled with its variant ID in uppercase, such as
 **W8A8**. Profiles with a W8A8 component come first and the page opens on the
 first tab, whatever order `model.yaml` declares. The GitHub link in the header opens
-the model's folder at the commit the README comes from. LLM and VLM pages show
+the model's folder at the commit the README comes from. The original-model link
+beside it opens the page `upstream.model_card` names. It shows the Hugging Face
+logo for a Hugging Face page and an external-link icon for any other host, such
+as a GitHub release page. LLM and VLM pages show
 the selected build's maximum context length (input plus output tokens) and image
 input resolution directly below the variant selector. Native deployments supply
 their verified settings, including fixed image resolutions without compiler
@@ -218,21 +225,24 @@ in this order:
    percentages, EPE in pixels, D1-all in percent), the evaluated sample count, and
    the commit and GitHub workflow of the run that measured them. With more than
    one dataset, each result is titled by its dataset name. The catalog table
-   and **Compare** use the first dataset.
+   and **Compare** use the first dataset. Under each of the four metrics, both
+   views show its published score and its FP32 baseline when `reference_metrics`
+   records them for the measured dataset.
    In the developer UI, each dataset's **Evaluation details** explains the coverage and lists
-   the remaining metrics, each with its published score when
-   `reference_metrics` in `model.yaml` records one for the measured dataset.
-   Its **Published scores** row lists every reference entry with its dataset,
-   conditions, and source. A build with no accuracy result yet shows only the
-   published scores.
+   the remaining metrics, each with its published score and its FP32 baseline
+   when `reference_metrics` in `model.yaml` records them for the measured
+   dataset. The **Published scores** and **FP32 baseline** rows list each
+   origin's entries with their dataset, conditions, and source or script. A
+   build with no accuracy result yet shows only the reference scores, each
+   origin under its own explanation.
 4. **Details (developer UI only).** The package with its size, checksum, and download buttons.
-   A single-component package downloads as its MPK. A multi-component package
-   downloads as a ZIP of its MPKs and also offers **Download components**.
+   A package downloads as a ZIP of its MPKs. A single-component build published before
+   packages became ZIPs downloads as its MPK.
    Then come rows for build provenance (the commit and workflow that compiled the
    build), source models, the package's numerical fidelity, and each
    component's files, checksum, and compile parameters.
-5. **License.** The SPDX identifier, whether redistribution is allowed, and the
-   attribution.
+5. **License.** The license identifier and name, whether redistribution is
+   allowed, one sentence on what the license asks, and the attribution.
 
 A section that has no data, such as Accuracy for a model with neither an
 accuracy result nor published scores, is left out.
@@ -384,3 +394,9 @@ separately through repository administration and checked again at runtime.
 Developer deployments serve model hero illustrations from the matching registry
 environment’s CDN. Existing production illustrations are backfilled before browser
 cutover; image loading retains bounded retries and the registry API fallback.
+
+For models declaring `performance.scope: components`, the Performance section
+shows a component selector. Each selection has its own throughput, latency,
+power, memory, workload and telemetry, with no combined score. The catalog table
+lists the components' measurements separately. Models using the default
+whole-model scope, such as RF-DETR, keep their pipeline-level result.

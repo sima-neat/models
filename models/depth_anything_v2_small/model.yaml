@@ -7,7 +7,7 @@ modalities:
   inputs: [image]
   outputs: [depth_map]
 
-architecture: depth_anything
+architecture: depth_anything_2
 
 license:
   spdx: Apache-2.0

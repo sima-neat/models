@@ -1,3 +1,5 @@
+# A build profile of this model compiles for over 20 minutes, so it builds only on request.
+build-on-demand: true
 display_name: RF-DETR Small
 description: A compact RF-DETR transformer detector for COCO objects.
 model_type: vision
@@ -30,10 +32,7 @@ conversion:
 
 compilation:
   format: onnx
-  source:
-    uri: https://artifacts.stg.neat.sima.ai/models-onnx/rf_detr_small/065fa96c52731a25e0ca481a98be90a3d4fb28943984b724bc3eee17e475847a/37610414373-1/model.onnx
-    sha256: 065fa96c52731a25e0ca481a98be90a3d4fb28943984b724bc3eee17e475847a
-    size_bytes: 114476199
+  source: conversion
   components: [backbone, decoder]
 
 calibrations:

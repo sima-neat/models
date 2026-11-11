@@ -1,3 +1,5 @@
+# A build profile of this model compiles for over 20 minutes, so it builds only on request.
+build-on-demand: true
 display_name: YOLO26x-seg
 description: The largest YOLO26 instance segmenter here, for COCO objects.
 model_type: vision
@@ -7,7 +9,7 @@ modalities:
   inputs: [image]
   outputs: [bounding_boxes, class_scores, masks]
 
-architecture: yolo
+architecture: yolo26_seg
 
 license:
   spdx: AGPL-3.0-only
@@ -27,10 +29,7 @@ conversion:
 
 compilation:
   format: onnx
-  source:
-    uri: https://artifacts.stg.neat.sima.ai/models-onnx/yolo26x_seg/c6d41a218959188f01809383a0a6e7b136dec839b42300bb6bdf5ce901333468/38232666376-1/model.onnx
-    sha256: c6d41a218959188f01809383a0a6e7b136dec839b42300bb6bdf5ce901333468
-    size_bytes: 251637872
+  source: conversion
 
 calibrations:
 - id: coco-2017-cal

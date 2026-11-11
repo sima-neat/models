@@ -68,7 +68,7 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: ${{ env.PIP_CACHE_DIR }}
-          key: onnx-python312-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles(format('models/{0}/scripts/requirements-convert.txt', inputs.model)) }}
+          key: onnx-python312-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles(format('models/{0}/scripts/requirements-convert*.txt', inputs.model)) }}
       - name: Convert and smoke-test with the model's convert script
         env:
           CONVERSION_VENV: ${{ env.EXPORT_VENV }}
@@ -78,8 +78,9 @@ jobs:
       - name: Test the converted model with the model's conversion tests
         run: |
           "$EXPORT_VENV/bin/python" -E -s -m pip --isolated install --cache-dir "$PIP_CACHE_DIR" '.[tests]'
+          entrypoint="$("$EXPORT_VENV/bin/python" -E -s -m model_registry conversion-entrypoint "models/$MODEL_ID")"
           outcome="$(REGISTRY_PYTHON="$EXPORT_VENV/bin/python" \
-            scripts/run_model_tests.sh conversion "models/$MODEL_ID" "$EXPORT_DIR/model.onnx")"
+            scripts/run_model_tests.sh conversion "models/$MODEL_ID" "$EXPORT_DIR/$entrypoint")"
           [[ "$outcome" == passed ]]
       - uses: aws-actions/configure-aws-credentials@v6
         with:

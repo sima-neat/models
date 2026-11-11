@@ -27,7 +27,10 @@ ROOT = Path(__file__).resolve().parents[1]
 PACKAGE_RUN = "00000000-0000-4000-8000-00000000000a"
 BENCHMARK_RUN = "00000000-0000-4000-8000-00000000000b"
 PERFORMANCE_METRICS = {
-    "latency_avg_ms": 2.5, "throughput_fps": 400.0, "avg_power_watts": 8.0, "energy_per_inference_joules": 0.02,
+    "latency_avg_ms": 2.5,
+    "throughput_fps": 400.0,
+    "avg_power_watts": 8.0,
+    "energy_per_inference_joules": 0.02,
 }
 
 
@@ -60,14 +63,26 @@ def registered_build(root: Path, model_id: str, profile_id: str, components: lis
         digest = hashlib.sha256(component.encode()).hexdigest()
         run_id = f"00000000-0000-4000-8000-{index + 1:012d}"
         outputs.append({"component_id": component, "mpk_path": f"{component}/{mpk.name}", "mpk_sha256": digest})
-        write_json(profile_dir / component / "registry-publication.json",
-                   {"runs": [{"component_id": component, "run_id": run_id}]})
+        write_json(
+            profile_dir / component / "registry-publication.json",
+            {"runs": [{"component_id": component, "run_id": run_id}]},
+        )
         builds[component] = {"run_id": run_id, "artifact_sha256": digest}
     write_json(profile_dir / "compile-outputs.json", {"outputs": outputs})
-    write_json(profile_dir / "packages" / "default" / "registry-publication.json", {"packages": [{
-        "model_id": model_id, "build_profile_id": profile_id, "package_id": "default", "run_id": PACKAGE_RUN,
-        "component_run_ids": {component: build["run_id"] for component, build in builds.items()},
-    }]})
+    write_json(
+        profile_dir / "packages" / "default" / "registry-publication.json",
+        {
+            "packages": [
+                {
+                    "model_id": model_id,
+                    "build_profile_id": profile_id,
+                    "package_id": "default",
+                    "run_id": PACKAGE_RUN,
+                    "component_run_ids": {component: build["run_id"] for component, build in builds.items()},
+                }
+            ]
+        },
+    )
     return builds
 
 
@@ -92,7 +107,7 @@ def dataset_result(**changes: object) -> dict:
     }  # fmt: skip
 
 
-IMAGENET = "imagenet-2012-mini"
+IMAGENET = "imagenet-2012-val"
 
 
 def accuracy_report(datasets: dict | None = None) -> dict:
@@ -267,15 +282,44 @@ def test_publish_report_counts_each_evaluated_accuracy_sample(tmp_path: Path) ->
     assert calls[0][2]["run_type"] == result["run_type"] == "model_accuracy"
     measurements = next(body for _, path, body in calls if path.endswith("/measurements/batch"))["measurements"]
     assert sorted(item["name"] for item in measurements) == [
-        "model.accuracy.top1_accuracy", "model.accuracy.top5_accuracy",
+        "model.accuracy.top1_accuracy",
+        "model.accuracy.top5_accuracy",
     ]
     assert {item["sample_count"] for item in measurements} == {500}
 
 
+def test_depth_publication_keeps_registered_ratio_units_and_unbounded_absrel(tmp_path: Path) -> None:
+    model_id = "depth_anything_3_small_1view_280x504"
+    registered_build(tmp_path / "_compiled", model_id, "w8a16", ["model"])
+    report = accuracy_report({"nyu-depth-v2-default": {
+        "split": "test", "evaluated_samples": 654, "available_samples": 654,
+        "metrics": {"abs_rel": 1.25, "delta1": 0.89}, "details": {},
+    }})
+
+    calls, _ = publish(tmp_path, model_id, "w8a16", "accuracy", report)
+
+    batch = next(body for _, path, body in calls if path.endswith("/measurements/batch"))
+    measurements = {item["name"]: item for item in batch["measurements"]}
+    assert measurements["model.accuracy.abs_rel"]["unit"] == "ratio"
+    assert measurements["model.accuracy.abs_rel"]["value"] == 1.25
+    assert measurements["model.accuracy.abs_rel"]["direction"] == "lower"
+    assert measurements["model.accuracy.delta1"]["unit"] == "ratio"
+    assert measurements["model.accuracy.delta1"]["value"] == 0.89
+    assert measurements["model.accuracy.delta1"]["direction"] == "higher"
+
+
 def test_publish_report_measures_each_dataset_apart(tmp_path: Path) -> None:
     repository = tmp_path / "repository"
-    for relative in ("schemas", "taxonomies", "datasets", "deps", "scripts", "tools", ".github/workflows",
-                     "models/resnet_50"):
+    for relative in (
+        "schemas",
+        "taxonomies",
+        "datasets",
+        "deps",
+        "scripts",
+        "tools",
+        ".github/workflows",
+        "models/resnet_50",
+    ):
         shutil.copytree(ROOT / relative, repository / relative, ignore=shutil.ignore_patterns("__pycache__"))
     model_dir = repository / "models" / "resnet_50"
     authored = yaml.safe_load((model_dir / "model.yaml").read_text(encoding="utf-8"))
@@ -286,10 +330,12 @@ def test_publish_report_measures_each_dataset_apart(tmp_path: Path) -> None:
         expected["imagenet-2012-small"] = expected[IMAGENET]
     (model_dir / "tests" / "tests.yaml").write_text(yaml.safe_dump(tests), encoding="utf-8")
     builds = registered_build(tmp_path / "_compiled", "resnet_50", "w8a8", ["model"])
-    report = accuracy_report({
-        IMAGENET: dataset_result(),
-        "imagenet-2012-small": dataset_result(evaluated_samples=100, metrics={"top1_accuracy": 0.7}),
-    })
+    report = accuracy_report(
+        {
+            IMAGENET: dataset_result(),
+            "imagenet-2012-small": dataset_result(evaluated_samples=100, metrics={"top1_accuracy": 0.7}),
+        }
+    )
 
     calls, result = publish(tmp_path, "resnet_50", "w8a8", "accuracy", report, repository)
 
@@ -301,11 +347,81 @@ def test_publish_report_measures_each_dataset_apart(tmp_path: Path) -> None:
     assert sorted(
         (item["measurement_key"], item["name"], item["sample_count"], tuple(sorted(item["dimensions"].items())))
         for item in measurements
-    ) == sorted([
-        (f"{fingerprint}-{IMAGENET}-top1_accuracy", "model.accuracy.top1_accuracy", 500,
-         tuple(sorted({**subject, "dataset": IMAGENET}.items()))),
-        (f"{fingerprint}-{IMAGENET}-top5_accuracy", "model.accuracy.top5_accuracy", 500,
-         tuple(sorted({**subject, "dataset": IMAGENET}.items()))),
-        (f"{fingerprint}-imagenet-2012-small-top1_accuracy", "model.accuracy.top1_accuracy", 100,
-         tuple(sorted({**subject, "dataset": "imagenet-2012-small"}.items()))),
-    ])
+    ) == sorted(
+        [
+            (
+                f"{fingerprint}-{IMAGENET}-top1_accuracy",
+                "model.accuracy.top1_accuracy",
+                500,
+                tuple(sorted({**subject, "dataset": IMAGENET}.items())),
+            ),
+            (
+                f"{fingerprint}-{IMAGENET}-top5_accuracy",
+                "model.accuracy.top5_accuracy",
+                500,
+                tuple(sorted({**subject, "dataset": IMAGENET}.items())),
+            ),
+            (
+                f"{fingerprint}-imagenet-2012-small-top1_accuracy",
+                "model.accuracy.top1_accuracy",
+                100,
+                tuple(sorted({**subject, "dataset": "imagenet-2012-small"}.items())),
+            ),
+        ]
+    )
+
+
+def component_performance_report() -> dict:
+    report = performance_report(["backbone", "decoder"])
+    measured = {key: report.pop(key) for key in ("metrics", "workload", "telemetry")}
+    report["scope"] = "components"
+    for index, component in enumerate(report["components"].values(), 1):
+        component.update({**measured, "metrics": {**measured["metrics"], "throughput_fps": 100.0 * index}})
+    return report
+
+
+def test_component_publication_keeps_measurements_and_core_evidence_distinct(tmp_path, monkeypatch):
+    import model_registry.report_publication as publication
+
+    definition = model("rf_detr_nano")
+    definition["performance"]["scope"] = "components"
+    monkeypatch.setattr(publication, "_model", lambda *args: definition)
+    registered_build(tmp_path / "_compiled", "rf_detr_nano", "w8a8_w16a16", ["backbone", "decoder"])
+    report = component_performance_report()
+    output = tmp_path / "_performance"
+    output.mkdir()
+    for name in report["components"]:
+        write_json(output / f"{name}-benchmark-report.json", {"fps": 1})
+    calls, _ = publish(tmp_path, "rf_detr_nano", "w8a8_w16a16", "performance", report)
+    measurements = next(body for _, path, body in calls if path.endswith("/measurements/batch"))["measurements"]
+    rates = {
+        item["dimensions"]["component_id"]: item["value"]
+        for item in measurements
+        if item["name"] == METRICS["throughput_fps"]["registry_name"]
+    }
+    assert rates == {"backbone": 100.0, "decoder": 200.0}
+    assert len({item["measurement_key"] for item in measurements}) == len(measurements)
+    artifact_paths = [path for _, path, _ in calls if "/artifacts/" in path]
+    assert any(path.endswith("/core-benchmark-report-backbone") for path in artifact_paths)
+    assert any(path.endswith("/core-benchmark-report-decoder") for path in artifact_paths)
+
+
+def test_report_scope_must_match_the_model_declaration(tmp_path):
+    write_json(tmp_path / REPORT_FILE, component_performance_report())
+    with pytest.raises(ValidationError, match="performance scope must be model"):
+        check_report(tmp_path / REPORT_FILE, ROOT, "rf_detr_nano", "w8a8_w16a16", "performance")
+
+
+def test_every_component_requires_its_own_metrics(tmp_path, monkeypatch):
+    import model_registry.report_publication as publication
+
+    definition = model("rf_detr_nano")
+    definition["performance"]["scope"] = "components"
+    monkeypatch.setattr(publication, "_model", lambda *args: definition)
+    report = component_performance_report()
+    del report["components"]["decoder"]["metrics"]["avg_power_watts"]
+    write_json(tmp_path / REPORT_FILE, report)
+    with pytest.raises(
+        ValidationError, match="decoder: required performance metrics were not measured: avg_power_watts"
+    ):
+        check_report(tmp_path / REPORT_FILE, ROOT, "rf_detr_nano", "w8a8_w16a16", "performance")

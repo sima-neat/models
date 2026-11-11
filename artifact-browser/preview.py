@@ -33,7 +33,7 @@ from model_registry.compile_matrix import build_matrix  # noqa: E402
 from model_registry.conversion import apply_selection, conversion_fingerprint  # noqa: E402
 from model_registry.dependencies import resolve_benchmark_runtime, resolve_model_compiler  # noqa: E402
 from model_registry.documentation import load_model_documentation  # noqa: E402
-from model_registry.fingerprints import BENCHMARK_RUN_TYPES  # noqa: E402
+from model_registry.fingerprints import BENCHMARK_RUN_TYPES, benchmark_fingerprint  # noqa: E402
 from model_registry.model import component_pipelines, load_models, mpk_filename, profile_component_for  # noqa: E402
 from model_registry.model_tests import load_model_tests  # noqa: E402
 from model_registry.registry import build_catalog_snapshot  # noqa: E402
@@ -147,19 +147,34 @@ def _documentation_receipt(model_id: str, documentation: dict[str, Any], sha: st
 
 
 def _published_builds(models: dict, matrix: list[dict], sha: str) -> dict[str, Any]:
-    """A previous catalog whose builds match every compile fingerprint, as if each invocation had been published."""
+    """A previous catalog whose builds match every compile fingerprint, as if each invocation had been published.
+
+    An ONNX model moved to on-demand builds keeps the benchmarks of its earlier automatic builds, as the registry
+    carries them forward; an on-demand LLiMa model was never benchmarked.
+    """
     builds: dict[str, list[dict]] = {model_id: [] for model_id in models}
     packages: dict[str, list[dict]] = {model_id: [] for model_id in models}
+    benchmarks: dict[str, dict[str, dict[str, str]]] = {model_id: {} for model_id in models}
     for entry in matrix:
+        profile_builds = {}
         for component_id in entry["component_ids"]:
-            builds[entry["model_id"]].append({
+            build = {
                 "build_profile_id": entry["build_profile_id"],
                 "component_id": component_id,
                 "compile_fingerprint": entry["compile_fingerprint"],
                 "compile_invocation_id": entry["compile_invocation_id"],
                 "run_id": _id("compile", sha, entry["model_id"], entry["build_profile_id"], component_id),
                 "artifact_sha256": _sha256("mpk", sha, entry["model_id"], entry["build_profile_id"], component_id),
-            })
+            }
+            builds[entry["model_id"]].append(build)
+            profile_builds[component_id] = build
+        model = models[entry["model_id"]]
+        if (entry.get("build_on_demand") and entry["stages"]
+                and model["components"][0]["interface"]["format"] == "onnx"):
+            benchmarks[entry["model_id"]][entry["build_profile_id"]] = {
+                stage: benchmark_fingerprint(ROOT, model, entry["build_profile_id"], profile_builds, stage)
+                for stage in entry["stages"]
+            }
     for model_id, model in models.items():
         for declaration in model["packages"]:
             for profile_id in declaration["build_profiles"]:
@@ -178,7 +193,9 @@ def _published_builds(models: dict, matrix: list[dict], sha: str) -> dict[str, A
                     },
                 })
     return {"models": [
-        {"id": model_id, "builds": builds[model_id], "packages": packages[model_id]} for model_id in models
+        {"id": model_id, "builds": builds[model_id], "packages": packages[model_id],
+         **({"benchmark_fingerprints": benchmarks[model_id]} if benchmarks[model_id] else {})}
+        for model_id in models
     ]}
 
 
@@ -433,6 +450,20 @@ def _performance_report(model: dict, profile_id: str) -> dict[str, Any]:
             "mla_layer_stats": {"status": "ok", "layers": layers},
             "mla_stage_stats": {"status": "ok", "stages": stages},
         }
+    if model.get("performance", {}).get("scope") == "components":
+        for index, (name, component) in enumerate(report["components"].items(), 1):
+            measured = copy.deepcopy(metrics)
+            measured["throughput_fps"] *= index
+            for key in ("latency_avg_ms", "latency_p50_ms", "latency_p95_ms", "latency_p99_ms"):
+                measured[key] /= index
+            measured["energy_per_inference_joules"] = measured["avg_power_watts"] / measured["throughput_fps"]
+            component.update(metrics=measured, telemetry=copy.deepcopy(report["telemetry"]),
+                             workload=f"Independent {name.replace('_', ' ')} benchmark; illustrative preview data")
+        for key in ("metrics", "telemetry", "workload"):
+            del report[key]
+        report["scope"] = "components"
+    # The registry stores the report as PostgreSQL jsonb, which orders keys shorter first, then bytewise.
+    report["components"] = dict(sorted(report["components"].items(), key=lambda item: (len(item[0]), item[0])))
     # The rest of the board telemetry keeps the template's DevKit readings.
     return report
 
@@ -452,12 +483,11 @@ def _accuracy_report(model: dict, profile_id: str) -> dict[str, Any]:
     expected = tests.get("accuracy", {}).get("expected", {}).get(profile_id, {})
     datasets = {}
     for name, dataset in model["accuracy"]["datasets"].items():
-        reference = {
-            metric: value
-            for entry in model.get("reference_metrics", [])
-            if entry["dataset"]["id"] == dataset["id"]
-            for metric, value in entry["metrics"].items()
-        }
+        # The FP32 baseline, measured on the package's own inputs, is the closer reference: it wins over a
+        # published score of the same metric.
+        entries = [entry for entry in model.get("reference_metrics", []) if entry["dataset"]["id"] == dataset["id"]]
+        entries.sort(key=lambda entry: entry.get("origin") == "fp32_baseline")
+        reference = {metric: value for entry in entries for metric, value in entry["metrics"].items()}
         available = 500 + int(_fraction("samples", *key, name) * 4500)
         datasets[name] = {
             **copy.deepcopy(sample),
@@ -842,12 +872,9 @@ class PreviewHandler(SimpleHTTPRequestHandler):
 
 
 def _package_file(model: dict, package: dict) -> tuple[str, str]:
-    """The published path and media type of a native folder index, a single-component model's MPK, or ZIP."""
+    """The published path and media type of a native folder index or ZIP."""
     if any(component["interface"]["format"] == "huggingface" for component in model["components"]):
         return "deployment/manifest.json", "application/json"
-    declaration = next(item for item in model["packages"] if item["id"] == package["package_id"])
-    if len(declaration["components"]) == 1:
-        return mpk_filename(model, package["build_profile_id"], declaration["components"][0]), "application/gzip"
     return f"{model['id']}_{package['build_profile_id']}_{package['package_id']}.zip", "application/zip"
 
 

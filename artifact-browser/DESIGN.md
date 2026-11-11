@@ -66,13 +66,14 @@ are available. A point popup identifies its model, variant and measurements. Mut
 compact table below aligns up to three selections. A compact Add model selector supports keyboard and mobile selection, including
 variants with missing measurements. The graph legend includes plotted selections only;
 variants without matching measurements remain in the table. Selection colors use the shared SiMa blue,
-green and orange palette. LLM/VLM comparisons remain TBD.
+green and orange palette. Comparisons for tasks containing only non-vision models remain TBD.
 
 The model page reads at a glance first and expands on request.
 The header pairs its title, description and Download action with a compact model
 image on the right; narrow screens stack the content and image. The image appears
-once, in the header. Performance and accuracy keep separate stacked sections, each
-measuring the whole model once per build profile.
+once, in the header. Performance and accuracy keep separate stacked sections.
+Accuracy measures the whole model once per build profile. Performance does the
+same by default; independent components have a selector with separate readings.
 Validation and source-link icons sit beside Download; CLI commands live inside
 the download dialog.
 Each section shows its key facts directly; longer detail sits behind one kind of control: a

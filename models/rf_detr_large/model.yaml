@@ -1,3 +1,5 @@
+# A build profile of this model compiles for over 20 minutes, so it builds only on request.
+build-on-demand: true
 display_name: RF-DETR Large
 description: The largest RF-DETR transformer detector here, for COCO objects.
 model_type: vision
@@ -30,10 +32,7 @@ conversion:
 
 compilation:
   format: onnx
-  source:
-    uri: https://artifacts.stg.neat.sima.ai/models-onnx/rf_detr_large/b618b08491b7a85ef3d6afc0d55e0bc85458fbfa5acb2446d80f8ca0d74308ef/37903234520-1/model.onnx
-    sha256: b618b08491b7a85ef3d6afc0d55e0bc85458fbfa5acb2446d80f8ca0d74308ef
-    size_bytes: 121813393
+  source: conversion
   components: [backbone, decoder]
 
 calibrations:

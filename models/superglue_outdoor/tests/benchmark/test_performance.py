@@ -1,0 +1,196 @@
+from __future__ import annotations
+
+import queue
+import threading
+import types
+from collections.abc import Callable
+from pathlib import Path
+from types import ModuleType
+from typing import Any
+
+import numpy as np
+import pytest
+from model_registry.model_tests import measured_shortfalls
+
+
+def _superpoint_dataset(root: Path) -> Path:
+    """A yfcc100m-keypoints val directory of three images at the 640 x 480 input's centre, one with 100 keypoints,
+    and two listed pairs, one of them holding the short image."""
+    rows = []
+    for index, count in enumerate((512, 100, 512)):
+        stem = root / "val" / "a" / str(index)
+        stem.mkdir(parents=True)
+        np.save(stem / "keypoints.npy", np.tile(np.array([320, 240], np.float32), (count, 1)))
+        np.save(stem / "scores.npy", np.full(count, 0.5, np.float32))
+        np.save(stem / "descriptors.npy", np.full((count, 256), 1 / 16, np.float32))
+        rows.append(f"a/{index}.jpg 1280 960 0 {count}")
+    (root / "annotations").mkdir()
+    (root / "annotations" / "images.txt").write_text("\n".join(rows) + "\n", encoding="utf-8")
+    (root / "annotations" / "pairs_val.txt").write_text("a/0.jpg a/1.jpg 0 0\na/0.jpg a/2.jpg 0 0\n", encoding="utf-8")
+    return root
+
+
+def test_the_benchmark_pair_is_a_listed_pair_of_full_images(
+    tmp_path: Path, load_script: Callable[[str], ModuleType]
+) -> None:
+    performance = load_script("performance")
+
+    workload, images = performance.dataset_pair(_superpoint_dataset(tmp_path / "dataset"))
+    tensors = performance.pair_tensors(images)
+
+    # The pair holding the 100-keypoint image is never picked.
+    assert workload == "the yfcc100m-keypoints-val pair a/0.jpg and a/2.jpg"
+    assert [tensor.shape for tensor in tensors] == [(1, 1, 512, 2), (1, 1, 512, 1), (1, 1, 512, 256)] * 2
+    # The keypoints sit at the input's centre, which SuperGlue's frame maps to the origin.
+    assert all((tensor == 0).all() for tensor in tensors[0::3])
+
+
+def test_the_model_takes_tensors_without_image_preprocessing(load_script: Callable[[str], ModuleType]) -> None:
+    performance = load_script("performance")
+
+    options = performance.tensor_options()
+
+    assert options.preprocess.kind is performance.pyneat.InputKind.Tensor
+    off = performance.pyneat.AutoFlag.Off
+    assert (options.preprocess.resize.enable, options.preprocess.normalize.enable) == (off, off)
+    assert options.preprocess.color_convert.enable is off
+
+
+def test_mla_stats_requests_layer_and_stage_stats(load_script: Callable[[str], ModuleType]) -> None:
+    performance = load_script("performance")
+
+    performance.mla_stats("model.tar.gz")
+
+    options = performance.pyneat.BenchmarkOptions.return_value
+    assert (options.include_mla_layer_stats, options.include_mla_stage_stats) == (True, True)
+    performance.pyneat.Model.return_value.benchmark.assert_called_once_with(options)
+
+
+def test_every_timed_pair_runs_the_cpu_matching(load_script: Callable[[str], ModuleType]) -> None:
+    performance = load_script("performance")
+
+    class Runner:
+        """Returns couplings in Neat's channels-last [1, 1, i, j] shape, each keypoint scoring itself highest."""
+
+        def run(self, tensors: list, timeout_ms: int) -> list:
+            couplings = np.full((513, 513), -5.0, np.float32)
+            np.fill_diagonal(couplings, 5.0)
+            return [types.SimpleNamespace(to_numpy=lambda copy: couplings.reshape(1, 1, 513, 513))]
+
+    assert performance.match_pair(Runner(), []).tolist() == list(range(512))
+
+
+def test_throughput_runs_the_runner_async_and_matches_every_pulled_pair(
+    load_script: Callable[[str], ModuleType], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    performance = load_script("performance")
+    for name, value in {"WARMUP_PAIRS": 2, "MEASURED_PAIRS": 5, "MIN_DURATION_S": 0, "MATCH_WORKERS": 2}.items():
+        monkeypatch.setattr(performance, name, value)
+    matched: list[int] = []
+    monkeypatch.setattr(performance, "sinkhorn_matches", lambda couplings, *_: matched.append(1))
+
+    class Runner:
+        """An async runner holding at most four pairs: push blocks when full, pull ends after close_input."""
+
+        def __init__(self) -> None:
+            self.outputs: queue.Queue = queue.Queue(maxsize=4)
+            self.pushed = 0
+
+        def push(self, tensors: list) -> bool:
+            self.outputs.put([types.SimpleNamespace(to_numpy=lambda copy: np.zeros((1, 1, 513, 513), np.float32))])
+            self.pushed += 1
+            return True
+
+        def close_input(self) -> None:
+            self.outputs.put([])
+
+        def pull(self, timeout_ms: int) -> types.SimpleNamespace:
+            return types.SimpleNamespace(tensors=self.outputs.get(timeout=timeout_ms / 1000))
+
+    runner = Runner()
+    result = performance.measure_throughput(runner, [])
+
+    assert result.pairs >= 5
+    # The pull loop drains the runner after the measured span, and every pair it returns is matched on the CPU.
+    assert len(matched) == runner.pushed >= result.pairs + 2
+
+
+@pytest.mark.parametrize("stall", ["pull raises", "pull times out"])
+def test_throughput_wakes_a_blocked_push_when_the_mpk_stops(
+    stall: str, load_script: Callable[[str], ModuleType], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    performance = load_script("performance")
+    monkeypatch.setattr(performance, "MATCH_WORKERS", 2)
+
+    class StalledRunner:
+        """A runner whose MPK stops: push blocks on its full queue until close_input, and pull returns nothing."""
+
+        def __init__(self) -> None:
+            self.queued = 0
+            self.blocked = threading.Event()
+            self.closed = threading.Event()
+            self.woken = False
+
+        def push(self, tensors: list) -> bool:
+            if self.queued < 4:
+                self.queued += 1
+                return True
+            self.blocked.set()
+            # Times out instead of hanging the test when nothing wakes the push.
+            self.woken = self.closed.wait(timeout=2)
+            return False
+
+        def close_input(self) -> None:
+            self.closed.set()
+
+        def pull(self, timeout_ms: int) -> types.SimpleNamespace:
+            assert self.blocked.wait(timeout=2)
+            if stall == "pull raises":
+                raise RuntimeError("the MPK failed")
+            return types.SimpleNamespace(tensors=[])
+
+    runner = StalledRunner()
+    error = "the MPK failed" if stall == "pull raises" else "no pair came out"
+    with pytest.raises(RuntimeError, match=error):
+        performance.measure_throughput(runner, [])
+    assert runner.woken
+
+
+@pytest.mark.parametrize("spread", [3.0, 12.0, 400.0])
+def test_the_benchmark_matches_as_accuracy_does(spread: float, load_script: Callable[[str], ModuleType]) -> None:
+    """performance.py times its own copy of the CPU matching; it must give accuracy.py's matches."""
+    performance, accuracy = load_script("performance"), load_script("accuracy")
+    rng = np.random.RandomState(7)
+    couplings = (rng.normal(0, 1, (513, 513)) * spread / 10).astype(np.float32)
+    couplings[np.arange(300), rng.permutation(512)[:300]] += spread
+
+    matches, scores = performance.sinkhorn_matches(couplings, 20, 0.2)
+    expected = accuracy.sinkhorn_matches(couplings, 20, 0.2)
+
+    np.testing.assert_array_equal(matches, expected[0])
+    np.testing.assert_array_equal(scores, expected[1])
+    keypoints = rng.uniform((0, 0), (640, 480), (512, 2))
+    np.testing.assert_array_equal(
+        performance.normalize_keypoints(keypoints, 640, 480), accuracy.normalize_keypoints(keypoints, 640, 480)
+    )
+
+
+def test_performance_meets_its_expected_values(
+    performance: dict[str, Any], model_dir: Path, build_profile: str
+) -> None:
+    assert measured_shortfalls(model_dir, "performance", build_profile, performance) == []
+
+
+def test_performance_records_the_execution_plan_the_browser_draws(performance: dict[str, Any]) -> None:
+    (component,) = performance["components"].values()
+    plan = component["execution_plan"]
+    assert (plan["schema"], plan["schema_version"]) == ("sima.neat.execution_plan", 1)
+    assert plan["nodes"] and plan["edges"]
+
+
+def test_mla_stats_collected(performance: dict[str, Any]) -> None:
+    (component,) = performance["components"].values()
+    layer_stats, stage_stats = component["mla_layer_stats"], component["mla_stage_stats"]
+    assert (layer_stats["status"], stage_stats["status"]) == ("ok", "ok")
+    assert any(layer["latency_us"] > 0 for layer in layer_stats["layers"]), "Core returned no MLA layer latency"
+    assert stage_stats["stages"], "Core returned no MLA stage latency"

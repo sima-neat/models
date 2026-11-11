@@ -1,0 +1,104 @@
+# A build profile of this model compiles for over 20 minutes, so it builds only on request.
+build-on-demand: true
+display_name: LightGlue
+description: Matches keypoints between two images, taking SuperPoint keypoints and descriptors as input.
+model_type: vision
+tasks: [feature_matching]
+
+modalities:
+  inputs: [keypoints, embeddings]
+  outputs: [keypoint_matches]
+
+architecture: lightglue
+
+# cvg/LightGlue releases LightGlue's code and weights under Apache-2.0. The Hugging Face card's noncommercial terms come
+# from SuperPoint, which the checkpoint bundles as its keypoint detector; the conversion exports the matcher only.
+license:
+  spdx: Apache-2.0
+  redistribution: allowed
+  attribution: LightGlue is developed by ETH Zurich's Computer Vision and Geometry Lab and distributed under Apache-2.0. The package holds the matcher only, not SuperPoint.
+
+upstream:
+  repository: https://huggingface.co/ETH-CVG/lightglue_superpoint
+  revision: 5f5f626efee99f37dbc9eafea879d24d297aeab8
+  derived_from: https://github.com/cvg/LightGlue/tree/5a650c444718caffc2669dc0094cde908f42dd73
+
+conversion:
+  source:
+    repository: ETH-CVG/lightglue_superpoint
+    revision: 5f5f626efee99f37dbc9eafea879d24d297aeab8
+    main_file: model.safetensors
+    files:
+      model.safetensors: {sha256: 320864fabf972cd00ce314e889cf89039e44c238e08d74d2b42d9cf2e80fc867, size_bytes: 55016112}
+      config.json: {sha256: adea6db482a567b4f01c342b5771f18a0cdcdef047a44974f22e3bf490714471, size_bytes: 898}
+  outputs: [weights.pth]
+
+compilation:
+  format: onnx
+  source: conversion
+
+calibrations:
+- id: yfcc100m-keypoints-cal
+  dataset: {id: yfcc100m-keypoints, variant: cal, sha256: 086ab34feec1f7aa364d56d7e71fc4ba5c0269af5bc708ba3ed3d4eb6bf0592a, size_bytes: 120522685}
+
+build_profiles:
+  # BF16 activations need no calibrated ranges, so only the INT8-activation build calibrates.
+  w16a16:
+    components:
+      model:
+        parameters: {precision: w16a16}
+
+  w8a8:
+    calibration_dataset: yfcc100m-keypoints-cal
+    components:
+      model:
+        parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 32}
+
+  # W8A8 whose attention and residual sums run BF16; surgery.BF16_REGIONS lists each region's operations. It keeps
+  # w16a16's accuracy, where plain w8a8 is faster and loses 6% of the pose AUC at 5 degrees.
+  w8a8_mixed:
+    calibration_dataset: yfcc100m-keypoints-cal
+    components:
+      model:
+        parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 32, bf16_regions: [attention, residual]}
+
+  # W8A16 keeps 95.7% of the ONNX's matches, but Model Compiler 3.0.0's simulator check rejects it ("Check FAILED",
+  # no MPK) with per-token quantization on, and every push would retry the failing compile. compile.py keeps its
+  # recipe; uncomment the profile once the check passes.
+  # w8a16:
+  #   components:
+  #     model:
+  #       parameters: {precision: w8a16}
+
+numerical_fidelity:
+  status: diagnostic
+  dataset: {id: yfcc100m-keypoints, variant: cal, sha256: 086ab34feec1f7aa364d56d7e71fc4ba5c0269af5bc708ba3ed3d4eb6bf0592a, size_bytes: 120522685}
+  # Calibration takes the first pairs of the same seeded order, so the fidelity pairs start after the largest sample.
+  selection: {method: seeded_random_without_replacement, seed: 42, offset: 32, samples: 8}
+  outputs: [assignment]
+
+# The archives were extracted at SuperPoint's threshold 0.0005, and each holds one image with fewer than 512 keypoints.
+# The matcher takes 512 real keypoints per image, so the scripts leave out that image's pairs: 22 of the 4,000 val pairs.
+accuracy:
+  datasets:
+  - {id: yfcc100m-keypoints, variant: val, sha256: 0ffdbdb0de66b9da22801e47cd588266691d8756ae990b8989e694e88e3b6a66, size_bytes: 713935383}
+
+performance: {}
+
+# No published score is comparable to this package: the authors evaluate up to 2048 SuperPoint keypoints at a
+# 1600-pixel longer side on MegaDepth-1500, and this package matches 512 keypoints from a 640x480 image. The builds
+# compare with the FP32 baseline instead, which scripts/fp32_baseline_accuracy.py measures on this package's own
+# inputs, on the ONNX surgery.py exports from the converted weights.
+reference_metrics:
+- origin: fp32_baseline
+  script: scripts/fp32_baseline_accuracy.py
+  dataset: {id: yfcc100m-keypoints, split: val}
+  conditions: FP32 ONNX on ONNX Runtime CPU; 512 SuperPoint keypoints per image from the image stretched to 640x480, threshold 0.0005 and NMS radius 4; mutual matches above 0.1; RANSAC at 1 px of the 640x480 input; 3978 of 4000 pairs
+  metrics: {pose_auc_5: 0.2696, pose_auc_10: 0.469, pose_auc_20: 0.6583}
+
+# The published table, kept for reference and not shown:
+# reference_metrics:
+# - source: https://github.com/cvg/glue-factory/blob/2d17e3b3bd7d30f0c828d4c4d3eac4ecefbf283d/README.md
+#   dataset: {id: megadepth-1500, split: test}
+#   conditions: 1600 px long side, 2048 SuperPoint keypoints, match threshold 0.1, OpenCV RANSAC at 0.5 px
+#   metrics: {pose_auc_5: 0.5102, pose_auc_10: 0.681, pose_auc_20: 0.8065}

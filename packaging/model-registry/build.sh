@@ -40,7 +40,7 @@ mkdir -p "${SOURCE_ROOT}"
 cp -R "${ROOT_DIR}/tools/model_registry" "${SOURCE_ROOT}/model_registry"
 cp -R "${ROOT_DIR}/tools/model_report" "${SOURCE_ROOT}/model_report"
 find "${SOURCE_ROOT}" -type d -name __pycache__ -prune -exec rm -rf {} +
-for ci_module in report_publication registry candidates promotions; do
+for ci_module in report_publication registry candidates promotions neat_core; do
   rm "${SOURCE_ROOT}/model_registry/${ci_module}.py"
 done
 install -m 0644 "${ROOT_DIR}/packaging/model-registry/__main__.py" \

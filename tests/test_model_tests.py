@@ -332,3 +332,20 @@ def test_accuracy_expectations_may_be_skipped_explicitly(model_dir: Path) -> Non
     )
 
     validate_model_tests(model_dir, ACCURACY_MODEL, ROOT / "schemas" / "model-tests.schema.json")
+
+
+def test_component_expectations_gate_each_result_without_combining(model_dir):
+    tests = {"performance": {"run_tests": True, "expected": {"w8a16": {"components": {
+        "image_encoder": {"throughput_fps": 200.0}, "text_encoder": {"throughput_fps": 600.0},
+    }}}}}
+    (model_dir / "tests/tests.yaml").write_text(yaml.safe_dump(tests))
+    report = {"scope": "components", "components": {
+        "image_encoder": {"metrics": {"throughput_fps": 195.0}},
+        "text_encoder": {"metrics": {"throughput_fps": 500.0}},
+    }}
+    shortfalls = measured_shortfalls(model_dir, "performance", "w8a16", report)
+    assert len(shortfalls) == 1 and shortfalls[0].startswith("text_encoder: throughput_fps")
+    report["components"]["text_encoder"]["metrics"]["throughput_fps"] = 600.0
+    assert measured_shortfalls(model_dir, "performance", "w8a16", report) == []
+    del report["components"]["image_encoder"]
+    assert measured_shortfalls(model_dir, "performance", "w8a16", report) == ["image_encoder was not measured"]

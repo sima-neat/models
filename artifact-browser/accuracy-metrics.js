@@ -40,38 +40,48 @@ export const ACCURACY_METRIC_LABELS = {
   coco_mask_ar_large: "Mask AR large",
   coco_box_map: "Box mAP 50–95",
   coco_box_ap50: "Box AP50",
-  abs_rel: "AbsRel",
-  delta1: "δ1",
+  dota_obb_map50: "DOTA mAP50",
+  dota_obb_map: "DOTA mAP 50–95",
+  keypoint_repeatability: "Repeatability",
+  homography_accuracy: "Homography accuracy",
+  pose_auc_5: "Pose AUC@5°",
+  pose_auc_10: "Pose AUC@10°",
+  pose_auc_20: "Pose AUC@20°",
+  match_precision: "Match precision",
+  matching_score: "Matching score",
   recall_at_1: "Recall@1",
   recall_at_5: "Recall@5",
   recall_at_10: "Recall@10",
   epe: "EPE",
   d1_all: "D1-all",
+  abs_rel: "AbsRel",
+  delta1: "δ1",
 };
 
-// The accuracy metrics that are not ratios from 0 to 1 with higher better; metrics.json gives the same units and
-// directions.
+// Accuracy metrics with non-default units, directions or display settings; matches metrics.json.
 export const ACCURACY_METRIC_SCALES = {
   epe: { unit: "px", direction: "lower" },
   d1_all: { unit: "%", direction: "lower" },
-  abs_rel: { unit: "ratio", direction: "lower" },
+  abs_rel: { unit: "ratio", direction: "lower", display: {unit: "", scale: 1} },
 };
 
 export function accuracyMetricLabel(name) {
   return ACCURACY_METRIC_LABELS[name] || name;
 }
 
-// A score as a number in its display unit: a ratio as a percentage, any other unit as reported.
+// Ratios default to percentages; an explicit display setting overrides that without changing the metric's unit.
 export function accuracyDisplay(name, value) {
-  const { unit, direction } = ACCURACY_METRIC_SCALES[name] || { unit: "ratio", direction: "higher" };
-  return unit === "ratio" ? { number: value * 100, unit: "%", direction } : { number: value, unit, direction };
+  const metric = ACCURACY_METRIC_SCALES[name] || {unit: "ratio", direction: "higher"};
+  const display = metric.display || (metric.unit === "ratio" ? {unit: "%", scale: 100} : {unit: metric.unit, scale: 1});
+  return {number: value * display.scale, unit: display.unit, direction: metric.direction};
 }
 
 // A score as text: "40.10%" for a ratio or a percentage, "0.776 px" for pixels, and "—" (or blank) when missing.
 export function formatAccuracy(name, value, { blank = false } = {}) {
   if (!Number.isFinite(value)) return blank ? "" : "—";
   const { number, unit } = accuracyDisplay(name, value);
-  return unit === "%" ? `${number.toFixed(2)}%` : `${number.toFixed(3)} ${unit}`;
+  if (unit === "%") return `${number.toFixed(2)}%`;
+  return unit ? `${number.toFixed(3)} ${unit}` : number.toFixed(3);
 }
 
 // Known metrics follow the label order and any others follow them in the order given.
@@ -81,15 +91,35 @@ export function orderedMetricNames(names) {
   return [...names].sort((left, right) => rank(left) - rank(right));
 }
 
-// The score each source model's authors published for a metric on a dataset. A result measured on a
-// different dataset has no comparable reference score, even when the metric names match.
-export function referenceScores(reference, datasetId) {
+// Who measured a reference score: the source model's authors, or the model's FP32 baseline script on the
+// package's own inputs. Each is labelled apart, so a baseline never reads as the authors' claim.
+export const REFERENCE_ORIGINS = {
+  published: { label: "Published", title: "Published scores", id: "published-scores" },
+  fp32_baseline: { label: "FP32 baseline", title: "FP32 baseline", id: "fp32-baseline-scores" },
+};
+
+export function referenceOrigin(entry) {
+  return entry.origin || "published";
+}
+
+// The reference score of one origin for each metric on a dataset. A result measured on a different dataset has
+// no comparable reference score, even when the metric names match.
+export function referenceScores(reference, datasetId, origin = "published") {
   const scores = {};
   for (const entry of reference || []) {
-    if (entry.dataset?.id !== datasetId) continue;
+    if (entry.dataset?.id !== datasetId || referenceOrigin(entry) !== origin) continue;
     for (const [name, value] of Object.entries(entry.metrics || {})) {
       if (Number.isFinite(value)) scores[name] = value;
     }
   }
   return scores;
+}
+
+// The reference notes under one accuracy tile, in REFERENCE_ORIGINS order, such as "FP32 baseline 28.65%". Both
+// views show them, so a customer can compare a build with its baseline.
+export function referenceNotes(name, scoresByOrigin) {
+  return Object.entries(REFERENCE_ORIGINS).flatMap(([origin, { label }]) => {
+    const score = formatAccuracy(name, scoresByOrigin[origin]?.[name], { blank: true });
+    return score ? [`${label} ${score}`] : [];
+  });
 }

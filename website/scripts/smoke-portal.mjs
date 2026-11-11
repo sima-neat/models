@@ -204,9 +204,9 @@ async function checkCatalogLayouts(browser, url) {
         if (viewport.width === 390) await page.keyboard.press('Tab');
         if (!await taskFilter.evaluate(el => document.activeElement === el && getComputedStyle(el).outlineStyle === 'solid')) throw new Error('keyboard navigation lost its filter focus outline');
         if (viewport.width === 390) await page.locator('#filter-toggle').click();
-        const names = await page.locator('.model-card strong').allTextContents();
+        const ids = await page.locator('.model-card').evaluateAll(cards => cards.map(card => card.dataset.modelCard));
         const tasksByModel = await page.locator('.model-card').evaluateAll(cards => Object.fromEntries(cards.map(card => [
-          card.querySelector('strong').textContent,
+          card.dataset.modelCard,
           [...card.querySelectorAll('.model-card-tag')].map(tag => tag.textContent),
         ])));
         const tableButton = page.getByRole('button', {name: 'Table', exact: true});
@@ -215,17 +215,17 @@ async function checkCatalogLayouts(browser, url) {
         await page.locator('.catalog-table').first().waitFor();
         const settled = () => page.waitForFunction(() => !document.querySelector('.catalog-pending'));
         await settled();
-        const tableNames = await page.locator('.catalog-model-link').allTextContents();
-        if (new Set(tableNames).size !== names.length || names.some(name => tableNames.filter(value => value === name).length !== tasksByModel[name].length)) throw new Error('model is missing from a task group or duplicated within one');
-        if (await page.locator('#result-count').innerText() !== `${names.length} models`) throw new Error('task groups inflated the model count');
+        const tableIds = await page.locator('[data-catalog-entry]').evaluateAll(rows => rows.map(row => row.dataset.catalogEntry));
+        if (new Set(tableIds).size !== ids.length || ids.some(id => tableIds.filter(value => value === id).length !== tasksByModel[id].length)) throw new Error('model is missing from a task group or duplicated within one');
+        if (await page.locator('#result-count').innerText() !== `${ids.length} models`) throw new Error('task groups inflated the model count');
         const headings = await page.locator('.catalog-task-group h3').allTextContents();
         if (JSON.stringify(headings) !== JSON.stringify([...headings].sort((a, b) => a.localeCompare(b)))) throw new Error('task groups are not alphabetical');
         for (const group of await page.locator('.catalog-task-group').all()) {
-          const groupNames = await group.locator('.catalog-model-link').allTextContents();
-          if (JSON.stringify(groupNames) !== JSON.stringify(names.filter(name => groupNames.includes(name)))) throw new Error('task grouping changed family ordering');
+          const groupIds = await group.locator('[data-catalog-entry]').evaluateAll(rows => rows.map(row => row.dataset.catalogEntry));
+          if (JSON.stringify(groupIds) !== JSON.stringify(ids.filter(id => groupIds.includes(id)))) throw new Error('task grouping changed family ordering');
           const heading = await group.locator('h3').innerText();
-          for (const name of groupNames) {
-            if (!tasksByModel[name].includes(heading)) throw new Error('model appears under an unrelated task');
+          for (const id of groupIds) {
+            if (!tasksByModel[id].includes(heading)) throw new Error('model appears under an unrelated task');
           }
         }
         const resnet = page.locator('[data-catalog-entry="resnet_50"]');
@@ -255,7 +255,9 @@ async function checkCatalogLayouts(browser, url) {
         if (viewport.width === 390) await page.locator('#filter-toggle').click();
         await page.locator('#task-filter').selectOption('visual_question_answering');
         await page.getByRole('heading', {name: 'Visual Question Answering', exact: true}).waitFor();
-        if (await page.locator('.catalog-model-link').count() !== 1 || await page.locator('.catalog-model-link').innerText() !== 'Qwen3.5-0.8B') throw new Error('multi-task model did not follow the selected task');
+        const answering = (await page.locator('[data-catalog-entry]').evaluateAll(rows => rows.map(row => row.dataset.catalogEntry))).sort();
+        const expected = ids.filter(id => tasksByModel[id].includes('Visual Question Answering')).sort();
+        if (JSON.stringify(answering) !== JSON.stringify(expected)) throw new Error('multi-task model did not follow the selected task');
         await page.locator('#task-filter').selectOption('');
         await page.locator('#search').fill('no such model xyz');
         await page.getByRole('heading', {name: 'No matching models', exact: true}).waitFor();
@@ -300,6 +302,9 @@ async function checkExecutionTooltips(browser, url) {
     const page = await browser.newPage({viewport: {width, height: 1000}, hasTouch: width === 390});
     try {
       await page.goto(url.href);
+      // The inline README shifts the graph when it arrives; hover only after the page has settled.
+      await page.locator('[data-model-card-body] .model-documentation-body').waitFor();
+      await page.evaluate(() => document.fonts.ready);
       await page.locator('[data-disclosure^="graphs:"] > summary').first().click();
       const stage = page.locator('.execution-step[data-runs-on="MLA"]').first();
       await stage.scrollIntoViewIfNeeded();
@@ -413,11 +418,14 @@ async function checkTaskComparison(browser, base) {
         if (!(await page.locator('.compare-chart-dataset').innerText()).includes('coco-2017')) throw new Error('chart does not identify its accuracy dataset');
         await page.locator('[data-compare-control="task"]').selectOption('image_classification');
         await add.waitFor();
-        const choices = await add.locator('option').allTextContents();
-        if (choices.length !== 4 || !choices.slice(1).every(text => text.includes('ResNet-50'))) throw new Error('comparison mixed tasks or omitted a variant');
+        // Each classifier's variants by exact model name (Wide ResNet-50-2 contains "ResNet-50"), and nothing from another task.
+        const classifiers = {'ResNet-50': 3, 'ResNet-18': 2, 'ResNet-34': 2, 'ResNeXt-50 32x4d': 2, 'ResNeXt-101 32x8d': 2, 'ResNeXt-101 64x4d': 2, 'Wide ResNet-50-2': 2, 'DLA-34': 2, 'Inception v3': 2, 'VGG-11': 2, 'VGG-11-BN': 2, 'VGG-13': 2, 'VGG-13-BN': 2, 'VGG-16': 2, 'VGG-16-BN': 2, 'VGG-19': 2, 'VGG-19-BN': 2, 'HRNet-W32': 2, 'ViT-B/16': 2, 'DenseNet-121': 2, 'DenseNet-161': 2, 'DenseNet-169': 2};
+        const variants = Object.values(classifiers).reduce((total, count) => total + count, 0);
+        const choices = (await add.locator('option').allTextContents()).slice(1);
+        if (choices.length !== variants || !Object.entries(classifiers).every(([name, count]) => choices.filter(text => text.startsWith(`${name} · `)).length === count)) throw new Error('comparison mixed tasks or omitted a variant');
         const dataset = await page.locator('.compare-chart-dataset').innerText();
-        if (!dataset.includes('imagenet-2012') || !dataset.includes('mini')) throw new Error('chart dataset did not follow the selected task');
-        if (await page.locator('.compare-point').count() !== 3) throw new Error('chart omitted a measured classification variant');
+        if (!dataset.includes('imagenet-2012') || !dataset.includes('/ val /')) throw new Error('chart dataset did not follow the selected task');
+        if (await page.locator('.compare-point').count() !== variants) throw new Error('chart omitted a measured classification variant');
         await add.selectOption('resnet_50.w16a16');
         if (!(await page.locator('.compare-table').innerText()).includes('W16A16')) throw new Error('selected variant is missing from the table');
         await page.locator('.compare-table .compare-remove').click();
@@ -430,6 +438,21 @@ async function checkTaskComparison(browser, base) {
         console.log(`ok  Task comparison · ${viewport.width}px ${theme}`);
       } finally { await page.close(); }
     }
+  }
+}
+
+// A portal without its license list offers no download at all, so check a model on each side of the rule.
+async function checkLicensedDownloads(browser, base) {
+  for (const [model, offered] of [['resnet_50', true], ['superpoint', false]]) {
+    const page = await browser.newPage();
+    try {
+      await page.goto(new URL(`/?model=${model}&variant=w8a8`, base).href);
+      await page.locator('#license-section .license-summary').waitFor();
+      const downloads = await page.locator('[data-download="package"], [data-download-variant]').count();
+      if (Boolean(downloads) !== offered) throw new Error(`${model} ${offered ? 'offers no download' : 'offers a download its license forbids'}`);
+      if (await page.locator('.download-unavailable').count() !== (offered ? 0 : 1)) throw new Error(`${model} shows the wrong download notice`);
+      console.log(`ok  Licensed downloads · ${model}`);
+    } finally { await page.close(); }
   }
 }
 
@@ -466,6 +489,7 @@ try {
     await checkExecutionTooltips(browser, variantUrl);
     await checkCatalogLayouts(browser, new URL('/', variantUrl));
     await checkTaskComparison(browser, variantUrl);
+    await checkLicensedDownloads(browser, variantUrl);
     for (const [name, url, readySelector] of checks) {
       const problems = await checkPage(browser, url, readySelector);
       console.log(`${problems.length ? 'FAIL' : 'ok'}  ${name}  ${url.pathname}${url.search}`);

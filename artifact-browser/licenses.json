@@ -1,0 +1,62 @@
+{
+  "GPL-3.0-only": {
+    "name": "GNU General Public License v3.0",
+    "summary": "Copyleft license. Redistribution requires compliance with GPL-3.0, including corresponding-source obligations.",
+    "downloadable": true
+  },
+  "AGPL-3.0-only": {
+    "name": "GNU Affero General Public License v3.0",
+    "summary": "Copyleft license. Anyone who redistributes the model must provide its source under the same license.",
+    "downloadable": true
+  },
+  "Apache-2.0": {
+    "name": "Apache License 2.0",
+    "summary": "Permissive license. Redistribution must include the license text and existing notices.",
+    "downloadable": true
+  },
+  "BSD-3-Clause": {
+    "name": "BSD 3-Clause License",
+    "summary": "Permissive license. Redistribution must keep the copyright notice and disclaimer.",
+    "downloadable": true
+  },
+  "LicenseRef-BigScience-OpenRAIL-M": {
+    "name": "BigScience Open RAIL-M License",
+    "summary": "Responsible AI license. Redistribution must include the license and pass its use restrictions on to every recipient.",
+    "downloadable": true
+  },
+  "LicenseRef-LFM-Open-1.0": {
+    "name": "LFM Open License v1.0",
+    "summary": "Use and redistribution are subject to Liquid AI's license. Commercial use by organizations meeting its revenue threshold requires a separate license. Include the license and notices.",
+    "downloadable": true
+  },
+  "LicenseRef-Llama-3.1-Community": {
+    "name": "Llama 3.1 Community License",
+    "summary": "Use and redistribution are subject to Meta’s Community License and Acceptable Use Policy. Include the license, attribution and notices.",
+    "downloadable": true
+  },
+  "LicenseRef-Llama-3.2-Community": {
+    "name": "Llama 3.2 Community License",
+    "summary": "Use and redistribution are subject to Meta’s Community License and Acceptable Use Policy. Include the license, attribution and notices.",
+    "downloadable": true
+  },
+  "LicenseRef-MagicLeap-Noncommercial-Research": {
+    "name": "Magic Leap noncommercial research license",
+    "summary": "Noncommercial research use only. The license does not permit redistribution, so SiMa.ai does not offer this model for download.",
+    "downloadable": false
+  },
+  "LicenseRef-OpenStereo-Academic": {
+    "name": "OpenStereo academic use terms",
+    "summary": "Academic use only, never commercial, and no license grants redistribution, so SiMa.ai does not offer this model for download.",
+    "downloadable": false
+  },
+  "LicenseRef-Swallow-Llama-Gemma": {
+    "name": "Swallow Llama and Gemma terms",
+    "summary": "Use and redistribution are subject to the upstream Llama and Gemma terms and use policies. Include the licenses, attribution and notices.",
+    "downloadable": true
+  },
+  "MIT": {
+    "name": "MIT License",
+    "summary": "Permissive license. Redistribution must include the copyright and permission notices.",
+    "downloadable": true
+  }
+}

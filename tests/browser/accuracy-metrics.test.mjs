@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 
-const {accuracyDisplay, formatAccuracy, orderedMetricNames, referenceScores} = await import(new URL('../../artifact-browser/accuracy-metrics.js', import.meta.url));
+const {accuracyDisplay, formatAccuracy, orderedMetricNames, referenceNotes, referenceScores} = await import(new URL('../../artifact-browser/accuracy-metrics.js', import.meta.url));
 
 test('detection metrics follow the label order whatever order the registry returns', () => {
   // The registry returned RF-DETR Small's metrics in this order.
@@ -47,6 +47,20 @@ test('reference scores sit beside measurements of the same dataset only', () => 
   assert.deepEqual(referenceScores(undefined, 'coco-2017'), {});
 });
 
+test('published and FP32 baseline scores stay apart', () => {
+  const baseline = {origin: 'fp32_baseline', dataset: {id: 'coco-2017', split: 'val'}, metrics: {coco_map: 0.51}};
+  assert.deepEqual(referenceScores([...reference, baseline], 'coco-2017'), {coco_map: 0.53, coco_ap50: 0.721});
+  assert.deepEqual(referenceScores([...reference, baseline], 'coco-2017', 'fp32_baseline'), {coco_map: 0.51});
+  assert.deepEqual(referenceScores(reference, 'coco-2017', 'fp32_baseline'), {});
+});
+
+test('an accuracy tile notes each origin that scores its metric, published first', () => {
+  const scores = {published: {pose_auc_5: 0.3902}, fp32_baseline: {pose_auc_5: 0.2865, matching_score: 0.2783}};
+  assert.deepEqual(referenceNotes('pose_auc_5', scores), ['Published 39.02%', 'FP32 baseline 28.65%']);
+  assert.deepEqual(referenceNotes('matching_score', scores), ['FP32 baseline 27.83%']);
+  assert.deepEqual(referenceNotes('match_precision', scores), []);
+});
+
 test('ratios show as percentages and other units as reported, each with its direction', () => {
   assert.equal(formatAccuracy('coco_map', 0.401), '40.10%');
   assert.equal(formatAccuracy('epe', 0.7763), '0.776 px');
@@ -56,9 +70,16 @@ test('ratios show as percentages and other units as reported, each with its dire
   assert.deepEqual(accuracyDisplay('coco_map', 0.401), {number: 40.1, unit: '%', direction: 'higher'});
   assert.deepEqual(accuracyDisplay('epe', 0.73), {number: 0.73, unit: 'px', direction: 'lower'});
   assert.deepEqual(accuracyDisplay('d1_all', 2.82), {number: 2.82, unit: '%', direction: 'lower'});
-  assert.deepEqual(accuracyDisplay('abs_rel', 0.25), {number: 25, unit: '%', direction: 'lower'});
 });
 
 test('disparity metrics lead with EPE', () => {
   assert.deepEqual(orderedMetricNames(['d1_all', 'epe']), ['epe', 'd1_all']);
+});
+
+test('depth error is dimensionless and unbounded, while delta1 is a percentage', () => {
+  assert.equal(formatAccuracy('abs_rel', 0.0924), '0.092');
+  assert.equal(formatAccuracy('abs_rel', 1.25), '1.250');
+  assert.equal(formatAccuracy('delta1', 0.893), '89.30%');
+  assert.deepEqual(accuracyDisplay('abs_rel', 0.0924), {number: 0.0924, unit: '', direction: 'lower'});
+  assert.deepEqual(orderedMetricNames(['delta1', 'abs_rel']), ['abs_rel', 'delta1']);
 });
