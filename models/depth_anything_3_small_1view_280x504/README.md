@@ -13,7 +13,7 @@ Prepare `image` as RGB using these steps:
 1. Resize while preserving aspect ratio until the image covers 280×504 pixels; use area interpolation when shrinking and bicubic interpolation when enlarging.
 2. Center-crop to 280×504 pixels.
 3. Divide pixel values by 255, subtract RGB means `[0.485, 0.456, 0.406]`, and divide by `[0.229, 0.224, 0.225]`.
-4. Supply a float32 tensor with explicit HWC layout when using Neat's tensor interface. The image interface can apply ImageNet normalization and a center crop itself.
+4. Supply the preprocessed float32 tensor with explicit HWC layout using Neat's tensor interface.
 
 `depth` and `depth_conf` each contain one value per image pixel. Larger `depth` means farther away, with an unknown scale and shift in inverse depth. `depth_conf` is a confidence score; larger values mean greater confidence. Read the two outputs in that order and reshape each to 280×504 for display. No detection decoder is needed. These entries omit the upstream camera-pose and auxiliary ray outputs.
 

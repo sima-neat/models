@@ -188,6 +188,10 @@ def test_depth_error_is_unbounded_but_threshold_accuracy_is_a_fraction(tmp_path)
         ({"validation": {**SAMPLES, "metrics": {"d1_all": 101.0}}}, "d1_all must be a percentage from 0 to 100"),
         ({"validation": {**SAMPLES, "metrics": {"epe": -0.1}}}, "epe must be at least 0 px"),
         ({"validation": {**SAMPLES, "metrics": {"epe": float("inf")}}}, "epe must be at least 0 px"),
+        ({"validation": {**SAMPLES, "metrics": {"abs_rel": -0.1}}}, "abs_rel must be at least 0 ratio"),
+        ({"validation": {**SAMPLES, "metrics": {"abs_rel": float("inf")}}}, "abs_rel must be at least 0 ratio"),
+        ({"validation": {**SAMPLES, "metrics": {"abs_rel": float("nan")}}}, "abs_rel must be at least 0 ratio"),
+        ({"validation": {**SAMPLES, "metrics": {"delta1": 1.01}}}, "delta1 must be a ratio from 0 to 1"),
         ({"validation": {**SAMPLES, "evaluated_samples": 2, "metrics": {"coco_map": 0.5}}}, "evaluated_samples"),
         ({"validation": {"metrics": {"coco_map": 0.5}}}, "validation must give metrics, split"),
         ({"validation": {**SAMPLES, "metrics": {"coco_map": 0.5}, "notes": "x"}}, "validation must give"),
@@ -411,7 +415,7 @@ def test_every_single_component_script_benchmarks_a_dataset_image(script, monkey
         assert STEREO_PAIR.format(view="left") in report["workload"]
     elif first_accuracy_dataset(script) == "nyu-depth-v2":
         assert_letterboxed_frame(frame)
-        assert (options.preprocess.resize.mode, options.preprocess.preset) == ("Crop", "ImageNet")
+        assert (options.preprocess.resize.mode, options.preprocess.preset) == ("Letterbox", "ImageNet")
         assert "val/rgb_0001.jpg" in report["workload"]
     elif getattr(options, "decode_type", "").startswith(("YoloV26", "YoloV8", "YoloX")):
         # Box decoders take a probability threshold, in [0, 1).

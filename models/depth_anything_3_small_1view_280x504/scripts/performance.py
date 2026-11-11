@@ -1,4 +1,7 @@
-"""Benchmark a single-view DA3-Small archive, including Neat image preprocessing."""
+"""Benchmark DA3-Small with Neat letterbox preprocessing.
+
+Accuracy and FP32 reference evaluation retain their cover resize and center crop.
+"""
 
 import argparse
 import random
@@ -61,7 +64,7 @@ options.preprocess.input_max_width = FRAME_WIDTH
 options.preprocess.input_max_height = FRAME_HEIGHT
 options.preprocess.enable = pyneat.AutoFlag.On
 options.preprocess.resize.enable = pyneat.AutoFlag.On
-options.preprocess.resize.mode = pyneat.ResizeMode.Crop
+options.preprocess.resize.mode = pyneat.ResizeMode.Letterbox
 options.preprocess.normalize.enable = pyneat.AutoFlag.On
 # Without a preset Neat only scales pixels to [0, 1]; the model expects ImageNet mean and std.
 options.preprocess.preset = pyneat.NormalizePreset.ImageNet
@@ -79,7 +82,7 @@ report = model_report.from_performance(
     {"model": model},
     workload=(
         f"{dataset_id} {image.parent.name}/{image.name} in a {FRAME_WIDTH}x{FRAME_HEIGHT} RGB frame, "
-        "Neat cover resize and center crop to the model input"
+        "Neat letterbox resize to the model input"
     ),
 )
 report.save(args.output)
