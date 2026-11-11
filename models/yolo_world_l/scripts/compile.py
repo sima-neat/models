@@ -3,7 +3,7 @@
 CLIP uses SkipCalibration and no calibration samples. Only detector INT8
 activation ranges are calibrated, using 64 images from the pinned Dataset
 Registry COCO calibration archive with all 80 COCO prompts. The build profile
-declares the detector calibration method.
+declares the detector calibration method and BF16 regions.
 """
 import argparse
 import json
@@ -58,10 +58,29 @@ def audit_mpk(path):
     return manifest
 
 
+def _bf16_regions(profile_id, component_parameters):
+    """Return the detector regions selected by the mixed build profile."""
+    if "bf16_regions" in component_parameters["text_encoder"]:
+        raise ValueError("only the detector declares bf16_regions")
+    parameters = component_parameters["detector"]
+    selected = parameters.get("bf16_regions", [])
+    if selected and (parameters["precision"] != "w8a8" or len(set(selected)) != len(selected)):
+        raise ValueError(f"bf16_regions must name distinct regions of a W8A8 detector: {selected}")
+    unknown = sorted(set(selected) - {"projection_attention"})
+    if unknown:
+        raise ValueError(f"unknown BF16 regions: {unknown}; choose projection_attention")
+    if bool(selected) != ("mixed" in profile_id.split("_")):
+        raise ValueError(f"build profile {profile_id!r} must have the mixed token exactly when it has bf16_regions")
+    return selected
+
+
 def compile_model(source, output, profile_id, dataset=None):
+    profile = build_profile_for(load_metadata(MODEL_DIR), profile_id)
+    parameters = {component["id"]: component["parameters"] for component in profile["components"]}
+    selected = _bf16_regions(profile_id, parameters)
     with tempfile.TemporaryDirectory(prefix=MODEL_DIR.name + "-") as temporary:
         directory = Path(temporary)
-        prepare_model(source, directory)
+        prepare_model(source, directory, bf16_regions=selected)
         compile_prepared(directory, output, profile_id, dataset)
 
 
@@ -73,10 +92,9 @@ def compile_prepared(directory, output, profile_id, dataset=None, quantized_outp
     profile = build_profile_for(metadata, profile_id)
     parameters = {component["id"]: component["parameters"] for component in profile["components"]}
     detector = parameters["detector"]
-    if (detector["precision"], detector["prompt_slots"], detector["bf16_region"]) != (
-        "w8a8_mixed_w16a16", 80, "projection_attention"
-    ):
-        raise ValueError("this recipe requires the 80-slot projection_attention profile")
+    if (detector["precision"], detector["prompt_slots"]) != ("w8a8", 80):
+        raise ValueError("this recipe requires a W8A8 detector with 80 prompt slots")
+    _bf16_regions(profile_id, parameters)
     if dataset is None:
         raise ValueError("the detector requires --dataset from dataset-registry")
     output.mkdir(parents=True, exist_ok=False)

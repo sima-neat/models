@@ -96,6 +96,19 @@ def test_bf16_text_configuration_skips_calibration(load_script, monkeypatch):
     assert config["per_token_quant"] is False
 
 
+@pytest.mark.parametrize("profile,parameters", [
+    ("w16a16_w8a8_mixed", {"precision": "w8a8", "bf16_regions": ["unknown"]}),
+    ("w16a16_w8a8_mixed", {"precision": "w8a8", "bf16_regions": ["projection_attention"] * 2}),
+    ("w16a16_w8a8_mixed", {"precision": "w16a16", "bf16_regions": ["projection_attention"]}),
+    ("w16a16_w8a8_mixed", {"precision": "w8a8"}),
+    ("w16a16_w8a8", {"precision": "w8a8", "bf16_regions": ["projection_attention"]}),
+])
+def test_bf16_regions_reject_incompatible_precision_or_profile(load_script, profile, parameters):
+    compiler = load_script("compile")
+    with pytest.raises(ValueError):
+        compiler._bf16_regions(profile, {"text_encoder": {}, "detector": parameters})
+
+
 def test_prompt_rows_preserve_order_and_share_a_content_bound_cache(tmp_path, load_script, monkeypatch):
     import contextlib
     import sys
@@ -145,6 +158,7 @@ def test_compiled_components_are_entirely_on_mla(compiled: Path, load_script):
 def test_compile_recipe_records_grouped_graphs_and_final_archives(tmp_path, load_script):
     import hashlib
     import io
+    import shutil
     import tarfile
     from unittest.mock import patch
 
@@ -178,11 +192,17 @@ def test_compile_recipe_records_grouped_graphs_and_final_archives(tmp_path, load
                     archive.addfile(member, io.BytesIO(content))
             compiler_archives[directory.name] = (directory / "fixture_mpk.tar.gz").read_bytes()
 
+    def prepare(source, directory, *, bf16_regions):
+        assert source == tmp_path / "weights.pth"
+        assert bf16_regions == ["projection_attention"]
+        shutil.copytree(prepared, directory, dirs_exist_ok=True)
+
     output = tmp_path / "build"
-    profile = "w8a8_mixed_w16a16"
+    profile = "w16a16_w8a8_mixed"
     with patch.object(compiler, "load_model", return_value=Backend()), \
-            patch.object(compiler, "onnx_source"), patch.object(compiler, "calibration_inputs"):
-        compiler.compile_prepared(prepared, output, profile, dataset=tmp_path / "calibration.tgz")
+            patch.object(compiler, "onnx_source"), patch.object(compiler, "calibration_inputs"), \
+            patch.object(compiler, "prepare_model", side_effect=prepare):
+        compiler.compile_model(tmp_path / "weights.pth", output, profile, dataset=tmp_path / "calibration.tgz")
     identity = dict(model_id=compiler.MODEL_DIR.name, build_profile_id=profile,
                     compile_invocation_id=profile, component_ids=list(compiler.COMPONENTS))
     manifest = output / "compile-outputs.json"

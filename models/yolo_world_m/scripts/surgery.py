@@ -61,7 +61,7 @@ def export(module, inputs, outputs, output):
     return graph
 
 
-def prepare_model(source: Path, directory: Path):
+def prepare_model(source: Path, directory: Path, bf16_regions):
     import torch
     from clip import TextEncoder, token_table
     from detector import Detector, OUTPUTS
@@ -77,7 +77,8 @@ def prepare_model(source: Path, directory: Path):
               "text_embeddings": embeddings, "prompt_mask": np.ones((1, SLOTS), np.float32)}
     reference_path = directory / "detector_fp32.onnx"
     graph = export(detector, inputs, OUTPUTS, reference_path)
-    selected = regions(graph)["projection_attention"]
+    available_regions = regions(graph)
+    selected = set().union(*(available_regions[name] for name in bf16_regions))
     graph, _ = annotate(graph, selected)
     detector_path = directory / "detector.onnx"
     onnx.save(graph, detector_path)

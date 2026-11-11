@@ -6,13 +6,13 @@ compile:
 accuracy:
   run_tests: true
   expected:
-    w8a8_mixed_w16a16:
+    w16a16_w8a8_mixed:
       coco-2017-val:
         coco_map: 0.4228720138230126
 performance:
   run_tests: true
   expected:
-    w8a8_mixed_w16a16:
+    w16a16_w8a8_mixed:
       components:
         text_encoder:
           throughput_fps: 438.1234409934226
