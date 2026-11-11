@@ -65,6 +65,10 @@ architectures:
     display_name: GPT-OSS
     paradigm: transformer
     allowed_model_types: [llm]
+  hrnet:
+    display_name: HRNet
+    paradigm: cnn
+    allowed_model_types: [vision]
   inception:
     display_name: Inception
     paradigm: cnn
@@ -145,6 +149,10 @@ architectures:
     display_name: Supertonic
     paradigm: transformer
     allowed_model_types: [audio]
+  vgg:
+    display_name: VGG
+    paradigm: cnn
+    allowed_model_types: [vision]
   whisper:
     display_name: Whisper
     paradigm: transformer

@@ -5,7 +5,7 @@ its numerical fidelity.
 surgery.py exports a static ONNX: two images' 512 keypoint encodings and descriptors in, their soft assignment out.
 Calibration and numerical fidelity use one seeded order of the yfcc100m-keypoints cal pairs: the INT8-activation
 build, w8a8, calibrates on the first pairs, and fidelity compares the quantized graph's assignment with the ONNX's on
-a later span.
+a later span. A W8A8 build runs the operations of its bf16_regions, if it declares any, in BF16.
 A build whose matches overlap the ONNX's too little stops there, before the MLA compile.
 """
 
@@ -18,6 +18,7 @@ import math
 import os
 import tarfile
 import tempfile
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -35,12 +36,13 @@ from afe.apis.defines import (
 )
 from afe.apis.loaded_net import load_model
 from afe.apis.model import L2CachingMode
+from afe.core.configs import QuantizationPrecision
 from afe.core.utils import convert_data_generator_to_iterable
 from afe.load.importers.general_importer import onnx_source
 from calibration import INPUT_SHAPES, KEYPOINTS, calibration_inputs, fidelity_inputs, matches
 from model_registry.model import load_model as load_metadata
 from sima_utils.data.data_generator import DataGenerator
-from surgery import INPUTS, assignment_matrix, export_matcher
+from surgery import BF16_REGIONS, INPUTS, annotate_bf16_regions, assignment_matrix, export_matcher
 
 MODEL_DIR = Path(__file__).resolve().parents[1]
 MODEL_ID = "lightglue_superpoint"
@@ -49,8 +51,10 @@ OUTPUT_NAME = "assignment"
 # The least overlap of a build's matches with the ONNX's. The assignment's own cosine overstates the change: its entries
 # sit near 0 or 1, and a keypoint whose two best partners are close can swap them under BF16 rounding. BF16 activations
 # keep most matches and INT8 ones may lose more but must not collapse; a broken operator or a collapsed build shows up
-# as a low overlap.
+# as a low overlap. The floors are per precision.
 MATCH_OVERLAP_FLOORS = {"w16a16": 0.9, "w8a16": 0.9, "w8a8": 0.6}
+# Softmaxes in the attention region: one per attention, in nine layers of self and cross attention on two images.
+ATTENTION_SOFTMAXES = 36
 
 
 def _metadata() -> dict[str, Any]:
@@ -68,6 +72,34 @@ def _parameters(metadata: dict[str, Any], profile_id: str) -> dict[str, Any]:
 def _bf16_activations(precision: str) -> bool:
     """w16a16 and w8a16 keep activations in BF16, which need no calibrated ranges; w8a8's INT8 activations do."""
     return precision in ("w16a16", "w8a16")
+
+
+def _bf16_regions(profile_id: str, parameters: dict[str, Any]) -> list[str]:
+    """The regions the build profile runs in BF16, checking that its ID marks it mixed."""
+    regions = parameters.get("bf16_regions", [])
+    if regions and (parameters["precision"] != "w8a8" or len(set(regions)) != len(regions)):
+        raise ValueError(f"bf16_regions must name distinct regions of a W8A8 build: {regions}")
+    unknown = sorted(set(regions) - set(BF16_REGIONS))
+    if unknown:
+        raise ValueError(f"unknown BF16 regions {unknown}; choose from {list(BF16_REGIONS)}")
+    if bool(regions) != ("mixed" in profile_id.split("_")):
+        raise ValueError(f"build profile {profile_id!r} must have the mixed token exactly when it has bf16_regions")
+    return regions
+
+
+def _require_bf16_regions(quantized: Any, regions: list[str]) -> None:
+    """Fail when the compiler ignored the BF16 annotations, which would silently build plain W8A8."""
+    # The quantized model keeps its network private, and the compiler renames every node, so count by operation.
+    counts = Counter(
+        type(node.ir.operation).__name__
+        for node in quantized._net.iter_nodes_recursive()
+        if getattr(node.ir, "quant_config", None) is not None
+        and node.ir.quant_config.quantization_precision.value == QuantizationPrecision.BFLOAT_16
+    )
+    print(f"BF16 operations: {dict(sorted(counts.items()))}", flush=True)
+    softmaxes = ATTENTION_SOFTMAXES if "attention" in regions else 0
+    if not counts or counts["SoftmaxOp"] != softmaxes:
+        raise RuntimeError(f"expected BF16 operations including {softmaxes} softmaxes, found {dict(counts)}")
 
 
 def _quantization_config(parameters: dict[str, Any]) -> QuantizationParams:
@@ -101,8 +133,14 @@ def quantize(source: Path, profile_id: str, dataset: Path | None, seed: int) -> 
     """Quantize the ONNX; the INT8-activation build calibrates on the first pairs of the cal pairs' seeded order."""
     parameters = _parameters(_metadata(), profile_id)
     config = _quantization_config(parameters)
+    regions = _bf16_regions(profile_id, parameters)
+    graph = source
+    if regions:
+        graph = source.with_name("annotated.onnx")
+        marks = annotate_bf16_regions(source, graph, regions)
+        print(f"Marked {marks['bfloat16']} operations BF16 and {marks['int8']} INT8 for {regions}", flush=True)
     shapes = {name: tuple(shape) for name, shape in INPUTS.items()}
-    importer = onnx_source(str(source), shape_dict=shapes, layout="NCHW", flexible_batch_size=True)
+    importer = onnx_source(str(graph), shape_dict=shapes, layout="NCHW", flexible_batch_size=True)
     loaded = load_model(importer, target=gen2_target)
     calibration_data = None
     if not _bf16_activations(parameters["precision"]):
@@ -110,12 +148,15 @@ def quantize(source: Path, profile_id: str, dataset: Path | None, seed: int) -> 
         print(f"Calibrating on {int(parameters['calibration_samples'])} yfcc100m-keypoints cal pairs", flush=True)
         data = {InputName(name): samples[name] for name in INPUT_SHAPES}
         calibration_data = convert_data_generator_to_iterable(DataGenerator(data))
-    return loaded.quantize(
+    quantized = loaded.quantize(
         calibration_data=calibration_data,
         quantization_config=config,
         model_name=f"{MODEL_ID}_{profile_id}",
         log_level=logging.INFO,
     )
+    if regions:
+        _require_bf16_regions(quantized, regions)
+    return quantized
 
 
 def _read_mpk_manifest(archive: Path) -> tuple[list[str], dict[str, Any]]:
@@ -238,11 +279,11 @@ def match_overlap(assignments: list[tuple[np.ndarray, np.ndarray]]) -> float:
     return shared / math.sqrt(expected_count * actual_count) if expected_count and actual_count else 0.0
 
 
-def require_match_overlap(profile_id: str, overlap: float) -> None:
-    """Stop a build whose matches overlap the ONNX's no more than its profile's floor."""
-    floor = MATCH_OVERLAP_FLOORS[profile_id]
+def require_match_overlap(precision: str, overlap: float) -> None:
+    """Stop a build whose matches overlap the ONNX's no more than its precision's floor."""
+    floor = MATCH_OVERLAP_FLOORS[precision]
     if not overlap > floor:
-        raise RuntimeError(f"{profile_id}'s matches overlap the ONNX's by {overlap:.4f}, not above the {floor} floor")
+        raise RuntimeError(f"{precision}'s matches overlap the ONNX's by {overlap:.4f}, not above the {floor} floor")
 
 
 def measure_fidelity(
@@ -320,7 +361,7 @@ def main() -> int:
             print(f"Fidelity {metric['name']}: cosine {metric['cosine_similarity']:.4f}, "
                   f"max |error| {metric['max_absolute_error']:.4f}", flush=True)
         print(f"Fidelity matches: overlap {overlap:.4f} with the ONNX's", flush=True)
-        require_match_overlap(args.build_profile, overlap)
+        require_match_overlap(precision, overlap)
         compile_model(quantized, output_dir / COMPONENT_ID, precision)
     (output_dir / "fidelity.json").write_text(
         json.dumps(report, allow_nan=False, indent=2, sort_keys=True) + "\n", encoding="utf-8"

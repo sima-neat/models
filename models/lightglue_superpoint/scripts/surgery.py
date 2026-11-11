@@ -20,6 +20,8 @@ compile.py calls export_matcher. To get the FP32 ONNX on a host, run:
 
 import argparse
 import math
+import re
+from collections import defaultdict
 from pathlib import Path
 
 import numpy as np
@@ -66,6 +68,16 @@ OUTPUT = {"assignment": [1, KEYPOINTS, 1, KEYPOINTS]}
 INTERFACE = {**INPUTS, **OUTPUT}
 OPSET = 17
 SEEDS = range(123, 128)
+# The operations a W8A8 build can run in BF16: each region's operations by the names the export gives them, and how
+# many the matcher's nine layers of self and cross attention on two images have.
+BF16_REGIONS = {
+    # Each attention's query-key product, softmax over the keys and weighted sum of the values.
+    "attention": (r"/layers\.\d+/(self|cross)_attention(_1)?/(Einsum|Softmax|Einsum_1)", 108),
+    # The hidden state: every residual sum after a self or cross attention's MLP.
+    "residual": (r"/layers\.\d+/Add(_\d+)?", 36),
+}
+# Operations that move values without computing: a region ends at the first other operation that reads it.
+LAYOUT_OPS = {"Reshape", "Transpose", "Split", "Concat", "Slice"}
 
 
 def validate_export(path):
@@ -303,6 +315,68 @@ def fold_constants(path):
     if not valid:
         raise RuntimeError("onnxsim could not validate the folded LightGlue export")
     onnx.save(model, path)
+
+
+def _first_operations(readers, value):
+    """The operations that read value, looking through layout operations."""
+    operations = []
+    for reader in readers[value]:
+        if reader.op_type in LAYOUT_OPS:
+            for output in reader.output:
+                operations.extend(_first_operations(readers, output))
+        else:
+            operations.append(reader)
+    return operations
+
+
+def precision_marks(model, regions):
+    """Return the precision to annotate after each operation, by name: bfloat16 for the regions' operations and int8
+    for the operations that first read their results.
+
+    The compiler gives an annotation's precision to the operation producing its input, and each later operation takes
+    the precision its inputs share, so an int8 mark on each first reader ends a region.
+    """
+    readers = defaultdict(list)
+    for node in model.graph.node:
+        for value in node.input:
+            readers[value].append(node)
+    promoted = {}
+    for region in regions:
+        pattern, count = BF16_REGIONS[region]
+        operations = [node for node in model.graph.node if re.fullmatch(pattern, node.name)]
+        if len(operations) != count:
+            raise ValueError(f"expected {count} {region} operations in the export, found {len(operations)}")
+        promoted.update({node.name: node for node in operations})
+    marks = dict.fromkeys(promoted, "bfloat16")
+    for node in promoted.values():
+        for reader in _first_operations(readers, node.output[0]):
+            marks.setdefault(reader.name, "int8")
+    return marks
+
+
+def annotate_bf16_regions(source, output, regions):
+    """Write the export with the regions' operations marked BF16 for the compiler; return the marks per precision.
+
+    ONNX Runtime cannot run the annotated graph, so numerical fidelity keeps comparing against the source.
+    """
+    model = onnx.load(source)
+    marks = precision_marks(model, regions)
+    nodes = []
+    for node in model.graph.node:
+        nodes.append(node)
+        if node.name in marks:
+            value = node.output[0]
+            node.output[0] = f"{value}/unannotated"
+            nodes.append(onnx.helper.make_node(
+                "AnnotatePrecision", [node.output[0]], [value], name=f"{node.name}/AnnotatePrecision",
+                domain="ai.sima", precision=marks[node.name],
+            ))
+    del model.graph.node[:]
+    model.graph.node.extend(nodes)
+    model.opset_import.append(onnx.helper.make_opsetid("ai.sima", 1))
+    onnx.checker.check_model(model)
+    onnx.save(model, output)
+    return {precision: list(marks.values()).count(precision) for precision in ("bfloat16", "int8")}
 
 
 def export_matcher(weights, output):
