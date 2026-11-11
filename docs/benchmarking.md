@@ -60,13 +60,6 @@ PYTHONPATH=tools ~/pyneat/bin/python models/resnet_50/scripts/performance.py \
   --output /workspace/performance
 ```
 
-Optional `scripts/requirements-performance.txt` pins extra wheels needed by
-the performance script. CI installs them without dependencies into a temporary
-folder on NVMe and adds that folder to `PYTHONPATH`; PyNeat's environment stays
-unchanged. When running the script directly, make those wheels available in the
-same way. Changes to this file rerun performance without recompiling the model
-or rerunning accuracy.
-
 The script takes:
 
 - `--mpk`: the MPK, or `<component>=<path>` once per component for a
@@ -194,6 +187,23 @@ the tensors and the CPU steps.
 
 A model without an accuracy dataset builds a fixed, realistic input in its
 own script and takes no `--dataset`.
+
+A model whose application also reads files beyond its MPKs, such as Supertonic's
+text models and voices, declares them as `resources` in `model.yaml`, and its
+script takes `--resources <directory>`. For a standalone run, fetch them in the
+layout the package installs, or extract the package ZIP to the same effect, and
+install the model's `scripts/requirements-performance.txt` beside PyNeat's
+environment, as the stage does:
+
+```bash
+resources="$(model-registry fetch-resources models/supertonic_3 --output-dir /workspace/resources)"
+~/pyneat/bin/python -m pip install --no-deps --only-binary=:all: \
+  --target /workspace/site -r models/supertonic_3/scripts/requirements-performance.txt
+PYTHONPATH=tools:/workspace/site ~/pyneat/bin/python models/supertonic_3/scripts/performance.py \
+  --mpk vector_estimator=/workspace/vector_estimator_mpk.tar.gz \
+  --mpk vocoder=/workspace/vocoder_mpk.tar.gz \
+  --resources "$resources" --output /workspace/performance
+```
 
 ## Multi-component models
 
@@ -407,10 +417,14 @@ the performance stage does not run when that step fails.
    `model-registry resolve-devkit-accuracy` and extracts it under
    `/media/nvme/neat-tests/`, which it removes when it exits; a build profile
    that accuracy does not measure gets no `--dataset`;
-3. sets the MLA and CPU clocks;
-4. runs the model's `performance.py`, which writes `model-report.json` and
+3. fetches the model's pinned `resources` with `model-registry fetch-resources`
+   and passes them as `--resources`, laid out as the package installs them, and
+   installs `scripts/requirements-performance.txt`, when the model has it, in a
+   folder beside PyNeat's environment;
+4. sets the MLA and CPU clocks;
+5. runs the model's `performance.py`, which writes `model-report.json` and
    `benchmark-report.json`, and copies its output to `performance.log`;
-5. runs `model-registry check-report`, which validates the report against
+6. runs `model-registry check-report`, which validates the report against
    [`model-report.schema.json`](../schemas/model-report.schema.json) and the
    `model.yaml` declaration and writes the board's installed packages and
    clocks to `environment.json`.

@@ -199,6 +199,16 @@ def publish_candidate(
             result_file = source / model_id / build_profile_id / name
             if result_file.is_file():
                 shutil.copyfile(result_file, compiled / model_id / build_profile_id / name)
+        # The runtime files a compile declares travel with its compile outputs into the package.
+        outputs_file = source / model_id / build_profile_id / "compile-outputs.json"
+        runtime_files = json.loads(outputs_file.read_text(encoding="utf-8")).get("runtime_files", []) \
+            if outputs_file.is_file() else []
+        if runtime_files:
+            shutil.copyfile(outputs_file, compiled / model_id / build_profile_id / outputs_file.name)
+        for item in runtime_files:
+            destination = compiled / model_id / build_profile_id / item["path"]
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source / model_id / build_profile_id / item["path"], destination)
     package_root = output / "packages"
     for package in packages:
         assemble_package(

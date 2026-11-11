@@ -15,6 +15,7 @@ from .benchmark_declarations import ACCURACY_REQUIREMENTS, FP32_BASELINE_SCRIPT,
 from .dependencies import resolve_benchmark_runtime
 from .errors import ValidationError
 from .model import CONVERSION_FILES, SCRIPTS_DIR, build_profile_for, compile_invocations_for, load_and_validate_model
+from .package import package_resources
 from .source import source_identity
 
 # Shared code used by ONNX builds.
@@ -202,6 +203,12 @@ def compile_fingerprint(
         },
         # scripts/compile.py measures numerical fidelity as it compiles.
         "fidelity": model.get("numerical_fidelity"),
+        # Packages are assembled only when their profile compiles, so a changed resource must recompile it.
+        # Models without resources keep their fingerprints.
+        **({"resources": [
+            {"id": item["id"], "source_sha256": source_identity(item["source"]), "install_path": item["install_path"]}
+            for item in package_resources(model)
+        ]} if model.get("resources") else {}),
         "compiler_version": compiler,
     }
     digest = hashlib.sha256(json.dumps(identity, sort_keys=True, separators=(",", ":")).encode())
@@ -234,8 +241,7 @@ def benchmark_fingerprint(
         raise ValidationError(f"{stage} of {model_id}/{build_profile_id} needs compiled component {missing[0]!r}")
     model_dir = f"models/{model_id}"
     required = [f"{model_dir}/{SCRIPTS[stage]}", *(PERFORMANCE_TOOLING if stage == "performance" else ACCURACY_TOOLING)]
-    requirements = ACCURACY_REQUIREMENTS if stage == "accuracy" else PERFORMANCE_REQUIREMENTS
-    optional = [f"{model_dir}/{requirements}"]
+    optional = [f"{model_dir}/{ACCURACY_REQUIREMENTS if stage == 'accuracy' else PERFORMANCE_REQUIREMENTS}"]
     baseline = build_profile_for(model, build_profile_id).get("benchmark_baseline") if stage == "performance" else None
     return _fingerprint({
         "stage": stage,

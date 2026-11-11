@@ -250,6 +250,26 @@ def test_numerical_fidelity_settings_invalidate_the_compile_fingerprint(model_re
     assert compile_fingerprint(model_repository, "alpha", "fixture", "fixture", "2.1.3") != first
 
 
+def test_package_resources_invalidate_only_their_models_compile_fingerprint(model_repository: Path) -> None:
+    """A package is assembled when its profile compiles, so a changed resource recompiles that profile."""
+    manifest = model_repository / "models" / "alpha" / "model.yaml"
+    model = yaml.safe_load(manifest.read_text(encoding="utf-8"))
+    without = compile_fingerprint(model_repository, "alpha", "fixture", "fixture", "2.1.3")
+    model["resources"] = {"runtime": {
+        "source": {"uri": "hf://models/example/runtime@" + "0" * 40 + "/voices.json", "sha256": "a" * 64,
+                   "size_bytes": 4},
+        "install_path": "runtime/voices.json",
+    }}
+    manifest.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
+    first = compile_fingerprint(model_repository, "alpha", "fixture", "fixture", "2.1.3")
+
+    model["resources"]["runtime"]["source"]["sha256"] = "b" * 64
+    manifest.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
+
+    assert first != without
+    assert compile_fingerprint(model_repository, "alpha", "fixture", "fixture", "2.1.3") not in {first, without}
+
+
 def test_compile_fingerprint_includes_model_local_recipe_helpers(model_repository: Path) -> None:
     helper = model_repository / "models" / "alpha" / "scripts" / "calibration.py"
     helper.write_text("# calibration helper\n", encoding="utf-8")
@@ -572,6 +592,7 @@ def test_publish_fresh_branch_reuses_only_compatible_catalog_runs(model_reposito
     "relative",
     [
         "scripts/performance.py",
+        "scripts/requirements-performance.txt",
         "scripts/accuracy.py",
         "scripts/fp32_baseline_accuracy.py",
         "scripts/requirements-accuracy.txt",
