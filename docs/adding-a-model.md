@@ -126,6 +126,11 @@ files [`conversion.outputs`](conversion-artifacts.md#publish-other-files) names.
 scripts/run_model_conversion.sh models/<model-id> default /tmp/<model-id>-export
 ```
 
+To omit an upstream package's unused dependencies, pin it in the optional
+`scripts/requirements-convert-nodeps.txt`. The runner installs
+that file with `pip --no-deps` after the normal requirements. Pin the dependencies
+the exporter uses in `requirements-convert.txt`.
+
 The **Vulcan Model Convert** workflow runs the same script and publishes
 a validated ONNX bundle. Declare `compilation.source: conversion` after matching
 output is registered. Editing the exporter requires a new conversion; compilation
