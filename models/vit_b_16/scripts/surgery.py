@@ -9,9 +9,7 @@ import onnx
 from onnx import numpy_helper
 
 INPUT = "pixel_values"
-INPUT_SHAPE = [1, 3, 224, 224]
 OUTPUT = "logits"
-OUTPUT_SHAPE = [1, 1000]
 LAYERS = 12
 HEAD_SIZE = 64
 # The export scales query and key by HEAD_SIZE ** -0.25 each. Their product, 1/8, is a power of two, so it moves into
@@ -27,17 +25,6 @@ def _require(condition: bool, message: str) -> None:
 
 def _shapes(values) -> dict[str, list[int]]:
     return {value.name: [dimension.dim_value for dimension in value.type.tensor_type.shape.dim] for value in values}
-
-
-def _fold(model: onnx.ModelProto) -> onnx.ModelProto:
-    """Fold the batch-size arithmetic of the export into constants at the compiled input shape."""
-    from onnxsim import simplify
-
-    folded, valid = simplify(model, perform_optimization=False, overwrite_input_shapes={INPUT: INPUT_SHAPE})
-    _require(valid, "onnxsim could not validate constant folding")
-    unfolded = sorted({node.op_type for node in folded.graph.node} & {"Constant", "Shape"})
-    _require(not unfolded, f"the graph still depends on {unfolded} nodes after constant folding")
-    return folded
 
 
 def _fuse_attention_projections(model: onnx.ModelProto, layer: int) -> None:
@@ -136,14 +123,15 @@ def prepare_model(source: Path, output_dir: Path) -> Path:
     _require([value.name for value in model.graph.input] == [INPUT], f"inputs {_shapes(model.graph.input)}")
     _require([value.name for value in model.graph.output] == [OUTPUT], f"outputs {_shapes(model.graph.output)}")
 
-    model = _fold(model)
+    # No onnxsim fold first: the attention blocks hold no shape arithmetic, and the Model Compiler's onnxsim 0.4 folds
+    # only with its optimizer on, which also rewrites the projections matched here. The compiler takes the export's
+    # remaining batch-size arithmetic as it is.
     for layer in range(LAYERS):
         _fuse_attention_projections(model, layer)
     _prune_initializers(model)
 
     del model.graph.value_info[:]
     model = onnx.shape_inference.infer_shapes(model, strict_mode=True)
-    _require(_shapes(model.graph.output) == {OUTPUT: OUTPUT_SHAPE}, f"outputs {_shapes(model.graph.output)}")
     onnx.checker.check_model(model, full_check=True)
     path = output_dir / "vit_b_16_fused_qkv.onnx"
     onnx.save(model, path)

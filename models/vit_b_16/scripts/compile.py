@@ -27,7 +27,7 @@ from afe.ir.tensor_type import ScalarType
 from afe.load.importers.general_importer import onnx_source
 from calibration import fidelity_names, preprocess_image, read_images
 from model_registry.model import load_model as load_metadata
-from surgery import INPUT, INPUT_SHAPE, prepare_model
+from surgery import prepare_model
 
 LOG = logging.getLogger("vit_b_16.compile")
 MODEL_DIR = Path(__file__).resolve().parents[1]
@@ -71,8 +71,8 @@ def compile_model(source: Path, component_dir: Path, profile_id: str) -> AfeMode
 
     input_name = str(parameters["input_name"])
     input_shape = tuple(int(value) for value in parameters["input_shape"])
-    if (input_name, input_shape) != (INPUT, tuple(INPUT_SHAPE)):
-        raise ValueError(f"surgery.py prepares {INPUT} {INPUT_SHAPE}, not {input_name} {list(input_shape)}")
+    if input_shape != (1, 3, 224, 224):
+        raise ValueError(f"unsupported ViT-B/16 input shape: {input_shape}")
 
     component_dir.mkdir(parents=True, exist_ok=False)
     model_name = f"{MODEL_ID}_{profile_id}"

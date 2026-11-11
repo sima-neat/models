@@ -245,7 +245,7 @@ def test_surgery_fuses_each_blocks_projections_and_scale(
 
     operations = [node.op_type for node in fused.graph.node]
     assert operations.count("Split") == 12
-    assert "Mul" not in operations and "Constant" not in operations
+    assert "Mul" not in operations
     # Two attention MatMuls and one projection per block, then the classifier.
     assert operations.count("MatMul") == 12 * 3 + 1
     source_weights = {value.name: numpy_helper.to_array(value) for value in export.graph.initializer}
