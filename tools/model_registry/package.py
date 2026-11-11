@@ -11,12 +11,13 @@ from typing import Any
 
 from jsonschema import Draft202012Validator
 
-from .artifact import deployment_files, read_runtime_files, verify_artifact
+from .artifact import deployment_files, verify_artifact
 from .errors import SourcePolicyError, ValidationError
 from .fetch import Fetcher, sha256_file
 from .mla_stage_simulation import SIMULATION_FILE
 from .model import _expand_source, load_and_validate_model, mpk_filename, source_members
 from .runner_approval import runner_provenance
+from .runtime_files import read_runtime_files
 from .source import SourceSpec, source_identity
 
 # scripts/compile.py writes the profile's numerical fidelity here; the package run publishes it.

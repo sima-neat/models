@@ -34,7 +34,7 @@ from afe.load.importers.general_importer import onnx_source
 from calibration import load_images, select_names
 from model_registry.fetch import sha256_file
 from model_registry.model import load_model as load_metadata
-from surgery import COMPONENT_GRAPHS, prepare_model
+from surgery import COMPONENT_GRAPHS, RUNTIME_FILES, prepare_model
 from surgery import graph_paths as _graph_paths
 
 MODEL_DIR = Path(__file__).resolve().parents[1]
@@ -383,7 +383,7 @@ def _write_compile_outputs(
         ],
         "runtime_files": [
             {"path": f"text_encoder/{name}", "sha256": sha256_file(output_dir / "text_encoder" / name)[0]}
-            for name in ("tokenizer.json", "token_embeddings.npy")
+            for name in RUNTIME_FILES
         ],
         "derived_graphs": [
             {"component_id": component_id, "sha256": graph_hashes[component_id]} for component_id in COMPONENT_IDS
@@ -438,7 +438,7 @@ def compile_model(source: Path, profile_id: str, fidelity_dataset: Path, output_
         _write_fidelity(temporary_dir, profile_id, fidelity_config, precision)
         output_dir.mkdir(parents=True)
         archives = _copy_component_archives(temporary_dir, profile_id, output_dir)
-        for name in ("tokenizer.json", "token_embeddings.npy"):
+        for name in RUNTIME_FILES:
             shutil.copyfile(temporary_dir / "graphs" / "text_encoder" / name, output_dir / "text_encoder" / name)
         shutil.copyfile(temporary_dir / FIDELITY_REPORT, output_dir / FIDELITY_REPORT)
         _write_compile_outputs(output_dir, profile_id, archives, graph_hashes)

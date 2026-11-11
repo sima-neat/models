@@ -1015,7 +1015,7 @@ def _main(argv: Sequence[str] | None, *, author_safe: bool) -> int:
             print("\n".join(model_component_mpks(args.compiled_dir, args.repository, args.model, args.build_profile)))
             return 0
         if args.command == "model-runtime-directory":
-            from .artifact import read_runtime_files
+            from .runtime_files import read_runtime_files
 
             profile_dir = args.compiled_dir.resolve() / args.model / args.build_profile
             if read_runtime_files(profile_dir):

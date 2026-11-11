@@ -7,7 +7,6 @@ import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .artifact import read_runtime_files
 from .errors import ValidationError
 from .model import load_models
 from .package import PROFILE_RESULT_FILES, _link_or_copy, assemble_package
@@ -25,6 +24,7 @@ from .registry import (
     publish_compilations,
     publish_packages,
 )
+from .runtime_files import read_runtime_files
 from .stage_plan import read_current_catalog
 
 DEPLOYMENTS = "/v1/repositories/sima-neat/models/deployments"

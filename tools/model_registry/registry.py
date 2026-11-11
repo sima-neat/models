@@ -25,7 +25,6 @@ from .artifact import (
     compile_output_fields,
     deployment_files,
     llima_compiled_parameters,
-    restore_runtime_files,
     validate_compile_outputs,
     verify_artifact,
     verify_llima,
@@ -42,6 +41,7 @@ from .package import FIDELITY_FILE
 from .registry_http import RegistryPublicationError, SigV4RegistryClient
 from .registry_http import read_registry_json_authenticated as _public_registry_json
 from .runner_approval import runner_provenance
+from .runtime_files import restore_runtime_files
 from .source import source_identity
 from .stage_plan import merge_catalog_sources, read_catalog_sources, read_current_catalog
 from .taxonomy import (

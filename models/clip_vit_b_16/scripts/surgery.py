@@ -24,6 +24,9 @@ TEXT_LENGTH = 77
 EMBED_DIM = 512
 CLASS_COUNT = 1000
 FIDELITY_PROMPTS = 64
+TOKENIZER_FILE = "tokenizer.json"
+TOKEN_EMBEDDINGS_FILE = "token_embeddings.npy"
+RUNTIME_FILES = (TOKENIZER_FILE, TOKEN_EMBEDDINGS_FILE)
 INTERFACE = {
     "pixel_values": [1, 3, IMAGE_SIZE, IMAGE_SIZE],
     "token_embeds": [1, TEXT_LENGTH, EMBED_DIM],
@@ -170,20 +173,12 @@ def build_image_encoder(clip):
     return ImageEncoder().float().eval()
 
 
-def load_clip(source, runtime_dir=None):
-    """Restore the upstream checkpoint and its processor from the conversion bundle."""
+def load_clip(source):
+    """Restore the upstream model, processor and original assets from the conversion bundle."""
     import torch
     from transformers import CLIPConfig, CLIPModel, CLIPProcessor
 
     checkpoint = torch.load(source, map_location="cpu", weights_only=True)
-    if runtime_dir is not None:
-        runtime_dir.mkdir(parents=True, exist_ok=True)
-        tokenizer = checkpoint["assets"]["tokenizer.json"]
-        (runtime_dir / "tokenizer.json").write_bytes(
-            tokenizer.encode("utf-8") if isinstance(tokenizer, str) else tokenizer
-        )
-        table = checkpoint["state_dict"]["text_model.embeddings.token_embedding.weight"].detach().numpy()
-        np.save(runtime_dir / "token_embeddings.npy", table, allow_pickle=False)
     assets = checkpoint["assets"]
     with tempfile.TemporaryDirectory(prefix="clip-processor-") as directory:
         for name, content in assets.items():
@@ -201,7 +196,16 @@ def load_clip(source, runtime_dir=None):
         if not torch.equal(positions, torch.arange(length)[None]):
             raise ValueError(f"unexpected {name} position IDs")
     clip.load_state_dict(state, strict=True)
-    return clip, processor
+    return clip, processor, assets
+
+
+def write_runtime_files(clip, assets, directory):
+    """Write the original tokenizer and FP32 lookup weights beside the exported text graph."""
+    directory.mkdir(parents=True, exist_ok=True)
+    tokenizer = assets[TOKENIZER_FILE]
+    (directory / TOKENIZER_FILE).write_bytes(tokenizer.encode("utf-8") if isinstance(tokenizer, str) else tokenizer)
+    table = clip.text_model.embeddings.token_embedding.weight.detach().numpy()
+    np.save(directory / TOKEN_EMBEDDINGS_FILE, table, allow_pickle=False)
 
 
 def tokenize(tokenizer, prompts, padding="max_length"):
@@ -300,7 +304,8 @@ def export_model(source, output_dir):
     output_dir.mkdir(parents=True, exist_ok=False)
     output = output_dir / "model.onnx"
     torch.set_num_threads(4)
-    clip, processor = load_clip(source, runtime_dir=output_dir / "text_encoder")
+    clip, processor, assets = load_clip(source)
+    write_runtime_files(clip, assets, output_dir / "text_encoder")
     prompt_ids, prompt_embeds = prepare_prompts(clip, processor.tokenizer)
     model = build_model(clip)
     rng = np.random.RandomState(0)

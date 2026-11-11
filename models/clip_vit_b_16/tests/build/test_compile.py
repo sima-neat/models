@@ -293,7 +293,7 @@ def test_build_holds_both_encoders_and_matches_the_onnx(
     assert [item["component_id"] for item in outputs["outputs"]] == ["image_encoder", "text_encoder"]
     for item in outputs["outputs"]:
         recipe.audit_mpk(compiled / item["mpk_path"], item["component_id"])
-    from model_registry.artifact import read_runtime_files
+    from model_registry.runtime_files import read_runtime_files
 
     assert [item["path"] for item in read_runtime_files(compiled)] == [
         "text_encoder/tokenizer.json", "text_encoder/token_embeddings.npy",

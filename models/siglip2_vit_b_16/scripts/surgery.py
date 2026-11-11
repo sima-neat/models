@@ -25,6 +25,9 @@ TEXT_LENGTH = 64
 EMBED_DIM = 768
 CLASS_COUNT = 1000
 FIDELITY_PROMPTS = 64
+TOKENIZER_FILE = "tokenizer.json"
+TOKEN_EMBEDDINGS_FILE = "token_embeddings.npy"
+RUNTIME_FILES = (TOKENIZER_FILE, TOKEN_EMBEDDINGS_FILE)
 INTERFACE = {
     "pixel_values": [1, 3, IMAGE_SIZE, IMAGE_SIZE],
     "token_embeds": [1, TEXT_LENGTH, EMBED_DIM],
@@ -61,20 +64,12 @@ def validate_config(directory):
         raise ValueError(f"config.json names model_type {model_type!r}, expected 'siglip'")
 
 
-def load_siglip(source, runtime_dir=None):
-    """Restore the checkpoint and processor from the verified conversion bundle."""
+def load_siglip(source):
+    """Restore the upstream model, processor and original assets from the conversion bundle."""
     import torch
     from transformers import AutoProcessor, SiglipConfig, SiglipModel
 
     bundle = torch.load(source, map_location="cpu", weights_only=True)
-    if runtime_dir is not None:
-        runtime_dir.mkdir(parents=True, exist_ok=True)
-        tokenizer = bundle["assets"]["tokenizer.json"]
-        (runtime_dir / "tokenizer.json").write_bytes(
-            tokenizer.encode("utf-8") if isinstance(tokenizer, str) else tokenizer
-        )
-        table = bundle["state_dict"]["text_model.embeddings.token_embedding.weight"].detach().numpy()
-        np.save(runtime_dir / "token_embeddings.npy", table, allow_pickle=False)
     with tempfile.TemporaryDirectory(prefix="siglip2-processor-") as directory:
         directory = Path(directory)
         for name, content in bundle["assets"].items():
@@ -87,7 +82,16 @@ def load_siglip(source, runtime_dir=None):
     config.vision_config._attn_implementation = "eager"
     model = SiglipModel(config).float().eval()
     model.load_state_dict(bundle["state_dict"], strict=True)
-    return model, processor
+    return model, processor, bundle["assets"]
+
+
+def write_runtime_files(siglip, assets, directory):
+    """Write the original tokenizer and FP32 lookup weights beside the exported text graph."""
+    directory.mkdir(parents=True, exist_ok=True)
+    tokenizer = assets[TOKENIZER_FILE]
+    (directory / TOKENIZER_FILE).write_bytes(tokenizer.encode("utf-8") if isinstance(tokenizer, str) else tokenizer)
+    table = siglip.text_model.embeddings.token_embedding.weight.detach().numpy()
+    np.save(directory / TOKEN_EMBEDDINGS_FILE, table, allow_pickle=False)
 
 
 def validate_export(path):
@@ -145,7 +149,7 @@ def write_text_check(checkpoint, onnx_path, output):
     prompt's text embedding from the FP32 ONNX."""
     import onnxruntime as ort
 
-    siglip, processor = load_siglip(checkpoint)
+    siglip, processor, _ = load_siglip(checkpoint)
     tokenizer = processor.tokenizer
 
     def token_ids(texts):
@@ -251,7 +255,8 @@ def export_model(source, output_dir):
     output_dir.mkdir(parents=True, exist_ok=False)
     output = output_dir / "model.onnx"
     torch.set_num_threads(4)
-    siglip, processor = load_siglip(source, runtime_dir=output_dir / "text_encoder")
+    siglip, processor, assets = load_siglip(source)
+    write_runtime_files(siglip, assets, output_dir / "text_encoder")
     prompt_ids = tokenize(processor.tokenizer, fidelity_prompts())
     with torch.inference_mode():
         prompt_embeds = siglip.text_model.embeddings.token_embedding(prompt_ids)

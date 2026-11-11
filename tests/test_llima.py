@@ -680,7 +680,7 @@ def test_mpk_candidate_binds_every_component_before_finalizing(tmp_path, monkeyp
     arguments = {**registry.args(), "environment": environment}
     result = publish_candidate(repository=root, dist_dir=tmp_path / "invocations", output_dir=tmp_path / "candidate",
                                model_id="fixture_model", build_profile_id="fixture", **arguments)
-    from model_registry.artifact import read_runtime_files
+    from model_registry.runtime_files import read_runtime_files
 
     assert read_runtime_files(tmp_path / "candidate/compiled/fixture_model/fixture") == runtime_files
     package = next((tmp_path / "candidate/packages").rglob("*.zip"))

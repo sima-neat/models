@@ -1572,7 +1572,7 @@ def test_package_publication_records_runtime_files_for_retained_builds(tmp_path)
 
 
 def test_retained_build_restores_declared_package_runtime_files(tmp_path):
-    from model_registry.artifact import read_runtime_files
+    from model_registry.runtime_files import read_runtime_files
 
     profile = _stage_catalog_build(tmp_path, [], runtime_files=True)
     assert (profile / "model/tokenizer.json").read_bytes() == b'{"version":"1.0"}'
