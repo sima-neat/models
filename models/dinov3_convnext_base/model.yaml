@@ -32,6 +32,16 @@ conversion:
       LICENSE.md: {sha256: 25d122eb8f5b880fd23c736fb6ea8018ee45c12237e00b8a86d14c653904999e, size_bytes: 7503}
   outputs: [weights.pth, reference.onnx]
 
+resources:
+  license:
+    # The DINOv3 License requires a copy of the license with every copy of the model.
+    source:
+      repository: timm/convnext_base.dinov3_lvd1689m
+      revision: 8e953102486d832f58e073cb4080f04001bb71ca
+      files:
+        LICENSE.md: {sha256: 25d122eb8f5b880fd23c736fb6ea8018ee45c12237e00b8a86d14c653904999e, size_bytes: 7503}
+    install_path: licenses
+
 compilation:
   format: onnx
   source: conversion
