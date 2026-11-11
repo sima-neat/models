@@ -1,0 +1,4 @@
+conversion:
+  run_tests: true
+compile:
+  run_tests: true

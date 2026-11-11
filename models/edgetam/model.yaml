@@ -1,0 +1,69 @@
+display_name: EdgeTAM
+description: Segments an object through a video from a click or a box on one frame, with Meta's on-device Segment Anything 2 tracker.
+model_type: vision
+tasks: [video_object_segmentation]
+
+modalities:
+  inputs: [video, keypoints]
+  outputs: [masks]
+
+architecture: edgetam
+
+# The upstream README: "The EdgeTAM model checkpoints and code are licensed under Apache 2.0."
+license:
+  spdx: Apache-2.0
+  redistribution: allowed
+  attribution: EdgeTAM by Chong Zhou et al. (Meta), distributed under Apache-2.0.
+
+upstream:
+  repository: https://huggingface.co/facebook/EdgeTAM
+  revision: 14d7ecc48c656b94e5184519f698cd5386c5a2bf
+  derived_from: https://github.com/facebookresearch/EdgeTAM/tree/7711e012a30a2402c4eaab637bdb00a521302c91
+
+# convert.py exports the image encoder, whose RepViT backbone needs timm, and republishes the renamed checkpoint, from
+# which surgery.py builds the other three components at compile time.
+conversion:
+  source:
+    uri: hf://models/facebook/EdgeTAM@14d7ecc48c656b94e5184519f698cd5386c5a2bf/edgetam.pt
+    sha256: ed2d4850b8792c239689b043c47046ec239b6e808a3d9b6ae676c803fd8780df
+    size_bytes: 56116523
+  outputs: [image_encoder.onnx, weights.pth]
+
+compilation:
+  format: onnx
+  source: conversion
+  # Each frame runs the image encoder, then the memory attention on a tracked frame, then the mask decoder, then the
+  # memory encoder on the chosen mask.
+  components: [image_encoder, memory_attention, mask_decoder, memory_encoder]
+
+# COCO has no videos: calibration.py tracks annotated cal objects through clips cropped from each image.
+calibrations:
+- id: coco-2017-cal
+  dataset: {id: coco-2017, variant: cal, sha256: 54c64d84122eba371ac014d7b43849a461551c2e6c5c430b5ead90ec1dec12b1, size_bytes: 187510866}
+
+build_profiles:
+  # The image encoder runs BF16: at INT8 every RepViT stage adds error, and its image embeddings keep a cosine of only
+  # 0.81 with FP32. The memory attention runs INT8 with its attention scores and softmax in BF16, where the -1e4
+  # scores of empty memory slots stay exact. The decoder runs BF16, because INT8 cannot represent its object pointer
+  # gate; its Sin and Cos still use INT8 lookup tables, so it calibrates. The memory encoder runs INT8.
+  w16a16_w8a8_mixed_w16a16_w8a8:
+    calibration_dataset: coco-2017-cal
+    components:
+      image_encoder:
+        parameters: {precision: w16a16, calibration_bins: 2048, calibration_samples: 32}
+      memory_attention:
+        parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 32, bf16_regions: [attention]}
+      mask_decoder:
+        parameters: {precision: w16a16, calibration_bins: 2048, calibration_samples: 32}
+      memory_encoder:
+        parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 32}
+
+pipeline:
+- {cpu: "Stretch each frame to 1024x1024 and normalize it"}
+- {component: image_encoder}
+- {cpu: "Skip on the prompted frame; otherwise fill the memory bank"}
+- {component: memory_attention}
+- {cpu: "Prompt points as normalized coordinates and one-hot point types"}
+- {component: mask_decoder}
+- {cpu: "Choose a mask, upsample it to 1024x1024 and turn it into probabilities"}
+- {component: memory_encoder}
