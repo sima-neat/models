@@ -10,7 +10,7 @@ YOLO-World v2 M detects objects described by text, including categories outside 
 
 Letterbox RGB images to 640×640 with centered padding of 114 and divide pixels by 255. Pass `images` in height, width, channel order.
 
-Tokenize each class with the packaged tokenizer, right-pad to 77 tokens with end-of-text ID 49407, and look up the packaged token table on the CPU. The text encoder takes `token_embeddings` [1,1,77,512] and `eos_selector` [1,1,96,1], with one at the first end-of-text position. Only the first 77 selector entries are used. It returns `text_embeddings` [1,1,1,512].
+The package ships `prompt_assets/tokenizer.json` and `prompt_assets/token_embedding_table.npy` beside the compiled components. Tokenize each class, right-pad to 77 tokens with end-of-text ID 49407, and look up its token vectors on the CPU. The text encoder takes `token_embeddings` [1,1,77,512] and `eos_selector` [1,1,96,1], with one at the first end-of-text position. Only the first 77 selector entries are used. It returns `text_embeddings` [1,1,1,512].
 
 1. Normalize each returned 512-value vector and cache it. Fill detector `text_embeddings` [1,80,512] and `prompt_mask` [1,80]; use one for active slots and zero for inactive slots, with at least one active slot.
 2. Decode `bbox_dfl_s8`, `bbox_dfl_s16`, `bbox_dfl_s32`: softmax each edge's 16 bins, project onto 0–15, and apply stride 8, 16 or 32 around grid-cell centers.

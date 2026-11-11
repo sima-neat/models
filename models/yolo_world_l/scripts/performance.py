@@ -8,7 +8,6 @@ updates are outside these independent model timings, as requested.
 from __future__ import annotations
 
 import argparse
-import io
 import json
 from pathlib import Path
 import random
@@ -89,12 +88,16 @@ class Component:
             self.runner = None
 
 
-def prompt_assets(archive):
+def prompt_assets(archive, resources=None):
     from tokenizers import Tokenizer
 
-    with tarfile.open(archive, "r:gz") as source:
-        table = np.load(io.BytesIO(source.extractfile("prompt_assets/token_embedding_table.npy").read()), allow_pickle=False)
-        tokenizer = Tokenizer.from_str(source.extractfile("prompt_assets/tokenizer.json").read().decode("utf-8"))
+    # Compile staging nests each component; the installed package puts MPKs at its root.
+    archive = Path(archive)
+    root = Path(resources) if resources is not None else (
+        archive.parent.parent if archive.parent.name == "text_encoder" else archive.parent)
+    assets = root / "prompt_assets"
+    table = np.load(assets / "token_embedding_table.npy", allow_pickle=False)
+    tokenizer = Tokenizer.from_file(str(assets / "tokenizer.json"))
     if table.shape != (49408, 512) or table.dtype != np.float32:
         raise ValueError("unexpected CLIP lookup table")
     tokenizer.no_truncation()
@@ -115,10 +118,10 @@ def prompt_input(prompt, tokenizer, table):
     return {"token_embeddings": table[ids][None, None], "eos_selector": selector}
 
 
-def encode_classes(archive, prompts):
+def encode_classes(archive, prompts, resources=None):
     if not 1 <= len(prompts) <= 80 or any(not prompt.strip() for prompt in prompts):
         raise ValueError("provide 1..80 nonempty prompts")
-    tokenizer, table = prompt_assets(archive)
+    tokenizer, table = prompt_assets(archive, resources)
     encoder = Component(archive)
     embeddings, mask = np.zeros((1, 80, 512), np.float32), np.zeros((1, 80), np.float32)
     try:
@@ -134,7 +137,7 @@ def encode_classes(archive, prompts):
     return embeddings, mask
 
 
-def benchmark(mpks, dataset, output):
+def benchmark(mpks, dataset, output, resources=None):
     import pyneat
 
     from calibration import preprocess_image
@@ -145,8 +148,8 @@ def benchmark(mpks, dataset, output):
         raise ValueError("expected COCO's 80 classes")
     record = random.Random(0).choice(sorted(annotations["images"], key=lambda item: item["id"]))
     image = preprocess_image((dataset / "val2017" / record["file_name"]).read_bytes())
-    embeddings, mask = encode_classes(mpks["text_encoder"], [item["name"] for item in categories])
-    tokenizer, table = prompt_assets(mpks["text_encoder"])
+    embeddings, mask = encode_classes(mpks["text_encoder"], [item["name"] for item in categories], resources)
+    tokenizer, table = prompt_assets(mpks["text_encoder"], resources)
     reports = {}
     for name in COMPONENTS:
         component = Component(mpks[name], decode=name == "detector")
@@ -178,11 +181,12 @@ def main():
     parser.add_argument("--mpk", action="append", required=True)
     parser.add_argument("--dataset", required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--resources", type=Path, help="package root containing prompt_assets; defaults to the MPK location")
     args = parser.parse_args()
     dataset_id, directory = args.dataset.split("=", 1)
     if dataset_id != "coco-2017-val":
         parser.error("expected coco-2017-val")
-    benchmark(parse_mpks(args.mpk), Path(directory), args.output)
+    benchmark(parse_mpks(args.mpk), Path(directory), args.output, args.resources)
 
 
 if __name__ == "__main__":

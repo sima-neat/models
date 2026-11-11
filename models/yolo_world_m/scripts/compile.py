@@ -59,22 +59,6 @@ def audit_mpk(path):
     return manifest
 
 
-def add_prompt_assets(archive, directory):
-    """Package the CPU lookup table and tokenizer beside the text tower's executable."""
-    temporary = archive.with_suffix(".tmp")
-    with tarfile.open(archive, "r:gz") as source, tarfile.open(temporary, "w:gz") as target:
-        for member in source.getmembers():
-            target.addfile(member, source.extractfile(member) if member.isfile() else None)
-        for name in ("token_embedding_table.npy", "tokenizer.json"):
-            path = directory / name
-            member = tarfile.TarInfo("prompt_assets/" + name)
-            member.size = path.stat().st_size
-            member.mode = 0o644
-            with path.open("rb") as stream:
-                target.addfile(member, stream)
-    temporary.replace(archive)
-
-
 def compile_model(source, output, profile_id, dataset=None):
     with tempfile.TemporaryDirectory(prefix=MODEL_DIR.name + "-") as temporary:
         directory = Path(temporary)
@@ -129,8 +113,6 @@ def compile_prepared(directory, output, profile_id, dataset=None, quantized_outp
                               log_level=logging.INFO, layer_norm_use_fp32_intermediates=True)
             (archive,) = (build / component).glob("*_mpk.tar.gz")
             audit_mpk(archive)
-            if component == "text_encoder":
-                add_prompt_assets(archive, directory)
             destination = output / component
             destination.mkdir()
             shutil.copyfile(archive, destination / archive.name)
@@ -139,6 +121,16 @@ def compile_prepared(directory, output, profile_id, dataset=None, quantized_outp
                 "mpk_path": f"{component}/{archive.name}",
                 "mpk_sha256": sha256_file(destination / archive.name)[0],
             })
+    assets = output / "prompt_assets"
+    assets.mkdir()
+    manifest["runtime_files"] = []
+    for name in ("token_embedding_table.npy", "tokenizer.json"):
+        destination = assets / name
+        shutil.copyfile(directory / name, destination)
+        manifest["runtime_files"].append({
+            "path": destination.relative_to(output).as_posix(),
+            "sha256": sha256_file(destination)[0],
+        })
     (output / "compile-outputs.json").write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 

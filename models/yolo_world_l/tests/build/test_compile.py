@@ -116,6 +116,8 @@ def test_compile_recipe_records_grouped_graphs_and_final_archives(tmp_path, load
     np.save(prepared / "token_embedding_table.npy", np.zeros((1, 512), np.float32))
     (prepared / "tokenizer.json").write_text("{}")
 
+    compiler_archives = {}
+
     class Backend:
         def quantize(self, **kwargs):
             return self
@@ -131,6 +133,7 @@ def test_compile_recipe_records_grouped_graphs_and_final_archives(tmp_path, load
                     member = tarfile.TarInfo(name)
                     member.size = len(content)
                     archive.addfile(member, io.BytesIO(content))
+            compiler_archives[directory.name] = (directory / "fixture_mpk.tar.gz").read_bytes()
 
     output = tmp_path / "build"
     profile = "w8a8_mixed_w16a16"
@@ -145,9 +148,21 @@ def test_compile_recipe_records_grouped_graphs_and_final_archives(tmp_path, load
         {"component_id": component, "sha256": hashlib.sha256(f"{component} graph".encode()).hexdigest()}
         for component in compiler.COMPONENTS
     ]
-    # The checksum must cover the final CLIP archive including its prompt assets.
-    with tarfile.open(output / "text_encoder" / "fixture_mpk.tar.gz") as archive:
-        assert "prompt_assets/token_embedding_table.npy" in archive.getnames()
+    # Preserve the compiler bytes; CPU files travel beside the archives in the outer package.
+    for component, payload in compiler_archives.items():
+        assert (output / component / "fixture_mpk.tar.gz").read_bytes() == payload
+    assert result["runtime_files"] == [
+        {"path": f"prompt_assets/{name}", "sha256": hashlib.sha256((prepared / name).read_bytes()).hexdigest()}
+        for name in ("token_embedding_table.npy", "tokenizer.json")
+    ]
+    for item in result["runtime_files"]:
+        assert (output / item["path"]).read_bytes() == (prepared / Path(item["path"]).name).read_bytes()
+    table = output / "prompt_assets/token_embedding_table.npy"
+    payload = table.read_bytes()
+    table.write_bytes(b"changed runtime file")
+    with pytest.raises(ValidationError, match="runtime file.*SHA-256"):
+        validate_compile_outputs(manifest, output, **identity)
+    table.write_bytes(payload)
     (output / "detector" / "fixture_mpk.tar.gz").write_bytes(b"changed after manifest")
     with pytest.raises(ValidationError, match="MPK SHA-256 does not match"):
         validate_compile_outputs(manifest, output, **identity)

@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from model_registry.model_tests import measured_shortfalls
 
 
@@ -24,3 +26,40 @@ def test_component_arguments_are_complete_and_unique(load_script):
     for values in (["detector=image.tgz"], ["detector=a", "detector=b", "text_encoder=c"]):
         with pytest.raises(ValueError):
             script.parse_mpks(values)
+
+
+@pytest.mark.parametrize("layout", ["compiled", "installed", "explicit"])
+def test_prompt_assets_load_from_files_beside_unchanged_components(tmp_path, load_script, monkeypatch, layout):
+    import json
+    import sys
+    from types import SimpleNamespace
+
+    import numpy as np
+
+    script = load_script("performance")
+    assets = tmp_path / "package/prompt_assets"
+    assets.mkdir(parents=True)
+    # Sparse on disk: exercise the real NPY loader without generating 96 MiB of fixture values.
+    table = np.lib.format.open_memmap(assets / "token_embedding_table.npy", mode="w+", dtype=np.float32,
+                                    shape=(49408, 512))
+    table[49407, 0] = 3.5
+    del table
+    (assets / "tokenizer.json").write_text('{"fixture": true}')
+    tokenizer = SimpleNamespace(no_truncation=lambda: None, enable_padding=lambda **kwargs: None)
+
+    def from_file(path):
+        assert Path(path) == assets / "tokenizer.json"
+        assert json.loads(Path(path).read_text()) == {"fixture": True}
+        return tokenizer
+
+    monkeypatch.setitem(sys.modules, "tokenizers", SimpleNamespace(Tokenizer=SimpleNamespace(from_file=from_file)))
+    archive = (tmp_path / "package/text_encoder/encoder_mpk.tar.gz" if layout == "compiled" else
+               tmp_path / "package/encoder_mpk.tar.gz" if layout == "installed" else tmp_path / "elsewhere/encoder.tgz")
+    archive.parent.mkdir(parents=True, exist_ok=True)
+    archive.write_bytes(b"not opened: compiler archive is independent of CPU resources")
+    actual_tokenizer, actual_table = script.prompt_assets(archive, tmp_path / "package" if layout == "explicit" else None)
+    assert actual_tokenizer is tokenizer
+    assert actual_table[49407, 0] == 3.5
+    (assets / "tokenizer.json").unlink()
+    with pytest.raises(FileNotFoundError):
+        script.prompt_assets(archive, tmp_path / "package" if layout == "explicit" else None)

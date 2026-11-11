@@ -171,6 +171,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--mpk", action="append", required=True, help="component=<path>; text_encoder and detector")
     parser.add_argument("--dataset", required=True, help="coco-2017-val=<extracted directory>")
     parser.add_argument("--output", type=Path, required=True, help="directory for model-report.json")
+    parser.add_argument("--resources", type=Path, help="package root containing prompt_assets; defaults to the MPK location")
     parser.add_argument("--limit", type=int, help="measure a seeded sample of images (local runs only)")
     args = parser.parse_args(argv)
     dataset_id, dataset_dir = args.dataset.split("=", 1)
@@ -189,7 +190,7 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit(f"expected {CLASSES} COCO categories, found {len(categories)}")
 
     category_records = sorted(ground_truth.dataset["categories"], key=lambda row: row["id"])
-    embeddings, mask = encode_classes(mpks["text_encoder"], [row["name"] for row in category_records])
+    embeddings, mask = encode_classes(mpks["text_encoder"], [row["name"] for row in category_records], args.resources)
     args.output.mkdir(parents=True, exist_ok=True)
     np.savez(args.output / "prompts_bf16.npz", text_embeddings=embeddings, prompt_mask=mask, category_ids=categories)
     rows: list[np.ndarray] = []
