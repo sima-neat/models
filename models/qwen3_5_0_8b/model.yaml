@@ -9,7 +9,7 @@ modalities:
   inputs: [text, image]
   outputs: [text]
 
-architecture: qwen
+architecture: qwen3_5
 
 license:
   spdx: Apache-2.0

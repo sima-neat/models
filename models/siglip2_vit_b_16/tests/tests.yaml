@@ -1,0 +1,33 @@
+# Historical gates from before the embedding-only graph and compiled-text
+# evaluation. Replace both stages with this revision's published CI results.
+conversion:
+  run_tests: true
+compile:
+  run_tests: true
+accuracy:
+  run_tests: true
+  expected:
+    w16a16:
+      imagenet-2012-val:
+        top1_accuracy: 0.7770
+        top5_accuracy: 0.9541
+    w8a16:
+      imagenet-2012-val:
+        top1_accuracy: 0.7733
+        top5_accuracy: 0.9528
+performance:
+  run_tests: true
+  # Historical manual measurements on bd3c4a3 packages, not registry benchmark runs.
+  expected:
+    w16a16:
+      components:
+        image_encoder:
+          throughput_fps: 115.6
+        text_encoder:
+          throughput_fps: 261.4
+    w8a16:
+      components:
+        image_encoder:
+          throughput_fps: 180.6
+        text_encoder:
+          throughput_fps: 397.7

@@ -1,3 +1,5 @@
+# A build profile of this model compiles for over 20 minutes, so it builds only on request.
+build-on-demand: true
 display_name: RF-DETR Large
 description: The largest RF-DETR transformer detector here, for COCO objects.
 model_type: vision

@@ -44,12 +44,13 @@ if [[ "${help_text}" != "${module_help_text}" ]]; then
   echo "Author console and module command surfaces do not match" >&2
   exit 1
 fi
-for command in validate validate-models fetch fetch-calibration fetch-fidelity-dataset matrix resolve-compiler simulate-mla-stages verify-mpk verify-artifact; do
+for command in validate validate-models fetch fetch-calibration fetch-fidelity-dataset fetch-resources matrix resolve-compiler simulate-mla-stages verify-mpk verify-artifact; do
   grep -q "${command}" <<< "${help_text}" || {
     echo "Installed author CLI is missing command: ${command}" >&2
     exit 1
   }
 done
+# Promotion (including --target-branch main) remains CI-only in the full tooling.
 for command in promotion package conversion-entrypoint publish-conversion publish publish-candidate publish-branch-deployment publish-report publish-catalog stage-registry-build; do
   if "${MODEL_REGISTRY_BIN}" "${command}" --help >/dev/null 2>&1; then
     echo "Installed author CLI unexpectedly exposes CI command: ${command}" >&2

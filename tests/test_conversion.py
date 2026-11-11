@@ -543,7 +543,7 @@ def test_conversion_fingerprint_ignores_generated_caches(repository):
     model = load_and_validate_model(repository / "models/yolo26x")
     original = conversion.conversion_fingerprint(repository, model)
     path = repository / "models/yolo26x/scripts/__pycache__/convert.pyc"
-    path.parent.mkdir()
+    path.parent.mkdir(exist_ok=True)
     path.write_bytes(b"generated cache")
     assert conversion.conversion_fingerprint(repository, model) == original
 
@@ -555,15 +555,41 @@ def test_conversion_fingerprint_names_an_unparsable_recipe(repository):
         conversion.conversion_fingerprint(repository, model)
 
 
-@pytest.mark.parametrize("relative", conversion.CONVERSION_TOOLING)
-def test_shared_conversion_dependency_invalidates_saved_selection(repository, relative):
+@pytest.mark.parametrize(
+    "relative",
+    [
+        ".github/workflows/vulcan-model-convert.yml",
+        "scripts/run_model_conversion.sh",
+        "tools/model_registry/conversion.py",
+        "tools/model_registry/fetch.py",
+        "tools/model_registry/source.py",
+    ],
+)
+def test_shared_conversion_tooling_keeps_the_saved_selection(repository, relative):
     model = load_and_validate_model(repository / "models/yolo26x")
     original = conversion.conversion_fingerprint(repository, model)
     path = repository / relative
     path.write_bytes(path.read_bytes() + b"\n")
+    assert conversion.conversion_fingerprint(repository, model) == original
+
+
+def test_raising_the_fingerprint_version_invalidates_saved_selection(repository, monkeypatch):
+    model = load_and_validate_model(repository / "models/yolo26x")
+    original = conversion.conversion_fingerprint(repository, model)
+    monkeypatch.setattr(conversion, "FINGERPRINT_VERSION", conversion.FINGERPRINT_VERSION + 1)
     assert conversion.conversion_fingerprint(repository, model) != original
     with pytest.raises(ValidationError, match="checkout's recipe"):
         conversion.apply_selection(model, {"yolo26x": {"conversion_fingerprint": original}}, root=repository)
+
+
+def test_another_checkpoint_invalidates_saved_selection(repository):
+    original = conversion.conversion_fingerprint(repository, load_and_validate_model(repository / "models/yolo26x"))
+    path = repository / "models/yolo26x/model.yaml"
+    doc = yaml.safe_load(path.read_text())
+    doc["conversion"]["source"]["sha256"] = "0" * 64
+    path.write_text(yaml.safe_dump(doc))
+    repinned = load_and_validate_model(repository / "models/yolo26x")
+    assert conversion.conversion_fingerprint(repository, repinned) != original
 
 
 def test_saved_selection_rejects_a_different_recipe(repository, monkeypatch):
@@ -653,10 +679,12 @@ def test_targeted_plan_publishes_catalog_with_unselected_conversion(
     matrix.write_text(json.dumps(result["compile"]))
     prior = {"id": "yolo26x", "builds": [], "packages": [],
              "build_on_demand": not deferred_pending, "build_requirements": {"unchanged": "requirements"},
-             "documentation": {"source_commit": "b" * 40}}
+             "documentation": {"source_commit": "b" * 40},
+             # Published under an older taxonomy whose architecture ID was since renamed.
+             "categories": {"architecture": {"id": "yolo", "paradigm": "cnn"}}}
     documentation = {model_id: {"source_commit": "a" * 40, "run_id": model_id + "-docs"}
                      for model_id in ("yolo26x", "yolo26l")}
-    monkeypatch.setattr(publication, "_revision_documentation_receipts", lambda *args: None)
+    monkeypatch.setattr(publication, "read_current_catalog", lambda *args: (None, None))
     monkeypatch.setattr(publication, "publish_model_documentation", lambda **kwargs: documentation)
     pending = [{"model_id": "yolo26x", "build_profile_id": "w16a16", "compile_invocation_id": "w16a16",
                 "component_ids": ["model"], "compile_fingerprint": "c" * 64}] if deferred_pending else []
@@ -672,7 +700,14 @@ def test_targeted_plan_publishes_catalog_with_unselected_conversion(
         entries = {model["id"]: model for model in published["models"]}
         assert "yolo26l" in entries
         if has_previous:
-            assert entries["yolo26x"] == {**prior, "documentation": documentation["yolo26x"]}
+            from model_registry.model import load_and_validate_model
+            from model_registry.taxonomy import canonical_taxonomy_document, load_taxonomy, validate_model_categorization
+            taxonomy = canonical_taxonomy_document(load_taxonomy(repository / "taxonomies/model-taxonomy.yaml"))
+            categories = validate_model_categorization(
+                load_and_validate_model(repository / "models/yolo26x"), taxonomy
+            )
+            assert categories["architecture"]["id"] != "yolo"
+            assert entries["yolo26x"] == {**prior, "documentation": documentation["yolo26x"], "categories": categories}
         else:
             assert "yolo26x" not in entries
         expected_pending_models = {"yolo26l", "yolo26x"} if has_previous and deferred_pending else {"yolo26l"}

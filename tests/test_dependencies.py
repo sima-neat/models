@@ -12,11 +12,10 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_repository_model_compiler_dependency_is_pinned() -> None:
     manifest = json.loads((ROOT / "deps" / "manifest.json").read_text(encoding="utf-8"))
-    compiler = manifest["model-compiler"]
-    version, channel, revision = compiler["version"], compiler["channel"], compiler["revision"]
+    version = manifest["model-compiler"]["version"]
     assert resolve_model_compiler(ROOT) == {
-        "identity": f"{version}+{channel}.{revision}",
-        "label": f"model-compiler-{channel}-{revision}",
+        "identity": version,
+        "label": f"model-compiler-{version}",
         "version": version,
     }
 

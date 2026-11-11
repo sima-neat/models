@@ -1,7 +1,8 @@
 """Write a model's report from what Neat Core returned.
 
-A model's scripts/performance.py and scripts/accuracy.py measure the whole model their own way, then hand
-Core's results to from_performance() or from_accuracy(). Report.save() writes model-report.json, which the registry
+A model's scripts hand Core's results to from_performance() or from_accuracy(). Independent component
+benchmarks combine their single-component reports with from_component_performance().
+Report.save() writes model-report.json, which the registry
 publishes unchanged and the model browser reads. metrics.json names every metric a report may hold, with
 its unit, direction, and the Vulcan measurement name (registry_name) it is published under.
 
@@ -23,7 +24,7 @@ REPORT_FILE = "model-report.json"
 # Core's own saved BenchmarkReport, kept beside the report as evidence.
 CORE_REPORT_FILE = "benchmark-report.json"
 METRICS: dict[str, dict[str, Any]] = json.loads(Path(__file__).with_name("metrics.json").read_text(encoding="utf-8"))
-# Every performance report must hold these; each accuracy dataset's datasets/<id>.yaml names its own.
+# Every performance result must hold these; each accuracy dataset's datasets/<id>.yaml names its own.
 REQUIRED_PERFORMANCE_METRICS = [name for name, metric in METRICS.items() if metric.get("required")]
 # Derived from the measured power and rate rather than read from Core.
 ENERGY_PER_INFERENCE = "energy_per_inference_joules"
@@ -99,8 +100,8 @@ def from_performance(
         raise ValueError("models must name at least one component")
     with tempfile.TemporaryDirectory() as scratch:
         core_report = _saved(benchmark, Path(scratch) / CORE_REPORT_FILE)
-        measured_telemetry = core_report["telemetry"] if telemetry is None else _saved(
-            telemetry, Path(scratch) / "telemetry.json"
+        measured_telemetry = (
+            core_report["telemetry"] if telemetry is None else _saved(telemetry, Path(scratch) / "telemetry.json")
         )
     layer_stats = _component_stats("mla_layer_stats", mla_layer_stats, core_report, models)
     stage_stats = _component_stats("mla_stage_stats", mla_stage_stats, core_report, models)
@@ -123,6 +124,30 @@ def from_performance(
     )
 
 
+def from_component_performance(reports: dict[str, Report]) -> Report:
+    """Independent component benchmarks, without a combined throughput or latency.
+
+    Build each entry with ``from_performance(benchmark, {component: model}, workload=...)``.
+    Every component retains its own metrics, telemetry, workload and Core evidence.
+    """
+    if not reports:
+        raise ValueError("reports must name at least one component")
+    components, evidence = {}, {}
+    header = _header("performance")
+    for name, report in reports.items():
+        document = report.document
+        if document.get("stage") != "performance" or set(document.get("components", {})) != {name}:
+            raise ValueError(f"{name}: expected a performance report of exactly that component")
+        if document["runtime"] != header["runtime"]:
+            raise ValueError(f"{name}: component benchmarks must use the same runtime")
+        components[name] = {
+            **document["components"][name],
+            **{key: document[key] for key in ("metrics", "workload", "telemetry")},
+        }
+        evidence.update({f"{name}-{filename}": value for filename, value in report.evidence.items()})
+    return Report({**header, "scope": "components", "components": components}, evidence)
+
+
 def from_accuracy(datasets: dict[str, dict[str, Any]]) -> Report:
     """An accuracy report: per dataset, each metric's score over its evaluated part, in the metric's unit.
 
@@ -131,10 +156,12 @@ def from_accuracy(datasets: dict[str, dict[str, Any]]) -> Report:
     """
     if not datasets:
         raise ValueError("datasets must name at least one dataset")
-    return Report({
-        **_header("accuracy"),
-        "datasets": {name: _dataset_result(name, result) for name, result in datasets.items()},
-    })
+    return Report(
+        {
+            **_header("accuracy"),
+            "datasets": {name: _dataset_result(name, result) for name, result in datasets.items()},
+        }
+    )
 
 
 def _component_stats(

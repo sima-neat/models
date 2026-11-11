@@ -243,7 +243,7 @@ async function downloadPackage(runId) {
     const packageId = metadata.package_id;
     const profile = variantLabel(metadata.build_profile_id);
     const components = Object.keys(metadata.component_run_ids);
-    // The registry serves the package under its published filename: the MPK itself, or a ZIP.
+    // The registry serves the package under its published filename: a ZIP, or the MPK of a build published before ZIPs.
     const downloads = await prepareDownloads([{
       runId: run.id,
       component: "Full package",

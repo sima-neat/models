@@ -42,7 +42,8 @@ function pyneatVersion(report) {
 
 // A performance report holds its metrics; an accuracy report holds them per dataset.
 function supported(report, stage) {
-  const results = stage === "accuracy" ? report?.datasets : report?.metrics;
+  const results = stage === "accuracy" ? report?.datasets
+    : report?.scope === "components" ? report.components : report?.metrics;
   return report?.schema === "sima.model-report" && report.schema_version === 1 && report.stage === stage
     && Boolean(results) && typeof results === "object";
 }
@@ -120,26 +121,35 @@ function generationWorkloads(generation) {
   return (generation?.workloads || []).map(adapt);
 }
 
+function performanceReadings(report) {
+  const telemetry = report.telemetry || {};
+  return {
+    measurements: Object.fromEntries(Object.entries(report.metrics || {})
+      .filter(([key, value]) => Number.isFinite(value) && !RETIRED_METRICS.has(key))
+      .map(([key, value]) => [key, measurement(key, value, telemetry)])),
+    workload: typeof report.workload === "string" ? report.workload : "",
+    telemetry: telemetrySource(report.telemetry),
+    cpuCores: cpuCores(report.telemetry),
+  };
+}
+
 // A performance report measures the whole model, however many components it runs, and records each
-// component's layer timings and execution plan in the order the model runs them.
-export function readPerformance(benchmarkRun) {
+// component's layer timings and execution plan. The registry stores the report as PostgreSQL jsonb, which
+// reorders its keys, so `order` gives the component IDs in the order the model runs them.
+export function readPerformance(benchmarkRun, order = []) {
   return read(benchmarkRun, "performance", ({ run, report }) => {
-    const telemetry = report.telemetry || {};
     return {
-      measurements: Object.fromEntries(Object.entries(report.metrics)
-        .filter(([key, value]) => Number.isFinite(value) && !RETIRED_METRICS.has(key))
-        .map(([key, value]) => [key, measurement(key, value, telemetry)])),
-      workload: typeof report.workload === "string" ? report.workload : "",
+      ...performanceReadings(report),
+      scope: report.scope || "model",
       tool: pyneatVersion(report),
       generation: report.generation || null,
       workloads: generationWorkloads(report.generation),
       timestamp: run?.finished_at || run?.created_at || null,
       modelId: run?.metadata?.model_id,
       buildProfileId: run?.metadata?.build_profile_id,
-      telemetry: telemetrySource(report.telemetry),
-      cpuCores: cpuCores(report.telemetry),
-      components: Object.entries(report.components || {}).map(([id, component]) => ({
+      components: inRunOrder(Object.entries(report.components || {}), order).map(([id, component]) => ({
         id,
+        ...(report.scope === "components" ? performanceReadings(component) : {}),
         layerAnalysis: analyzeLayers(component?.mla_layer_stats?.layers),
         mlaStageStats: component?.mla_stage_stats || null,
         // Inferences in each MLA run, which Core's execution plan records for every model.
@@ -148,6 +158,12 @@ export function readPerformance(benchmarkRun) {
       })),
     };
   });
+}
+
+// Report entries with the IDs `order` names first, in its order, and any others after them as stored.
+function inRunOrder(entries, order) {
+  const rank = ([id]) => (order.includes(id) ? order.indexOf(id) : order.length);
+  return [...entries].sort((left, right) => rank(left) - rank(right));
 }
 
 // An accuracy report scores the whole model on each dataset model.yaml names, as ratios over the evaluated part

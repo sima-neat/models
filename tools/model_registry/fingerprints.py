@@ -11,10 +11,11 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .benchmark_declarations import ACCURACY_REQUIREMENTS, SCRIPTS
+from .benchmark_declarations import ACCURACY_REQUIREMENTS, FP32_BASELINE_SCRIPT, PERFORMANCE_REQUIREMENTS, SCRIPTS
 from .dependencies import resolve_benchmark_runtime, resolve_model_compiler
 from .errors import ValidationError
 from .model import CONVERSION_FILES, SCRIPTS_DIR, build_profile_for, compile_invocations_for, load_and_validate_model
+from .package import package_resources
 from .source import source_identity
 
 # Shared code used by ONNX builds.
@@ -26,16 +27,18 @@ COMPILE_TOOLING = (
 
 _IGNORED_BUILD_PARTS = {".git", "__pycache__"}
 _IGNORED_BUILD_SUFFIXES = {".pyc", ".pyo"}
-# Conversion produces the pinned source, and the benchmarks consume the MPK; none changes compilation.
-NON_COMPILE_SCRIPTS = {*SCRIPTS.values(), *CONVERSION_FILES}
+# Conversion produces the pinned source, the benchmarks consume the MPK, and the FP32 baseline script runs the
+# source on a host; none changes compilation.
+NON_COMPILE_SCRIPTS = {*SCRIPTS.values(), FP32_BASELINE_SCRIPT, *CONVERSION_FILES}
 
 # Each benchmark stage's registry run type.
 BENCHMARK_RUN_TYPES = {"performance": "model_performance", "accuracy": "model_accuracy"}
 # The workflow runs the benchmark, model_report writes its report, and report_publication checks and publishes it.
+# metrics.json is left out: it names and labels metrics, so adding or editing one must not rerun every benchmark.
 BOARD_STAGE_TOOLING = (
     ".github/workflows/vulcan-model-benchmarking.yml",
+    "tools/model_registry/neat_core.py",
     "tools/model_report/__init__.py",
-    "tools/model_report/metrics.json",
     "schemas/model-report.schema.json",
     "tools/model_registry/report_publication.py",
 )
@@ -48,6 +51,7 @@ LLIMA_PERFORMANCE_TOOLING = (
 )
 ACCURACY_TOOLING = (
     *BOARD_STAGE_TOOLING,
+    "tools/model_registry/runtime_files.py",
     "scripts/install_dataset_registry.sh",
     "scripts/cache_accuracy_dataset.sh",
     "scripts/run_model_accuracy.sh",
@@ -207,6 +211,12 @@ def compile_fingerprint(
         },
         # scripts/compile.py measures numerical fidelity as it compiles.
         "fidelity": model.get("numerical_fidelity"),
+        # Packages are assembled only when their profile compiles, so a changed resource must recompile it.
+        # Models without resources keep their fingerprints.
+        **({"resources": [
+            {"id": item["id"], "source_sha256": source_identity(item["source"]), "install_path": item["install_path"]}
+            for item in package_resources(model)
+        ]} if model.get("resources") else {}),
         "compiler_version": compiler,
     }
     digest = hashlib.sha256(json.dumps(identity, sort_keys=True, separators=(",", ":")).encode())
@@ -244,7 +254,7 @@ def benchmark_fingerprint(
         required.extend(LLIMA_PERFORMANCE_TOOLING)
     runtime = resolve_benchmark_runtime(root)
     runtime.pop("neat_core" if native else "llima", None)
-    optional = [f"{model_dir}/{ACCURACY_REQUIREMENTS}"] if stage == "accuracy" else []
+    optional = [f"{model_dir}/{ACCURACY_REQUIREMENTS if stage == 'accuracy' else PERFORMANCE_REQUIREMENTS}"]
     baseline = build_profile_for(model, build_profile_id).get("benchmark_baseline") if stage == "performance" else None
     if baseline:
         reference = load_and_validate_model(root / "models" / baseline["model_id"])

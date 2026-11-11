@@ -85,7 +85,7 @@ if output_name == named_checkpoint.name:
 saved_arguments = [named_checkpoint.name, output_name, *arguments]
 if "draft_model_path" in parameters:
     saved_arguments[saved_arguments.index("--draft_model_path") + 1] = named_draft.name
-    saved_arguments[1] += "-MTP"
+    saved_arguments[1] += "-DFlash" if parameters.get("speculative_method") == "dflash" else "-MTP"
     checkpoints[named_draft.name] = files[parameters["draft_model_path"] + "/config.json"]
 save_llima_recipe(Path(model_dir) / "scripts", Path(output), saved_arguments, checkpoints)
 PY

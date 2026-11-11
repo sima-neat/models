@@ -3,7 +3,7 @@
 #
 # Usage: require_source_board_tooling.sh <source_checkout>
 #
-# A dispatch runs the benchmarking workflow from the branch tip, while publication computes the benchmark
+# A manual dispatch runs the benchmarking workflow from the branch tip, while publication computes the benchmark
 # fingerprints from the source revision. If the branch has since changed tooling those fingerprints hash, the
 # run would publish under a fingerprint that does not describe it; the newer push benchmarks the build with its
 # own fingerprints.

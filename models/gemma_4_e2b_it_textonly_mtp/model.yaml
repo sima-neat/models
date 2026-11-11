@@ -10,11 +10,12 @@ modalities:
   - text
   outputs:
   - text
-architecture: gemma
+architecture: gemma4
+# Google licenses Gemma 4 under Apache-2.0. The Gemma Terms of Use cover Gemma 1 to 3.
 license:
-  spdx: LicenseRef-Gemma
-  redistribution: restricted
-  attribution: Derived from google/gemma-4-E2B-it under the Gemma Terms of Use; text-only GPTQ checkpoint provided
+  spdx: Apache-2.0
+  redistribution: allowed
+  attribution: Derived from google/gemma-4-E2B-it under Apache-2.0; text-only GPTQ checkpoint provided
     by SiMa.ai. Includes the Google Gemma 4 E2B MTP assistant.
 upstream:
   repository: https://huggingface.co/simaai/Gemma-4-E2B-it-TextOnly-GPTQ-Safetensors

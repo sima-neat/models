@@ -1,5 +1,11 @@
 import { deploymentCatalog, variantBuildRuns } from "./branch-builds.js";
 
+// A model's compiled artifacts are offered only under a license that licenses.json lists as downloadable.
+// An unlisted license, or a list that did not load, offers none.
+export function downloadOffered(licenseId, licenses) {
+  return licenses?.[licenseId]?.downloadable === true;
+}
+
 // Delivery comes from the resolved artifact, never from the source checkpoint URL.
 export function artifactDelivery(artifact = {}) {
   if (artifact.metadata?.storage_backend === "huggingface") return "huggingface";
@@ -46,7 +52,7 @@ export async function variantDownloads(run, api, catalogModel = null) {
   return downloads.flat().sort((a, b) => a.component.localeCompare(b.component));
 }
 
-// Directory manifests describe folders; archive packages contain an MPK or ZIP.
+// Directory manifests describe folders; archive packages are ZIPs, or an MPK for a build published before ZIPs.
 export function packageFormat(artifact, filename = "") {
   if (artifact && artifactDelivery(artifact) !== "archive") return "Folder";
   return artifact?.media_type === "application/gzip" || filename.endsWith("_mpk.tar.gz") ? "MPK" : "ZIP";

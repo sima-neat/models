@@ -1,0 +1,16 @@
+conversion:
+  run_tests: true
+compile:
+  run_tests: true
+accuracy:
+  run_tests: true
+  expected:
+    w16a16:
+      scene-flow-val:
+        epe: 0.8471
+        d1_all: 3.3465
+performance:
+  run_tests: true
+  expected:
+    w16a16:
+      throughput_fps: 10.9

@@ -74,8 +74,9 @@ each model's image-plus-text benchmark at its encoder resolution, with no worklo
 The model page reads at a glance first and expands on request.
 The header pairs its title, description and Download action with a compact model
 image on the right; narrow screens stack the content and image. The image appears
-once, in the header. Performance and accuracy keep separate stacked sections, each
-measuring the whole model once per build profile.
+once, in the header. Performance and accuracy keep separate stacked sections.
+Accuracy measures the whole model once per build profile. Performance does the
+same by default; independent components have a selector with separate readings.
 Validation and source-link icons sit beside Download; CLI commands live inside
 the download dialog.
 Each section shows its key facts directly; longer detail sits behind one kind of control: a

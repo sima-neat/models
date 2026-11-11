@@ -25,8 +25,8 @@ The facets are intentionally independent:
 - task describes what the model does;
 - modality describes semantic inputs and outputs;
 - `architecture.id` names the model family, the upstream model line without its
-  generation or size: `yolo`, not `yolo_26` or `yolo26n`. The model's `id` and
-  `display_name` carry the generation and size. The browser labels this filter
+  size: `yolo26_det`, not `yolo26n_det`, and `resnext`, not `resnext_50`. The
+  model's `id` and `display_name` carry the size. The browser labels this filter
   Model family;
 - the family's `paradigm` (CNN or Transformer) is derived, not declared. The
   browser labels it Architecture;
