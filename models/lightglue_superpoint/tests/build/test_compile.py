@@ -6,9 +6,10 @@ import sys
 import tarfile
 from collections.abc import Callable
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 import numpy as np
+import onnx
 import pytest
 
 # Ground truth for a pairs line: two identity intrinsics and an identity pose.
@@ -112,7 +113,8 @@ def test_only_the_int8_activation_build_calibrates_before_the_fidelity_pairs(
     for profile in metadata["build_profiles"]:
         parameters = recipe._parameters(metadata, profile["id"])
         (binding,) = profile["components"]
-        assert parameters["precision"] == profile["id"]
+        assert profile["id"].split("_mixed")[0] == parameters["precision"]
+        assert bool(recipe._bf16_regions(profile["id"], parameters)) == ("mixed" in profile["id"])
         if recipe._bf16_activations(parameters["precision"]):
             assert binding.get("calibration") is None
             assert "calibration_samples" not in parameters
@@ -120,7 +122,8 @@ def test_only_the_int8_activation_build_calibrates_before_the_fidelity_pairs(
             assert binding["calibration"] == "yfcc100m-keypoints-cal"
             assert parameters["calibration_samples"] <= selection["offset"]
     assert metadata["numerical_fidelity"]["outputs"] == [recipe.OUTPUT_NAME]
-    assert {profile["id"] for profile in metadata["build_profiles"]} <= set(recipe.MATCH_OVERLAP_FLOORS)
+    precisions = {recipe._parameters(metadata, profile["id"])["precision"] for profile in metadata["build_profiles"]}
+    assert precisions <= set(recipe.MATCH_OVERLAP_FLOORS)
     with pytest.raises(ValueError, match="exactly one build profile named 'w32a32'"):
         recipe._parameters(metadata, "w32a32")
 
@@ -159,6 +162,97 @@ def test_bf16_activations_skip_calibration_and_int8_ones_calibrate_with_histogra
                                                                    "bits": 8}),
         "per_token_quant": True,
     }
+
+
+@pytest.mark.parametrize(
+    ("profile", "parameters", "message"),
+    [
+        ("w8a8", {"precision": "w8a8", "bf16_regions": ["attention"]}, "mixed token"),
+        ("w8a8_mixed", {"precision": "w8a8"}, "mixed token"),
+        ("w16a16_mixed", {"precision": "w16a16", "bf16_regions": ["attention"]}, "W8A8 build"),
+        ("w8a8_mixed", {"precision": "w8a8", "bf16_regions": ["residual", "residual"]}, "distinct"),
+        ("w8a8_mixed", {"precision": "w8a8", "bf16_regions": ["encoder"]}, "unknown BF16 regions"),
+    ],
+)
+def test_bf16_regions_must_be_known_regions_of_a_mixed_w8a8_profile(
+    load_script: Callable[[str], ModuleType], profile: str, parameters: dict, message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        load_script("compile")._bf16_regions(profile, parameters)
+
+
+@pytest.mark.parametrize(
+    ("regions", "softmaxes", "accepted"),
+    [(["attention"], 36, True), (["attention", "residual"], 36, True), (["attention"], 0, False),
+     (["residual"], 0, True), (["attention", "residual"], 38, False)],
+)
+def test_a_mixed_build_must_hold_its_regions_bf16_softmaxes(
+    load_script: Callable[[str], ModuleType], regions: list[str], softmaxes: int, accepted: bool
+) -> None:
+    recipe = load_script("compile")
+    recipe.QuantizationPrecision.BFLOAT_16 = "bfloat16"
+
+    def node(operation: str, precision: str) -> SimpleNamespace:
+        config = SimpleNamespace(quantization_precision=SimpleNamespace(value=precision))
+        return SimpleNamespace(ir=SimpleNamespace(operation=type(operation, (), {})(), quant_config=config))
+
+    nodes = [node("SoftmaxOp", "bfloat16")] * softmaxes + [node("AddOp", "bfloat16"), node("SoftmaxOp", "int8")]
+    quantized = SimpleNamespace(_net=SimpleNamespace(iter_nodes_recursive=lambda: nodes))
+
+    if accepted:
+        recipe._require_bf16_regions(quantized, regions)
+    else:
+        with pytest.raises(RuntimeError, match="softmaxes"):
+            recipe._require_bf16_regions(quantized, regions)
+
+
+def _attention_graph() -> onnx.ModelProto:
+    """A query and key convolution, one attention, and the convolution that reads it through a Split."""
+    helper = onnx.helper
+    weight = onnx.numpy_helper.from_array(np.ones((4, 4, 1, 1), np.float32), "w")
+    sizes = onnx.numpy_helper.from_array(np.array([2, 2], np.int64), "sizes")
+    attention = "/layers.0/cross_attention"
+    nodes = [
+        helper.make_node("Conv", ["x", "w"], ["q"], name="/q/Conv"),
+        helper.make_node("Conv", ["x", "w"], ["k"], name="/k/Conv"),
+        helper.make_node("Einsum", ["q", "k"], ["scores"], name=f"{attention}/Einsum", equation="nchw,nchq->nqhw"),
+        helper.make_node("Softmax", ["scores"], ["probabilities"], name=f"{attention}/Softmax", axis=1),
+        helper.make_node(
+            "Einsum", ["probabilities", "k"], ["context"], name=f"{attention}/Einsum_1", equation="nchw,nqhc->nqhw"
+        ),
+        helper.make_node("Split", ["context", "sizes"], ["half0", "half1"], name=f"{attention}/Split", axis=2),
+        helper.make_node("Concat", ["half0", "half1"], ["merged"], name=f"{attention}/Concat", axis=1),
+        helper.make_node("Conv", ["merged", "w"], ["y"], name=f"{attention}/output/Conv"),
+    ]
+    values = [helper.make_tensor_value_info(name, onnx.TensorProto.FLOAT, [1, 4, 4, 4]) for name in ("x", "y")]
+    graph = helper.make_graph(nodes, "fixture", values[:1], values[1:], [weight, sizes])
+    return helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)])
+
+
+def test_a_bf16_region_ends_at_the_first_operations_that_read_it(
+    tmp_path: Path, load_script: Callable[[str], ModuleType], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    surgery = load_script("surgery")
+    monkeypatch.setitem(surgery.BF16_REGIONS, "attention", (surgery.BF16_REGIONS["attention"][0], 3))
+    source, annotated = tmp_path / "model.onnx", tmp_path / "annotated.onnx"
+    onnx.save(_attention_graph(), source)
+
+    counts = surgery.annotate_bf16_regions(source, annotated, ["attention"])
+
+    assert counts == {"bfloat16": 3, "int8": 1}
+    model = onnx.load(annotated)
+    marks = {
+        node.input[0]: node.attribute[0].s.decode() for node in model.graph.node if node.op_type == "AnnotatePrecision"
+    }
+    assert marks == {
+        "scores/unannotated": "bfloat16",
+        "probabilities/unannotated": "bfloat16",
+        "context/unannotated": "bfloat16",
+        "y/unannotated": "int8",
+    }
+    assert [value.name for value in model.graph.output] == ["y"]
+    with pytest.raises(ValueError, match="expected 36 residual operations"):
+        surgery.precision_marks(_attention_graph(), ["residual"])
 
 
 def test_a_build_needs_its_matches_to_overlap_the_onnxs(load_script: Callable[[str], ModuleType]) -> None:
@@ -308,4 +402,4 @@ def test_build_holds_the_matcher_and_follows_the_onnx(
     # compile.py stops a build whose matches overlap the ONNX's no more than MATCH_OVERLAP_FLOORS before the MLA
     # compile, so a build here kept enough of them; the accuracy stage checks its pose AUC against tests.yaml.
     assert all(np.isfinite(value) for name, value in metrics["assignment"].items() if name != "name"), metrics
-    assert build_profile in recipe.MATCH_OVERLAP_FLOORS
+    assert recipe._parameters(recipe._metadata(), build_profile)["precision"] in recipe.MATCH_OVERLAP_FLOORS

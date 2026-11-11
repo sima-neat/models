@@ -69,6 +69,10 @@ architectures:
     display_name: GPT-OSS
     paradigm: transformer
     allowed_model_types: [llm]
+  hrnet:
+    display_name: HRNet
+    paradigm: cnn
+    allowed_model_types: [vision]
   inception:
     display_name: Inception
     paradigm: cnn
