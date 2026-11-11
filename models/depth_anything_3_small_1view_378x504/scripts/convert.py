@@ -6,9 +6,6 @@ The Cartesian-product symbolic fills an unsupported PyTorch-to-ONNX export opera
 
 import argparse
 import json
-import sys
-import tempfile
-import zipfile
 from pathlib import Path
 
 import numpy as np
@@ -20,9 +17,7 @@ from preprocess import HEIGHT, WIDTH
 
 MODEL_DIR = Path(__file__).resolve().parents[1]
 PRESET = "da3-small"
-PACKAGE = "depth_anything_3"
-WHEEL = "depth_anything_3-0.1.1-py3-none-any.whl"
-SOURCE = ("file_set", "model.safetensors", ["model.safetensors", "config.json", WHEEL])
+SOURCE = ("file_set", "model.safetensors", ["model.safetensors", "config.json"])
 MISSING_KEYS = {f"head.scratch.output_conv2_aux.{level}.2.{name}" for level in (1, 2, 3) for name in ("weight", "bias")}
 INTERFACE = {"image": [1, 3, HEIGHT, WIDTH], "depth": [1, 1, HEIGHT, WIDTH], "depth_conf": [1, 1, HEIGHT, WIDTH]}
 
@@ -33,16 +28,6 @@ def validate_source(source):
         raise ValueError(f"Expected the file set {SOURCE}, model.yaml declares {declared}")
 
 
-def unpack_package(wheel, directory):
-    """Unpack the pinned package; requirements-convert.txt provides the dependencies used by its forward pass."""
-    with zipfile.ZipFile(wheel) as archive:
-        members = [name for name in archive.namelist() if name.startswith(f"{PACKAGE}/")]
-        if not members or any(".." in Path(name).parts for name in members):
-            raise ValueError(f"Unexpected contents in {wheel.name}")
-        archive.extractall(directory, members)
-    sys.path.insert(0, str(directory))
-
-
 def build_network(directory):
     from depth_anything_3.cfg import create_object, load_config
     from depth_anything_3.registry import MODEL_REGISTRY
@@ -51,9 +36,9 @@ def build_network(directory):
 
     declared = json.loads((directory / "config.json").read_text(encoding="utf-8"))
     config = load_config(MODEL_REGISTRY[PRESET])
-    # The Hugging Face mixin builds the network from the wheel preset that config.json names.
+    # The Hugging Face mixin builds the network from the package preset that config.json names.
     if declared.get("model_name") != PRESET or OmegaConf.to_container(config) != declared.get("config"):
-        raise ValueError(f"config.json does not describe the wheel's {PRESET} preset")
+        raise ValueError(f"config.json does not describe the package's {PRESET} preset")
     network = create_object(config).eval()
     state = load_file(directory / "model.safetensors")
     if not all(key.startswith("model.") for key in state):
@@ -121,36 +106,34 @@ def convert(source: Path, output_dir: Path) -> Path:
     (filename,) = conversion_outputs(MODEL_DIR)
     output = output_dir / filename
     torch.set_num_threads(4)
-    with tempfile.TemporaryDirectory(prefix="da3-upstream-") as temporary:
-        unpack_package(source.parent / WHEEL, Path(temporary))
-        network = build_network(source.parent)
+    network = build_network(source.parent)
 
-        class Upstream(torch.nn.Module):
-            def __init__(self, model):
-                super().__init__()
-                self.model = model
+    class Upstream(torch.nn.Module):
+        def __init__(self, model):
+            super().__init__()
+            self.model = model
 
-            def forward(self, image):
-                result = self.model(image[:, None], ref_view_strategy="first")
-                return result.depth, result.depth_conf
+        def forward(self, image):
+            result = self.model(image[:, None], ref_view_strategy="first")
+            return result.depth, result.depth_conf
 
-        upstream = Upstream(network).eval()
-        samples = sample_inputs()
-        with torch.inference_mode():
-            references = [[value.numpy() for value in upstream(torch.from_numpy(sample))] for sample in samples]
-            torch.onnx.register_custom_op_symbolic("aten::cartesian_prod", cartesian_product, 17)
-            try:
-                torch.onnx.export(
-                    upstream,
-                    (torch.from_numpy(samples[0]),),
-                    str(output),
-                    opset_version=17,
-                    input_names=["image"],
-                    output_names=["depth", "depth_conf"],
-                    dynamo=False,
-                )
-            finally:
-                torch.onnx.unregister_custom_op_symbolic("aten::cartesian_prod", 17)
+    upstream = Upstream(network).eval()
+    samples = sample_inputs()
+    with torch.inference_mode():
+        references = [[value.numpy() for value in upstream(torch.from_numpy(sample))] for sample in samples]
+        torch.onnx.register_custom_op_symbolic("aten::cartesian_prod", cartesian_product, 17)
+        try:
+            torch.onnx.export(
+                upstream,
+                (torch.from_numpy(samples[0]),),
+                str(output),
+                opset_version=17,
+                input_names=["image"],
+                output_names=["depth", "depth_conf"],
+                dynamo=False,
+            )
+        finally:
+            torch.onnx.unregister_custom_op_symbolic("aten::cartesian_prod", 17)
     model, valid = simplify(onnx.load(output), perform_optimization=False)
     if not valid:
         raise RuntimeError("ONNX constant folding failed")

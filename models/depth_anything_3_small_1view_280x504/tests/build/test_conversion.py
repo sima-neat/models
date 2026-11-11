@@ -10,7 +10,7 @@ from onnx import helper, numpy_helper
 from onnx.reference import ReferenceEvaluator
 
 
-def test_source_has_exact_weights_config_and_upstream_code(model_dir, load_script):
+def test_source_has_exact_weights_and_config(model_dir, load_script):
     converter = load_script("convert")
     source = load_model(model_dir)["conversion"]["default"]["source"]
     converter.validate_source(source)

@@ -22,7 +22,6 @@ VULCAN_ONNX_RE = re.compile(r"^/models-onnx/[a-z][a-z0-9_]*/[a-f0-9]{64}/[0-9]+-
 GITHUB_RELEASE_RE = re.compile(
     r"^/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/releases/download/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$"
 )
-PYPI_WHEEL_RE = re.compile(r"^/packages/[a-f0-9]{2}/[a-f0-9]{2}/[a-f0-9]{60}/[A-Za-z0-9._+-]+\.whl$")
 
 
 def _require_hugging_face_commit(path: str) -> None:
@@ -40,15 +39,9 @@ def _require_github_release_file(path: str) -> None:
         raise SourcePolicyError("GitHub sources must be a release file addressed by its tag")
 
 
-def _require_pypi_wheel(path: str) -> None:
-    if not PYPI_WHEEL_RE.fullmatch(path):
-        raise SourcePolicyError("PyPI sources must be a wheel addressed by its hashed package path")
-
-
 # Every approved HTTPS host and the check its URL path must pass. Approving a host is one entry here.
 HTTPS_HOST_CHECKS: dict[str, Callable[[str], None]] = {
     "artifacts.stg.neat.sima.ai": _require_vulcan_onnx,
-    "files.pythonhosted.org": _require_pypi_wheel,
     "github.com": _require_github_release_file,
     "huggingface.co": _require_hugging_face_commit,
 }

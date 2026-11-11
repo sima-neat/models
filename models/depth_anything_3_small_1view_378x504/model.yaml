@@ -29,11 +29,6 @@ conversion:
       config.json:
         sha256: a486e29e82b7ab4a7d4cefc1ea4526cfe2ae438a572c8ca98917cfbcde7447d2
         size_bytes: 1202
-      # The pure-Python upstream wheel is unpacked during conversion, without its unrelated app dependencies.
-      depth_anything_3-0.1.1-py3-none-any.whl:
-        uri: https://files.pythonhosted.org/packages/32/c8/73948d6bbe7ab32aebb50d2879df5479fdeedb67ec70f4784021b722f4ee/depth_anything_3-0.1.1-py3-none-any.whl
-        sha256: d7de119f5d235bb06044d83e0e41ee63dee7f30126776b23d648e4dbcf106542
-        size_bytes: 271370
 
 compilation:
   format: onnx

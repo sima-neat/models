@@ -149,25 +149,6 @@ def test_vulcan_onnx_source() -> None:
     assert SourceSpec(uri=uri, sha256=DIGEST, size_bytes=10).resolve_url() == uri
 
 
-def test_pypi_wheel_uses_its_hashed_package_path() -> None:
-    uri = f"https://files.pythonhosted.org/packages/ab/cd/{'e' * 60}/depth_anything_3-0.1.1-py3-none-any.whl"
-    source = SourceSpec(uri=uri, sha256=DIGEST, size_bytes=10)
-    assert source.resolve_url() == uri
-    assert source.filename == "depth_anything_3-0.1.1-py3-none-any.whl"
-
-
-@pytest.mark.parametrize("path", [
-    "/packages/source/d/depth_anything_3/depth_anything_3-0.1.1.tar.gz",
-    "/packages/ab/cd/short/model-0.1-py3-none-any.whl",
-    f"/packages/ab/cd/{'e' * 60}/model-0.1.tar.gz",
-    f"/packages/ab/cd/{'e' * 60}/nested/model-0.1-py3-none-any.whl",
-    "/simple/depth-anything-3/",
-])
-def test_pypi_rejects_indexes_and_non_wheel_paths(path: str) -> None:
-    with pytest.raises(SourcePolicyError, match="hashed package path"):
-        SourceSpec(uri=f"https://files.pythonhosted.org{path}", sha256=DIGEST, size_bytes=10).resolve_url()
-
-
 def test_a_file_set_without_an_entrypoint_keeps_compile_source_identities_unchanged() -> None:
     members = [{"path": "model.onnx", "sha256": "a" * 64, "size_bytes": 1}]
     compile_source = {"type": "file_set", "entrypoint": "model.onnx", "files": members}
