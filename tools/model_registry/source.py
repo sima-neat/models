@@ -67,7 +67,10 @@ def source_identity(source: dict[str, Any]) -> str:
         }
         for member in sorted(source["files"], key=lambda item: item["path"])
     ]
-    document = {"entrypoint": source["entrypoint"], "files": members}
+    # A resource's file set has no entrypoint; a compile source's identity keeps the exact document it had.
+    document = {"files": members}
+    if "entrypoint" in source:
+        document["entrypoint"] = source["entrypoint"]
     return hashlib.sha256(json.dumps(document, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 

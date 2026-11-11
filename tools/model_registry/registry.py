@@ -22,8 +22,12 @@ from urllib.request import urlopen
 from jsonschema import Draft202012Validator
 
 from .artifact import (
-    compile_output_fields, deployment_files, llima_compiled_parameters,
-    validate_compile_outputs, verify_artifact, verify_llima,
+    compile_output_fields,
+    deployment_files,
+    llima_compiled_parameters,
+    validate_compile_outputs,
+    verify_artifact,
+    verify_llima,
 )
 from .compile_matrix import build_matrix
 from .dependencies import resolve_model_compiler
@@ -584,6 +588,9 @@ def build_catalog_snapshot(
         if model["id"] not in deferred:
             continue
         entry = dict(model)
+        # Categories follow this checkout's taxonomy, which may have renamed IDs
+        # since the carried entry was published.
+        entry["categories"] = validate_model_categorization(all_models[model["id"]], taxonomy)
         if documentation_receipts is not None:
             documentation = documentation_receipts.get(model["id"])
             if not isinstance(documentation, dict):

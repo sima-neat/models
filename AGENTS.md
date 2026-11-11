@@ -51,7 +51,7 @@ then fails until Vulcan Model Convert reruns for every conversion-backed model.
 |---|---|---|---|
 | compile (ONNX) | Model Compiler | `scripts/compile.py` | `scripts/run_model_compilation.sh` |
 | compile (LLiMa) | Model Compiler | `scripts/compile.sh` | `scripts/run_llima_compilation.sh` |
-| performance | DevKit | `scripts/performance.py` | `scripts/run_model_performance.sh` |
+| performance | DevKit | `scripts/performance.py` + `requirements-performance.txt` | `scripts/run_model_performance.sh` |
 | accuracy | DevKit | `scripts/accuracy.py` + `requirements-accuracy.txt` | `scripts/run_model_accuracy.sh` |
 
 `compile_fingerprint` and `benchmark_fingerprint` in
@@ -129,7 +129,8 @@ dataset pair as a side-by-side frame instead. A model whose
 inputs are not images benchmarks one `random.Random(0)` validation sample as tensors on the
 tensor route, and each timed sample runs the CPU steps that produce the model's result.
 `run_model_performance.sh` passes only the first dataset, and only for a profile
-accuracy measures. A model without an accuracy dataset builds a fixed input in its script;
+accuracy measures. A model with `resources` also takes `--resources <directory>`,
+laid out as its package installs them. A model without an accuracy dataset builds a fixed input in its script;
 do not benchmark Core's synthetic inputs ([Benchmark
 input](docs/benchmarking.md#benchmark-input)). `performance.py`
 and `accuracy.py` write `model-report.json` with `model_report.from_performance()`
@@ -260,6 +261,7 @@ in the same commit.
 | the set of model scripts a benchmark or conversion runs | `SCRIPTS` in `benchmark_declarations.py` or `CONVERSION_FILES` in `model.py`, which make up `NON_COMPILE_SCRIPTS` in `fingerprints.py` with `FP32_BASELINE_SCRIPT`; every other `.py`/`.sh` under `scripts/` is an ONNX compile input |
 | board-only code | keep it inside `performance.py` or `accuracy.py`; a helper module under `scripts/` is an ONNX compile input, so editing it recompiles and then remeasures the model |
 | how `performance.py` gets its input | `scripts/run_model_performance.sh`, the dataset steps in `vulcan-model-benchmarking.yml`, [Benchmark input](docs/benchmarking.md#benchmark-input), and `tests/test_model_report.py` and `tests/test_benchmark_workflow.py` |
+| what a package holds besides MPKs: `resources` (pinned files with no `main_file`) or a compile's `runtime_files` | `package.py` and `candidates.py`, `validate_compile_outputs` in `artifact.py`, the compile fingerprint in `fingerprints.py`, `source_identity` in `source.py`, `resourceSource` in `model.schema.json`, [Packages and pipeline](docs/metadata-schema.md#packages-and-pipeline), and `tests/test_package.py`, `tests/test_artifact.py`, `tests/test_compile_matrix.py` and `tests/test_source.py` |
 | a custom `performance.py` | start from the [canonical script](docs/benchmarking.md#the-performance-script), and for a multi-component model the [multi-component script](docs/benchmarking.md#multi-component-models): hand Core's `BenchmarkReport`, board telemetry, and each component's Model to `model_report.from_performance()` |
 | a metric: a Core benchmark reading or an accuracy score the registry should publish | a row in `tools/model_report/metrics.json` with its Vulcan measurement name (`registry_name`), and its entry in the browser's `metrics.js` or `accuracy-metrics.js`, and for a telemetry reading in `TELEMETRY_METRICS` in `model-report.js`, which tests keep in step; for a performance metric, its row in `DETAIL_CARDS` in `model-view.js` when a Performance details card should show it, and the metric table in [benchmarking](docs/benchmarking.md#workload-and-measurements) |
 | a `datasets/<id>.yaml` requirement | `dataset-requirements.schema.json` when its shape changes, and the `accuracy.py` and `tests.yaml` expectations of every model with that task that evaluates the dataset |

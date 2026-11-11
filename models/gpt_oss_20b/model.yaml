@@ -1,0 +1,40 @@
+build-on-demand: true
+display_name: GPT-OSS 20B
+description: Generates text from instructions and conversation history.
+model_type: llm
+tasks: [text_generation]
+
+modalities:
+  inputs: [text]
+  outputs: [text]
+
+architecture: gpt_oss
+
+license:
+  spdx: Apache-2.0
+  redistribution: allowed
+  attribution: Derived from openai/gpt-oss-20b via unsloth/gpt-oss-20b-BF16 under Apache-2.0; AutoRound checkpoint provided by SiMa.ai.
+
+compilation:
+  format: huggingface
+  source:
+    repository: simaai/gpt-oss-20b-Autoround-Safetensors
+    revision: 0967315d67d104d5fe89022a48a672157eda20c1
+    main_file: config.json
+    files:
+      LICENSE.txt: {uri: hf://models/openai/gpt-oss-20b@6cee5e81ee83917806bbde320786a8fb61efebee/LICENSE, sha256: 58d1e17ffe5109a7ae296caafcadfdbe6a7d176f0bc4ab01e12a689b0499d8bd, size_bytes: 11357}
+      chat_template.jinja: {sha256: 445c3a7c29d9cf61860179de179f60b6cf24834518b491016993eba63c8b1ecc, size_bytes: 15078}
+      config.json: {sha256: 36635dbc66851447dfc96545fea9e23171894eef1c57582d3b143896265ec513, size_bytes: 3976}
+      generation_config.json: {sha256: 3286858e41c1bc67f59940e7e868aa09432d8d29a2512d63138bf11aa34ba4c4, size_bytes: 160}
+      model.safetensors: {sha256: a388958c766b9dc9d40aabcf6e5a46dd1590b71310984b64c69154f20589d5ca, size_bytes: 11508114960}
+      special_tokens_map.json: {sha256: 8464cabd6eda239fe46ebf8ae63b46c417721784a961a022f6b59174a2cda0e2, size_bytes: 440}
+      tokenizer.json: {sha256: 0614fe83cadab421296e664e1f48f4261fa8fef6e03e63bb75c20f38e37d07d3, size_bytes: 27868174}
+      tokenizer_config.json: {sha256: 9279e942392b742d633c7adbb89ebe002c98399db8926a7af5125c726f404070, size_bytes: 4200}
+  entrypoint: generate
+
+build_profiles:
+  w4a16:
+    runner_class: expensive
+    components:
+      model:
+        parameters: {precision: a16w4, max_num_tokens: 4096, language_group_size: 128}

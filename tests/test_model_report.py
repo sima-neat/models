@@ -341,12 +341,15 @@ def first_accuracy_dataset(script: Path) -> str | None:
     return datasets[0]["id"] if datasets else None
 
 
-def performance_scripts(*, components: bool) -> list[Path]:
+def performance_scripts(*, components: bool, accuracy: bool | None = None) -> list[Path]:
     """Benchmarked models' scripts: single-component ones run Model.benchmark, multi-component ones time their
-    pipeline and take each component's MLA stats from its own Model.benchmark."""
+    pipeline and take each component's MLA stats from its own Model.benchmark. accuracy selects the models that
+    do or do not declare accuracy datasets; only those benchmark a dataset image."""
     scripts = []
     for path in sorted(REPOSITORY.glob("models/*/model.yaml")):
         model = yaml.safe_load(path.read_text(encoding="utf-8"))
+        if accuracy is not None and ("accuracy" in model) != accuracy:
+            continue
         if "performance" in model and ("components" in model["compilation"]) == components:
             scripts.append(path.parent / "scripts/performance.py")
     assert scripts
@@ -496,6 +499,7 @@ def test_every_multi_component_script_keeps_cores_mla_stats(script, monkeypatch)
 
     pyneat = types.SimpleNamespace(Model=ScriptModel, BenchmarkOptions=BenchmarkOptions)
     monkeypatch.setitem(sys.modules, "pyneat", pyneat)
+    monkeypatch.setitem(sys.modules, "onnxruntime", types.SimpleNamespace())
 
     layer_stats, stage_stats = runpy.run_path(str(script))["mla_stats"](Path("backbone.tar.gz"))
 
@@ -504,7 +508,7 @@ def test_every_multi_component_script_keeps_cores_mla_stats(script, monkeypatch)
 
 
 @pytest.mark.parametrize(
-    "script", [path for path in performance_scripts(components=True)
+    "script", [path for path in performance_scripts(components=True, accuracy=True)
                if yaml.safe_load((path.parents[1] / "model.yaml").read_text())["performance"].get("scope")
                != "components"],
     ids=lambda path: path.parents[1].name,
