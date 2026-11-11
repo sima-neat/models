@@ -120,7 +120,7 @@ def test_every_build_calibrates_and_only_bf16_weights_skip_per_token_quantizatio
     recipe.quantization(precision, 2048)
 
     arguments = recipe.QuantizationParams.call_args.kwargs
-    # model.yaml gives every build profile a calibration dataset, so each build calibrates with Histogram MSE.
+    # The VLAD norm's Sqrt is an INT8 lookup table even in the BF16 builds, so every build calibrates its range.
     recipe.HistogramMSEMethod.assert_called_once_with(2048)
     assert arguments["calibration_method"] is recipe.HistogramMSEMethod.return_value
     assert arguments["activation_quantization_scheme"] is recipe.bfloat16_scheme.return_value
@@ -252,7 +252,7 @@ def test_compile_reports_the_compilers_silent_exit_as_an_error(
 ) -> None:
     recipe = load_script("compile")
     loaded = MagicMock()
-    # AFE reports a compile error by raising a bare SystemExit, which would otherwise exit with status 0.
+    # AFE raised a bare SystemExit when it could not segment NetVLAD's 32768-wide L2 normalization at INT8.
     loaded.quantize.return_value.compile.side_effect = SystemExit()
     monkeypatch.setattr(recipe, "load_model", lambda *args, **kwargs: loaded)
     parameters = {"precision": "w16a16", "calibration_bins": 2048, "calibration_samples": 1}

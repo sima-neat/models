@@ -1,9 +1,8 @@
 """Build NetVLAD for the MLA from the converted weights, export it and check it against Patch-NetVLAD's forward.
 
 The rebuilt network keeps Patch-NetVLAD's VGG16 conv5_3 encoder, NetVLAD pooling and WPCA projection, and makes two
-exact rewrites: it aggregates the soft-assigned residuals with one MatMul instead of a loop over the 64 clusters, and
-it folds the final 32768-wide L2 normalization, whose input always has norm sqrt(64) after the per-cluster
-normalization, into the WPCA bias.
+exact rewrites the Model Compiler needs: it aggregates the soft-assigned residuals with one MatMul instead of a loop
+over the 64 clusters, and it scales the WPCA bias by the VLAD's norm instead of normalizing all 32768 values.
 
 compile.py compiles what export_netvlad writes and measures its fidelity against reference_netvlad. To get the FP32
 ONNX on a host, run:
@@ -14,7 +13,6 @@ ONNX on a host, run:
 from __future__ import annotations
 
 import argparse
-import math
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -172,10 +170,7 @@ def build_netvlad(encoder: Any, pooling: dict[str, np.ndarray]) -> Any:
             self.register_buffer("centroids", torch.from_numpy(pooling["pool.centroids"]))
             self.wpca = torch.nn.Conv2d(CLUSTERS * FEATURE_DIM, DESCRIPTOR_DIM, kernel_size=1, bias=False)
             self.wpca.weight.data.copy_(torch.from_numpy(pooling["WPCA.0.weight"]))
-            # After the per-cluster normalization every one of the 64 rows has unit length, so the flattened VLAD's
-            # L2 norm is sqrt(64) and upstream's final normalize(v) is v / sqrt(64). normalize(W v / s + b) equals
-            # normalize(W v + s b), so the bias absorbs the division and the network computes no 32768-wide norm.
-            self.register_buffer("scaled_wpca_bias", torch.from_numpy(pooling["WPCA.0.bias"]) * math.sqrt(CLUSTERS))
+            self.register_buffer("wpca_bias", torch.from_numpy(pooling["WPCA.0.bias"]))
 
         def forward(self, image: torch.Tensor) -> torch.Tensor:
             features = normalize(self.encoder(image), dim=1)
@@ -184,7 +179,13 @@ def build_netvlad(encoder: Any, pooling: dict[str, np.ndarray]) -> Any:
             # sum_n a_kn (x_n - c_k) = A X^T - c_k sum_n a_kn, the upstream per-cluster loop in one MatMul.
             vlad = soft @ local.transpose(1, 2) - self.centroids * soft.sum(dim=2, keepdim=True)
             vlad = normalize(vlad, dim=2)
-            projected = self.wpca(vlad.reshape(1, -1, 1, 1)).reshape(1, -1) + self.scaled_wpca_bias
+            # normalize(W v / |v| + b) == normalize(W v + |v| b): scaling the bias by the VLAD's norm replaces the
+            # 32768-wide L2 normalization, which the Model Compiler cannot segment onto the MLA at INT8. The norm
+            # is reduced per cluster first, so no reduction spans all 32768 values at once. It is not the constant
+            # sqrt(64): a cluster that no cell is assigned to has a residual sum below the normalization's epsilon,
+            # stays near zero instead of unit length, and lowers the norm, as it does upstream.
+            norm = vlad.square().sum(dim=2).sum(dim=1, keepdim=True).sqrt()
+            projected = self.wpca(vlad.reshape(1, -1, 1, 1)).reshape(1, -1) + norm * self.wpca_bias
             return normalize(projected, dim=1)
 
     return NetVLAD().eval()
