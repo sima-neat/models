@@ -1124,20 +1124,36 @@ def use_channel_first_context_inputs(model: onnx.ModelProto) -> Counter:
             dim.dim_value = size
         result["inputs"] += 1
 
-    # The extracted graph folds the static position ramps of the latent and text branches to constants.
-    prefix = "/vector_estimator/vector_field/main_blocks.3/attn"
+    # Each rotary branch multiplies theta by its position ramp over a length. The extracted graph folds the static
+    # ramps to constants, so find them from theta's consumers, through any Cast or Identity left around them.
     theta_name = "vector_estimator.tts.ttl.vector_field.main_blocks.3.attn.theta"
-    layouts = {
-        f"{prefix}/Cast_output_0": (0, 1, 3, 2),
-        f"{prefix}/Cast_1_output_0": (0, 1, 3, 2),
-        theta_name: (0, 3, 1, 2),
-    }
-    for index, value in enumerate(model.graph.initializer):
-        if value.name in layouts:
-            array = numpy_helper.to_array(value).transpose(layouts[value.name])
-            model.graph.initializer[index].CopyFrom(numpy_helper.from_array(array, name=value.name))
-            result["rotary"] += 1
-    if result != Counter({"inputs": 3, "rotary": 3}):
+    producer = {output: node for node in model.graph.node for output in node.output}
+    initializers = {value.name: index for index, value in enumerate(model.graph.initializer)}
+    layouts = {theta_name: (0, 3, 1, 2)}
+    for node in model.graph.node:
+        if node.op_type != "Mul" or theta_name not in node.input:
+            continue
+        ramp = producer[next(name for name in node.input if name != theta_name)].input[0]
+        while ramp not in initializers and producer[ramp].op_type in {"Cast", "Identity"}:
+            ramp = producer[ramp].input[0]
+        if ramp not in initializers and producer[ramp].op_type == "Slice":
+            # An unfolded ramp slices the increments constant along its length axis, which moves to axis 3.
+            ramp_slice = producer[ramp]
+            ramp = ramp_slice.input[0]
+            axes = ramp_slice.input[3]
+            model.graph.initializer[initializers[axes]].CopyFrom(
+                numpy_helper.from_array(np.asarray([3], dtype=np.int64), name=axes)
+            )
+        if ramp not in initializers:
+            raise RuntimeError(f"rotary position ramp {ramp} is not a constant")
+        layouts[ramp] = (0, 1, 3, 2)
+    for name, order in layouts.items():
+        index = initializers[name]
+        array = numpy_helper.to_array(model.graph.initializer[index]).transpose(order)
+        model.graph.initializer[index].CopyFrom(numpy_helper.from_array(array, name=name))
+        result["rotary"] += 1
+    # Two ramps, or one increments constant both branches slice, and theta.
+    if result["inputs"] != 3 or result["rotary"] not in (2, 3):
         raise RuntimeError(f"unexpected context inputs or rotary constants: {dict(result)}")
     return result
 
