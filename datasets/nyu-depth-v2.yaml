@@ -1,0 +1,3 @@
+# NYU Depth V2 relative-depth evaluation: mean per-image error and threshold accuracy.
+required_metrics:
+  depth_estimation: [abs_rel, delta1]

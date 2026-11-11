@@ -481,7 +481,7 @@ def test_browser_accuracy_labels_match_the_model_report_metrics() -> None:
 
 
 def test_browser_accuracy_scales_match_the_model_report_metrics() -> None:
-    # Accuracy metrics that are not 0-1 ratios with higher better show in their own unit and rank by their direction.
+    # The browser preserves metric units/directions and applies the same explicit display overrides.
     scales = subprocess.run(
         [
             "node", "--input-type=module", "--eval",
@@ -491,9 +491,10 @@ def test_browser_accuracy_scales_match_the_model_report_metrics() -> None:
         cwd=ROOT, check=True, capture_output=True, text=True,
     )  # fmt: skip
     expected = {
-        name: {"unit": metric["unit"], "direction": metric["direction"]}
+        name: {"unit": metric["unit"], "direction": metric["direction"],
+               **({"display": metric["display"]} if "display" in metric else {})}
         for name, metric in _report_metrics("accuracy").items()
-        if (metric["unit"], metric["direction"]) != ("ratio", "higher")
+        if (metric["unit"], metric["direction"]) != ("ratio", "higher") or "display" in metric
     }
     assert json.loads(scales.stdout) == expected
 

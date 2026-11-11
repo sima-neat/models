@@ -288,6 +288,26 @@ def test_publish_report_counts_each_evaluated_accuracy_sample(tmp_path: Path) ->
     assert {item["sample_count"] for item in measurements} == {500}
 
 
+def test_depth_publication_keeps_registered_ratio_units_and_unbounded_absrel(tmp_path: Path) -> None:
+    model_id = "depth_anything_3_small_1view_280x504"
+    registered_build(tmp_path / "_compiled", model_id, "w8a16", ["model"])
+    report = accuracy_report({"nyu-depth-v2-default": {
+        "split": "test", "evaluated_samples": 654, "available_samples": 654,
+        "metrics": {"abs_rel": 1.25, "delta1": 0.89}, "details": {},
+    }})
+
+    calls, _ = publish(tmp_path, model_id, "w8a16", "accuracy", report)
+
+    batch = next(body for _, path, body in calls if path.endswith("/measurements/batch"))
+    measurements = {item["name"]: item for item in batch["measurements"]}
+    assert measurements["model.accuracy.abs_rel"]["unit"] == "ratio"
+    assert measurements["model.accuracy.abs_rel"]["value"] == 1.25
+    assert measurements["model.accuracy.abs_rel"]["direction"] == "lower"
+    assert measurements["model.accuracy.delta1"]["unit"] == "ratio"
+    assert measurements["model.accuracy.delta1"]["value"] == 0.89
+    assert measurements["model.accuracy.delta1"]["direction"] == "higher"
+
+
 def test_publish_report_measures_each_dataset_apart(tmp_path: Path) -> None:
     repository = tmp_path / "repository"
     for relative in (

@@ -50,7 +50,7 @@ See [Ship supporting files](docs/adding-a-model.md#ship-supporting-files).
 A tooling change reruns a stage only when the changed file is in that stage's
 tooling list in `fingerprints.py`. No shared file is a conversion input: a
 conversion reruns only when the model's checkpoint, `convert.py` and the
-modules it imports, `requirements-convert.txt`, or `conversion.outputs`
+modules it imports, conversion requirements, or `conversion.outputs`
 change. Raise `FINGERPRINT_VERSION` in `conversion.py` in the change that
 makes shared tooling convert the same inputs to a different model. Planning
 then fails until Vulcan Model Convert reruns for every conversion-backed model.

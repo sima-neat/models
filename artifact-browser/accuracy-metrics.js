@@ -54,30 +54,34 @@ export const ACCURACY_METRIC_LABELS = {
   recall_at_10: "Recall@10",
   epe: "EPE",
   d1_all: "D1-all",
+  abs_rel: "AbsRel",
+  delta1: "δ1",
 };
 
-// The accuracy metrics that are not ratios from 0 to 1 with higher better; metrics.json gives the same units and
-// directions.
+// Accuracy metrics with non-default units, directions or display settings; matches metrics.json.
 export const ACCURACY_METRIC_SCALES = {
   epe: { unit: "px", direction: "lower" },
   d1_all: { unit: "%", direction: "lower" },
+  abs_rel: { unit: "ratio", direction: "lower", display: {unit: "", scale: 1} },
 };
 
 export function accuracyMetricLabel(name) {
   return ACCURACY_METRIC_LABELS[name] || name;
 }
 
-// A score as a number in its display unit: a ratio as a percentage, any other unit as reported.
+// Ratios default to percentages; an explicit display setting overrides that without changing the metric's unit.
 export function accuracyDisplay(name, value) {
-  const { unit, direction } = ACCURACY_METRIC_SCALES[name] || { unit: "ratio", direction: "higher" };
-  return unit === "ratio" ? { number: value * 100, unit: "%", direction } : { number: value, unit, direction };
+  const metric = ACCURACY_METRIC_SCALES[name] || {unit: "ratio", direction: "higher"};
+  const display = metric.display || (metric.unit === "ratio" ? {unit: "%", scale: 100} : {unit: metric.unit, scale: 1});
+  return {number: value * display.scale, unit: display.unit, direction: metric.direction};
 }
 
 // A score as text: "40.10%" for a ratio or a percentage, "0.776 px" for pixels, and "—" (or blank) when missing.
 export function formatAccuracy(name, value, { blank = false } = {}) {
   if (!Number.isFinite(value)) return blank ? "" : "—";
   const { number, unit } = accuracyDisplay(name, value);
-  return unit === "%" ? `${number.toFixed(2)}%` : `${number.toFixed(3)} ${unit}`;
+  if (unit === "%") return `${number.toFixed(2)}%`;
+  return unit ? `${number.toFixed(3)} ${unit}` : number.toFixed(3);
 }
 
 // Known metrics follow the label order and any others follow them in the order given.

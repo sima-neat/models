@@ -65,6 +65,11 @@ architectures:
     description: Estimates scene depth from a single image.
     paradigm: transformer
     allowed_model_types: [vision]
+  depth_anything_3:
+    display_name: Depth Anything 3
+    description: Estimates scene depth from images.
+    paradigm: transformer
+    allowed_model_types: [vision]
   dla:
     display_name: DLA
     description: Classifies images by combining features across layers and resolutions.
