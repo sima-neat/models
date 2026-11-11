@@ -86,45 +86,117 @@ def test_w8a16_uses_sima_per_token_quantization_without_calibration(load_script,
     assert parameters["per_token_quant"] is True
 
 
-def test_final_projection_split_preserves_both_learned_rows(load_script):
-    torch = pytest.importorskip("torch")
+def test_qkv_split_preserves_head_and_token_order(load_script, monkeypatch):
+    from onnx import TensorProto, helper, numpy_helper
+    from onnx.reference import ReferenceEvaluator
+
     surgery = load_script("surgery")
-    torch.manual_seed(123)
-    projection = torch.nn.Conv2d(32, 2, 1)
-    features = torch.randn(1, 32, 7, 9)
-    expected = projection(features)
-    head = torch.nn.Module()
-    head.scratch = torch.nn.Module()
-    head.scratch.output_conv2 = torch.nn.Sequential(projection)
-    head.activation, head.conf_activation, head.down_ratio = "exp", "expp1", 1
-    surgery.split_head_projections(head)
-    actual = torch.cat([head.depth_projection(features), head.confidence_projection(features)], dim=1)
-    torch.testing.assert_close(actual, expected, rtol=1e-6, atol=1e-6)
-    assert isinstance(head.scratch.output_conv2[-1], torch.nn.Identity)
+    nodes = [
+        helper.make_node("Reshape", ["packed", "shape"], ["five_dims"], name="attention/Reshape"),
+        helper.make_node("Transpose", ["five_dims"], ["qkv"], name="attention/Transpose", perm=[2, 0, 3, 1, 4]),
+        *[
+            helper.make_node("Gather", ["qkv", f"index{i}"], [name], name=f"attention/{name}", axis=0)
+            for i, name in enumerate(("q", "k", "v"))
+        ],
+    ]
+    constants = [numpy_helper.from_array(np.array([1, 5, 3, 2, 4], np.int64), "shape")]
+    constants.extend(numpy_helper.from_array(np.array(i, np.int64), f"index{i}") for i in range(3))
+    graph = helper.make_graph(
+        nodes,
+        "qkv",
+        [helper.make_tensor_value_info("packed", TensorProto.FLOAT, [1, 5, 24])],
+        [helper.make_tensor_value_info(name, TensorProto.FLOAT, [1, 2, 5, 4]) for name in ("q", "k", "v")],
+        constants,
+    )
+    model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)])
+    inputs = {"packed": np.arange(120, dtype=np.float32).reshape(1, 5, 24)}
+    expected = ReferenceEvaluator(model).run(None, inputs)
+    monkeypatch.setattr(surgery, "BLOCKS", 1)
+    prepared = surgery.split_attention_qkv(model)
+    actual = ReferenceEvaluator(prepared).run(None, inputs)
+    for reference, result in zip(expected, actual, strict=True):
+        np.testing.assert_array_equal(result, reference)
+    assert all(node.op_type != "Gather" for node in prepared.graph.node)
 
 
-def test_explicit_attention_matches_scaled_dot_product_attention(load_script):
-    torch = pytest.importorskip("torch")
+def test_camera_token_replacement_preserves_all_patch_tokens(load_script):
+    from onnx import TensorProto, helper, numpy_helper
+    from onnx.reference import ReferenceEvaluator
+
     surgery = load_script("surgery")
-    torch.manual_seed(123)
-    attention = SimpleNamespace(
-        training=False,
-        num_heads=4,
-        scale=8**-0.5,
-        qkv=torch.nn.Linear(32, 96),
-        proj=torch.nn.Linear(32, 32),
-        q_norm=torch.nn.Identity(),
-        k_norm=torch.nn.Identity(),
-        rope=None,
-        attn_drop=torch.nn.Identity(),
-        proj_drop=torch.nn.Identity(),
+    shape = [1, 1, 5, 4]
+    graph = helper.make_graph(
+        [helper.make_node("ScatterND", ["tokens", "indices", "camera"], ["output"], name="camera_assignment")],
+        "camera",
+        [helper.make_tensor_value_info("tokens", TensorProto.FLOAT, shape)],
+        [helper.make_tensor_value_info("output", TensorProto.FLOAT, shape)],
+        [
+            numpy_helper.from_array(np.zeros((1, 1, 1, 3), np.int64), "indices"),
+            numpy_helper.from_array(np.full((1, 1, 1, 4), -7, np.float32), "camera"),
+        ],
     )
-    image = torch.randn(1, 9, 32)
-    packed = attention.qkv(image).reshape(1, 9, 3, 4, 8).permute(2, 0, 3, 1, 4)
-    expected = attention.proj(
-        torch.nn.functional.scaled_dot_product_attention(*packed).transpose(1, 2).reshape(1, 9, 32)
+    model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)])
+    inputs = {"tokens": np.arange(20, dtype=np.float32).reshape(shape)}
+    expected = ReferenceEvaluator(model).run(None, inputs)
+    prepared = surgery.replace_camera_token(model)
+    actual = ReferenceEvaluator(prepared).run(None, inputs)
+    np.testing.assert_array_equal(actual, expected)
+    assert [node.op_type for node in prepared.graph.node] == ["Slice", "Concat"]
+
+
+def test_projection_split_preserves_depth_and_confidence(load_script, monkeypatch):
+    import onnx
+    from onnx import TensorProto, helper, numpy_helper
+    from onnx.reference import ReferenceEvaluator
+
+    surgery = load_script("surgery")
+    monkeypatch.setattr(surgery, "HEIGHT", 3)
+    monkeypatch.setattr(surgery, "WIDTH", 5)
+    random = np.random.RandomState(123)
+    constants = [
+        numpy_helper.from_array(random.normal(0, 0.1, (2, 32, 1, 1)).astype(np.float32), "weight"),
+        numpy_helper.from_array(np.array([0.2, -0.4], np.float32), "bias"),
+        *[
+            numpy_helper.from_array(np.array(value, np.int64), name)
+            for name, value in (
+                ("start", [0]),
+                ("end", [-1]),
+                ("channel", [3]),
+                ("step", [1]),
+                ("confidence_channel", -1),
+                ("output_shape", [1, 1, 3, 5]),
+            )
+        ],
+        numpy_helper.from_array(np.array(1, np.float32), "one"),
+    ]
+    nodes = [
+        helper.make_node("Conv", ["image", "weight", "bias"], ["logits"], name="projection"),
+        helper.make_node("Transpose", ["logits"], ["nhwc"], name="layout", perm=[0, 2, 3, 1]),
+        helper.make_node("Slice", ["nhwc", "start", "end", "channel", "step"], ["depth_logit"], name="depth_select"),
+        helper.make_node("Exp", ["depth_logit"], ["depth_value"], name="depth_exp"),
+        helper.make_node("Squeeze", ["depth_value", "channel"], ["depth_3d"], name="depth_squeeze"),
+        helper.make_node("Reshape", ["depth_3d", "output_shape"], ["depth"], name="depth_shape"),
+        helper.make_node("Gather", ["nhwc", "confidence_channel"], ["confidence_logit"], name="conf_select", axis=3),
+        helper.make_node("Exp", ["confidence_logit"], ["confidence_exp"], name="conf_exp"),
+        helper.make_node("Add", ["confidence_exp", "one"], ["confidence"], name="conf_add"),
+        helper.make_node("Reshape", ["confidence", "output_shape"], ["depth_conf"], name="conf_shape"),
+    ]
+    graph = helper.make_graph(
+        nodes,
+        "head",
+        [helper.make_tensor_value_info("image", TensorProto.FLOAT, [1, 32, 3, 5])],
+        [helper.make_tensor_value_info(name, TensorProto.FLOAT, [1, 1, 3, 5]) for name in ("depth", "depth_conf")],
+        constants,
     )
-    torch.testing.assert_close(surgery.attention_forward(attention, image), expected, rtol=1e-5, atol=1e-6)
+    model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)])
+    model = onnx.shape_inference.infer_shapes(model)
+    inputs = {"image": random.normal(size=(1, 32, 3, 5)).astype(np.float32)}
+    expected = ReferenceEvaluator(model).run(None, inputs)
+    prepared = surgery.split_output_projection(model)
+    actual = ReferenceEvaluator(prepared).run(None, inputs)
+    for reference, result in zip(expected, actual, strict=True):
+        np.testing.assert_allclose(result, reference, rtol=1e-6, atol=1e-6)
+    assert [node.op_type for node in prepared.graph.node] == ["Conv", "Exp", "Conv", "Exp", "Add"]
 
 
 def test_compiled_package_keeps_computation_on_one_mla_segment(compiled: Path, model_dir, build_profile, load_script):

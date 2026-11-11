@@ -34,7 +34,6 @@ conversion:
         uri: https://files.pythonhosted.org/packages/32/c8/73948d6bbe7ab32aebb50d2879df5479fdeedb67ec70f4784021b722f4ee/depth_anything_3-0.1.1-py3-none-any.whl
         sha256: d7de119f5d235bb06044d83e0e41ee63dee7f30126776b23d648e4dbcf106542
         size_bytes: 271370
-  outputs: [model.pt]
 
 compilation:
   format: onnx
@@ -62,4 +61,4 @@ reference_metrics:
     FP32 ONNX; 654 NYU test images; 280x504; original PNG/float32 depth;
     Eigen crop; per-image inverse-depth scale/shift alignment.
   note: NYU images center-cropped to 16:9.
-  metrics: {abs_rel: 0.08771950898015553, delta1: 0.9133138965177866}
+  metrics: {abs_rel: 0.08771951082427801, delta1: 0.9133138888479831}

@@ -1,7 +1,7 @@
-"""Package the unmodified DA3-Small checkpoint and its pinned upstream Python modules.
+"""Export the unmodified DA3-Small forward pass to ONNX at the shipped input shape.
 
-Torch's package format keeps model code with its weights. surgery.py can rebuild
-and export it without installing DA3's unrelated application dependencies.
+Only static constant folding runs here; surgery.py owns all MLA-specific rewrites.
+The Cartesian-product symbolic fills an unsupported PyTorch-to-ONNX export operator.
 """
 
 import argparse
@@ -11,17 +11,20 @@ import tempfile
 import zipfile
 from pathlib import Path
 
+import numpy as np
+import onnx
 from model_registry.conversion import conversion_outputs
 from model_registry.fetch import Fetcher
 from model_registry.model import load_model as load_metadata
+from preprocess import HEIGHT, WIDTH
 
 MODEL_DIR = Path(__file__).resolve().parents[1]
 PRESET = "da3-small"
 PACKAGE = "depth_anything_3"
 WHEEL = "depth_anything_3-0.1.1-py3-none-any.whl"
 SOURCE = ("file_set", "model.safetensors", ["model.safetensors", "config.json", WHEEL])
-# Upstream intentionally leaves these unused auxiliary ray-head normalizations at their defaults.
 MISSING_KEYS = {f"head.scratch.output_conv2_aux.{level}.2.{name}" for level in (1, 2, 3) for name in ("weight", "bias")}
+INTERFACE = {"image": [1, 3, HEIGHT, WIDTH], "depth": [1, 1, HEIGHT, WIDTH], "depth_conf": [1, 1, HEIGHT, WIDTH]}
 
 
 def validate_source(source):
@@ -31,7 +34,7 @@ def validate_source(source):
 
 
 def unpack_package(wheel, directory):
-    """Unpack only the pure-Python package tree; its declared dependencies are not needed to export."""
+    """Unpack the pinned package; requirements-convert.txt provides the dependencies used by its forward pass."""
     with zipfile.ZipFile(wheel) as archive:
         members = [name for name in archive.namelist() if name.startswith(f"{PACKAGE}/")]
         if not members or any(".." in Path(name).parts for name in members):
@@ -61,9 +64,58 @@ def build_network(directory):
     return network
 
 
-def convert(source: Path, output_dir: Path) -> Path:
+def sample_inputs():
+    """Three normalized noise images and one smooth RGB gradient."""
+    from preprocess import MEAN, STD
+
+    samples = [
+        np.random.RandomState(seed).uniform(0, 1, (HEIGHT, WIDTH, 3)).astype(np.float32) for seed in range(123, 126)
+    ]
+    y, x = np.meshgrid(
+        np.linspace(0, 1, HEIGHT, dtype=np.float32), np.linspace(0, 1, WIDTH, dtype=np.float32), indexing="ij"
+    )
+    samples.append(np.stack([x, y, (x + y) / 2], axis=-1))
+    return [np.ascontiguousarray(((image - MEAN) / STD).transpose(2, 0, 1)[None]) for image in samples]
+
+
+def cartesian_product(graph, values):
+    """Lower a pair of 1-D tensors in torch.cartesian_prod to ONNX broadcasting, in the same row order."""
     import torch
-    from torch.package import PackageExporter
+    from torch.onnx import symbolic_helper
+
+    rows, columns = symbolic_helper._unpack_list(values)
+
+    def constant(values):
+        return graph.op("Constant", value_t=torch.tensor(values, dtype=torch.int64))
+
+    shape = graph.op("Concat", graph.op("Shape", rows), graph.op("Shape", columns), axis_i=0)
+    left = graph.op("Expand", graph.op("Unsqueeze", rows, constant([1])), shape)
+    right = graph.op("Expand", graph.op("Unsqueeze", columns, constant([0])), shape)
+    pairs = graph.op(
+        "Concat", graph.op("Unsqueeze", left, constant([2])), graph.op("Unsqueeze", right, constant([2])), axis_i=2
+    )
+    return graph.op("Reshape", pairs, constant([-1, 2]))
+
+
+def validate_export(path):
+    model = onnx.load(path)
+    onnx.checker.check_model(model, full_check=True)
+    if [version.version for version in model.opset_import if not version.domain] != [17]:
+        raise ValueError("expected ONNX opset 17")
+    values = [*model.graph.input, *model.graph.output]
+    if [value.name for value in values] != list(INTERFACE):
+        raise ValueError("expected image, depth and depth_conf")
+    for value in values:
+        tensor = value.type.tensor_type
+        shape = [dimension.dim_value for dimension in tensor.shape.dim]
+        if tensor.elem_type != onnx.TensorProto.FLOAT or shape != INTERFACE[value.name]:
+            raise ValueError(f"unexpected input/output: {value.name}")
+
+
+def convert(source: Path, output_dir: Path) -> Path:
+    import onnxruntime as ort
+    import torch
+    from onnxsim import simplify
 
     output_dir.mkdir(parents=True, exist_ok=False)
     (filename,) = conversion_outputs(MODEL_DIR)
@@ -72,12 +124,47 @@ def convert(source: Path, output_dir: Path) -> Path:
     with tempfile.TemporaryDirectory(prefix="da3-upstream-") as temporary:
         unpack_package(source.parent / WHEEL, Path(temporary))
         network = build_network(source.parent)
-        with PackageExporter(output) as package:
-            package.intern("depth_anything_3.**")
-            package.extern("**")
-            package.save_pickle("da3", "model.pkl", network)
-            package.save_text("da3", "preset.txt", PRESET)
-    print(f"Packaged the original {PRESET} network: {output}")
+
+        class Upstream(torch.nn.Module):
+            def __init__(self, model):
+                super().__init__()
+                self.model = model
+
+            def forward(self, image):
+                result = self.model(image[:, None], ref_view_strategy="first")
+                return result.depth, result.depth_conf
+
+        upstream = Upstream(network).eval()
+        samples = sample_inputs()
+        with torch.inference_mode():
+            references = [[value.numpy() for value in upstream(torch.from_numpy(sample))] for sample in samples]
+            torch.onnx.register_custom_op_symbolic("aten::cartesian_prod", cartesian_product, 17)
+            try:
+                torch.onnx.export(
+                    upstream,
+                    (torch.from_numpy(samples[0]),),
+                    str(output),
+                    opset_version=17,
+                    input_names=["image"],
+                    output_names=["depth", "depth_conf"],
+                    dynamo=False,
+                )
+            finally:
+                torch.onnx.unregister_custom_op_symbolic("aten::cartesian_prod", 17)
+    model, valid = simplify(onnx.load(output), perform_optimization=False)
+    if not valid:
+        raise RuntimeError("ONNX constant folding failed")
+    onnx.save(model, output)
+    validate_export(output)
+    options = ort.SessionOptions()
+    options.intra_op_num_threads = 4
+    session = ort.InferenceSession(str(output), options, providers=["CPUExecutionProvider"])
+    for sample, expected in zip(samples, references, strict=True):
+        for reference, actual in zip(expected, session.run(None, {"image": sample}), strict=True):
+            if not np.isfinite(actual).all():
+                raise ValueError("non-finite ONNX output")
+            np.testing.assert_allclose(actual, reference, rtol=1e-3, atol=1e-3)
+    print(f"Exported the original {PRESET} forward pass: {output}")
     return output
 
 

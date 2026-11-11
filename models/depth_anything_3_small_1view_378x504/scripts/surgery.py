@@ -1,13 +1,12 @@
-"""Specialize one DA3-Small view in PyTorch, export ONNX, and check both outputs against upstream.
+"""Adapt the unmodified DA3-Small ONNX to MLA and check both outputs against the source.
 
-QKV is split before reshaping, fixed position tables are cached, the camera token
-is concatenated, and the final learned depth/confidence projections are separate.
-All changes retain the checkpoint's computation; no LayerNorm affine terms are folded.
+QKV selection becomes fixed splits, camera-token assignment becomes concatenation,
+and the final learned projection is split into separate depth/confidence rows.
 """
 
 from __future__ import annotations
 
-import types
+from collections import defaultdict
 from pathlib import Path
 
 import numpy as np
@@ -15,94 +14,221 @@ import onnx
 from onnx import helper, numpy_helper
 from preprocess import HEIGHT, WIDTH
 
-PRESET = "da3-small"
-VIEWS = 1
 INPUT_SHAPES = {"image": [1, 3, HEIGHT, WIDTH]}
 OUTPUT_SHAPES = {"depth": [1, 1, HEIGHT, WIDTH], "depth_conf": [1, 1, HEIGHT, WIDTH]}
-INTERFACE = {**INPUT_SHAPES, **OUTPUT_SHAPES}
-INPUTS = tuple(INPUT_SHAPES)
-OUTPUTS = tuple(OUTPUT_SHAPES)
+INPUTS, OUTPUTS = tuple(INPUT_SHAPES), tuple(OUTPUT_SHAPES)
+BLOCKS = 12
 
 
-def _require(condition, message):
-    if not condition:
-        raise ValueError(f"Unsupported Depth Anything 3 graph: {message}")
+def prepare_model(source: Path, output_dir: Path) -> Path:
+    import onnxruntime as ort
+
+    model = onnx.load(source)
+    onnx.checker.check_model(model)
+    _validate_interface(model)
+    _require(not ({node.op_type for node in model.graph.node} & {"Constant", "Shape"}), "constant-folded source")
+    names = [node.name for node in model.graph.node]
+    _require(all(names) and len(set(names)) == len(names), "unique node names")
+    # 1. Express the fixed camera-token overwrite without ScatterND.
+    model = replace_camera_token(model)
+    # 2. Keep attention's Q/K/V tensors within MLA's four-dimensional limit.
+    model = split_attention_qkv(model)
+    # 3. Produce depth/confidence directly, without layout moves or selector convolutions.
+    model = split_output_projection(model)
+    # 4. Remove identity and consecutive layout operations left by export and the rewrites.
+    model = remove_redundant_layout_changes(model)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    path = output_dir / "depth_anything_3_small.onnx"
+    onnx.save(model, path)
+    validate_export(path)
+
+    options = ort.SessionOptions()
+    options.intra_op_num_threads = 4
+    reference = ort.InferenceSession(str(source), options, providers=["CPUExecutionProvider"])
+    prepared = ort.InferenceSession(str(path), options, providers=["CPUExecutionProvider"])
+    for sample in sample_inputs():
+        inputs = {"image": sample}
+        compare_outputs(reference.run(list(OUTPUTS), inputs), prepared.run(list(OUTPUTS), inputs))
+    return path
 
 
-def _shape(value) -> list[int]:
-    return [dimension.dim_value for dimension in value.type.tensor_type.shape.dim]
+def replace_camera_token(model):
+    """Replace the one-view camera-token ScatterND with Slice + Concat.
 
-
-def _attributes(node):
-    return {attribute.name: helper.get_attribute_value(attribute) for attribute in node.attribute}
-
-
-def _index(model):
-    shapes = {value.name: _shape(value) for value in (*model.graph.input, *model.graph.value_info, *model.graph.output)}
-    constants = {value.name: numpy_helper.to_array(value) for value in model.graph.initializer}
-    shapes.update({name: list(value.shape) for name, value in constants.items()})
-    from collections import defaultdict
-
-    producers, users = {}, defaultdict(list)
+    The first token is overwritten by a fixed learned token; every remaining
+    patch token is retained. Concatenation expresses this without ScatterND.
+    """
+    shapes, constants, _, _ = _index(model)
+    added, removed = {}, set()
     for node in model.graph.node:
-        for name in node.output:
-            producers[name] = node
-        for name in node.input:
-            if name:
-                users[name].append(node)
-    # A graph output is used outside the graph and must keep its producer.
-    for value in model.graph.output:
-        users[value.name].append(None)
-    return shapes, constants, producers, users
+        if node.op_type != "ScatterND":
+            continue
+        source, indices, update = node.input
+        shape = shapes[source]
+        _require(len(shape) == 4 and shape[:2] == [1, 1], "one-view camera-token tensor")
+        _require(np.array_equal(constants[indices], np.zeros((1, 1, 1, 3), np.int64)), "camera token at index zero")
+        _require(constants[update].shape == (1, 1, 1, shape[3]), "one learned camera token")
+        _require(_attributes(node).get("reduction", b"none") == b"none", "camera-token replacement")
+        bounds = [
+            _constant(model, f"{node.name}/{label}", np.array([value], np.int64))
+            for label, value in (("start", 1), ("end", shape[2]), ("axis", 2))
+        ]
+        tail = f"{node.name}/patch_tokens"
+        added[node.name] = [
+            helper.make_node("Slice", [source, *bounds], [tail], name=f"{node.name}/Slice"),
+            helper.make_node("Concat", [update, tail], list(node.output), name=f"{node.name}/Concat", axis=2),
+        ]
+        removed.add(node.name)
+    _require(len(added) == 1, "one camera-token assignment")
+    _replace_nodes(model, added, removed)
+    return _finish(model)
 
 
-def _validate_interface(model):
-    inputs = {value.name: _shape(value) for value in model.graph.input}
-    outputs = {value.name: _shape(value) for value in model.graph.output}
-    _require(inputs == INPUT_SHAPES and outputs == OUTPUT_SHAPES, f"interface {inputs} -> {outputs}")
+def split_attention_qkv(model):
+    """Split Q/K/V before reshaping, so attention never creates a five-dimensional tensor.
 
-
-def _prune(model):
-    """Drop nodes and initializers that no longer reach a graph output."""
-    needed = {value.name for value in model.graph.output}
-    kept = []
-    for node in reversed(model.graph.node):
-        if any(name in needed for name in node.output):
-            kept.append(node)
-            needed.update(node.input)
-    del model.graph.node[:]
-    model.graph.node.extend(reversed(kept))
-    initializers = [value for value in model.graph.initializer if value.name in needed]
-    del model.graph.initializer[:]
-    model.graph.initializer.extend(initializers)
-
-
-def _finish(model):
-    _prune(model)
-    del model.graph.value_info[:]
+    Upstream packs [B, N, 3, heads, width], transposes, then gathers Q/K/V.
+    Splitting the last channel axis first gives the same three [B, heads, N, width]
+    tensors using only four-dimensional reshapes and transposes.
+    """
     model = onnx.shape_inference.infer_shapes(model, strict_mode=True)
-    onnx.checker.check_model(model, full_check=True)
-    return model
+    shapes, constants, producers, users = _index(model)
+    added, removed = {}, set()
+    for transpose in model.graph.node:
+        if transpose.op_type != "Transpose" or _attributes(transpose).get("perm") != [2, 0, 3, 1, 4]:
+            continue
+        reshape = producers.get(transpose.input[0])
+        _require(reshape is not None and reshape.op_type == "Reshape", f"QKV reshape before {transpose.name}")
+        _require(users[reshape.output[0]] == [transpose], f"private QKV reshape {reshape.name}")
+        batch, tokens, parts, heads, width = constants[reshape.input[1]].tolist()
+        source = reshape.input[0]
+        _require(parts == 3 and shapes[source] == [batch, tokens, 3 * heads * width], f"QKV packing at {reshape.name}")
+        gathers = {}
+        for gather in users[transpose.output[0]]:
+            _require(
+                gather is not None and gather.op_type == "Gather" and _attributes(gather).get("axis", 0) == 0,
+                f"axis-0 Gather after {transpose.name}",
+            )
+            index = constants.get(gather.input[1])
+            _require(index is not None and index.shape == (), f"scalar Gather index at {gather.name}")
+            _require(int(index) in (0, 1, 2) and int(index) not in gathers, "distinct Q/K/V indices")
+            gathers[int(index)] = gather
+        _require(sorted(gathers) == [0, 1, 2], f"Q, K and V Gathers after {transpose.name}")
+        prefix = transpose.name.rsplit("/", 1)[0] + "/qkv_split"
+        names = [f"{prefix}/{part}" for part in "qkv"]
+        sizes = _constant(model, f"{prefix}/sizes", np.array([heads * width] * 3, np.int64))
+        head_shape = _constant(model, f"{prefix}/head_shape", np.array([batch, tokens, heads, width], np.int64))
+        nodes = [helper.make_node("Split", [source, sizes], names, name=f"{prefix}/Split", axis=2)]
+        for index, name in enumerate(names):
+            nodes.append(helper.make_node("Reshape", [name, head_shape], [f"{name}/heads"], name=f"{name}/Reshape"))
+            nodes.append(
+                helper.make_node(
+                    "Transpose",
+                    [f"{name}/heads"],
+                    [gathers[index].output[0]],
+                    name=f"{name}/Transpose",
+                    perm=[0, 2, 1, 3],
+                )
+            )
+        added[reshape.name] = nodes
+        removed.update({reshape.name, transpose.name, *(gather.name for gather in gathers.values())})
+    _require(len(added) == BLOCKS, f"expected {BLOCKS} QKV blocks, found {len(added)}")
+    _replace_nodes(model, added, removed)
+    return _finish(model)
 
 
-def _bypass(model, node, producers, users, outputs) -> bool:
-    """Remove a node whose output equals its first input; a graph output keeps its name."""
-    source, result = node.input[0], node.output[0]
-    if result in outputs:
-        producer = producers.get(source)
-        if producer is None or len(users[source]) != 1:
-            return False
-        producer.output[list(producer.output).index(source)] = result
-    else:
-        for user in users[result]:
-            for index, name in enumerate(user.input):
-                if name == result:
-                    user.input[index] = source
-    model.graph.node.remove(node)
-    return True
+def split_output_projection(model):
+    """Replace the two-channel head and its layout/selection tail with two learned projections.
+
+    Upstream: Conv(32 -> 2) -> NHWC -> select depth/confidence -> exp / (exp + 1).
+    Prepared: Conv(32 -> 1) -> exp, and Conv(32 -> 1) -> exp + 1, both in NCHW.
+    Copying the original weight rows and biases preserves both outputs and avoids
+    the extra quantized selector convolutions that AFE otherwise creates.
+    """
+    shapes, constants, producers, users = _index(model)
+
+    def producer(tensor, kind):
+        node = producers.get(tensor)
+        _require(node is not None and node.op_type == kind, f"expected {kind} producing {tensor}")
+        return node
+
+    # Check the original output paths before replacing any computation.
+    depth_shape = producer("depth", "Reshape")
+    depth_squeeze = producer(depth_shape.input[0], "Squeeze")
+    depth_exp = producer(depth_squeeze.input[0], "Exp")
+    depth_slice = producer(depth_exp.input[0], "Slice")
+    layout = producer(depth_slice.input[0], "Transpose")
+    projection = producer(layout.input[0], "Conv")
+    confidence_shape = producer("depth_conf", "Reshape")
+    confidence_add = producer(confidence_shape.input[0], "Add")
+    confidence_exp = producer(confidence_add.input[0], "Exp")
+    confidence_gather = producer(confidence_exp.input[0], "Gather")
+    _require(confidence_gather.input[0] == layout.output[0], "both outputs select from the same head")
+
+    _require(_attributes(layout).get("perm") == [0, 2, 3, 1], "NCHW to NHWC head layout")
+    _require(
+        [constants[name].tolist() for name in depth_slice.input[1:]] == [[0], [-1], [3], [1]],
+        "depth selects NHWC channel zero",
+    )
+    _require(constants[depth_squeeze.input[1]].tolist() == [3], "depth squeezes only the channel axis")
+    _require(
+        _attributes(confidence_gather).get("axis") == 3 and constants[confidence_gather.input[1]].tolist() == -1,
+        "confidence selects the last NHWC channel",
+    )
+    _require(constants[confidence_add.input[1]].item() == 1, "confidence is exp(logit) + 1")
+    _require(
+        all(constants[node.input[1]].tolist() == [1, 1, HEIGHT, WIDTH] for node in (depth_shape, confidence_shape)),
+        "both outputs retain the full-resolution single-view shape",
+    )
+    _require(len(projection.input) == 3, "final projection has a bias")
+    weight, bias = (constants[name] for name in projection.input[1:])
+    attributes = _attributes(projection)
+    _require(
+        weight.shape == (2, 32, 1, 1)
+        and bias.shape == (2,)
+        and weight.dtype == bias.dtype == np.float32
+        and attributes.get("group", 1) == 1
+        and shapes[projection.output[0]] == [1, 2, HEIGHT, WIDTH],
+        "full-resolution learned float32 32-to-2 projection",
+    )
+    tail = [
+        projection,
+        layout,
+        depth_slice,
+        depth_exp,
+        depth_squeeze,
+        depth_shape,
+        confidence_gather,
+        confidence_exp,
+        confidence_add,
+        confidence_shape,
+    ]
+    removed = {node.name for node in tail}
+    _require(
+        all(user is None or user.name in removed for node in tail for user in users[node.output[0]]),
+        "the output tail has no other consumers",
+    )
+
+    # Each convolution uses one original learned row. No new weights or calibration are introduced.
+    nodes = []
+    for index, output in enumerate(OUTPUTS):
+        prefix = f"{projection.name}/{output}"
+        weights = _constant(model, f"{prefix}/weight", weight[index : index + 1].copy())
+        biases = _constant(model, f"{prefix}/bias", bias[index : index + 1].copy())
+        logit, value = f"{prefix}/logit", f"{prefix}/exp"
+        nodes.append(
+            helper.make_node(
+                "Conv", [projection.input[0], weights, biases], [logit], name=f"{prefix}/Conv", **attributes
+            )
+        )
+        nodes.append(helper.make_node("Exp", [logit], [output if index == 0 else value], name=f"{prefix}/Exp"))
+        if index == 1:
+            nodes.append(helper.make_node("Add", [value, confidence_add.input[1]], [output], name=f"{prefix}/Add"))
+    _replace_nodes(model, {projection.name: nodes}, removed)
+    return _finish(model)
 
 
-def _collapse_data_movement(model):
+def remove_redundant_layout_changes(model):
     """Collapse reshape and transpose chains, then remove identity Reshapes, Squeezes and Casts."""
     model = onnx.shape_inference.infer_shapes(model, strict_mode=True)
     graph = model.graph
@@ -147,152 +273,21 @@ def _collapse_data_movement(model):
             return _finish(model)
 
 
-def freeze_for_export(network, reference_threshold):
-    """Write the fixed-shape graph explicitly; the arithmetic stays the same."""
-    import torch
-
-    vit = network.backbone.pretrained
-    settings = (vit.alt_start, vit.rope_start, vit.patch_start_idx, vit.num_register_tokens, vit.cat_token)
-    if settings != (4, 4, 1, 0, True) or not network.head.pos_embed:
-        raise ValueError(f"Unexpected {PRESET} configuration")
-    # Upstream reorders the views around a selected reference only from this many views on.
-    if VIEWS >= reference_threshold:
-        raise ValueError("Reference-view selection would reorder the views")
-    for block in vit.blocks:
-        # The explicit softmax form of the same attention that scaled_dot_product_attention computes.
-        block.attn.forward = types.MethodType(attention_forward, block.attn)
-    # The bicubically interpolated position table and the RoPE positions depend only on the fixed patch grid.
-    patches = (HEIGHT // vit.patch_size) * (WIDTH // vit.patch_size)
-    table = vit.interpolate_pos_encoding(torch.zeros(1, 1 + patches, vit.embed_dim), HEIGHT, WIDTH).detach().clone()
-    vit.interpolate_pos_encoding = types.MethodType(lambda self, *args: table, vit)
-    positions, global_positions = vit._prepare_rope(1, VIEWS, HEIGHT, WIDTH, torch.device("cpu"))
-
-    def intermediate_layers(self, x, n=1, export_feat_layers=(), **kwargs):
-        # Upstream _get_intermediate_layers_not_chunked without camera conditioning or auxiliary
-        # features. The camera token replaces token 0 by concatenation instead of index assignment.
-        if kwargs.get("cam_token") is not None or export_feat_layers:
-            raise ValueError("The export supports no camera conditioning or auxiliary features")
-        x = self.prepare_tokens_with_masks(x)
-        total = len(self.blocks)
-        taken = range(total - n, total) if isinstance(n, int) else n
-        output, local_x = [], x
-        for index, block in enumerate(self.blocks):
-            rope = index >= self.rope_start and self.rope is not None
-            if index == self.alt_start:
-                # A single view uses only the reference token. Avoid an empty Expand/Concat,
-                # whose ONNX constant folding can incorrectly retain the second camera token.
-                camera = self.camera_token[:, :1]
-                x = torch.cat([camera[:, :, None], x[:, :, 1:]], dim=2)
-            if index >= self.alt_start and index % 2 == 1:
-                x = self.process_attention(x, block, "global", pos=global_positions if rope else None, attn_mask=None)
-            else:
-                x = self.process_attention(x, block, "local", pos=positions if rope else None)
-                local_x = x
-            if index in taken:
-                features = torch.cat([local_x, x], dim=-1)
-                output.append((features[:, :, 0], features))
-        return output, []
-
-    vit._get_intermediate_layers_not_chunked = types.MethodType(intermediate_layers, vit)
-
-    head = network.head
-    add_pos_embed = head._add_pos_embed
-    tables = {}
-
-    def head_pos_embed(self, x, W, H, ratio=0.1):
-        # The UV sin/cos table depends only on the feature-map shape. int() turns traced sizes into the
-        # values the eager check run cached, so tracing finds the same tables.
-        key = (tuple(int(size) for size in x.shape[1:]), W, H, ratio)
-        if key not in tables:
-            tables[key] = add_pos_embed(torch.zeros((1, *key[0]), dtype=x.dtype), W, H, ratio).detach().clone()
-        return x + tables[key]
-
-    head._add_pos_embed = types.MethodType(head_pos_embed, head)
-
-
-def attention_forward(self, x, pos=None, attn_mask=None):
-    """Upstream's evaluation attention with fixed Q/K/V splits instead of a 5-D transpose and Gather."""
-    _require(attn_mask is None and not self.training, "unmasked evaluation attention")
-    batch, tokens, channels = x.shape
-    q, k, v = self.qkv(x).split(int(channels), dim=-1)
-    shape = (batch, tokens, self.num_heads, channels // self.num_heads)
-    q, k, v = (value.reshape(shape).transpose(1, 2) for value in (q, k, v))
-    q, k = self.q_norm(q), self.k_norm(k)
-    if self.rope is not None and pos is not None:
-        q, k = self.rope(q, pos), self.rope(k, pos)
-    weights = ((q * self.scale) @ k.transpose(-2, -1)).softmax(dim=-1)
-    result = (self.attn_drop(weights) @ v).transpose(1, 2).reshape(batch, tokens, channels)
-    return self.proj_drop(self.proj(result))
-
-
-def split_head_projections(head):
-    """Copy the two learned weight rows into independent 32→1 projections, before exp/exp+1."""
-    import torch
-
-    projection = head.scratch.output_conv2[-1]
-    _require(
-        isinstance(projection, torch.nn.Conv2d)
-        and tuple(projection.weight.shape) == (2, 32, 1, 1)
-        and projection.bias is not None
-        and projection.groups == 1,
-        "the learned 32→2 final projection",
-    )
-    _require(
-        head.activation == "exp" and head.conf_activation == "expp1" and head.down_ratio == 1,
-        "full-resolution exp depth and exp+1 confidence",
-    )
-    for index, name in enumerate(("depth_projection", "confidence_projection")):
-        layer = torch.nn.Conv2d(32, 1, kernel_size=1)
-        with torch.no_grad():
-            layer.weight.copy_(projection.weight[index : index + 1])
-            layer.bias.copy_(projection.bias[index : index + 1])
-        setattr(head, name, layer.eval())
-    head.scratch.output_conv2[-1] = torch.nn.Identity()
-    head._forward_impl = types.MethodType(head_forward, head)
-
-
-def head_forward(self, feats, height, width, patch_start_idx):
-    """The upstream main depth branch, with separate NCHW outputs and the unused ray branch omitted."""
-    import torch
-
-    batch, _, channels = feats[0].shape
-    rows, columns = HEIGHT // self.patch_size, WIDTH // self.patch_size
-    resized = []
-    for stage, take in enumerate(self.intermediate_layer_idx):
-        value = self.norm(feats[take][:, patch_start_idx:])
-        value = value.permute(0, 2, 1).reshape(batch, channels, rows, columns)
-        value = self.projects[stage](value)
-        value = self._add_pos_embed(value, WIDTH, HEIGHT)
-        resized.append(self.resize_layers[stage](value))
-    fused, _ = self._fuse(resized)
-    fused = torch.nn.functional.interpolate(fused, size=(HEIGHT, WIDTH), mode="bilinear", align_corners=True)
-    fused = self._add_pos_embed(fused, WIDTH, HEIGHT)
-    features = self.scratch.output_conv2(fused)
-    return {
-        self.head_main: torch.exp(self.depth_projection(features)).squeeze(1),
-        f"{self.head_main}_conf": (torch.exp(self.confidence_projection(features)) + 1).squeeze(1),
-    }
-
-
-def sample_inputs():
-    """Three normalized noise images and one smooth RGB gradient."""
-    from preprocess import MEAN, STD
-
-    samples = [
-        np.random.RandomState(seed).uniform(0, 1, (HEIGHT, WIDTH, 3)).astype(np.float32) for seed in range(123, 126)
-    ]
-    y, x = np.meshgrid(
-        np.linspace(0, 1, HEIGHT, dtype=np.float32), np.linspace(0, 1, WIDTH, dtype=np.float32), indexing="ij"
-    )
-    samples.append(np.stack([x, y, (x + y) / 2], axis=-1))
-    return [np.ascontiguousarray(((image - MEAN) / STD).transpose(2, 0, 1)[None]) for image in samples]
-
-
-def compare_outputs(expected, actual):
-    for name, reference, candidate in zip(OUTPUTS, expected, actual, strict=True):
-        _require(list(reference.shape) == list(candidate.shape) == OUTPUT_SHAPES[name], f"shape of {name}")
-        _require(np.isfinite(reference).all() and np.isfinite(candidate).all(), f"finite {name}")
-        np.testing.assert_allclose(candidate, reference, rtol=1e-3, atol=1e-3, err_msg=name)
+def _bypass(model, node, producers, users, outputs) -> bool:
+    """Remove a node whose output equals its first input; a graph output keeps its name."""
+    source, result = node.input[0], node.output[0]
+    if result in outputs:
+        producer = producers.get(source)
+        if producer is None or len(users[source]) != 1:
+            return False
+        producer.output[list(producer.output).index(source)] = result
+    else:
+        for user in users[result]:
+            for index, name in enumerate(user.input):
+                if name == result:
+                    user.input[index] = source
+    model.graph.node.remove(node)
+    return True
 
 
 def validate_export(path):
@@ -311,61 +306,97 @@ def validate_export(path):
     )
 
 
-def prepare_model(source: Path, output_dir: Path) -> Path:
-    import onnxruntime as ort
-    import torch
-    from onnxsim import simplify
-    from torch.package import PackageImporter
+def compare_outputs(expected, actual):
+    for name, reference, candidate in zip(OUTPUTS, expected, actual, strict=True):
+        _require(list(reference.shape) == list(candidate.shape) == OUTPUT_SHAPES[name], f"shape of {name}")
+        _require(np.isfinite(reference).all() and np.isfinite(candidate).all(), f"finite {name}")
+        np.testing.assert_allclose(candidate, reference, rtol=1e-3, atol=1e-3, err_msg=name)
 
-    torch.set_num_threads(4)
-    package = PackageImporter(source)
-    _require(package.load_text("da3", "preset.txt") == PRESET, "the packaged da3-small preset")
-    network = package.load_pickle("da3", "model.pkl", map_location="cpu").float().eval()
-    samples = sample_inputs()
-    references = []
-    with torch.inference_mode():
-        for sample in samples:
-            original = network(torch.from_numpy(sample)[:, None], ref_view_strategy="first")
-            references.append([original.depth.numpy(), original.depth_conf.numpy()])
-        threshold = package.import_module("depth_anything_3.utils.constants").THRESH_FOR_REF_SELECTION
-        freeze_for_export(network, threshold)
-        split_head_projections(network.head)
 
-        class Exported(torch.nn.Module):
-            def __init__(self, model):
-                super().__init__()
-                self.model = model
+def sample_inputs():
+    """Three normalized noise images and one smooth RGB gradient."""
+    from preprocess import MEAN, STD
 
-            def forward(self, image):
-                features, _ = self.model.backbone(
-                    image[:, None], cam_token=None, export_feat_layers=[], ref_view_strategy="first"
-                )
-                output = self.model._process_depth_head(features, HEIGHT, WIDTH)
-                return output.depth, output.depth_conf
+    samples = [
+        np.random.RandomState(seed).uniform(0, 1, (HEIGHT, WIDTH, 3)).astype(np.float32) for seed in range(123, 126)
+    ]
+    y, x = np.meshgrid(
+        np.linspace(0, 1, HEIGHT, dtype=np.float32), np.linspace(0, 1, WIDTH, dtype=np.float32), indexing="ij"
+    )
+    samples.append(np.stack([x, y, (x + y) / 2], axis=-1))
+    return [np.ascontiguousarray(((image - MEAN) / STD).transpose(2, 0, 1)[None]) for image in samples]
 
-        exported = Exported(network).eval()
-        for sample, expected in zip(samples, references, strict=True):
-            compare_outputs(expected, [value.numpy() for value in exported(torch.from_numpy(sample))])
-        output_dir.mkdir(parents=True, exist_ok=True)
-        path = output_dir / "depth_anything_3_small.onnx"
-        torch.onnx.export(
-            exported,
-            (torch.from_numpy(samples[0]),),
-            str(path),
-            opset_version=17,
-            input_names=list(INPUTS),
-            output_names=list(OUTPUTS),
-            dynamo=False,
-        )
-    model, valid = simplify(onnx.load(path), perform_optimization=False)
-    _require(valid, "ONNX constant folding")
-    model = _collapse_data_movement(model)
-    onnx.save(model, path)
-    validate_export(path)
-    options = ort.SessionOptions()
-    options.intra_op_num_threads = 4
-    session = ort.InferenceSession(str(path), options, providers=["CPUExecutionProvider"])
-    for sample, expected in zip(samples, references, strict=True):
-        compare_outputs(expected, session.run(list(OUTPUTS), {"image": sample}))
-    print(f"Original PyTorch / optimized PyTorch / ONNX check passed on {len(samples)} samples: {path}")
-    return path
+
+def _validate_interface(model):
+    inputs = {value.name: _shape(value) for value in model.graph.input}
+    outputs = {value.name: _shape(value) for value in model.graph.output}
+    _require(inputs == INPUT_SHAPES and outputs == OUTPUT_SHAPES, f"interface {inputs} -> {outputs}")
+
+
+def _require(condition, message):
+    if not condition:
+        raise ValueError(f"Unsupported Depth Anything 3 graph: {message}")
+
+
+def _shape(value) -> list[int]:
+    return [dimension.dim_value for dimension in value.type.tensor_type.shape.dim]
+
+
+def _attributes(node):
+    return {attribute.name: helper.get_attribute_value(attribute) for attribute in node.attribute}
+
+
+def _index(model):
+    shapes = {value.name: _shape(value) for value in (*model.graph.input, *model.graph.value_info, *model.graph.output)}
+    constants = {value.name: numpy_helper.to_array(value) for value in model.graph.initializer}
+    shapes.update({name: list(value.shape) for name, value in constants.items()})
+    producers, users = {}, defaultdict(list)
+    for node in model.graph.node:
+        for name in node.output:
+            producers[name] = node
+        for name in node.input:
+            if name:
+                users[name].append(node)
+    # A graph output is used outside the graph and must keep its producer.
+    for value in model.graph.output:
+        users[value.name].append(None)
+    return shapes, constants, producers, users
+
+
+def _prune(model):
+    """Drop nodes and initializers that no longer reach a graph output."""
+    needed = {value.name for value in model.graph.output}
+    kept = []
+    for node in reversed(model.graph.node):
+        if any(name in needed for name in node.output):
+            kept.append(node)
+            needed.update(node.input)
+    del model.graph.node[:]
+    model.graph.node.extend(reversed(kept))
+    initializers = [value for value in model.graph.initializer if value.name in needed]
+    del model.graph.initializer[:]
+    model.graph.initializer.extend(initializers)
+
+
+def _finish(model):
+    _prune(model)
+    del model.graph.value_info[:]
+    model = onnx.shape_inference.infer_shapes(model, strict_mode=True)
+    onnx.checker.check_model(model, full_check=True)
+    return model
+
+
+def _constant(model, name, value):
+    model.graph.initializer.append(numpy_helper.from_array(np.asarray(value), name))
+    return name
+
+
+def _replace_nodes(model, added, removed):
+    """Insert each replacement where the node it is keyed by stood, and drop the removed nodes."""
+    nodes = []
+    for node in model.graph.node:
+        nodes.extend(added.get(node.name, []))
+        if node.name not in removed:
+            nodes.append(node)
+    del model.graph.node[:]
+    model.graph.node.extend(nodes)
