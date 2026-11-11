@@ -67,9 +67,8 @@ def build_parameters(metadata: dict[str, Any], profile_id: str) -> dict[str, Any
 def quantization(precision: str, calibration_bins: int) -> QuantizationParams:
     """The compiler's activation and weight formats for a precision.
 
-    Every build calibrates. AFE has no BF16 Sqrt, so even with BF16 activations the VLAD norm's Sqrt runs as an INT8
-    lookup table, and without calibration data quantize() fails for missing calibration information. Histogram MSE
-    measures its input range, and the W8A8 encoder's ranges, on the calibration images.
+    Every build calibrates: model.yaml gives each profile a calibration dataset, and Histogram MSE measures the
+    activation ranges the W8A8 encoder and the INT8 weights quantize against. The BF16 build keeps the same path.
     """
     if precision in ("w8a8", "w8a16"):
         # The W8A8 build quantizes as W8A16 too, and its INT8 marks make the encoder W8A8 (bf16_regions). A BF16 mark
