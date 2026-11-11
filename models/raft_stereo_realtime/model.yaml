@@ -46,8 +46,8 @@ build_profiles:
 
   # w8a8 is held back: on the 8 Scene Flow fidelity pairs its disparity's end-point error was 6.449 px, against
   # 1.111 px for the ONNX and 1.174 px for w16a16 (1.143 px since surgery.py's lookup, abs and upsampling rewrites).
-  # Uncomment it once an INT8 recipe keeps RAFT-Stereo's accuracy, such as LightStereo-S's mixed build, which runs
-  # the operations INT8 rounding hurts most in BF16.
+  # Uncomment it once an INT8 recipe keeps RAFT-Stereo's accuracy, for example one that runs the operations INT8
+  # rounding hurts most in BF16.
   # w8a8:
   #   calibration_dataset: scene-flow-cal
   #   components:
