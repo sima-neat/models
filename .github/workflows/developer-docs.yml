@@ -1,6 +1,6 @@
 name: Developer Docs Validation
 
-# The orchestrator calls this before planning compilations and publishes the site it uploads;
+# The orchestrator runs this independently of model processing and publishes the checked site it uploads;
 # Target Branch Checks calls it on every pull request; a manual run checks one ref.
 on:
   workflow_call:

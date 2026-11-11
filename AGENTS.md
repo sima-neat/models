@@ -288,7 +288,11 @@ in the same commit.
   `developer-docs.yml` checks the model browser.
   `PR Sanitization` checks the pull request's description. Contributor code
   never runs on self-hosted runners for a pull request.
-- **Push.** Every push runs `Vulcan Model Orchestrator`. Its `portal` job builds and smoke-tests the model browser (`developer-docs.yml`); `plan` waits for it, so a portal failure stops the run. On `main` and `develop`, `publish-model-browser` publishes that checked portal to staging. The `plan` job runs `model-registry plan-stages`, which reads the
+- **Push.** Every push runs `Vulcan Model Orchestrator`. Its `portal` job builds and
+  smoke-tests the model browser (`developer-docs.yml`) independently of model processing.
+  Planning waits for model validation and registry configuration. On `main` and `develop`,
+  `publish-model-browser` publishes the portal to staging only after its checks pass.
+  The `plan` job runs `model-registry plan-stages`, which reads the
   branch's prior catalog (its own, merged with its base branches' on a feature
   branch; see `design-doc/model-registry-architecture.md`) and resolves each
   fingerprint against the registry. `compile` calls

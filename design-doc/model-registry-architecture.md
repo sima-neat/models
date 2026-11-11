@@ -206,10 +206,10 @@ configuration, retries, and the staging acceptance boundary.
 ```text
 push (Vulcan Model Orchestrator, every push)
   -> select: validate the catalog, resolve the compiler pin and base branches
-     portal (in parallel): build and smoke-test the model browser; a failure stops the run here
+     portal (in parallel): build and smoke-test the model browser; gates browser publication independently of model processing
        -> on main and develop: resolve-staging-browser-config + checked portal -> publish-model-browser to staging
   -> resolve-vulcan-config: after select, resolve the selected environment configuration
-  -> plan (waits for select, portal and resolve-vulcan-config): resolve and retain converted ONNX inputs, then compare fingerprints with the branch catalog and registry runs; skip on-demand models on pushes
+  -> plan (waits for select and resolve-vulcan-config): resolve and retain converted ONNX inputs, then compare fingerprints with the branch catalog and registry runs; skip on-demand models on pushes
   -> authorize: check requested runner classes
   -> initialize the catalog: publish model requirements and mark automatic builds pending
   -> resolve-benchmark-runner: resolve the DevKit runner once; every benchmark of the run gets it and the Vulcan config
@@ -240,9 +240,10 @@ and the checked portal. The selected model configuration
 supplies the compiler runner environment, artifact bucket and dataset bucket; compile
 workers receive that dataset bucket through `SIMA_DATASET_S3_URI`.
 
-The `plan` job requests `id-token: write` and waits for configuration resolution
-as well as validation and the portal check. Only production assumes the selected
-GitHub environment's `VULCAN_ARTIFACT_REGISTRY_PUBLISHER_ROLE_ARN` via OIDC before
+The `plan` job requests `id-token: write` and waits for model validation and
+configuration resolution. Portal validation runs independently and gates browser
+publication. Only production assumes the selected GitHub environment's
+`VULCAN_ARTIFACT_REGISTRY_PUBLISHER_ROLE_ARN` via OIDC before
 planning. That role must authorize catalog/resolve reads for this repository;
 planning uses a publisher-capable identity even though its registry operations
 are reads. Missing trust or read permissions fail the job before compilation.
