@@ -1,4 +1,4 @@
-"""Checks of the conversion's source pin, the checkpoint it accepts, and the weights.pth and reference.onnx it
+"""Checks of the conversion's source pin, the checkpoint it accepts, and the weight-index.pth and reference.onnx it
 writes."""
 
 from __future__ import annotations
@@ -42,9 +42,22 @@ def test_config_must_name_the_converted_architecture(tmp_path: Path, converter: 
             converter.validate_config(tmp_path)
 
 
-def test_conversion_writes_the_weights_and_then_the_reference(converter: ModuleType) -> None:
+def test_conversion_writes_the_weight_index_and_then_the_reference(converter: ModuleType) -> None:
     # compile.py receives the first output as --model and reads the second beside it.
-    assert conversion_outputs(MODEL_DIR) == ["weights.pth", "reference.onnx"]
+    assert conversion_outputs(MODEL_DIR) == ["weight-index.pth", "reference.onnx"]
+
+
+def test_the_index_names_the_initializer_holding_each_weight(tmp_path: Path, converter: ModuleType) -> None:
+    norm, projection = np.arange(3, dtype=np.float32), np.arange(6, dtype=np.float32).reshape(2, 3)
+    initializers = [onnx.numpy_helper.from_array(norm, "norm"), onnx.numpy_helper.from_array(projection.T, "matmul")]
+    graph = onnx.helper.make_graph([], "reference", [], [], initializer=initializers)
+    onnx.save(onnx.helper.make_model(graph), tmp_path / "reference.onnx")
+
+    index = converter.index_initializers({"norm.weight": norm, "proj.weight": projection}, tmp_path / "reference.onnx")
+
+    assert index == {"norm.weight": ("norm", False), "proj.weight": ("matmul", True)}
+    with pytest.raises(ValueError, match="no initializer equal to"):
+        converter.index_initializers({"norm.bias": norm + 1}, tmp_path / "reference.onnx")
 
 
 def test_the_interface_is_the_one_surgery_exports(
@@ -53,7 +66,7 @@ def test_the_interface_is_the_one_surgery_exports(
     surgery = load_script("surgery")
 
     assert converter.INTERFACE == surgery.INTERFACE
-    assert converter.ROTARY_EMBEDDING == surgery.ROTARY_EMBEDDING
+    assert (converter.ROTARY_EMBEDDING, converter.INITIALIZERS) == (surgery.ROTARY_EMBEDDING, surgery.INITIALIZERS)
     assert (converter.PATCHES, converter.HEAD_SIZE, converter.REGISTERS) == (
         surgery.PATCHES, surgery.HEAD_SIZE, surgery.REGISTERS)
 
@@ -101,18 +114,18 @@ def test_reference_must_follow_timm(converter: ModuleType, case: str) -> None:
             converter.compare_outputs(expected, actual)
 
 
-def test_converted_weights_are_timms_state_dict_with_the_rotary_embedding(
+def test_converted_index_finds_every_weight_in_the_reference(
     converted: Path, load_script: Callable[[str], ModuleType]
 ) -> None:
-    """The conversion stage's real output: the float32 tensors surgery.py rebuilds the encoder from, and beside it
-    reference.onnx with the package interface."""
+    """The conversion stage's real output: reference.onnx with the package interface, and the weight index that
+    surgery.py rebuilds timm's state dict from with it."""
     torch = pytest.importorskip("torch")
     surgery, converter = load_script("surgery"), load_script("convert")
-    weights = torch.load(converted, weights_only=True)
+    reference = converted.with_name(conversion_outputs(MODEL_DIR)[1])
+    converter.validate_export(reference)
 
-    assert {name: list(value.shape) for name, value in weights.items()} == surgery.weight_shapes()
-    assert all(value.dtype == torch.float32 for value in weights.values())
+    # load_weights requires every weight's shape.
+    weights = surgery.load_weights(converted, reference)
     # Each row holds sines then cosines of the same phases.
     sines, cosines = weights[surgery.ROTARY_EMBEDDING].tensor_split(2, dim=1)
     torch.testing.assert_close(sines.square() + cosines.square(), torch.ones_like(sines))
-    converter.validate_export(converted.with_name(conversion_outputs(MODEL_DIR)[1]))

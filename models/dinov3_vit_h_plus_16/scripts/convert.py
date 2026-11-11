@@ -1,13 +1,16 @@
-"""Publish DINOv3 ViT-H+/16 from the pinned timm checkpoint as the weights.pth surgery.py rebuilds the encoder from,
-and as reference.onnx, timm's own forward pass at 1x3x224x224.
+"""Publish DINOv3 ViT-H+/16 from the pinned timm checkpoint as reference.onnx, timm's own forward pass at
+1x3x224x224, and as the weight-index.pth surgery.py rebuilds the encoder from.
 
-Conversion changes no computation. weights.pth holds timm's state dict and, as its own entry, the rotary sines and
-cosines of the 14x14 patch grid of a 224x224 image, which timm computes from the input shape. reference.onnx is timm's
-DINOv3 with exact GELU, folded with onnxsim, returning the final-norm class token and the 196 patch tokens without
-the 4 register tokens, as Meta's DINOv3 returns them. Numerical fidelity compares each build against it.
+Conversion changes no computation. reference.onnx is timm's DINOv3, folded with onnxsim, returning the final-norm
+class token and the 196 patch tokens without the 4 register tokens, as Meta's DINOv3 returns them. Numerical fidelity
+compares each build against it. reference.onnx holds every weight of timm's state dict, as is or transposed, so
+weight-index.pth names the initializer of each instead of publishing the 3.4 GB of weights twice, which would exceed
+the registry's 5 GiB upload limit. It also holds the rotary sines and cosines of the 14x14 patch grid of a 224x224
+image, which timm computes from the input shape.
 """
 
 import argparse
+import hashlib
 import json
 import tempfile
 from pathlib import Path
@@ -17,6 +20,7 @@ import onnx
 from model_registry.conversion import conversion_outputs
 from model_registry.fetch import Fetcher
 from model_registry.model import load_and_validate_model
+from onnx import numpy_helper
 
 MODEL_DIR = Path(__file__).resolve().parents[1]
 
@@ -35,8 +39,11 @@ INTERFACE = {
 }
 OUTPUTS = ("class_embedding", "patch_embeddings")
 OPSET = 17
-# The weights.pth entry with timm's rotary embedding of the 14x14 grid: [196, 2 * head size], sines then cosines.
+# The weight-index.pth entry with timm's rotary embedding of the 14x14 grid: [196, 2 * head size], sines then cosines.
 ROTARY_EMBEDDING = "rope.embedding"
+# The weight-index.pth entry mapping each state dict name to its reference.onnx initializer and whether it is stored
+# transposed, as each Linear weight is.
+INITIALIZERS = "initializers"
 SEEDS = range(123, 127)
 # ONNX Runtime and PyTorch order their float32 sums differently, which moves a few output values by up to about 5e-4;
 # nothing else may differ.
@@ -105,15 +112,42 @@ def load_dinov3(checkpoint):
     return model.to(torch.float32).eval()
 
 
-def save_weights(dinov3, path):
-    """Write timm's state dict with the rotary embedding of the 224x224 input as its own entry."""
+def _content(array):
+    """A key equal for two arrays exactly when they hold the same values in the same shape and dtype."""
+    return hashlib.sha256(np.ascontiguousarray(array).tobytes()).hexdigest(), array.shape, array.dtype.str
+
+
+def index_initializers(weights, reference):
+    """The reference.onnx initializer holding each named array of weights, and whether it holds it transposed."""
+    initializers = {}
+    for initializer in onnx.load(reference).graph.initializer:
+        initializers.setdefault(_content(numpy_helper.to_array(initializer)), initializer.name)
+
+    def find(array):
+        if name := initializers.get(_content(array)):
+            return name, False
+        if array.ndim == 2 and (name := initializers.get(_content(array.T))):
+            return name, True
+        return None
+
+    index = {name: find(array) for name, array in weights.items()}
+    missing = [name for name, found in index.items() if found is None]
+    if missing:
+        raise ValueError(f"reference.onnx holds no initializer equal to {missing[:4]}")
+    return index
+
+
+def save_weight_index(dinov3, reference, path):
+    """Write where reference.onnx holds each weight of timm's state dict, with the rotary embedding of the 224x224
+    input."""
     import torch
 
     with torch.inference_mode():
         rotary = dinov3.rope.get_embed()
     if list(rotary.shape) != [PATCHES, 2 * HEAD_SIZE]:
         raise ValueError(f"timm's rotary embedding has shape {list(rotary.shape)}, not one row per patch")
-    torch.save({**dinov3.state_dict(), ROTARY_EMBEDDING: rotary.clone()}, path)
+    weights = {name: value.numpy() for name, value in dinov3.state_dict().items()}
+    torch.save({ROTARY_EMBEDDING: rotary.clone(), INITIALIZERS: index_initializers(weights, reference)}, path)
     print(f"Wrote {path}")
 
 
@@ -171,12 +205,12 @@ def convert(checkpoint, output_dir):
 
     validate_config(checkpoint.parent)
     output_dir.mkdir(parents=True, exist_ok=False)
-    weights, reference = (output_dir / name for name in conversion_outputs(MODEL_DIR))
+    weight_index, reference = (output_dir / name for name in conversion_outputs(MODEL_DIR))
     torch.set_num_threads(4)
     dinov3 = load_dinov3(checkpoint)
-    save_weights(dinov3, weights)
     export_reference(dinov3, reference)
-    return weights, reference
+    save_weight_index(dinov3, reference, weight_index)
+    return weight_index, reference
 
 
 def main():

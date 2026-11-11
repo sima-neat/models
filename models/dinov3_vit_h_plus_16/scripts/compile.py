@@ -226,7 +226,7 @@ def measure_fidelity(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model", type=Path, required=True, help="the converted weights.pth")
+    parser.add_argument("--model", type=Path, required=True, help="the converted weight-index.pth")
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--build-profile", required=True)
     parser.add_argument("--compile-invocation", required=True)
@@ -235,16 +235,16 @@ def main() -> int:
     if args.compile_invocation != args.build_profile:
         parser.error("a build profile compiles in one invocation named after it")
 
-    weights = args.model.expanduser().resolve()
-    if weights.suffix != ".pth" or not weights.is_file():
-        parser.error(f"--model must be the converted weights.pth, not {weights}")
-    reference = weights.with_name(conversion_outputs(MODEL_DIR)[1])
+    weight_index = args.model.expanduser().resolve()
+    if weight_index.suffix != ".pth" or not weight_index.is_file():
+        parser.error(f"--model must be the converted weight-index.pth, not {weight_index}")
+    reference = weight_index.with_name(conversion_outputs(MODEL_DIR)[1])
     metadata = load_metadata(MODEL_DIR)
     precision = str(_parameters(metadata, args.build_profile)["precision"])
     fidelity = metadata["numerical_fidelity"]
     output_dir = args.output_dir.expanduser().resolve()
     with tempfile.TemporaryDirectory(prefix=f"{MODEL_ID}-onnx-", dir=os.environ.get("RUNNER_TEMP")) as temporary:
-        source = export_encoder(weights, reference, Path(temporary) / "model.onnx")
+        source = export_encoder(weight_index, reference, Path(temporary) / "model.onnx")
         quantized = quantize(source, args.build_profile, precision)
         # Before the MLA compile, so a broken quantization shows early. Printed, not logged: the Model Compiler's
         # logging setup drops this script's INFO records.

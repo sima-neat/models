@@ -1,4 +1,5 @@
-"""Rebuild DINOv3 ViT-H+/16 for the MLA from the converted weights, export it and check it against reference.onnx.
+"""Rebuild DINOv3 ViT-H+/16 for the MLA from the weights in reference.onnx, export it and check it against
+reference.onnx.
 
 The rebuilt encoder runs timm's DINOv3 on the 5 prefix tokens (the class token and 4 registers) and the 196 patch
 tokens of a 224x224 image as 4D, batch-one operations on a [1, HIDDEN_SIZE, 1, 201] tensor, channels on C and tokens
@@ -19,8 +20,8 @@ on W, and returns the same class_embedding and patch_embeddings. Each rewrite is
 
 compile.py calls export_encoder. To get the FP32 ONNX on a host, run:
 
-    python models/dinov3_vit_h_plus_16/scripts/surgery.py --weights weights.pth --reference reference.onnx \
-        --output model.onnx
+    python models/dinov3_vit_h_plus_16/scripts/surgery.py --weight-index weight-index.pth \
+        --reference reference.onnx --output model.onnx
 """
 
 import argparse
@@ -29,6 +30,7 @@ from pathlib import Path
 
 import numpy as np
 import onnx
+from onnx import numpy_helper
 
 IMAGE_SIZE = 224
 PATCH_SIZE = 16
@@ -41,8 +43,11 @@ DEPTH = 32
 REGISTERS = 4
 PREFIX = 1 + REGISTERS
 EPSILON = 1e-5
-# convert.py's weights.pth entry with timm's rotary embedding of the 14x14 grid: [196, 128], sines then cosines.
+# convert.py's weight-index.pth entry with timm's rotary embedding of the 14x14 grid: [196, 128], sines then cosines.
 ROTARY_EMBEDDING = "rope.embedding"
+# convert.py's weight-index.pth entry mapping each state dict name to its reference.onnx initializer and whether it
+# is stored transposed.
+INITIALIZERS = "initializers"
 INPUTS = {"pixel_values": [1, 3, IMAGE_SIZE, IMAGE_SIZE]}
 OUTPUTS = {"class_embedding": [1, HIDDEN_SIZE], "patch_embeddings": [1, PATCHES, HIDDEN_SIZE]}
 INTERFACE = {**INPUTS, **OUTPUTS}
@@ -54,7 +59,7 @@ MIN_COSINE = 0.99999
 
 
 def weight_shapes():
-    """The shape of every weights.pth entry, as convert.py writes timm's DINOv3 ViT-H+/16."""
+    """The shape of every weight of timm's DINOv3 ViT-H+/16 that convert.py indexes, and of the rotary embedding."""
     shapes = {
         "cls_token": [1, 1, HIDDEN_SIZE],
         "reg_token": [1, REGISTERS, HIDDEN_SIZE],
@@ -79,15 +84,23 @@ def weight_shapes():
     return shapes
 
 
-def load_weights(path):
+def load_weights(weight_index, reference):
+    """timm's state dict with the rotary embedding, each weight read from the reference.onnx initializer
+    weight-index.pth names."""
     import torch
 
-    weights = torch.load(path, weights_only=True)
+    index = torch.load(weight_index, weights_only=True)
+    initializers = {initializer.name: initializer for initializer in onnx.load(reference).graph.initializer}
+    weights = {ROTARY_EMBEDDING: index[ROTARY_EMBEDDING]}
+    for name, (initializer, transposed) in index[INITIALIZERS].items():
+        array = numpy_helper.to_array(initializers[initializer])
+        weights[name] = torch.from_numpy(np.ascontiguousarray(array.T if transposed else array))
     expected = weight_shapes()
     differing = sorted(name for name in {*weights, *expected}
                        if name not in weights or list(weights[name].shape) != expected.get(name))
     if differing:
-        raise ValueError(f"weights.pth is not DINOv3 ViT-H+/16 as convert.py writes it; it differs at {differing[:4]}")
+        raise ValueError(f"weight-index.pth and reference.onnx are not DINOv3 ViT-H+/16 as convert.py writes them; "
+                         f"they differ at {differing[:4]}")
     return {name: value.to(torch.float64) for name, value in weights.items()}
 
 
@@ -235,13 +248,13 @@ def synthetic_pixels(seed):
     return np.random.RandomState(seed).standard_normal(INPUTS["pixel_values"]).astype(np.float32)
 
 
-def export_encoder(weights, reference, output):
+def export_encoder(weight_index, reference, output):
     """Export the rebuilt encoder to output and require its embeddings to follow reference.onnx."""
     import onnxruntime as ort
     import torch
 
     torch.set_num_threads(4)
-    encoder = build_encoder(load_weights(weights))
+    encoder = build_encoder(load_weights(weight_index, reference))
     # Above 2 GB torch writes each weight to its own file beside the export, so it exports into a directory of its own.
     with tempfile.TemporaryDirectory(dir=output.parent) as temporary, torch.inference_mode():
         exported = Path(temporary) / output.name
@@ -263,11 +276,11 @@ def export_encoder(weights, reference, output):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--weights", type=Path, required=True, help="the converted weights.pth")
+    parser.add_argument("--weight-index", type=Path, required=True, help="the converted weight-index.pth")
     parser.add_argument("--reference", type=Path, required=True, help="the converted reference.onnx")
     parser.add_argument("--output", type=Path, required=True, help="the ONNX to write")
     args = parser.parse_args()
-    export_encoder(args.weights.resolve(), args.reference.resolve(), args.output.resolve())
+    export_encoder(args.weight_index.resolve(), args.reference.resolve(), args.output.resolve())
 
 
 if __name__ == "__main__":

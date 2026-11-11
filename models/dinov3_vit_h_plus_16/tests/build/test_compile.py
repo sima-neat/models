@@ -16,10 +16,10 @@ from PIL import Image
 
 MODEL_DIR = Path(__file__).resolve().parents[2]
 # The least cosine with reference.onnx a build keeps on the 50 fidelity images, per output. Model Compiler
-# 3.0.0.dev0+develop.2291 measured the least output on 16 of them at w16a16 0.99963, w8a16 0.99756;
+# 3.0.0.dev0+develop.2291 measured the least output on 20 of them at w16a16 0.99952, and on all 50 at w8a16 0.99554;
 # CI compiles with Model Compiler 3.0.0.1. A floor allows twice the measured loss, 1 - cosine, when measured on all 50
 # images and three times when measured on fewer, rounded down to three decimals.
-FIDELITY_FLOORS = {"w16a16": 0.998, "w8a16": 0.992}
+FIDELITY_FLOORS = {"w16a16": 0.998, "w8a16": 0.991}
 
 
 def _png(width: int, height: int, colour: tuple[int, int, int] = (255, 0, 0)) -> bytes:
@@ -155,18 +155,32 @@ def test_rotate_half_is_timms_on_each_heads_channels(load_script: Callable[[str]
     torch.testing.assert_close(surgery.rotate_half(heads), expected)
 
 
-def test_weights_must_be_dinov3_vit_h_plus_16(tmp_path: Path, load_script: Callable[[str], ModuleType]) -> None:
+def test_weights_are_read_from_the_indexed_reference_initializers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, load_script: Callable[[str], ModuleType]
+) -> None:
     torch = pytest.importorskip("torch")
     surgery = load_script("surgery")
-    weights = {name: torch.zeros(shape) for name, shape in surgery.weight_shapes().items()}
-    torch.save(weights, tmp_path / "weights.pth")
-    assert surgery.load_weights(tmp_path / "weights.pth").keys() == weights.keys()
+    # Two small weights stand in for the encoder's, so the test needs no 3.4 GB reference.onnx.
+    monkeypatch.setattr(surgery, "weight_shapes", lambda: {
+        "norm.weight": [3], "blocks.0.attn.proj.weight": [2, 3], surgery.ROTARY_EMBEDDING: [2, 4]})
+    norm, projection = np.arange(3, dtype=np.float32), np.arange(6, dtype=np.float32).reshape(2, 3)
+    initializers = [onnx.numpy_helper.from_array(norm, "norm"), onnx.numpy_helper.from_array(projection.T, "matmul")]
+    graph = onnx.helper.make_graph([], "reference", [], [], initializer=initializers)
+    onnx.save(onnx.helper.make_model(graph), tmp_path / "reference.onnx")
+    rotary = torch.ones(2, 4)
+    index = {"norm.weight": ("norm", False), "blocks.0.attn.proj.weight": ("matmul", True)}
+    torch.save({surgery.ROTARY_EMBEDDING: rotary, surgery.INITIALIZERS: index}, tmp_path / "weight-index.pth")
 
-    # ViT-S/16's GELU MLP has one input projection where ViT-H+/16's SwiGLU has two.
-    weights["blocks.31.mlp.fc1.weight"] = weights.pop("blocks.31.mlp.fc1_x.weight")
-    torch.save(weights, tmp_path / "gelu.pth")
-    with pytest.raises(ValueError, match="is not DINOv3"):
-        surgery.load_weights(tmp_path / "gelu.pth")
+    weights = surgery.load_weights(tmp_path / "weight-index.pth", tmp_path / "reference.onnx")
+    assert weights["norm.weight"].tolist() == norm.tolist()
+    assert weights["blocks.0.attn.proj.weight"].tolist() == projection.tolist()
+    assert weights[surgery.ROTARY_EMBEDDING].tolist() == rotary.tolist()
+
+    # Read as is, the transposed projection has the wrong shape.
+    index["blocks.0.attn.proj.weight"] = ("matmul", False)
+    torch.save({surgery.ROTARY_EMBEDDING: rotary, surgery.INITIALIZERS: index}, tmp_path / "untransposed.pth")
+    with pytest.raises(ValueError, match="are not DINOv3"):
+        surgery.load_weights(tmp_path / "untransposed.pth", tmp_path / "reference.onnx")
 
 
 def _export_like_model(surgery: ModuleType, case: str) -> onnx.ModelProto:
@@ -338,7 +352,7 @@ def test_audit_requires_one_mla_plugin_no_cpu_plugin_and_the_input(
         (["--compile-invocation", "model", "--fidelity-dataset", "cal.tar.gz"],
          "a build profile compiles in one invocation named after it"),
         (["--compile-invocation", "w16a16", "--fidelity-dataset", "cal.tar.gz", "--model", "model.onnx"],
-         "--model must be the converted weights.pth"),
+         "--model must be the converted weight-index.pth"),
     ],
 )
 def test_compile_main_rejects_an_incomplete_invocation(
@@ -350,7 +364,7 @@ def test_compile_main_rejects_an_incomplete_invocation(
     message: str,
 ) -> None:
     recipe = load_script("compile")
-    source = tmp_path / "weights.pth"
+    source = tmp_path / "weight-index.pth"
     source.touch()
     monkeypatch.setattr(
         sys,

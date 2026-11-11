@@ -31,7 +31,7 @@ conversion:
       model.safetensors: {sha256: 0d54131c846c91a78ec7641482f32e45b27cb4895f83653c038f305f18c7e61c, size_bytes: 3362084520}
       config.json: {sha256: c22d89c036033b9f22445c136e6e050a27dd7f3bff26566b9dad0c66c9c84a83, size_bytes: 675}
       LICENSE.md: {sha256: 25d122eb8f5b880fd23c736fb6ea8018ee45c12237e00b8a86d14c653904999e, size_bytes: 7503}
-  outputs: [weights.pth, reference.onnx]
+  outputs: [weight-index.pth, reference.onnx]
 
 compilation:
   format: onnx
