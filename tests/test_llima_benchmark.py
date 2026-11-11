@@ -117,6 +117,33 @@ def test_exact_prompt_lengths_preserve_native_assistant_suffix():
         assert len(tokens) == length and tokens[0] == 1000 and tokens[-2:] == [1001, 1002]
 
 
+def test_text_client_uses_the_resolved_target_tokenizer(monkeypatch, tmp_path):
+    import sys
+    from types import SimpleNamespace
+
+    target = tmp_path / "target"
+    (target / "devkit").mkdir(parents=True)
+    (target / "devkit/vlm_config.json").write_text('{"target": true}')
+    calls = []
+
+    def resolve(deployment):
+        assert deployment == tmp_path
+        return target, tmp_path / "draft"
+
+    def client(**kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(zmq_socket=SimpleNamespace(close=lambda **_: None),
+                               zmq_context=SimpleNamespace(term=lambda: None))
+
+    monkeypatch.setitem(sys.modules, "sima_lmm.devkit.model_manager", SimpleNamespace(
+        resolve_target_and_draft_paths=resolve))
+    monkeypatch.setitem(sys.modules, "sima_lmm.mole.modalixlm", SimpleNamespace(ModalixLM=client))
+    assert bench._config(tmp_path) == {"target": True}
+    with bench._client("board", tmp_path, 4096):
+        pass
+    assert calls == [{"board": "board", "pretrained": str(target / "devkit"), "device": "cpu", "max_length": 4096}]
+
+
 def generation_report():
     data = report()
     data["settings"].update(repetitions=5, warmup=1)

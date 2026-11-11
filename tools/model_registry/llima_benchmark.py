@@ -136,8 +136,14 @@ def validate_report(result: dict[str, Any]) -> None:
             raise ValidationError("image does not match the compiled vision encoder size")
 
 
+def _target(deployment: Path) -> Path:
+    from sima_lmm.devkit.model_manager import resolve_target_and_draft_paths
+
+    return resolve_target_and_draft_paths(deployment)[0]
+
+
 def _config(deployment: Path) -> dict:
-    return json.loads((deployment / "devkit/vlm_config.json").read_text())
+    return json.loads((_target(deployment) / "devkit/vlm_config.json").read_text())
 
 
 def _speculative(config: dict) -> bool:
@@ -169,7 +175,7 @@ def _client(board, deployment: Path, context: int, *, image: bool = False):
     else:
         from sima_lmm.mole.modalixlm import ModalixLM
 
-        lm = ModalixLM(board=board, pretrained=str(deployment / "devkit"), device="cpu", max_length=context)
+        lm = ModalixLM(board=board, pretrained=str(_target(deployment) / "devkit"), device="cpu", max_length=context)
     try:
         yield lm
     finally:
