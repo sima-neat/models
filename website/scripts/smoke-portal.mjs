@@ -470,7 +470,7 @@ async function checkTaskComparison(browser, base) {
         await page.locator('[data-compare-control="task"]').selectOption('visual_question_answering');
         await page.locator('.compare-point').waitFor();
         if (await page.locator('[data-compare-control="workload"], [data-compare-control="graph"]').count()) throw new Error('VLM comparison must not have workload or graph selectors');
-        if ((await add.locator('option').allTextContents()).some(text => text.includes('Gemma'))) throw new Error('text-only model appears in the VLM group');
+        if (await add.locator('option[value^="gemma_4_e2b_it_textonly"]').count()) throw new Error('text-only model appears in the VLM group');
         if (await table.locator('thead th').count() !== 1 || await ttftRow.locator('td').first().innerText() !== '132.3 ms') throw new Error('VLM table did not use its image-inclusive TTFT');
         if (await table.getByRole('rowheader', {name: 'Prefill', exact: true}).count()) throw new Error('VLM comparison fabricated prefill TPS');
         if (new URL(page.url()).searchParams.has('compare_workload')) throw new Error('VLM link retains a text input length');
