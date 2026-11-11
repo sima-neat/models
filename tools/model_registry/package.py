@@ -17,7 +17,7 @@ from .fetch import Fetcher, sha256_file
 from .mla_stage_simulation import SIMULATION_FILE
 from .model import _expand_source, load_and_validate_model, mpk_filename, source_members
 from .runner_approval import runner_provenance
-from .source import source_identity
+from .source import SourceSpec, source_identity
 
 # scripts/compile.py writes the profile's numerical fidelity here; the package run publishes it.
 FIDELITY_FILE = "fidelity.json"
@@ -60,9 +60,19 @@ def _link_or_copy(source: str, destination: str) -> str:
 def package_resources(model: dict[str, Any]) -> list[dict[str, Any]]:
     """model.yaml's resources, each with its expanded source; every package of the model installs all of them."""
     return [
-        {"id": resource_id, "source": _expand_source(resource["source"]), "install_path": resource["install_path"]}
+        {"id": resource_id, "source": _resource_source(resource["source"]), "install_path": resource["install_path"]}
         for resource_id, resource in sorted(model.get("resources", {}).items())
     ]
+
+
+def _resource_source(source: dict[str, Any]) -> dict[str, Any]:
+    """Expand a resource's source like a compile source. Nothing opens a resource file, so its file set names no
+    main file: the expansion gets an empty one and drops it."""
+    if "files" not in source:
+        return _expand_source(source)
+    expanded = _expand_source({**source, "main_file": ""})
+    del expanded["entrypoint"]
+    return expanded
 
 
 def _reject_overlapping_paths(paths: list[str]) -> None:
@@ -92,13 +102,9 @@ def validate_package_resources(model: dict[str, Any]) -> None:
     for resource in resources:
         source = resource["source"]
         try:
-            members = dict(source_members(source))
+            source_members(source)
         except (KeyError, TypeError, ValueError, SourcePolicyError) as exc:
             raise ValidationError(f"{model['id']}: resource {resource['id']}: source policy: {exc}") from exc
-        if source["type"] == "file_set" and source["entrypoint"] not in members:
-            raise ValidationError(
-                f"{model['id']}: resource {resource['id']}: main_file {source['entrypoint']!r} is not one of its files"
-            )
     if not resources:
         return
     resource_paths = [path for resource in resources for path in _resource_paths(resource)]
@@ -145,16 +151,14 @@ def _runtime_files(profile_dir: Path) -> list[tuple[str, Path]]:
 def _resource_files(fetcher: Fetcher, resource: dict[str, Any]) -> tuple[dict[str, Any], list[tuple[str, Path]]]:
     """Fetch one pinned resource and place its files under install_path."""
     source = resource["source"]
-    path, _, digest, size = fetcher.fetch_source(source)
-    if source["type"] == "file":
-        local = [path]
-    else:
-        source_root = path
-        for _ in PurePosixPath(source["entrypoint"]).parts:
-            source_root = source_root.parent
-        local = [source_root / member["path"] for member in source["files"]]
+    mappings = [source] if source["type"] == "file" else source["files"]
+    members = [SourceSpec.from_mapping(mapping) for mapping in mappings]
+    local = [fetcher.fetch(member)[0] for member in members]
     files = list(zip(_resource_paths(resource), local, strict=True))
-    entry = {"id": resource["id"], "paths": [name for name, _ in files], "source_sha256": digest, "size_bytes": size}
+    entry = {
+        "id": resource["id"], "paths": [name for name, _ in files], "source_sha256": source_identity(source),
+        "size_bytes": sum(member.size_bytes for member in members),
+    }
     return entry, files
 
 

@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from pathlib import Path
 
 import pytest
 import yaml
 from model_registry.errors import SourcePolicyError
-from model_registry.source import SourceSpec, redact_url
+from model_registry.source import SourceSpec, redact_url, source_identity
 
 DIGEST = "a" * 64
 REVISION = "0123456789abcdef0123456789abcdef01234567"
@@ -145,3 +147,14 @@ def test_only_conversion_sources_pin_github_release_files() -> None:
 def test_vulcan_onnx_source() -> None:
     uri = f"https://artifacts.stg.neat.sima.ai/models-onnx/rf_detr_small/{DIGEST}/123-1/model.onnx"
     assert SourceSpec(uri=uri, sha256=DIGEST, size_bytes=10).resolve_url() == uri
+
+
+def test_a_file_set_without_an_entrypoint_keeps_compile_source_identities_unchanged() -> None:
+    members = [{"path": "model.onnx", "sha256": "a" * 64, "size_bytes": 1}]
+    compile_source = {"type": "file_set", "entrypoint": "model.onnx", "files": members}
+    # The identity a compile source had before resources could omit the entrypoint; a change here recompiles models.
+    document = {"entrypoint": "model.onnx", "files": [{**members[0], "media_type": "application/octet-stream"}]}
+    expected = hashlib.sha256(json.dumps(document, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+    assert source_identity(compile_source) == expected
+    assert source_identity({"type": "file_set", "files": members}) != expected

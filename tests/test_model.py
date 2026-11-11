@@ -210,6 +210,16 @@ def test_only_an_onnx_model_declares_resources() -> None:
         validate_model(ROOT / "models" / "qwen3_5_0_8b", authored, SCHEMA)
 
 
+
+def test_a_resource_file_set_names_no_main_file() -> None:
+    model_dir = ROOT / "models" / "supertonic_3"
+    authored = _authored(model_dir)
+    validate_model(model_dir, authored, SCHEMA)
+    authored["resources"]["supertone_runtime"]["source"]["main_file"] = "onnx/tts.json"
+    with pytest.raises(ValidationError, match="main_file"):
+        validate_model(model_dir, authored, SCHEMA)
+
+
 RUN_TESTS = {"run_tests": True}
 DATASET = {"id": "imagenet-2012", "variant": "mini", "sha256": "a" * 64, "size_bytes": 1}
 BENCHMARK_DECLARATIONS = {

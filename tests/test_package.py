@@ -15,8 +15,10 @@ from model_registry.package import (
     assemble_available_packages,
     assemble_package,
     fetch_package_resources,
+    package_resources,
     validate_package_resources,
 )
+from model_registry.source import SourceSpec, source_identity
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE_SHA = "de5d34d98e29c8f436264685f0b0e6a83b0d023516e40df0f96e02d5dd8e4c50"
@@ -197,8 +199,7 @@ def _model_with_resource(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, instal
     }
     model["resources"] = {
         "runtime": {
-            "source": {"repository": "example/runtime", "revision": "0" * 40, "main_file": "config.json",
-                       "files": files},
+            "source": {"repository": "example/runtime", "revision": "0" * 40, "files": files},
             "install_path": install_path,
         }
     }
@@ -207,8 +208,8 @@ def _model_with_resource(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, instal
         def __init__(self, _cache_dir: str | Path | None) -> None:
             pass
 
-        def fetch_source(self, _source: dict) -> tuple[Path, bool, str, int]:
-            return source_root / "config.json", True, "b" * 64, sum(item["size_bytes"] for item in files.values())
+        def fetch(self, spec: SourceSpec) -> tuple[Path, bool]:
+            return source_root / spec.uri.split("@" + "0" * 40 + "/", 1)[1], True
 
     monkeypatch.setattr(package_module, "load_and_validate_model", lambda *_args: model)
     monkeypatch.setattr(package_module, "Fetcher", FakeFetcher)
@@ -240,9 +241,8 @@ def test_a_model_without_resources_fetches_none(tmp_path: Path) -> None:
 @pytest.mark.parametrize(("source", "message"), (
     ({"uri": "https://unapproved.example/tables.json", "sha256": "b" * 64, "size_bytes": 1},
      "resource runtime: source policy.*not approved"),
-    ({"repository": "example/runtime", "revision": "0" * 40, "main_file": "missing.json",
-      "files": {"tables.json": {"sha256": "b" * 64, "size_bytes": 1}}},
-     "resource runtime: main_file 'missing.json' is not one of its files"),
+    ({"files": {"tables.json": {"uri": "https://unapproved.example/tables.json", "sha256": "b" * 64, "size_bytes": 1}}},
+     "resource runtime: source policy.*not approved"),
 ))
 def test_a_resource_source_follows_the_compile_source_rules(source: dict, message: str) -> None:
     model = {"id": "resnet_50", "resources": {"runtime": {"source": source, "install_path": "runtime"}}}
@@ -256,7 +256,7 @@ def test_a_resource_source_follows_the_compile_source_rules(source: dict, messag
 ))
 def test_resources_that_install_onto_each_other_fail_validation(second_install_path: str, message: str) -> None:
     files = {"tables.json": {"sha256": "b" * 64, "size_bytes": 1}}
-    source = {"repository": "example/runtime", "revision": "0" * 40, "main_file": "tables.json", "files": files}
+    source = {"repository": "example/runtime", "revision": "0" * 40, "files": files}
     model = {"id": "resnet_50", "resources": {
         "first": {"source": source, "install_path": "runtime"},
         "second": {"source": {**source, "repository": "example/other"}, "install_path": second_install_path},
@@ -275,7 +275,7 @@ def test_a_resource_cannot_install_onto_a_component_archive(install_path: str, m
         {"uri": "https://huggingface.co/example/runtime/resolve/" + "0" * 40 + "/tables.json",
          "sha256": "b" * 64, "size_bytes": 1}
         if install_path.endswith(".tar.gz")
-        else {"repository": "example/runtime", "revision": "0" * 40, "main_file": "tables.json", "files": files}
+        else {"repository": "example/runtime", "revision": "0" * 40, "files": files}
     )
     model = {
         "id": "resnet_50",
@@ -306,9 +306,10 @@ def test_package_with_resources_and_runtime_files_is_a_flat_deterministic_zip(
         assert stream.namelist() == [MPK_NAME, "runtime/config.json", "runtime/voices/a.json", "tables.npz"]
         assert stream.read("tables.npz") == b"tables"
     manifest = results[0]["manifest"]
+    [resource] = package_resources(package_module.load_and_validate_model())
     assert manifest["resources"] == [{
         "id": "runtime", "paths": ["runtime/config.json", "runtime/voices/a.json"],
-        "source_sha256": "b" * 64, "size_bytes": 24,
+        "source_sha256": source_identity(resource["source"]), "size_bytes": 24,
     }]
     assert [item["path"] for item in manifest["files"]] == stream.namelist()
 

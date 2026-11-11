@@ -36,7 +36,6 @@ resources:
     source:
       repository: Supertone/supertonic-3
       revision: 724fb5abbf5502583fb520898d45929e62f02c0b
-      main_file: onnx/tts.json
       files:
         LICENSE: {sha256: 0d944a9110fed9a9602d60e0423a272903e7bd21ab060490774efc77c2275e9f, size_bytes: 15007}
         onnx/tts.json: {sha256: 42078d3aef1cd43ab43021f3c54f47d2d75ceb4e75f627f118890128b06a0d09, size_bytes: 8253}
