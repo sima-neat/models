@@ -1,3 +1,5 @@
+# A build profile of this model compiles for over 20 minutes, so it builds only on request.
+build-on-demand: true
 display_name: LightStereo-M
 description: The medium LightStereo network, estimating disparity from a rectified stereo image pair.
 model_type: vision

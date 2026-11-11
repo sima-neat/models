@@ -1,3 +1,5 @@
+# A build profile of this model compiles for over 20 minutes, so it builds only on request.
+build-on-demand: true
 display_name: YOLO26x-seg
 description: The largest YOLO26 instance segmenter here, for COCO objects.
 model_type: vision

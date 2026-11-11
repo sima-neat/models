@@ -1,3 +1,5 @@
+# A build profile of this model compiles for over 20 minutes, so it builds only on request.
+build-on-demand: true
 display_name: CLIP ViT-B/16
 description: Embeds images and text in one space for zero-shot classification and image-text search.
 model_type: vlm
