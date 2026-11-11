@@ -307,7 +307,10 @@ jobs:
     name: Publish
     needs: compile
     if: ${{ !fromJSON(inputs.entry).build_on_demand || fromJSON(inputs.entry).runner_script == 'scripts/run_llima_compilation.sh' }}
-    runs-on: ubuntu-latest
+    runs-on: >-
+      ${{ fromJSON(inputs.entry).runner_script == 'scripts/run_llima_compilation.sh' &&
+          fromJSON(format('["self-hosted","linux","arm64","{0}","ubuntu","default"]', inputs.runner_environment)) ||
+          'ubuntu-latest' }}
     environment: ${{ inputs.vulcan_environment }}
     permissions:
       actions: write

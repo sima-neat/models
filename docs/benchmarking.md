@@ -17,12 +17,29 @@ writes the one report the registry publishes.
 
 The DevKit must run the platform version that `deps/manifest.json` pins, and
 the stage uses the Core package named by `neat-core.install_target` in that
-file. CI checks the platform version, then installs Core with:
+file. CI checks the platform version, then prepares Core with:
 
 ```bash
-sima-cli neat install --env production --type minimal '<neat-core.install_target>'
-~/pyneat/bin/python -c 'import pyneat; print(pyneat.__version__, pyneat.__file__)'
+model-registry ensure-neat-core --repository . --environment production
 ```
+
+The command reads `neat-core.install_target` from that repository's manifest.
+It resolves a floating target such as `core@develop` to the published artifact
+tag once, then compares `neat --json` with that artifact's metadata. The Core
+channel, exact tag and artifact environment must match, as must Runner and
+Scheduler. It compares their installed versions with the Debian
+versions in `resolved-deps-manifest.json`, verified against the checksum in
+`metadata-minimal.json`, the same metadata the minimal installer uses.
+A Core tag republished with newer dependencies therefore installs again.
+An exact match skips installation; missing, invalid or ambiguous status or
+metadata takes the normal `sima-cli neat install --env production --type minimal`
+path with the resolved target. An unresolved floating target fails the job.
+Both paths run the PyNeat import/version check and Debian package reporting.
+
+Core artifacts come from production independently of the Model Registry and
+dataset environment. For a non-production Core setup, supply that environment's
+index with `--artifacts-base-url` or `NEAT_ARTIFACTS_BASE_URL`; production metadata
+cannot justify skipping an install from another environment.
 
 Core's board installer also installs Sentinel, the DevKit telemetry daemon.
 Core's benchmark reads power, temperature, CPU usage, and memory from Sentinel
@@ -152,9 +169,9 @@ not the MPK alone:
    YOLO26 resizes with `ResizeMode.Letterbox` and keeps Neat's default
    scaling of pixels to [0, 1]. ResNet-50 and RF-DETR's backbone resize with
    `ResizeMode.Stretch` and set `preprocess.preset =
-   NormalizePreset.ImageNet`. CLIP ViT-B/16 and SigLIP 2 ViT-B/16 also stretch,
-   and set their own mean and standard deviation in
-   `preprocess.normalize.mean` and `stddev` with
+   NormalizePreset.ImageNet`. ViT-B/16, CLIP ViT-B/16 and SigLIP 2 ViT-B/16
+   also stretch, and set their own mean and standard deviation (0.5 for
+   ViT-B/16) in `preprocess.normalize.mean` and `stddev` with
    `normalize.has_explicit_stats = True`. Without a preset or explicit
    statistics, Neat applies no mean or standard deviation.
 

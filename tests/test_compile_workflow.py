@@ -31,14 +31,14 @@ def step_index(job: dict, name: str) -> int:
     return next(index for index, item in enumerate(job["steps"]) if item.get("name") == name)
 
 
-def evaluate(condition: str, values: dict[str, object]) -> bool:
-    """Evaluate a GitHub Actions condition after substituting every context reference it uses."""
+def evaluate(condition: str, values: dict[str, object]) -> object:
+    """Evaluate a GitHub Actions expression after substituting every context reference it uses."""
     expression = " ".join(condition.splitlines())
     for name in sorted(values, key=len, reverse=True):
         expression = expression.replace(name, repr(values[name]))
     expression = expression.replace("&&", " and ").replace("||", " or ")
     expression = re.sub(r"!(?!=)", " not ", expression)
-    return eval(expression, {"__builtins__": {}}, {})
+    return eval(expression, {"__builtins__": {}, "fromJSON": json.loads, "format": str.format}, {})
 
 
 LOCAL_BENCHMARK_WORKFLOW = "./.github/workflows/vulcan-model-benchmarking.yml"
@@ -941,10 +941,12 @@ def test_every_component_mpk_records_runner_and_input_provenance() -> None:
         assert option in verify
 
 
-# Reusable build workflow: publish from a hosted runner
+# Reusable build workflow: publication and retained outputs
 
 
-def test_build_is_published_from_a_hosted_runner() -> None:
+@pytest.mark.parametrize("runner_script", ["scripts/run_model_compilation.sh", "scripts/run_llima_compilation.sh"])
+@pytest.mark.parametrize("runner_environment", ["vulcan-stg", "vulcan-production"])
+def test_build_publication_runner_and_steps(runner_script: str, runner_environment: str) -> None:
     jobs = load(BUILD_WORKFLOW)["jobs"]
     compile_job, publish = jobs["compile"], jobs["publish"]
     upload = step(compile_job, "Retain the complete compiler output")
@@ -955,7 +957,14 @@ def test_build_is_published_from_a_hosted_runner() -> None:
         "${{ !fromJSON(inputs.entry).build_on_demand || "
         "fromJSON(inputs.entry).runner_script == 'scripts/run_llima_compilation.sh' }}"
     )
-    assert publish["runs-on"] == "ubuntu-latest"
+    runner = evaluate(publish["runs-on"].removeprefix("${{").removesuffix("}}"), {
+        "fromJSON(inputs.entry).runner_script": runner_script,
+        "inputs.runner_environment": runner_environment,
+    })
+    assert runner == (
+        ["self-hosted", "linux", "arm64", runner_environment, "ubuntu", "default"]
+        if runner_script == "scripts/run_llima_compilation.sh" else "ubuntu-latest"
+    )
     assert publish["permissions"] == {"actions": "write", "contents": "read", "id-token": "write"}
     assert publish["outputs"] == {"package_count": "${{ steps.packages.outputs.count }}"}
     assert upload["with"]["name"].startswith("compiler-output-")

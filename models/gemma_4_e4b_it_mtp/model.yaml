@@ -1,0 +1,58 @@
+build-on-demand: true
+display_name: Gemma 4 E4B MTP
+description: Generates text using a draft assistant whose proposals are checked by the target model.
+model_type: vlm
+tasks:
+- text_generation
+- visual_question_answering
+modalities:
+  inputs:
+  - text
+  - image
+  outputs:
+  - text
+architecture: gemma4
+license:
+  spdx: Apache-2.0
+  redistribution: allowed
+  attribution: Derived from google/gemma-4-E4B-it under Apache-2.0; GPTQ checkpoint provided by SiMa.ai. Includes the Google
+    Gemma 4 MTP assistant.
+upstream:
+  repository: https://huggingface.co/simaai/Gemma-4-E4B-it-GPTQ-Safetensors
+  revision: 3f482772c4ca4a2ebfb83ea8455b12abc073bafd
+  derived_from: https://huggingface.co/google/gemma-4-E4B-it
+compilation:
+  format: huggingface
+  source:
+    main_file: Gemma-4-E4B-it-GPTQ-Safetensors/config.json
+    files:
+      Gemma-4-E4B-it-GPTQ-Safetensors/chat_template.jinja: {uri: hf://models/simaai/Gemma-4-E4B-it-GPTQ-Safetensors@3f482772c4ca4a2ebfb83ea8455b12abc073bafd/chat_template.jinja, sha256: 0a2c8073c878ab1da004bee933a998606537bbb62016310352c7285c3f01c5b5, size_bytes: 18569}
+      Gemma-4-E4B-it-GPTQ-Safetensors/config.json: {uri: hf://models/simaai/Gemma-4-E4B-it-GPTQ-Safetensors@3f482772c4ca4a2ebfb83ea8455b12abc073bafd/config.json, sha256: b736cac806f4fa64e8d20f9d3d11811485382a13fe1fff89e7a6ec765fa0152e, size_bytes: 44130}
+      Gemma-4-E4B-it-GPTQ-Safetensors/generation_config.json: {uri: hf://models/simaai/Gemma-4-E4B-it-GPTQ-Safetensors@3f482772c4ca4a2ebfb83ea8455b12abc073bafd/generation_config.json, sha256: ca3509307f9760c9ed873072bf385cc224dbb2876e3f7e985c4d09aada0e2062, size_bytes: 204}
+      Gemma-4-E4B-it-GPTQ-Safetensors/model.safetensors: {uri: hf://models/simaai/Gemma-4-E4B-it-GPTQ-Safetensors@3f482772c4ca4a2ebfb83ea8455b12abc073bafd/model.safetensors, sha256: 14e668131465fecc97d7a72b59b1a95ffd2fc3135086dc1564b1a1cc09d2df3a, size_bytes: 10143979692}
+      Gemma-4-E4B-it-GPTQ-Safetensors/processor_config.json: {uri: hf://models/simaai/Gemma-4-E4B-it-GPTQ-Safetensors@3f482772c4ca4a2ebfb83ea8455b12abc073bafd/processor_config.json, sha256: 32bdf45d2ad4cc29a0822ddd157a182de76644f0419a6228d151495256e9813c, size_bytes: 1689}
+      Gemma-4-E4B-it-GPTQ-Safetensors/tokenizer.json: {uri: hf://models/simaai/Gemma-4-E4B-it-GPTQ-Safetensors@3f482772c4ca4a2ebfb83ea8455b12abc073bafd/tokenizer.json, sha256: cc8d3a0ce36466ccc1278bf987df5f71db1719b9ca6b4118264f45cb627bfe0f, size_bytes: 32169626}
+      Gemma-4-E4B-it-GPTQ-Safetensors/tokenizer_config.json: {uri: hf://models/simaai/Gemma-4-E4B-it-GPTQ-Safetensors@3f482772c4ca4a2ebfb83ea8455b12abc073bafd/tokenizer_config.json, sha256: a284d1243b62be31faa9c13e1c28cece940c4abaa7bd9ad87b94f61b40687200, size_bytes: 2741}
+      gemma-4-E4B-it-assistant/config.json: {uri: hf://models/google/gemma-4-E4B-it-assistant@8d0031ea8c2109e2b1e86bb9368a4539b537f80a/config.json, sha256: 13cdf5418e5a89cf951717a953cd11cef4e5c2743c4767e9e5dd72802954f822, size_bytes: 2315}
+      gemma-4-E4B-it-assistant/generation_config.json: {uri: hf://models/google/gemma-4-E4B-it-assistant@8d0031ea8c2109e2b1e86bb9368a4539b537f80a/generation_config.json, sha256: 8e58004dc0e2407b63410b190bb8470efbdcfeb71533f1770e09c20abe193a6f, size_bytes: 307}
+      gemma-4-E4B-it-assistant/model.safetensors: {uri: hf://models/google/gemma-4-E4B-it-assistant@8d0031ea8c2109e2b1e86bb9368a4539b537f80a/model.safetensors, sha256: 12875062fc25c51e8fa9b62abd2de7ad48b7d63f8559d5d604fbd5a3d6bcff16, size_bytes: 159138208}
+      gemma-4-E4B-it-assistant/tokenizer.json: {uri: hf://models/google/gemma-4-E4B-it-assistant@8d0031ea8c2109e2b1e86bb9368a4539b537f80a/tokenizer.json, sha256: 75a6583c1a418e2bbd79c60d95d28e0f5bf549ad3f2990b5bdb5238c6c2bf70c, size_bytes: 32169440}
+      gemma-4-E4B-it-assistant/tokenizer_config.json: {uri: hf://models/google/gemma-4-E4B-it-assistant@8d0031ea8c2109e2b1e86bb9368a4539b537f80a/tokenizer_config.json, sha256: 089594a3924fcfd4cb1c596a7906fbf476193519e5198f780912eed02b177e42, size_bytes: 822}
+  entrypoint: generate
+build_profiles:
+  w4a16:
+    runner_class: expensive
+    benchmark_baseline:
+      model_id: gemma_4_e4b_it
+      build_profile: w4a16
+    components:
+      model:
+        parameters:
+          precision: a16w4
+          max_num_tokens: 4096
+          language_group_size: 128
+          input_height: 480
+          input_width: 480
+          draft_model_path: gemma-4-E4B-it-assistant
+          speculative_method: gemma4_mtp
+          draft_precision: a16w8
