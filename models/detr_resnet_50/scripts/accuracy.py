@@ -1,9 +1,10 @@
 """Score one compiled DETR ResNet-50 MPK on COCO val2017 and save its accuracy report.
 
-Each image is stretched to the 1280x720 input and ImageNet-normalized on the CPU, as
-calibration.preprocess_image does. Every one of the 100 queries becomes one detection, as DETR's own COCO
-evaluation scores them: the class with the highest softmax probability, excluding "no object", and its box
-mapped back to the image.
+Each image is stretched to the 640x640 input and ImageNet-normalized on the CPU, as
+calibration.preprocess_image does. The MPK returns class and box logits, which the CPU decodes as Neat's DETR
+box decoder does. Every one of the 100 queries becomes one detection, as DETR's own COCO evaluation scores them:
+the class with the highest softmax probability, excluding "no object", and its sigmoid box mapped back to the
+image.
 """
 
 from __future__ import annotations
@@ -132,8 +133,8 @@ def mpk_inference(mpk: Path) -> Inference:
         tensors = [pyneat.Tensor.from_numpy(image, copy=False)]
         if runner is None:
             runner = model.build(tensors)
-        logits, boxes = (output.to_numpy(copy=False) for output in runner.run(tensors, timeout_ms=120000))
-        return logits, boxes
+        logits, box_logits = (output.to_numpy(copy=False) for output in runner.run(tensors, timeout_ms=120000))
+        return logits, 1 / (1 + np.exp(-box_logits))
 
     return infer
 

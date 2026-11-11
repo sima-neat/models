@@ -7,6 +7,9 @@ Three exact rewrites run on the folded export, each guarded by the number of mat
 - every attention block keeps its scores, softmax and output projection in an NCHW layout: Q, K and V become
   [1, D, H, T], the scores an einsum over D, the softmax runs over the key axis as channels, and the output
   projection becomes a 1x1 convolution on the head-packed values.
+
+The graph then ends the box head before its final Sigmoid, so the package returns box logits for Neat's DETR
+box decoder, which applies that sigmoid itself.
 """
 
 from __future__ import annotations
@@ -19,7 +22,7 @@ import numpy as np
 import onnx
 from onnx import helper, numpy_helper
 
-INPUT_HEIGHT, INPUT_WIDTH = 720, 1280
+INPUT_HEIGHT, INPUT_WIDTH = 640, 640
 QUERY_COUNT = 100
 CLASS_COUNT = 92
 # The ResNet-50 backbone's 53 convolutions each carry a frozen batch norm.
@@ -33,18 +36,20 @@ ATTENTIONS = ENCODER_LAYERS + 2 * DECODER_LAYERS - 1
 
 INPUT = "input"
 INPUT_SHAPE = [1, 3, INPUT_HEIGHT, INPUT_WIDTH]
-OUTPUT_SHAPES = {"logits": [1, QUERY_COUNT, CLASS_COUNT], "pred_boxes": [1, QUERY_COUNT, 4]}
+SOURCE_OUTPUT_SHAPES = {"logits": [1, QUERY_COUNT, CLASS_COUNT], "pred_boxes": [1, QUERY_COUNT, 4]}
+SOURCE_OUTPUTS = list(SOURCE_OUTPUT_SHAPES)
+OUTPUT_SHAPES = {"logits": [1, QUERY_COUNT, CLASS_COUNT], "box_logits": [1, QUERY_COUNT, 4]}
 OUTPUTS = list(OUTPUT_SHAPES)
 VALIDATION_SEED = 123
-# The rewrites change float32 accumulation order by as much as the export itself does: on ten COCO images both
-# stay below 2e-3 in the logits and 5e-4 in the box fractions, and every confident detection keeps its class.
+# The rewrites change float32 accumulation order: on ten COCO images the outputs stay below 5e-4 in the logits and
+# 3e-5 in the box fractions, and every confident detection keeps its class.
 LOGITS_TOLERANCE = 3e-3
 BOXES_TOLERANCE = 1e-3
 # Regions a W8A8 build can run BF16. In a host fake-quant screen at 640x640, keeping the heads float recovered 11
 # of the 13 mAP points W8A8 lost, with almost none of the MACs.
 BF16_REGIONS = ("heads",)
-# The class Linear (MatMul, Add) and the box MLP (three MatMul and Add, two Relu, Sigmoid).
-HEAD_OPERATIONS = 11
+# The class Linear (MatMul, Add) and the box MLP up to its logits (three MatMul and Add, two Relu).
+HEAD_OPERATIONS = 10
 
 
 def _shape(value: onnx.ValueInfoProto) -> list[int]:
@@ -60,11 +65,11 @@ def _attributes(node: onnx.NodeProto) -> dict[str, object]:
     return {attribute.name: helper.get_attribute_value(attribute) for attribute in node.attribute}
 
 
-def _validate_interface(model: onnx.ModelProto) -> None:
+def _validate_interface(model: onnx.ModelProto, output_shapes: dict[str, list[int]]) -> None:
     inputs = {value.name: _shape(value) for value in model.graph.input}
     outputs = {value.name: _shape(value) for value in model.graph.output}
     _require(inputs == {INPUT: INPUT_SHAPE}, f"unexpected input interface {inputs}")
-    _require(outputs == OUTPUT_SHAPES, f"unexpected output interface {outputs}")
+    _require(outputs == output_shapes, f"unexpected output interface {outputs}")
 
 
 def _require_folded(model: onnx.ModelProto) -> None:
@@ -303,6 +308,19 @@ def _optimize_attention(model: onnx.ModelProto, expected: int) -> onnx.ModelProt
     return _prune_and_check(model)
 
 
+def _cut_box_sigmoid(model: onnx.ModelProto) -> onnx.ModelProto:
+    """End the box head at the logits its final Sigmoid reads, and publish them as box_logits."""
+    graph = _index(model)
+    sigmoid = _producer(graph, "pred_boxes", "Sigmoid")
+    logits = sigmoid.input[0]
+    _require(graph.users[logits] == [sigmoid], f"box logits read outside {sigmoid.name}")
+    head = graph.producers[logits]
+    head.output[list(head.output).index(logits)] = "box_logits"
+    model.graph.node.remove(sigmoid)
+    next(value for value in model.graph.output if value.name == "pred_boxes").name = "box_logits"
+    return _prune_and_check(model)
+
+
 def _head_operations(model: onnx.ModelProto) -> list[onnx.NodeProto]:
     """Every operation between the decoder's last LayerNorm and the two outputs."""
     graph = _index(model)
@@ -353,7 +371,10 @@ def annotate_bf16_regions(graph: Path, regions: list[str]) -> int:
 
 
 def validate_rewrite(source: Path, rewritten: Path, inputs: np.ndarray) -> None:
-    """Require the rewritten graph to reproduce the converted graph's outputs on NCHW float32 inputs."""
+    """Require the rewritten graph to reproduce the converted graph's outputs on NCHW float32 inputs.
+
+    The box logits are compared after the sigmoid the decoder applies, as the converted graph's boxes.
+    """
     import onnxruntime as ort
 
     options = ort.SessionOptions()
@@ -364,8 +385,10 @@ def validate_rewrite(source: Path, rewritten: Path, inputs: np.ndarray) -> None:
         for path in (source, rewritten)
     ]
     for sample in inputs:
-        expected, actual = (session.run(OUTPUTS, {INPUT: sample[None]}) for session in sessions)
-        for name, reference, candidate in zip(OUTPUTS, expected, actual, strict=True):
+        expected = sessions[0].run(SOURCE_OUTPUTS, {INPUT: sample[None]})
+        logits, box_logits = sessions[1].run(OUTPUTS, {INPUT: sample[None]})
+        actual = [logits, 1 / (1 + np.exp(-box_logits))]
+        for name, reference, candidate in zip(SOURCE_OUTPUTS, expected, actual, strict=True):
             tolerance = LOGITS_TOLERANCE if name == "logits" else BOXES_TOLERANCE
             error = float(np.max(np.abs(candidate - reference)))
             if not np.isfinite(candidate).all() or error > tolerance:
@@ -377,12 +400,13 @@ def prepare_model(source: Path, output_dir: Path) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
     model = onnx.load(source)
     onnx.checker.check_model(model)
-    _validate_interface(model)
+    _validate_interface(model, SOURCE_OUTPUT_SHAPES)
     _require_folded(model)
     model = _fold_frozen_batch_norms(model, BATCH_NORMS)
     model = _remove_zero_masks(model, MASKED_ATTENTIONS)
     model = _optimize_attention(model, ATTENTIONS)
-    _validate_interface(model)
+    model = _cut_box_sigmoid(model)
+    _validate_interface(model, OUTPUT_SHAPES)
     path = output_dir / "detr_resnet_50_nchw_attention.onnx"
     onnx.save(model, path)
     sample = np.random.default_rng(VALIDATION_SEED).standard_normal([1, *INPUT_SHAPE[1:]], dtype=np.float32)

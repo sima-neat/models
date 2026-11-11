@@ -255,7 +255,7 @@ PYNEAT_ENUMS = {
     "PixelFormat": ("RGB",),
     "TensorMemory": ("EV74",),
     "BoxDecodeType": (
-        "YoloV8", "YoloV26", "YoloV26Pose", "YoloV26Seg", "YoloV8Obb", "YoloV26Obb", "SuperPoint", "YoloX"
+        "YoloV8", "YoloV26", "YoloV26Pose", "YoloV26Seg", "YoloV8Obb", "YoloV26Obb", "SuperPoint", "YoloX", "Detr"
     ),
     "BoxDecodeTypeOption": ("Split3Interleaved",),
     "SuperPointProfile": ("MagicLeapDemoV1", "LightGlueV1"),
@@ -426,11 +426,14 @@ def test_every_single_component_script_benchmarks_a_dataset_image(script, monkey
             "YoloV26Pose": "000000000002.jpg", "YoloV8Obb": "P0003.jpg", "YoloV26Obb": "P0003.jpg",
         }.get(options.decode_type, ".jpg")
         assert expected in report["workload"]
-    elif first_accuracy_dataset(script) == "coco-2017" and not hasattr(options, "decode_type"):
-        # A COCO detector without a Neat box decoder, such as DETR, stretches the frame to its input with the
-        # ImageNet preset and returns its raw outputs for the CPU to decode.
+    elif getattr(options, "decode_type", "") == "Detr":
+        # DETR stretches the frame to its input with the ImageNet preset and decodes it with Neat's DETR decoder,
+        # which keeps the top 10 above 0.25 and runs no NMS.
         assert_letterboxed_frame(frame)
         assert (options.preprocess.resize.mode, options.preprocess.preset) == ("Stretch", "ImageNet")
+        assert (options.top_k, options.score_threshold) == (10, 0.25)
+        assert not hasattr(options, "nms_iou_threshold")
+        assert "DETR box decoder, top 10 above 0.25" in report["workload"]
         assert any(f"{name} in a 1280x720" in report["workload"] for name in ("000000000001.jpg", "000000000002.jpg"))
     elif getattr(options, "decode_type", "") == "SuperPoint":
         # SuperPoint takes the frame stretched to its input, converted to GRAY8, scaled to [0, 1] without a preset,

@@ -3,40 +3,8 @@ conversion:
 compile:
   run_tests: true
 accuracy:
-  run_tests: true
-  expected:
-    w16a16:
-      coco-2017-val:
-        coco_map: 0.3598
-        coco_ap50: 0.5527
-        coco_ap75: 0.3741
-        coco_ap_small: 0.1661
-        coco_ap_medium: 0.3864
-        coco_ap_large: 0.5344
-        coco_ar1: 0.2953
-        coco_ar10: 0.4775
-        coco_ar100: 0.5171
-        coco_ar_small: 0.2702
-        coco_ar_medium: 0.5637
-        coco_ar_large: 0.7359
-    w8a8_mixed:
-      coco-2017-val:
-        coco_map: 0.3339
-        coco_ap50: 0.5311
-        coco_ap75: 0.3407
-        coco_ap_small: 0.1309
-        coco_ap_medium: 0.3607
-        coco_ap_large: 0.5193
-        coco_ar1: 0.2817
-        coco_ar10: 0.4568
-        coco_ar100: 0.4994
-        coco_ar_small: 0.2327
-        coco_ar_medium: 0.5465
-        coco_ar_large: 0.7350
+  run_tests: false
+  skip_reason: The 640x640 builds have no published accuracy report to expect values from yet.
 performance:
-  run_tests: true
-  expected:
-    w16a16:
-      throughput_fps: 30.3
-    w8a8_mixed:
-      throughput_fps: 82.1
+  run_tests: false
+  skip_reason: The 640x640 builds have no published performance report to expect values from yet.

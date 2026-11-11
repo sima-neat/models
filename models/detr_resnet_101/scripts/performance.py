@@ -10,8 +10,8 @@ import numpy as np
 import pyneat
 
 IMAGES = "val2017"
-# The benchmark input is a COCO image letterboxed into a 720p camera frame. The frame already has the
-# model's 1280x720 size, so Neat's stretch does not resize it.
+# The benchmark input is a COCO image letterboxed into a 720p camera frame, which Neat stretches to the
+# model's 640x640 input.
 FRAME_WIDTH, FRAME_HEIGHT, FILL = 1280, 720, 114
 
 
@@ -49,7 +49,7 @@ dataset_id, dataset_dir = args.dataset.split("=", 1)
 image = sample_image(Path(dataset_dir))
 
 options = pyneat.ModelOptions()
-# Neat normalizes, quantizes and tessellates the frame inside the measured pipeline.
+# Neat stretches, normalizes, quantizes and tessellates the frame inside the measured pipeline.
 options.preprocess.kind = pyneat.InputKind.Image
 # Size Neat's input buffers for the benchmark frame, not the 1920x1080 default.
 options.preprocess.input_max_width = FRAME_WIDTH
@@ -60,6 +60,10 @@ options.preprocess.resize.mode = pyneat.ResizeMode.Stretch
 options.preprocess.normalize.enable = pyneat.AutoFlag.On
 # Without a preset Neat only scales pixels to [0, 1]; the model expects ImageNet mean and std.
 options.preprocess.preset = pyneat.NormalizePreset.ImageNet
+options.decode_type = pyneat.BoxDecodeType.Detr
+# An application's decoder keeps a few confident detections, not every query.
+options.top_k = 10
+options.score_threshold = 0.25
 model = pyneat.Model(args.mpk, options)
 # Request 1000 samples and a 60 s minimum measurement duration.
 benchmark_options = pyneat.BenchmarkOptions()
@@ -75,7 +79,7 @@ report = model_report.from_performance(
     {"model": model},
     workload=(
         f"{dataset_id} {image.name} in a {FRAME_WIDTH}x{FRAME_HEIGHT} RGB frame, Neat preprocessing, "
-        f"raw class logits and boxes, {postprocess} post-processing"
+        f"DETR box decoder, top 10 above 0.25, {postprocess} post-processing"
     ),
 )
 report.save(args.output)

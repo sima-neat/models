@@ -52,22 +52,26 @@ build_profiles:
 
 accuracy:
   # The reference resizes the shortest side to 800, caps the longest at 1333 and masks the padding. accuracy.py
-  # stretches each image to the fixed 1280x720 input, which distorts COCO's mostly non-16:9 images.
+  # stretches each image to the fixed 640x640 input, which distorts every image that is not square.
   datasets:
   - {id: coco-2017, variant: val, sha256: a40de1caf42b47c5a8976eb97efe3c83f3a41337c4d16d318eb15d65c293f2da, size_bytes: 898368520}
 
 performance: {}
 
-# The paper's score uses the shortest side at 800 with the padding masked, so it sits about 5 points above this
-# package's stretched 1280x720 input. scripts/fp32_baseline_accuracy.py measures the FP32 baseline on the
-# package's own inputs, on the ONNX Vulcan Model Convert produced.
+# No published score is comparable to this package. The paper scores each image with its shortest side at 800, its
+# longest at most 1333 and the padding masked, while this package stretches every image to 640x640.
+# scripts/fp32_baseline_accuracy.py measures the FP32 baseline on this package's own inputs instead, on the ONNX
+# Vulcan Model Convert produced.
 reference_metrics:
 - origin: fp32_baseline
   script: scripts/fp32_baseline_accuracy.py
   dataset: {id: coco-2017, split: val}
-  conditions: FP32 ONNX on ONNX Runtime CPU; each image stretched to 1280x720, ImageNet-normalized; all 100 queries scored; 5000 images
-  metrics: {coco_map: 0.3877, coco_ap50: 0.5811, coco_ap75: 0.407, coco_ap_small: 0.1915, coco_ap_medium: 0.4201, coco_ap_large: 0.5535, coco_ar1: 0.315, coco_ar10: 0.5073, coco_ar100: 0.5487, coco_ar_small: 0.3053, coco_ar_medium: 0.5958, coco_ar_large: 0.7713}
-- source: https://github.com/facebookresearch/detr/blob/29901c51d7fe8712168b8d0d64351170bc0f83e0/README.md
-  dataset: {id: coco-2017, split: val}
-  conditions: shortest side 800, longest side 1333, padding masked
-  metrics: {coco_map: 0.435}
+  conditions: FP32 ONNX on ONNX Runtime CPU; each image stretched to 640x640, ImageNet-normalized; all 100 queries scored; 5000 images
+  metrics: {coco_map: 0.3801, coco_ap50: 0.5732, coco_ap75: 0.4012, coco_ap_small: 0.1446, coco_ap_medium: 0.416, coco_ap_large: 0.5976, coco_ar1: 0.313, coco_ar10: 0.4867, coco_ar100: 0.5246, coco_ar_small: 0.2381, coco_ar_medium: 0.5801, coco_ar_large: 0.7879}
+
+# The published table, kept for reference and not shown:
+# reference_metrics:
+# - source: https://github.com/facebookresearch/detr/blob/29901c51d7fe8712168b8d0d64351170bc0f83e0/README.md
+#   dataset: {id: coco-2017, split: val}
+#   conditions: shortest side 800, longest side 1333, padding masked
+#   metrics: {coco_map: 0.435}

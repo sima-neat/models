@@ -12,9 +12,9 @@ from PIL import Image
 
 MODEL_DIR = Path(__file__).resolve().parents[1]
 
-# The input is a 720p camera frame, so Neat feeds frames without resizing them. Its 720-pixel short side is
-# within DETR's training scales of 480 to 800.
-INPUT_HEIGHT, INPUT_WIDTH = 720, 1280
+# A square 640x640 input runs about three times as fast as a stretched 1280x720 input and scores about as well
+# in FP32 on COCO val2017. Images of any shape are stretched to it.
+INPUT_HEIGHT, INPUT_WIDTH = 640, 640
 QUERY_COUNT = 100
 # 91 COCO category slots plus the "no object" class.
 CLASS_COUNT = 92

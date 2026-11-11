@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import json
+import sys
 from collections.abc import Callable
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from typing import Any
 
 import numpy as np
@@ -50,6 +51,27 @@ def test_boxes_map_from_fractions_of_the_stretched_input_to_image_pixels(scorer:
 def test_decode_rejects_other_output_shapes(scorer: ModuleType, shape: tuple[int, ...]) -> None:
     with pytest.raises(ValueError, match="unexpected MPK outputs"):
         scorer.decode(np.zeros(shape, np.float32), np.zeros((1, shape[1], 4), np.float32), 1, 10, 10)
+
+
+def test_the_mpk_box_logits_pass_through_the_sigmoid_neats_decoder_applies(
+    scorer: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    logits = np.zeros((1, scorer.QUERY_COUNT, scorer.CLASSES), np.float32)
+    box_logits = np.zeros((1, scorer.QUERY_COUNT, 4), np.float32)
+    box_logits[0, 0] = [0.0, 2.0, -2.0, 0.5]
+
+    class Runner:
+        def run(self, tensors: list, timeout_ms: int) -> list:
+            return [SimpleNamespace(to_numpy=lambda copy, value=value: value) for value in (logits, box_logits)]
+
+    model = SimpleNamespace(build=lambda tensors: Runner())
+    pyneat = SimpleNamespace(Model=lambda path: model, Tensor=SimpleNamespace(from_numpy=lambda array, copy: array))
+    monkeypatch.setitem(sys.modules, "pyneat", pyneat)
+
+    returned_logits, boxes = scorer.mpk_inference(Path("model_mpk.tar.gz"))(np.zeros((640, 640, 3), np.float32))
+
+    assert returned_logits is logits
+    np.testing.assert_allclose(boxes, 1 / (1 + np.exp(-box_logits)), rtol=1e-6)
 
 
 def test_mpk_argument_names_the_model_component(scorer: ModuleType) -> None:

@@ -9,6 +9,7 @@ from types import ModuleType
 
 import numpy as np
 import onnx
+import onnx.reference
 import pytest
 from PIL import Image
 
@@ -24,13 +25,13 @@ def test_preprocessing_stretches_to_the_input_and_normalizes_with_imagenet_stati
 ) -> None:
     calibration = load_script("calibration")
 
-    # A 4:3 image fills the whole 16:9 input, with no padding at any edge.
+    # A 4:3 image fills the whole square input, with no padding at any edge.
     result = calibration.preprocess_image(_png(500, 375, (255, 0, 0)))
 
-    assert result.shape == (720, 1280, 3)
+    assert result.shape == (640, 640, 3)
     assert result.dtype == np.float32
     red = (np.array([255, 0, 0]) / 255 - calibration.MEAN) / calibration.STD
-    for row, column in ((0, 0), (0, 1279), (719, 0), (719, 1279), (400, 640)):
+    for row, column in ((0, 0), (0, 639), (639, 0), (639, 639), (320, 320)):
         np.testing.assert_allclose(result[row, column], red, rtol=1e-6)
 
 
@@ -191,7 +192,7 @@ def test_only_an_all_zero_attention_mask_is_removed(load_script: Callable[[str],
 def test_surgery_requires_the_folded_interface(tmp_path: Path, load_script: Callable[[str], ModuleType]) -> None:
     surgery = load_script("surgery")
     helper = onnx.helper
-    outputs = {name: shape for name, shape in surgery.OUTPUT_SHAPES.items()}
+    outputs = {name: shape for name, shape in surgery.SOURCE_OUTPUT_SHAPES.items()}
     nodes = [
         helper.make_node("Constant", [], [name], value=onnx.numpy_helper.from_array(np.zeros(shape, np.float32)))
         for name, shape in outputs.items()
@@ -208,7 +209,7 @@ def test_surgery_requires_the_folded_interface(tmp_path: Path, load_script: Call
 
 def _mpk_manifest(compile_module: ModuleType) -> dict:
     return {
-        "input_nodes": [{"name": "input", "size": 1 * 3 * 720 * 1280 * 4}],
+        "input_nodes": [{"name": "input", "size": 1 * 3 * 640 * 640 * 4}],
         "plugins": [
             {"sequence": 0, "processor": "EV74", "config_params": {"kernel": "quantize"}},
             {"sequence": 1, "processor": "MLA", "config_params": {}},
@@ -300,7 +301,10 @@ def test_quantization_calibrates_only_int8_activations(
 
 
 def _heads_graph(extra_relu: bool = False) -> onnx.ModelProto:
-    """The decoder's last LayerNorm feeding the class Linear and the three-layer box MLP, as the export names them."""
+    """The decoder's last LayerNorm feeding the class Linear and the three-layer box MLP, as the export names them.
+
+    The box MLP ends in the Sigmoid the converted graph keeps, before surgery cuts it.
+    """
     rng = np.random.default_rng(4)
     helper = onnx.helper
     box = ["MatMul", "Add", "Relu", "MatMul", "Add", "Relu", "MatMul", "Add", "Sigmoid"]
@@ -336,12 +340,37 @@ def _heads_graph(extra_relu: bool = False) -> onnx.ModelProto:
     return _model(nodes, {"h": [1, 3, 8]}, {"logits": [1, 3, 5], "pred_boxes": [1, 3, 4]}, initializers)
 
 
+def test_box_sigmoid_is_cut_so_the_package_returns_the_box_logits(load_script: Callable[[str], ModuleType]) -> None:
+    surgery = load_script("surgery")
+    source = _heads_graph()
+    rewritten = surgery._cut_box_sigmoid(onnx.ModelProto.FromString(source.SerializeToString()))
+
+    assert [value.name for value in rewritten.graph.output] == ["logits", "box_logits"]
+    assert "Sigmoid" not in {node.op_type for node in rewritten.graph.node}
+    hidden = {"h": np.random.default_rng(5).standard_normal((1, 3, 8), dtype=np.float32)}
+    logits, boxes = onnx.reference.ReferenceEvaluator(source).run(None, hidden)
+    cut_logits, box_logits = onnx.reference.ReferenceEvaluator(rewritten).run(None, hidden)
+    np.testing.assert_array_equal(cut_logits, logits)
+    np.testing.assert_allclose(1 / (1 + np.exp(-box_logits)), boxes, rtol=1e-6)
+
+
+def test_box_sigmoid_cut_rejects_logits_read_elsewhere(load_script: Callable[[str], ModuleType]) -> None:
+    surgery = load_script("surgery")
+    model = _heads_graph()
+    sigmoid = next(node for node in model.graph.node if node.op_type == "Sigmoid")
+    model.graph.node.append(onnx.helper.make_node("Relu", [sigmoid.input[0]], ["side"], name="side"))
+    model.graph.output.append(onnx.helper.make_tensor_value_info("side", onnx.TensorProto.FLOAT, [1, 3, 4]))
+    with pytest.raises(ValueError, match="box logits read outside"):
+        surgery._cut_box_sigmoid(model)
+
+
 def test_heads_annotation_marks_each_head_operation_bf16_and_keeps_the_outputs(
     tmp_path: Path, load_script: Callable[[str], ModuleType]
 ) -> None:
     surgery = load_script("surgery")
+    rewritten = surgery._cut_box_sigmoid(_heads_graph())
     graph = tmp_path / "rewritten.onnx"
-    onnx.save(_heads_graph(), graph)
+    onnx.save(rewritten, graph)
 
     assert surgery.annotate_bf16_regions(graph, ["heads"]) == surgery.HEAD_OPERATIONS
 
@@ -351,17 +380,17 @@ def test_heads_annotation_marks_each_head_operation_bf16_and_keeps_the_outputs(
     assert len(marks) == surgery.HEAD_OPERATIONS
     assert all(node.domain == "ai.sima" and node.attribute[0].s == b"bfloat16" for node in marks)
     assert {producers[node.input[0]].name for node in marks} == {
-        node.name for node in _heads_graph().graph.node if node.op_type != "LayerNormalization"
+        node.name for node in rewritten.graph.node if node.op_type != "LayerNormalization"
     }
-    assert {producers[name].op_type for name in ("logits", "pred_boxes")} == {"AnnotatePrecision"}
+    assert {producers[name].op_type for name in ("logits", "box_logits")} == {"AnnotatePrecision"}
     assert ("ai.sima", 1) in {(opset.domain, opset.version) for opset in annotated.opset_import}
 
 
 def test_heads_annotation_rejects_an_unexpected_head(tmp_path: Path, load_script: Callable[[str], ModuleType]) -> None:
     surgery = load_script("surgery")
     graph = tmp_path / "rewritten.onnx"
-    onnx.save(_heads_graph(extra_relu=True), graph)
-    with pytest.raises(ValueError, match="expected 11 head operations, found 12"):
+    onnx.save(surgery._cut_box_sigmoid(_heads_graph(extra_relu=True)), graph)
+    with pytest.raises(ValueError, match="expected 10 head operations, found 11"):
         surgery.annotate_bf16_regions(graph, ["heads"])
 
 
@@ -384,12 +413,10 @@ def test_only_the_int8_build_calibrates_and_marks_bf16_heads_and_only_bf16_keeps
 ) -> None:
     recipe = load_script("compile")
     monkeypatch.setattr(recipe, "_parameters", lambda profile_id: parameters)
-    monkeypatch.setattr(
-        recipe, "calibration_images", lambda dataset, count: np.zeros((count, 720, 1280, 3), np.float32)
-    )
+    monkeypatch.setattr(recipe, "calibration_images", lambda dataset, count: np.zeros((count, 640, 640, 3), np.float32))
     monkeypatch.setattr(recipe, "prepare_model", lambda source, output_dir: output_dir / "rewritten.onnx")
     annotated, checked = [], []
-    monkeypatch.setattr(recipe, "annotate_bf16_regions", lambda graph, regions: annotated.append(regions) or 11)
+    monkeypatch.setattr(recipe, "annotate_bf16_regions", lambda graph, regions: annotated.append(regions) or 10)
     monkeypatch.setattr(recipe, "_require_bf16_operations", checked.append)
 
     with pytest.raises(RuntimeError, match="expected one MPK"):
