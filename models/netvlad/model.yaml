@@ -54,10 +54,10 @@ build_profiles:
     calibration_dataset: pitts30k-cal
     components:
       model:
-        # The VGG16 encoder runs W8A8 up to conv5_3, and conv5_3 and the pooling run BF16 activations. In an
-        # experiment on 10 COCO images with the VM's Model Compiler, INT8 activations from conv5_3 on dropped the
-        # descriptor to 0.41 cosine with float; this build kept 0.979 (W8A16: 0.962) and ran at 122.6/s on a DevKit
-        # (W8A16: 90.2/s).
+        # The VGG16 encoder runs W8A8 up to conv5_3, and conv5_3 and the pooling run BF16 activations. INT8
+        # activations from conv5_3 on drop the descriptor to 0.41 cosine with float. On the registry's fidelity images
+        # this build keeps 0.969 (W8A16: 0.948) and runs at 122.6/s on a DevKit (W8A16: 90.2/s), with Recall@1
+        # 0.3 points below W16A16.
         parameters:
           precision: w8a8
           bf16_regions: [pooling]
