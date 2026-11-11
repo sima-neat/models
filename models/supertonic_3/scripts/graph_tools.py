@@ -8,19 +8,24 @@ import numpy as np
 import onnx
 
 
-def prune(model: onnx.ModelProto, *, inputs: bool = False) -> dict[str, int]:
+def prune(model: onnx.ModelProto, *, nodes: bool = True, inputs: bool = False) -> dict[str, int]:
     """Keep the nodes the graph outputs depend on and the initializers they read; with inputs, also drop the
-    graph inputs nothing reads. Node order is kept."""
+    graph inputs nothing reads. Without nodes, keep every node and drop only initializers no node reads. Node
+    order is kept."""
 
-    needed = {value.name for value in model.graph.output}
-    kept_reversed: list[onnx.NodeProto] = []
-    for node in reversed(model.graph.node):
-        if any(output in needed for output in node.output):
-            kept_reversed.append(node)
-            needed.update(value for value in node.input if value)
-    removed = {"nodes": len(model.graph.node) - len(kept_reversed)}
-    del model.graph.node[:]
-    model.graph.node.extend(reversed(kept_reversed))
+    if nodes:
+        needed = {value.name for value in model.graph.output}
+        kept_reversed: list[onnx.NodeProto] = []
+        for node in reversed(model.graph.node):
+            if any(output in needed for output in node.output):
+                kept_reversed.append(node)
+                needed.update(value for value in node.input if value)
+        removed = {"nodes": len(model.graph.node) - len(kept_reversed)}
+        del model.graph.node[:]
+        model.graph.node.extend(reversed(kept_reversed))
+    else:
+        needed = {value for node in model.graph.node for value in node.input if value}
+        removed = {"nodes": 0}
 
     initializers = [value for value in model.graph.initializer if value.name in needed]
     removed["initializers"] = len(model.graph.initializer) - len(initializers)

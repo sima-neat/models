@@ -98,13 +98,6 @@ def extract(source: Path, output: Path) -> dict[str, object]:
         "wrapper. The caller performs two evaluations and applies 4*c-3*u."
     )
     checker.check_model(model, full_check=True)
-    # Fold the static shape bookkeeping. Graph optimizations stay off: the later passes match the exported
-    # MatMul and Add pattern of each linear.
-    from onnxsim import simplify
-
-    model, check = simplify(model, check_n=0, perform_optimization=False)
-    if not check:
-        raise RuntimeError("onnxsim did not validate the vector field")
     inferred = shape_inference.infer_shapes(model, strict_mode=True, data_prop=True)
     checker.check_model(inferred, full_check=True)
 
@@ -466,6 +459,43 @@ def control_tensors(model: onnx.ModelProto) -> set[str]:
     return control
 
 
+def fold_forbidden_shape_ops(model: onnx.ModelProto) -> Counter:
+    """Fold static Gather/Unsqueeze/Squeeze nodes to Constant nodes."""
+
+    values = {initializer.name: numpy_helper.to_array(initializer) for initializer in model.graph.initializer}
+    folded = Counter()
+    for node in model.graph.node:
+        result: np.ndarray | None = None
+        if node.op_type == "Constant":
+            for attr in node.attribute:
+                if attr.name == "value":
+                    result = numpy_helper.to_array(attr.t)
+                    break
+        elif node.op_type == "Gather" and all(name in values for name in node.input):
+            axis = attr_int(node, "axis", 0)
+            result = np.take(values[node.input[0]], values[node.input[1]], axis=axis)
+        elif node.op_type in {"Unsqueeze", "Squeeze"} and all(name in values for name in node.input):
+            axes = [int(axis) for axis in values[node.input[1]].reshape(-1)]
+            result = values[node.input[0]]
+            if node.op_type == "Unsqueeze":
+                for axis in sorted(axes):
+                    result = np.expand_dims(result, axis=axis)
+            else:
+                result = np.squeeze(result, axis=tuple(axes))
+
+        if result is None:
+            continue
+        values[node.output[0]] = np.asarray(result)
+        if node.op_type in {"Gather", "Unsqueeze", "Squeeze"}:
+            old_op = node.op_type
+            del node.input[:]
+            del node.attribute[:]
+            node.op_type = "Constant"
+            node.attribute.append(helper.make_attribute("value", numpy_helper.from_array(np.asarray(result))))
+            folded[old_op] += 1
+    return folded
+
+
 def rewrite_equal_where_masks(model: onnx.ModelProto) -> Counter:
     """Replace binary-mask Equal/Where patterns with arithmetic masking.
 
@@ -733,6 +763,7 @@ def lift(source: Path, output: Path) -> dict[str, object]:
 
     del model.graph.node[:]
     model.graph.node.extend(new_nodes)
+    rewritten.update(fold_forbidden_shape_ops(model))
     rewritten.update(rewrite_equal_where_masks(model))
     pruned = prune(model)
     del model.graph.value_info[:]
@@ -1124,8 +1155,8 @@ def use_channel_first_context_inputs(model: onnx.ModelProto) -> Counter:
             dim.dim_value = size
         result["inputs"] += 1
 
-    # Each rotary branch multiplies theta by its position ramp over a length. The extracted graph folds the static
-    # ramps to constants, so find them from theta's consumers, through any Cast or Identity left around them.
+    # Each rotary branch multiplies theta by its position ramp over a length. Find each ramp from theta's
+    # consumers, through any Cast or Identity, whether it is a folded constant or a Slice of the increments.
     theta_name = "vector_estimator.tts.ttl.vector_field.main_blocks.3.attn.theta"
     producer = {output: node for node in model.graph.node for output in node.output}
     initializers = {value.name: index for index, value in enumerate(model.graph.initializer)}

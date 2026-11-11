@@ -35,8 +35,8 @@ from vocoder_surgery import (
 
 COMPONENTS = ("vector_estimator", "vocoder")
 SURGERY_SEED = 1101
-VECTOR_GRAPH_SHA256 = "697b0fd8822df9201f7c571b7cb3c3e7d8d8ca38094d4b556b95c32969b5e8a2"
-VOCODER_GRAPH_SHA256 = "de3e27e80b53193ebc5186b54060bbd9dc8c440fd606f13c72f4154eebdf3987"
+VECTOR_GRAPH_SHA256 = "79f6c51e73f4c8c20450fcede73fccbc183f4b22e5e20b78d64bc3aa585def5a"
+VOCODER_GRAPH_SHA256 = "b6d233bb3cd6062f613fcc2e8b9192b1447408db06995b215f1da0d66f1a9684"
 # Natural (latent, text) lengths and steps at which the derived graph must reproduce Supertone's own.
 SOURCE_CHECK_LENGTHS = ((1, 1), (24, 18), (160, 128), (192, 192))
 SOURCE_CHECK_STEPS = (0, 3, 7)

@@ -294,7 +294,8 @@ def optimize(model: onnx.ModelProto, output: Path) -> dict[str, Any]:
         ]
     )
 
-    removed_initializers = prune(model)["initializers"]
+    # The edge-pad rewrite leaves its replaced Slice nodes in place; only unused initializers go.
+    removed_initializers = prune(model, nodes=False)["initializers"]
     del graph.value_info[:]
     model = onnx.shape_inference.infer_shapes(model, strict_mode=True, data_prop=True)
     onnx.checker.check_model(model, full_check=True)
