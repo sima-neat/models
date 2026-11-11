@@ -288,12 +288,17 @@ def compare_checkpoint(output, clip, pixel_values, prompt_ids, prompt_embeds):
         expected_image = clip.get_image_features(pixel_values=pixel_values)
         expected_image = getattr(expected_image, "pooler_output", expected_image).numpy()
         expected_text = text_features(clip, prompt_ids[:4]).numpy()
+    for index, image in enumerate(pixel_values):
+        (image_embeds,) = session.run(
+            ["image_embeds"], {"pixel_values": image[None].numpy(), "token_embeds": prompt_embeds[:1].numpy()}
+        )
+        np.testing.assert_allclose(image_embeds[0], expected_image[index], rtol=1e-3, atol=1e-3)
     for index in range(4):
-        image_embeds, text_embeds = session.run(
-            None, {"pixel_values": pixel_values.numpy(), "token_embeds": prompt_embeds[index : index + 1].numpy()}
+        (text_embeds,) = session.run(
+            ["text_embeds"],
+            {"pixel_values": pixel_values[:1].numpy(), "token_embeds": prompt_embeds[index : index + 1].numpy()},
         )
         np.testing.assert_allclose(text_embeds[0, int(prompt_ends[index])], expected_text[index], rtol=1e-3, atol=1e-3)
-    np.testing.assert_allclose(image_embeds, expected_image, rtol=1e-3, atol=1e-3)
 
 
 def export_model(source, output_dir):
@@ -309,9 +314,12 @@ def export_model(source, output_dir):
     prompt_ids, prompt_embeds = prepare_prompts(clip, processor.tokenizer)
     model = build_model(clip)
     rng = np.random.RandomState(0)
-    image = Image.fromarray(rng.randint(0, 256, (300, 400, 3), dtype=np.uint8))
-    pixel_values = processor(images=image, return_tensors="pt")["pixel_values"]
-    export_onnx(model, pixel_values, prompt_embeds, output)
+    images = [
+        Image.fromarray(rng.randint(0, 256, (h, w, 3), dtype=np.uint8))
+        for h, w in ((300, 400), (400, 300), (224, 224))
+    ]
+    pixel_values = processor(images=images, return_tensors="pt")["pixel_values"]
+    export_onnx(model, pixel_values[:1], prompt_embeds, output)
     compare_checkpoint(output, clip, pixel_values, prompt_ids, prompt_embeds)
     np.savez(output_dir / "prompts.npz", prompts=prompt_embeds.numpy(), ends=prompt_ids.argmax(-1).numpy())
     print(f"PyTorch/ONNX check passed: {output}")

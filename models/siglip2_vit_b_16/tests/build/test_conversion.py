@@ -50,6 +50,12 @@ def test_converted_checkpoint_preserves_weights_and_processor_assets(converted: 
     for name, content in assets.items():
         assert (hashlib.sha256(content).hexdigest(), len(content)) == (files[name]["sha256"], files[name]["size_bytes"])
     assert json.loads(assets["config.json"])["model_type"] == "siglip"
+    processor = json.loads(assets["preprocessor_config.json"])
+    assert processor["size"] == {"height": 224, "width": 224}
+    assert processor["resample"] == 2
+    assert processor["do_resize"] and processor["do_rescale"] and processor["do_normalize"]
+    assert processor["rescale_factor"] == 1 / 255
+    assert processor["image_mean"] == processor["image_std"] == [0.5] * 3
     assert weights["text_model.embeddings.token_embedding.weight"].shape == (256000, 768)
     assert weights["vision_model.embeddings.patch_embedding.weight"].shape == (768, 3, 16, 16)
     assert weights["text_model.head.weight"].shape == (768, 768)

@@ -1,7 +1,9 @@
 """Benchmark CLIP's independent image and text encoders with Neat's benchmark API.
 
 The image benchmark includes Neat preprocessing of one dataset image in a 720p
-RGB frame. The text benchmark starts from one prompt's prepared 77x512 token
+RGB frame, then stretches the full padded frame to 224x224. Accuracy uses
+its own resize/crop route; it is not measured with this timed image route.
+The text benchmark starts from one prompt's prepared 77x512 token
 embeddings. Tokenization, CPU lookup and cosine scoring are outside timing.
 Each encoder reports its own latency, throughput, telemetry and MLA statistics.
 """
@@ -147,8 +149,10 @@ def benchmark_encoders(mpks: dict[str, Path], dataset_id: str, dataset: Path, ou
         options.include_mla_layer_stats = True
         options.include_mla_stage_stats = True
         workload = (
-            f"{dataset_id} {path.name} in a 1280x720 RGB frame; Neat resize and CLIP normalization, "
-            "image encoder returning its embedding and tensor conversions"
+            f"{dataset_id} {path.name} letterboxed into 1280x720 RGB; "
+            "Neat stretches the full padded frame to 224x224, "
+            "CLIP normalization, "
+            "image encoder returning its embedding and tensor conversions; accuracy uses a separate resize/crop route"
             if is_image
             else "One prompt padded to 77 tokens; prepared FP32 token embeddings, "
             "text encoder with per-token projected outputs and tensor conversions; "

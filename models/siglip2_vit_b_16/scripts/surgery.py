@@ -2,7 +2,7 @@
 
 The image and text encoders return their raw embeddings. The text encoder starts after token lookup,
 which the CPU performs, and pools the last of its 64 tokens. ImageNet scoring stays in accuracy.py.
-The export also returns fixed token embeddings for 64 prompts, which check the text encoder against FP32.
+Surgery saves 64 prompts in a temporary sidecar file for text-encoder fidelity checks against FP32.
 
 Use --weights weights.pth --output-dir graphs to prepare the encoders. Surgery verifies
 PyTorch/ONNX parity and the committed runtime probes before compilation. To regenerate
@@ -12,13 +12,14 @@ and update TEXT_CHECK_SHA256 in this script, accuracy.py and performance.py.
 
 import argparse
 import hashlib
+import io
 import json
 import tempfile
 from pathlib import Path
 
 import numpy as np
 import onnx
-from calibration import CLASS_NAMES
+from calibration import CLASS_NAMES, preprocess_image
 
 IMAGE_SIZE = 224
 TEXT_LENGTH = 64
@@ -33,15 +34,14 @@ INTERFACE = {
     "token_embeds": [1, TEXT_LENGTH, EMBED_DIM],
     "image_embeds": [1, EMBED_DIM],
     "text_embeds": [1, EMBED_DIM],
-    "fidelity_token_embeds": [FIDELITY_PROMPTS, TEXT_LENGTH, EMBED_DIM],
 }
 INPUTS = ("pixel_values", "token_embeds")
-OUTPUTS = ("image_embeds", "text_embeds", "fidelity_token_embeds")
+OUTPUTS = ("image_embeds", "text_embeds")
 
 # OpenAI's ImageNet class names and the 7 prompt templates its forward selection chose over the 80, from
 # https://github.com/openai/CLIP/blob/d05afc436d78f1c48dc0dbf8e5980a9d471f35f6/notebooks/Prompt_Engineering_for_ImageNet.ipynb
 # The names follow the ImageNet class index order (sorted WordNet IDs). SigLIP 2 was trained on lowercase text.
-# The text-encoder check's classes, one per template: ImageNet classes the 64 embedded prompts leave out, each named by
+# The text-encoder check's classes, one per template: ImageNet classes the 64 fidelity prompts leave out, each named by
 # one token, so the check file stores few token embedding rows.
 CHECK_CLASSES = (1, 107, 291, 340, 879, 963, 980)
 # Fixed fidelity and regression prompts are independent of the ImageNet accuracy recipe.
@@ -129,7 +129,7 @@ def fold_constants(path):
 
 
 def fidelity_prompts():
-    """The 64 prompts the export embeds: the templates in turn, with classes spread over the 1,000."""
+    """The 64 fidelity prompts: the templates in turn, with classes spread over the 1,000."""
     return [
         PROBE_TEMPLATES[index % len(PROBE_TEMPLATES)]
         .format(CLASS_NAMES[index * CLASS_COUNT // FIDELITY_PROMPTS])
@@ -174,12 +174,9 @@ def write_text_check(checkpoint, onnx_path, output):
         (embeds,) = session.run(["text_embeds"], {"pixel_values": pixel_values, "token_embeds": token_embeds[None]})
         return embeds[0]
 
-    # The ONNX holds the token embeddings surgery looked up for its fidelity prompts; this tokenizer and lookup
-    # must reproduce them exactly.
-    (embedded,) = session.run(
-        ["fidelity_token_embeds"],
-        {"pixel_values": pixel_values, "token_embeds": np.zeros(INTERFACE["token_embeds"], np.float32)},
-    )
+    # The temporary sidecar holds the fidelity inputs prepared during export.
+    with np.load(onnx_path.parent / "prompts.npz", allow_pickle=False) as saved:
+        embedded = saved["prompts"]
     np.testing.assert_array_equal(
         np.stack([lookup(ids) for ids in prompt_ids]),
         embedded,
@@ -210,21 +207,20 @@ def text_features(siglip, input_ids):
     return getattr(features, "pooler_output", features)
 
 
-def adapted_model(siglip, prompt_embeds):
+def adapted_model(siglip):
     import torch
 
     class SigLIP(torch.nn.Module):
         def __init__(self):
             super().__init__()
             self.siglip = siglip
-            self.register_buffer("fidelity_token_embeds", prompt_embeds)
 
         def forward(self, pixel_values, token_embeds):
             image_embeds = self.siglip.vision_model(pixel_values=pixel_values).pooler_output
             text = self.siglip.text_model
             hidden = text.encoder(inputs_embeds=text.embeddings(inputs_embeds=token_embeds)).last_hidden_state
             text_embeds = text.head(text.final_layer_norm(hidden)[:, -1, :])
-            return image_embeds, text_embeds, self.fidelity_token_embeds
+            return image_embeds, text_embeds
 
     return SigLIP().eval()
 
@@ -238,13 +234,17 @@ def validate_parity(path, siglip, pixel_values, prompt_ids, prompt_embeds):
         expected_image = siglip.get_image_features(pixel_values=pixel_values)
         expected_image = getattr(expected_image, "pooler_output", expected_image).numpy()
         expected_text = text_features(siglip, prompt_ids[:4]).numpy()
+    for index, image in enumerate(pixel_values):
+        (image_embeds,) = session.run(
+            ["image_embeds"], {"pixel_values": image[None].numpy(), "token_embeds": prompt_embeds[:1].numpy()}
+        )
+        np.testing.assert_allclose(image_embeds[0], expected_image[index], rtol=1e-3, atol=1e-3)
     for index in range(4):
-        image_embeds, text_embeds, embeds = session.run(
-            None, {"pixel_values": pixel_values.numpy(), "token_embeds": prompt_embeds[index : index + 1].numpy()}
+        (text_embeds,) = session.run(
+            ["text_embeds"],
+            {"pixel_values": pixel_values[:1].numpy(), "token_embeds": prompt_embeds[index : index + 1].numpy()},
         )
         np.testing.assert_allclose(text_embeds[0], expected_text[index], rtol=1e-3, atol=1e-3)
-    np.testing.assert_allclose(image_embeds, expected_image, rtol=1e-3, atol=1e-3)
-    np.testing.assert_array_equal(embeds, prompt_embeds.numpy())
     print(f"PyTorch/ONNX check passed: {path}")
 
 
@@ -260,14 +260,25 @@ def export_model(source, output_dir):
     prompt_ids = tokenize(processor.tokenizer, fidelity_prompts())
     with torch.inference_mode():
         prompt_embeds = siglip.text_model.embeddings.token_embedding(prompt_ids)
-    model = adapted_model(siglip, prompt_embeds)
+    model = adapted_model(siglip)
     rng = np.random.RandomState(0)
-    image = Image.fromarray(rng.randint(0, 256, (300, 400, 3), dtype=np.uint8))
-    pixel_values = processor(images=image, return_tensors="pt")["pixel_values"]
+    images = [
+        Image.fromarray(rng.randint(0, 256, (h, w, 3), dtype=np.uint8))
+        for h, w in ((300, 400), (400, 300), (224, 224))
+    ]
+    pixel_values = processor(images=images, return_tensors="pt")["pixel_values"]
+    # Check the actual bundled processor against the preprocessing used for compilation fidelity.
+    for image, expected in zip(images, pixel_values.numpy(), strict=True):
+        content = io.BytesIO()
+        image.save(content, format="PNG")
+        # Pillow and the processor's Torchvision backend can round bilinear samples by one RGB level.
+        np.testing.assert_allclose(
+            preprocess_image(content.getvalue()).transpose(2, 0, 1), expected, rtol=0, atol=2 / 255 + 1e-6
+        )
     with torch.inference_mode():
         torch.onnx.export(
             model,
-            (pixel_values, prompt_embeds[:1]),
+            (pixel_values[:1], prompt_embeds[:1]),
             str(output),
             input_names=list(INPUTS),
             output_names=list(OUTPUTS),
@@ -277,6 +288,7 @@ def export_model(source, output_dir):
     fold_constants(output)
     validate_export(output)
     validate_parity(output, siglip, pixel_values, prompt_ids, prompt_embeds)
+    np.savez(output_dir / "prompts.npz", prompts=prompt_embeds.numpy())
     return output
 
 
@@ -298,8 +310,6 @@ def graph_paths(directory):
 
 def validate_text_check(source):
     """Keep the committed runtime probes aligned with the exported text encoder."""
-    import io
-
     import onnxruntime as ort
 
     content = Path(__file__).with_name("text_encoder_check.npz").read_bytes()

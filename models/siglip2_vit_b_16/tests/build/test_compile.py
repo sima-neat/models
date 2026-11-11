@@ -38,7 +38,7 @@ def _mpk(path: Path, plugins: list[dict], inputs: list[dict]) -> Path:
     return _write_archive(path, {"model_mpk.json": json.dumps(manifest).encode(), "model.elf": b"elf"})
 
 
-def test_preprocessing_follows_the_checkpoints_processor(load_script: Callable[[str], ModuleType]) -> None:
+def test_preprocessing_constants_remain_fixed(load_script: Callable[[str], ModuleType]) -> None:
     calibration = load_script("calibration")
     processor = {"size": {"height": 224, "width": 224}, "resample": 2, "image_mean": [0.5] * 3, "image_std": [0.5] * 3}
     assert calibration.SIZE == processor["size"]["height"] == processor["size"]["width"]
@@ -135,7 +135,7 @@ def test_the_quantization_recipe_follows_the_precision(
     monkeypatch: pytest.MonkeyPatch, load_script: Callable[[str], ModuleType], precision: str
 ) -> None:
     recipe = load_script("compile")
-    for name in ("quantization_scheme", "bfloat16_scheme", "SkipCalibration", "default_quantization"):
+    for name in ("quantization_scheme", "bfloat16_scheme", "SkipCalibration", "QuantizationParams"):
         monkeypatch.setattr(recipe, name, MagicMock(name=name))
     recipe._quantization_config({"precision": precision})
     if precision == "w8a16":
@@ -146,9 +146,11 @@ def test_the_quantization_recipe_follows_the_precision(
         recipe.quantization_scheme.assert_not_called()
         recipe.bfloat16_scheme.assert_called_once_with()
     # Only w8a16 scales activations per token.
-    per_token = [c[1] for c in recipe.default_quantization.mock_calls if c[0].endswith("with_per_token_quant")]
-    assert per_token == [(precision == "w8a16",)]
+    options = recipe.QuantizationParams.call_args.kwargs
+    assert options["per_token_quant"] == (precision == "w8a16")
+    assert options["requantization_mode"] == recipe.RequantizationMode.sima
     recipe.SkipCalibration.assert_called_once_with()
+    assert options["calibration_method"] is recipe.SkipCalibration.return_value
     with pytest.raises(ValueError, match="unsupported precision"):
         recipe._quantization_config({"precision": "w4a8"})
 
@@ -331,7 +333,7 @@ def test_prompt_tables_are_openais_imagenet_classes_and_templates(exporter: Modu
     assert all(template.count("{}") == 1 for template in exporter.PROBE_TEMPLATES)
 
 
-def test_the_text_check_prompts_use_each_template_on_classes_the_embedded_prompts_leave_out(exporter: ModuleType):
+def test_the_text_check_prompts_use_each_template_on_classes_the_fidelity_prompts_leave_out(exporter: ModuleType):
     embedded = exporter.fidelity_prompts()
     assert len(embedded) == exporter.FIDELITY_PROMPTS
     assert embedded[:2] == ["itap of a tench.", "a bad photo of the american robin."]

@@ -33,6 +33,16 @@ conversion:
       tokenizer.model: {sha256: 61a7b147390c64585d6c3543dd6fc636906c9af3865a5548f27f31aee1d4c8e2, size_bytes: 4241003}
       tokenizer_config.json: {sha256: 14afe629fe4959b9e0d51e1852b8d9f7ad074f90a1a7125a4fcdd17f06e78fc8, size_bytes: 47164}
 
+resources:
+  license:
+    # The SigLIP checkpoint omits LICENSE. Google's BERT repository carries the standard Apache-2.0 text.
+    source:
+      repository: google-bert/bert-base-uncased
+      revision: 86b5e0934494bd15c9632b12f734a8a67f723594
+      files:
+        LICENSE: {sha256: 43070e2d4e532684de521b885f385d0841030efa2b1a20bafb76133a5e1379c1, size_bytes: 11356}
+    install_path: licenses
+
 compilation:
   format: onnx
   source: conversion

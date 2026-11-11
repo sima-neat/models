@@ -2,7 +2,7 @@
 """Prepare SigLIP 2 from its conversion bundle, compile both encoders, and measure fidelity.
 
 BF16 activations need no calibration. Image fidelity uses the declared dataset selection; text fidelity
-compares every fixed prompt surgery embeds as a constant output against the original FP32 ONNX.
+compares every fixed prompt prepared by surgery against the original FP32 ONNX.
 """
 
 from __future__ import annotations
@@ -25,10 +25,10 @@ import numpy as np
 import onnxruntime as ort
 from afe.apis.defines import (
     InputName,
+    QuantizationParams,
     RequantizationMode,
     SkipCalibration,
     bfloat16_scheme,
-    default_quantization,
     gen2_target,
     quantization_scheme,
 )
@@ -44,7 +44,6 @@ from surgery import graph_paths as _graph_paths
 MODEL_DIR = Path(__file__).resolve().parents[1]
 MODEL_ID = "siglip2_vit_b_16"
 COMPONENT_IDS = tuple(COMPONENT_GRAPHS)
-PROMPTS = "fidelity_token_embeds"
 # Files the compilation phases pass to each other in the temporary directory.
 PROMPTS_FILE = "prompts.npz"
 REFERENCE_OUTPUTS = "reference_outputs.npz"
@@ -77,16 +76,12 @@ def _quantization_config(parameters: dict[str, Any]) -> Any:
         activation = weights = bfloat16_scheme()
     else:
         raise ValueError(f"unsupported precision: {precision}")
-    return (
-        default_quantization.with_activation_quantization(activation)
-        .with_weight_quantization(weights)
-        .with_requantization_mode(RequantizationMode.sima)
-        .with_calibration(SkipCalibration())
-        .with_channel_equalization(False)
-        .with_smooth_quant(False)
-        # with_activation_quantization turns per-token quantization on for BF16. w8a16 keeps it, scaling each token's
-        # activations on its own before an INT8-weight operation; w16a16 does not use it.
-        .with_per_token_quant(precision == "w8a16")
+    return QuantizationParams(
+        activation_quantization_scheme=activation,
+        weight_quantization_scheme=weights,
+        requantization_mode=RequantizationMode.sima,
+        calibration_method=SkipCalibration(),
+        per_token_quant=precision == "w8a16",
     )
 
 
@@ -233,9 +228,10 @@ def _prepare_phase(source: Path, fidelity_dataset: Path, fidelity_names: list[st
     """Prepare the static graphs, check the split and record fidelity reference outputs."""
     paths = prepare_model(source, temporary_dir / "graphs")
     reference = _session(temporary_dir / "graphs/model.onnx")
-    (prompts,) = reference.run([PROMPTS], _full_inputs())
+    with np.load(temporary_dir / "graphs" / PROMPTS_FILE, allow_pickle=False) as saved:
+        prompts = saved["prompts"]
     if prompts.shape != (FIDELITY_PROMPTS, *COMPONENT_GRAPHS["text_encoder"]["inputs"]["token_embeds"][1:]):
-        raise RuntimeError(f"unexpected embedded prompts: {prompts.shape}")
+        raise RuntimeError(f"unexpected fidelity prompts: {prompts.shape}")
     np.savez(temporary_dir / PROMPTS_FILE, prompts=prompts)
 
     images = load_images(fidelity_dataset, fidelity_names).transpose(0, 3, 1, 2)

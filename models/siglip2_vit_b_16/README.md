@@ -22,13 +22,11 @@ ImageNet accuracy uses Big Vision's evaluation geometry: bilinear resize to
 256×256, then center-crop 224×224. The checkpoint's processor and compilation
 fidelity checks use the direct 224×224 resize above.
 
-**Text input.** Lowercase the prompt and tokenize it with SigLIP 2's Gemma
-tokenizer (`text_encoder/tokenizer.json` in the package), which appends the
-end-of-sequence token, then pad it to 64 tokens with the padding token. On the
-CPU, replace each token ID with its 768-value row of the packaged
-`text_encoder/token_embeddings.npy` lookup table. This gives the
-64×768 float tensor `token_embeds`; pass it as a 1×64×768 tensor with height,
-width, channel (HWC) axes.
+**Text input.** Lowercase the prompt and tokenize it with the packaged Gemma
+tokenizer `text_encoder/tokenizer.json`. It appends end-of-sequence; pad to 64
+tokens with the padding token. On CPU, replace each ID with its 768-value row
+from `text_encoder/token_embeddings.npy`. Pass the resulting float tensor
+`token_embeds` as 1×64×768 with HWC axes.
 
 **Outputs.** `image_embeds` is the image's 768-value embedding, and
 `text_embeds` is the prompt's 768-value embedding.
@@ -38,6 +36,12 @@ width, channel (HWC) axes.
 
 The encoders have no fixed class list. ImageNet evaluation uses all 1,000
 classes in the standard order of sorted WordNet IDs.
+
+**Speed measurements.** The image route letterboxes into 1280×720, then Neat
+stretches the entire padded frame to 224×224 and normalizes it. Accuracy uses
+the resize/crop route described above. Text timing starts from prepared
+embeddings; CPU tokenization and lookup are excluded. Results are separate
+per encoder. The package ships `licenses/LICENSE`.
 
 ## Building applications
 

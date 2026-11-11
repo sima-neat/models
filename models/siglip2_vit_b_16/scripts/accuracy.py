@@ -213,6 +213,10 @@ def load_text_inputs(resources: Path):
     table = np.load(directory / "token_embeddings.npy", mmap_mode="r", allow_pickle=False)
     if table.shape != (256000, EMBED_DIM) or table.dtype != np.float32:
         raise ValueError(f"unexpected token embedding table: {table.shape}, {table.dtype}")
+    check = load_text_check()
+    actual_ids = np.asarray([item.ids for item in tokenizer.encode_batch(check["prompts"].tolist())])
+    if not np.array_equal(actual_ids, check["token_ids"]):
+        raise ValueError("packaged tokenizer does not reproduce the text probe's token IDs")
     return tokenizer, table
 
 

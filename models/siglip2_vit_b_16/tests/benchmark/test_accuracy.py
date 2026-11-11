@@ -263,6 +263,8 @@ def test_text_inputs_use_packaged_weights_without_a_checkpoint(tmp_path, monkeyp
     weights = np.arange(vocab * 2, dtype=np.float32).reshape(vocab, 2)
     np.save(directory / "token_embeddings.npy", weights, allow_pickle=False)
     tokenizer = MagicMock()
+    check = script.load_text_check()
+    tokenizer.encode_batch.return_value = [SimpleNamespace(ids=ids.tolist()) for ids in check["token_ids"]]
 
     def from_file(path):
         assert Path(path).read_text() == "{}"
@@ -277,6 +279,10 @@ def test_text_inputs_use_packaged_weights_without_a_checkpoint(tmp_path, monkeyp
     np.testing.assert_array_equal(table, weights)
     tokenizer.enable_truncation.assert_called_once_with(max_length=script.TEXT_LENGTH)
     assert tokenizer.enable_padding.call_args.kwargs["length"] == script.TEXT_LENGTH
+    tokenizer.encode_batch.assert_called_once_with(check["prompts"].tolist())
+    tokenizer.encode_batch.return_value[0].ids[0] += 1
+    with pytest.raises(ValueError, match="tokenizer does not reproduce"):
+        script.load_text_inputs(tmp_path)
     # A mismatched table must fail before an input can reach the compiled encoder.
     np.save(directory / "token_embeddings.npy", weights[:2], allow_pickle=False)
     with pytest.raises(ValueError, match="unexpected token embedding table"):
