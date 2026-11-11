@@ -345,20 +345,34 @@ def test_branches_reuse_builds_from_the_resolved_base_branch_catalogs() -> None:
     assert jobs["compile"]["with"]["base_branches"] == "${{ needs.select.outputs.base_branches }}"
 
 
-def test_a_portal_that_fails_its_check_stops_the_run_before_planning() -> None:
+def test_portal_checks_gate_browser_publication_independently_of_model_processing() -> None:
     jobs = load(WORKFLOW)["jobs"]
 
+    def ancestors(job_id: str) -> set[str]:
+        dependencies = jobs[job_id].get("needs", [])
+        if isinstance(dependencies, str):
+            dependencies = [dependencies]
+        return set(dependencies).union(*(ancestors(dependency) for dependency in dependencies))
+
     assert jobs["portal"]["uses"] == "./.github/workflows/developer-docs.yml"
-    assert "portal" in jobs["plan"]["needs"]
-    # Without a status function, plan runs only when portal succeeded; every later job needs plan.
+    assert "portal" in ancestors("publish-model-browser")
+    for job_id in (
+        "plan", "authorize-runner-classes", "initialize-catalog", "compile", "publish-candidates",
+        "publish-catalog", "benchmark", "benchmark-without-compiles", "report-partial-publication",
+    ):
+        assert "portal" not in ancestors(job_id), job_id
+    # Model validation and registry configuration must still succeed before planning.
     assert "if" not in jobs["plan"]
+    assert load(WORKFLOWS / "target-branch-checks.yml")["jobs"]["portal"]["uses"] == (
+        "./.github/workflows/developer-docs.yml"
+    )
 
 
 def test_plan_compares_fingerprints_with_the_environment_registry() -> None:
     plan_job = load(WORKFLOW)["jobs"]["plan"]
     plan = step(plan_job, "Compare fingerprints with published runs")
 
-    assert plan_job["needs"] == ["select", "portal", "resolve-vulcan-config"]
+    assert plan_job["needs"] == ["select", "resolve-vulcan-config"]
     assert plan_job["environment"] == "${{ needs.select.outputs.vulcan_environment }}"
     assert plan_job["permissions"] == {"contents": "read", "id-token": "write"}
     credentials = step(plan_job, "Configure registry planning credentials")
