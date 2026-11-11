@@ -68,3 +68,12 @@ accuracy:
   - {id: scene-flow, variant: val, sha256: f355b01ceab38e3ac1e3fd069bf3af61a140fff88d7cf21acaa610195799c500, size_bytes: 14868088916}
 
 performance: {}
+
+reference_metrics:
+# princeton-vl publishes no Scene Flow score for the realtime model, and the paper's ablations report only 1px error
+# for other configurations, so the reference is the FP32 ONNX on the package's own protocol.
+- origin: fp32_baseline
+  script: scripts/fp32_baseline_accuracy.py
+  dataset: {id: scene-flow, split: test}
+  conditions: FP32 ONNX from surgery.py on ONNX Runtime CPU, each 960x540 view ImageNet-normalized and padded to 544 rows by the graph, all 4,370 finalpass test pairs, pixels with true disparity above 0 and under 192
+  metrics: {epe: 0.8345, d1_all: 3.3486}
