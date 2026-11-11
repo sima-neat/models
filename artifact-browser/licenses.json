@@ -16,8 +16,8 @@
   },
   "LicenseRef-DINOv3": {
     "name": "DINOv3 License",
-    "summary": "Use and redistribution of the model and its derivatives are subject to Meta’s DINOv3 License, which must accompany every copy and bars military, nuclear, espionage, weapons and other uses that trade controls prohibit. SiMa.ai packages do not include the license text yet, so SiMa.ai does not offer this model for download.",
-    "downloadable": false
+    "summary": "Use and redistribution of the model and its derivatives are subject to Meta’s DINOv3 License, which must accompany every copy and bars military, nuclear, espionage, weapons and other uses that trade controls prohibit. Include the license.",
+    "downloadable": true
   },
   "LicenseRef-LFM-Open-1.0": {
     "name": "LFM Open License v1.0",
