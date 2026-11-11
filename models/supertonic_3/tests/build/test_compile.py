@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import builtins
-import io
 import hashlib
+import io
 import json
 import sys
 import tarfile
@@ -14,6 +14,7 @@ from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
+import yaml
 from model_registry.model import load_model, mpk_filename
 
 PROFILE_ID = "w8a16_w16a16"
@@ -53,6 +54,15 @@ def test_vector_estimator_runs_both_guidance_branches_in_one_call(load_script: C
     assert recipe._batch_size(parameters["vocoder"]) == 1
     with pytest.raises(ValueError, match="positive"):
         recipe._batch_size({"batch_size": 0})
+
+
+def test_the_cpu_files_come_from_the_revision_the_graphs_compile_from(model_dir: Path) -> None:
+    # The text encoder feeds the vector estimator, so both come from one Supertone revision.
+    authored = yaml.safe_load((model_dir / "model.yaml").read_text(encoding="utf-8"))
+    compiled_from = authored["compilation"]["source"]
+    for resource in authored["resources"].values():
+        pin = resource["source"]
+        assert (pin["repository"], pin["revision"]) == (compiled_from["repository"], compiled_from["revision"])
 
 
 @pytest.mark.parametrize("component_id", COMPONENT_IDS)
