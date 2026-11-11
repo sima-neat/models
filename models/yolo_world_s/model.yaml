@@ -61,12 +61,13 @@ compilation:
   components:
   - text_encoder
   - detector
-# Calibration is the fixed class-balanced training selection in scripts/calibration_samples.py.
-# Each image and prompt pairing is pinned there. Direct official COCO downloads were requested
-# because local Artifactory access is unavailable; no validation image calibrates this build.
-# Text uses SkipCalibration. Only the detector INT8 activation ranges are calibrated.
+calibrations:
+- id: coco-2017-cal
+  dataset: {id: coco-2017, variant: cal, sha256: 54c64d84122eba371ac014d7b43849a461551c2e6c5c430b5ead90ec1dec12b1, size_bytes: 187510866}
+
 build_profiles:
   w8a8_mixed_w16a16:
+    calibration_dataset: coco-2017-cal
     components:
       text_encoder:
         parameters:
@@ -76,7 +77,7 @@ build_profiles:
         parameters:
           precision: w8a8_mixed_w16a16
           prompt_slots: 80
-          calibration_samples: 128
+          calibration_samples: 64
           calibration_method: mse
           bf16_region: projection_attention
 pipeline:

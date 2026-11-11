@@ -1,9 +1,8 @@
-"""Verified calibration images and their paired prompt lists.
+"""Calibrate with a deterministic sample from the pinned COCO calibration archive.
 
-The exact research selection is reproduced from official COCO image URLs when
---dataset is omitted. A supplied directory must contain the same verified bytes.
-This direct-download route was explicitly requested because Artifactory access
-is unavailable; it never substitutes validation images for calibration.
+Only cal2017 images are eligible, using the same selection seed as YOLOv8n.
+Every image receives the complete 80-class COCO prompt bank and an all-active
+mask; the image/prompt pairing therefore includes every COCO category.
 
 The BF16 simulator processes 32 independent prompt rows per call. A cache bound
 to the graph, tokenizer, lookup table, prompts and compiler versions shares the
@@ -14,18 +13,29 @@ import importlib.metadata
 import json
 import logging
 import os
-from concurrent.futures import ThreadPoolExecutor
 import fcntl
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import tempfile
-import urllib.request
+import random
+import tarfile
 
 import numpy as np
-from calibration_samples import SAMPLES
 
 IMAGE_SIZE = 640
 FILL = 114
 PROMPT_ROWS = 32
+CALIBRATION_SEED = 20260930
+CALIBRATION_SPLIT = "cal2017"
+IMAGE_SUFFIXES = (".jpg", ".jpeg", ".webp")
+COCO_PROMPTS = ('person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus', 'train', 'truck', 'boat', 'traffic light',
+ 'fire hydrant', 'stop sign', 'parking meter', 'bench', 'bird', 'cat', 'dog', 'horse', 'sheep', 'cow',
+ 'elephant', 'bear', 'zebra', 'giraffe', 'backpack', 'umbrella', 'handbag', 'tie', 'suitcase', 'frisbee',
+ 'skis', 'snowboard', 'sports ball', 'kite', 'baseball bat', 'baseball glove', 'skateboard', 'surfboard',
+ 'tennis racket', 'bottle', 'wine glass', 'cup', 'fork', 'knife', 'spoon', 'bowl', 'banana', 'apple',
+ 'sandwich', 'orange', 'broccoli', 'carrot', 'hot dog', 'pizza', 'donut', 'cake', 'chair', 'couch',
+ 'potted plant', 'bed', 'dining table', 'toilet', 'tv', 'laptop', 'mouse', 'remote', 'keyboard', 'cell phone',
+ 'microwave', 'oven', 'toaster', 'sink', 'refrigerator', 'book', 'clock', 'vase', 'scissors', 'teddy bear',
+ 'hair drier', 'toothbrush')
 LOGGER = logging.getLogger(__name__)
 LOGGER.setLevel(logging.INFO)
 
@@ -51,33 +61,53 @@ def preprocess_image(content):
     return image.astype(np.float32) / np.float32(255)
 
 
-def verified_images(directory=None, download_missing=False):
-    supplied = directory is not None
-    directory = Path(directory) if supplied else Path.home() / ".cache/yolo-world/cal128"
-    directory.mkdir(parents=True, exist_ok=True)
+def _is_image(name: str) -> bool:
+    return name.lower().endswith(IMAGE_SUFFIXES)
 
-    def one(record):
-        candidates = [directory / record["file_name"], directory / "train2017" / record["file_name"]]
-        path = next((p for p in candidates if p.is_file()), candidates[0])
-        if not path.exists():
-            if supplied and not download_missing:
-                raise ValueError(f"calibration selection missing {record['file_name']}")
-            url = "https://s3.amazonaws.com/images.cocodataset.org/train2017/" + record["file_name"]
-            with urllib.request.urlopen(url, timeout=60) as response:
-                content = response.read()
-            if hashlib.sha256(content).hexdigest() != record["sha256"]:
-                raise ValueError(f"calibration image checksum mismatch: {record['file_name']}")
-            with tempfile.NamedTemporaryFile(dir=directory, prefix=path.name + ".", delete=False) as stream:
-                stream.write(content)
-                temporary = Path(stream.name)
-            temporary.replace(path)
-        content = path.read_bytes()
-        if hashlib.sha256(content).hexdigest() != record["sha256"]:
-            raise ValueError(f"calibration image checksum mismatch: {path}")
-        return preprocess_image(content)
 
-    with ThreadPoolExecutor(4) as pool:
-        return np.stack(list(pool.map(one, SAMPLES)))
+def _image_names(dataset: Path) -> list[str]:
+    if dataset.is_dir():
+        return sorted(
+            path.relative_to(dataset).as_posix()
+            for path in dataset.rglob("*")
+            if path.is_file() and _is_image(path.name)
+        )
+    if tarfile.is_tarfile(dataset):
+        with tarfile.open(dataset) as archive:
+            return sorted(member.name for member in archive.getmembers() if member.isfile() and _is_image(member.name))
+    raise ValueError(f"unsupported image dataset input: {dataset}")
+
+
+def _image_bytes(dataset: Path, names: list[str]):
+    if dataset.is_dir():
+        for name in names:
+            yield (dataset / name).read_bytes()
+        return
+    if tarfile.is_tarfile(dataset):
+        with tarfile.open(dataset) as archive:
+            members = {member.name: member for member in archive.getmembers()}
+            for name in names:
+                stream = archive.extractfile(members[name])
+                if stream is None:
+                    raise ValueError(f"could not read image from dataset: {name}")
+                yield stream.read()
+        return
+    raise ValueError(f"unsupported image dataset input: {dataset}")
+
+
+def calibration_names(dataset: Path, count: int) -> list[str]:
+    """Return a seeded sample of the dataset's cal2017 images, in sampling order."""
+    names = [name for name in _image_names(dataset) if PurePosixPath(name).parent.name == CALIBRATION_SPLIT]
+    if count < 1 or len(names) < count:
+        raise ValueError(f"cannot select {count} calibration images from {len(names)} {CALIBRATION_SPLIT} images")
+    selected = random.Random(CALIBRATION_SEED).sample(names, count)
+    LOGGER.info("Calibration images (%d, seed %d): %s", count, CALIBRATION_SEED, selected)
+    return selected
+
+
+def calibration_images(dataset: Path, count: int) -> np.ndarray:
+    """Return the selected calibration images as one NHWC float32 batch."""
+    return np.stack([preprocess_image(content) for content in _image_bytes(dataset, calibration_names(dataset, count))])
 
 
 def tokenize(prompts, tokenizer_json, table):
@@ -161,20 +191,11 @@ def cached_prompt_vectors(prompts, graph, tokenizer_json, table, create_model, c
         return vectors
 
 
-def calibration_inputs(directory, text_graph, tokenizer_json, table, create_text_model):
+def calibration_inputs(dataset, text_graph, tokenizer_json, table, create_text_model, count):
     from afe.apis.defines import InputName
 
-    images = verified_images(directory)
-    prompts = sorted({prompt for record in SAMPLES for prompt in record["prompts"]})
-    vectors = dict(zip(prompts, cached_prompt_vectors(prompts, text_graph, tokenizer_json, table,
-                                                     create_text_model), strict=True))
-    samples = []
-    for image, record in zip(images, SAMPLES, strict=True):
-        embeddings = np.zeros((1, 80, 512), np.float32)
-        mask = np.zeros((1, 80), np.float32)
-        for i, prompt in enumerate(record["prompts"]):
-            embeddings[0, i] = vectors[prompt]
-        mask[0, :record["active_count"]] = 1
-        samples.append({InputName("images"): image[None], InputName("text_embeddings"): embeddings,
-                        InputName("prompt_mask"): mask})
-    return samples
+    images = calibration_images(dataset, count)
+    embeddings = cached_prompt_vectors(list(COCO_PROMPTS), text_graph, tokenizer_json, table, create_text_model)[None]
+    mask = np.ones((1, len(COCO_PROMPTS)), np.float32)
+    return [{InputName("images"): image[None], InputName("text_embeddings"): embeddings,
+             InputName("prompt_mask"): mask} for image in images]

@@ -23,24 +23,67 @@ def test_finite_clip_preserves_ordinary_normalization(load_script):
     onnx.checker.check_model(graph)
 
 
-def test_calibration_keeps_image_prompt_pairing_and_sparse_masks(load_script):
-    samples = load_script("calibration_samples").SAMPLES
-    assert len(samples) == 128
-    assert len({row["file_name"] for row in samples}) == 128
-    assert {row["active_count"] for row in samples} == {1, 2, 3, 8, 16, 32, 80}
-    for row in samples:
-        assert len(row["sha256"]) == 64
-        assert len(row["prompts"]) == 80
-        assert 1 <= row["active_count"] <= 80
+@pytest.mark.parametrize("archive_input", [False, True])
+def test_calibration_selects_only_cal2017_and_preserves_order(tmp_path, load_script, monkeypatch, archive_input):
+    import tarfile
 
-
-def test_supplied_calibration_bytes_are_verified(tmp_path, load_script, monkeypatch):
     calibration = load_script("calibration")
-    path = tmp_path / "000000000001.jpg"
-    path.write_bytes(b"wrong-image")
-    monkeypatch.setattr(calibration, "SAMPLES", [{"file_name": path.name, "sha256": "0" * 64}])
-    with pytest.raises(ValueError, match="checksum"):
-        calibration.verified_images(tmp_path)
+    directory = tmp_path / "dataset"
+    for split, count in (("cal2017", 68), ("val2017", 5)):
+        (directory / split).mkdir(parents=True)
+        for index in range(count):
+            (directory / split / f"{index:012}.jpg").write_text(str(index))
+    dataset = directory
+    if archive_input:
+        dataset = tmp_path / "dataset.tgz"
+        with tarfile.open(dataset, "w:gz") as archive:
+            for path in reversed(sorted(directory.rglob("*.jpg"))):
+                archive.add(path, arcname=path.relative_to(directory).as_posix())
+    selected = calibration.calibration_names(dataset, 64)
+    assert selected == calibration.calibration_names(directory, 64)
+    assert len(selected) == len(set(selected)) == 64
+    assert all(Path(name).parent.name == "cal2017" for name in selected)
+    monkeypatch.setattr(calibration, "preprocess_image", lambda content: np.array([int(content)], np.float32))
+    images = calibration.calibration_images(dataset, 64)
+    np.testing.assert_array_equal(images[:, 0], [int(Path(name).stem) for name in selected])
+    with pytest.raises(ValueError, match="cannot select"):
+        calibration.calibration_names(dataset, 69)
+
+
+def test_calibration_pairs_every_image_with_all_coco_prompts(load_script, monkeypatch):
+    import sys
+
+    calibration = load_script("calibration")
+    monkeypatch.setattr(sys.modules["afe.apis.defines"], "InputName", str)
+    images = np.arange(36, dtype=np.float32).reshape(3, 2, 2, 3)
+    vectors = np.eye(512, dtype=np.float32)[:80]
+    monkeypatch.setattr(calibration, "calibration_images", lambda dataset, count: images)
+
+    def cached(prompts, *args):
+        assert len(prompts) == len(set(prompts)) == 80
+        assert (prompts[0], prompts[-1]) == ("person", "toothbrush")
+        return vectors
+
+    monkeypatch.setattr(calibration, "cached_prompt_vectors", cached)
+    samples = calibration.calibration_inputs(Path("dataset.tgz"), None, None, None, None, 3)
+    for index, sample in enumerate(samples):
+        np.testing.assert_array_equal(sample["images"], images[index:index + 1])
+        np.testing.assert_array_equal(sample["text_embeddings"], vectors[None])
+        np.testing.assert_array_equal(sample["prompt_mask"], np.ones((1, 80), np.float32))
+
+
+def test_calibration_is_pinned_in_model_registry(model_dir):
+    from model_registry.model import load_model
+
+    model = load_model(model_dir)
+    assert model["calibrations"] == [{"id": "coco-2017-cal", "dataset": {
+        "id": "coco-2017", "variant": "cal", "sha256": "54c64d84122eba371ac014d7b43849a461551c2e6c5c430b5ead90ec1dec12b1",
+        "size_bytes": 187510866,
+    }}]
+    (profile,) = model["build_profiles"]
+    assert profile["components"][0]["calibration"] == "coco-2017-cal"
+    detector = next(item for item in profile["components"] if item["id"] == "detector")
+    assert detector["parameters"]["calibration_samples"] == 64
 
 
 def test_bf16_text_configuration_skips_calibration(load_script, monkeypatch):
@@ -139,7 +182,7 @@ def test_compile_recipe_records_grouped_graphs_and_final_archives(tmp_path, load
     profile = "w8a8_mixed_w16a16"
     with patch.object(compiler, "load_model", return_value=Backend()), \
             patch.object(compiler, "onnx_source"), patch.object(compiler, "calibration_inputs"):
-        compiler.compile_prepared(prepared, output, profile)
+        compiler.compile_prepared(prepared, output, profile, dataset=tmp_path / "calibration.tgz")
     identity = dict(model_id=compiler.MODEL_DIR.name, build_profile_id=profile,
                     compile_invocation_id=profile, component_ids=list(compiler.COMPONENTS))
     manifest = output / "compile-outputs.json"

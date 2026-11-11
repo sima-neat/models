@@ -1,9 +1,9 @@
 """Classical Model Compiler build: BF16 CLIP and a mostly INT8 image detector.
 
 CLIP uses SkipCalibration and no calibration samples. Only detector INT8
-activation ranges are calibrated, using the content-pinned 128 COCO training
-images and their paired prompt lists. The build profile declares the detector
-calibration method.
+activation ranges are calibrated, using 64 images from the pinned Dataset
+Registry COCO calibration archive with all 80 COCO prompts. The build profile
+declares the detector calibration method.
 """
 import argparse
 import json
@@ -19,7 +19,6 @@ from afe.apis.defines import (HistogramMSEMethod, MinMaxMethod, QuantizationPara
 from afe.apis.loaded_net import load_model
 from afe.load.importers.general_importer import onnx_source
 from calibration import calibration_inputs
-from calibration_samples import SAMPLES
 from model_registry.fetch import sha256_file
 from model_registry.model import build_profile_for, load_model as load_metadata
 from surgery import COMPONENTS, prepare_model
@@ -74,10 +73,12 @@ def compile_prepared(directory, output, profile_id, dataset=None, quantized_outp
     profile = build_profile_for(metadata, profile_id)
     parameters = {component["id"]: component["parameters"] for component in profile["components"]}
     detector = parameters["detector"]
-    if (detector["precision"], detector["prompt_slots"], detector["calibration_samples"], detector["bf16_region"]) != (
-        "w8a8_mixed_w16a16", 80, len(SAMPLES), "projection_attention"
+    if (detector["precision"], detector["prompt_slots"], detector["bf16_region"]) != (
+        "w8a8_mixed_w16a16", 80, "projection_attention"
     ):
-        raise ValueError("this recipe requires the qualified 80-slot projection_attention profile and 128 samples")
+        raise ValueError("this recipe requires the 80-slot projection_attention profile")
+    if dataset is None:
+        raise ValueError("the detector requires --dataset from dataset-registry")
     output.mkdir(parents=True, exist_ok=False)
     table = np.load(directory / "token_embedding_table.npy", allow_pickle=False)
     manifest = {
@@ -102,7 +103,7 @@ def compile_prepared(directory, output, profile_id, dataset=None, quantized_outp
             manifest["derived_graphs"].append({"component_id": component, "sha256": sha256_file(graph)[0]})
             loaded = load_model(onnx_source(str(graph), layout="NCHW", flexible_batch_size=False), target=gen2_target)
             data = (calibration_inputs(dataset, directory / "text_calibration.onnx", directory / "tokenizer.json", table,
-                                       create_text_calibrator)
+                                       create_text_calibrator, detector["calibration_samples"])
                     if component == "detector" else None)
             quantized = loaded.quantize(calibration_data=data, quantization_config=quantization(component, parameters[component]),
                                         model_name=name, log_level=logging.INFO)
@@ -141,7 +142,7 @@ def main():
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--build-profile", required=True)
     parser.add_argument("--compile-invocation", required=True)
-    parser.add_argument("--dataset", type=Path)
+    parser.add_argument("--dataset", type=Path, required=True, help="verified Dataset Registry calibration archive")
     args = parser.parse_args()
     if args.compile_invocation != args.build_profile:
         parser.error("one compile invocation per build profile")
