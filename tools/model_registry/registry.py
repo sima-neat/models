@@ -589,6 +589,9 @@ def build_catalog_snapshot(
         if model["id"] not in deferred:
             continue
         entry = dict(model)
+        # Categories follow this checkout's taxonomy, which may have renamed IDs
+        # since the carried entry was published.
+        entry["categories"] = validate_model_categorization(all_models[model["id"]], taxonomy)
         if documentation_receipts is not None:
             documentation = documentation_receipts.get(model["id"])
             if not isinstance(documentation, dict):

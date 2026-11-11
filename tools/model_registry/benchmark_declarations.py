@@ -22,6 +22,7 @@ SCRIPTS = {"performance": "scripts/performance.py", "accuracy": "scripts/accurac
 # An optional host script that measures a reference_metrics entry with origin fp32_baseline; no stage runs it.
 FP32_BASELINE_SCRIPT = "scripts/fp32_baseline_accuracy.py"
 ACCURACY_REQUIREMENTS = "scripts/requirements-accuracy.txt"
+PERFORMANCE_REQUIREMENTS = "scripts/requirements-performance.txt"
 DATASET_REQUIREMENTS_DIR = "datasets"
 DATASET_REQUIREMENTS_SCHEMA = "schemas/dataset-requirements.schema.json"
 

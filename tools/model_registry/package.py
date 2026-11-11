@@ -12,12 +12,12 @@ from typing import Any
 from jsonschema import Draft202012Validator
 
 from .artifact import deployment_files, read_runtime_files, verify_artifact
-from .errors import ValidationError
-from .fetch import sha256_file
+from .errors import SourcePolicyError, ValidationError
+from .fetch import Fetcher, sha256_file
 from .mla_stage_simulation import SIMULATION_FILE
-from .model import load_and_validate_model
+from .model import _expand_source, load_and_validate_model, mpk_filename, source_members
 from .runner_approval import runner_provenance
-from .source import source_identity
+from .source import SourceSpec, source_identity
 
 # scripts/compile.py writes the profile's numerical fidelity here; the package run publishes it.
 FIDELITY_FILE = "fidelity.json"
@@ -59,6 +59,97 @@ def _link_or_copy(source: str, destination: str) -> str:
         return shutil.copyfile(source, destination)
 
 
+def package_resources(model: dict[str, Any]) -> list[dict[str, Any]]:
+    """model.yaml's resources, each with its expanded source; every package of the model installs all of them."""
+    return [
+        {"id": resource_id, "source": _resource_source(resource["source"]), "install_path": resource["install_path"]}
+        for resource_id, resource in sorted(model.get("resources", {}).items())
+    ]
+
+
+def _resource_source(source: dict[str, Any]) -> dict[str, Any]:
+    """Expand a resource's source like a compile source. Nothing opens a resource file, so its file set names no
+    main file: the expansion gets an empty one and drops it."""
+    if "files" not in source:
+        return _expand_source(source)
+    expanded = _expand_source({**source, "main_file": ""})
+    del expanded["entrypoint"]
+    return expanded
+
+
+def _reject_overlapping_paths(paths: list[str]) -> None:
+    """A package path may appear once and may not sit below another packaged file."""
+    occupied: set[str] = set()
+    for path in paths:
+        if path in occupied:
+            raise ValidationError(f"package path is declared more than once: {path}")
+        occupied.add(path)
+    for path in sorted(occupied):
+        if any(parent.as_posix() in occupied for parent in PurePosixPath(path).parents):
+            raise ValidationError(f"package paths overlap: {path}")
+
+
+def _resource_paths(resource: dict[str, Any]) -> list[str]:
+    """Where a resource's files land in the package, from its declaration alone."""
+    install_path = PurePosixPath(resource["install_path"])
+    if resource["source"]["type"] == "file":
+        return [install_path.as_posix()]
+    return [(install_path / member["path"]).as_posix() for member in resource["source"]["files"]]
+
+
+def validate_package_resources(model: dict[str, Any]) -> None:
+    """Hold each resource's source to the compile source's rules, and their package paths to the package's,
+    so a bad one fails before the compile."""
+    resources = package_resources(model)
+    for resource in resources:
+        source = resource["source"]
+        try:
+            source_members(source)
+        except (KeyError, TypeError, ValueError, SourcePolicyError) as exc:
+            raise ValidationError(f"{model['id']}: resource {resource['id']}: source policy: {exc}") from exc
+    if not resources:
+        return
+    resource_paths = [path for resource in resources for path in _resource_paths(resource)]
+    # Every package of the model installs all resources beside its components' archives.
+    archives_by_profile = [
+        [mpk_filename(model, profile["id"], item["id"]) for item in profile["components"]]
+        for profile in model.get("build_profiles", [])
+    ]
+    for archives in archives_by_profile or [[]]:
+        try:
+            _reject_overlapping_paths([*archives, *resource_paths])
+        except ValidationError as exc:
+            raise ValidationError(f"{model['id']}: resources: {exc}") from exc
+
+
+def fetch_package_resources(model: dict[str, Any], output_dir: Path, cache_dir: Path | None = None) -> Path | None:
+    """Lay out the model's resources as its package installs them; None for a model without resources."""
+    resources = package_resources(model)
+    if not resources:
+        return None
+    fetcher = Fetcher(cache_dir)
+    for resource in resources:
+        for name, path in _resource_files(fetcher, resource)[1]:
+            destination = output_dir / name
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(path, destination)
+    return output_dir
+
+
+def _resource_files(fetcher: Fetcher, resource: dict[str, Any]) -> tuple[dict[str, Any], list[tuple[str, Path]]]:
+    """Fetch one pinned resource and place its files under install_path."""
+    source = resource["source"]
+    mappings = [source] if source["type"] == "file" else source["files"]
+    members = [SourceSpec.from_mapping(mapping) for mapping in mappings]
+    local = [fetcher.fetch(member)[0] for member in members]
+    files = list(zip(_resource_paths(resource), local, strict=True))
+    entry = {
+        "id": resource["id"], "paths": [name for name, _ in files], "source_sha256": source_identity(source),
+        "size_bytes": sum(member.size_bytes for member in members),
+    }
+    return entry, files
+
+
 def assemble_package(
     *,
     repository: str | Path,
@@ -67,6 +158,7 @@ def assemble_package(
     model_id: str,
     build_profile_id: str,
     package_id: str,
+    resource_cache_dir: str | Path | None = None,
 ) -> dict[str, Any]:
     root = Path(repository).expanduser().resolve()
     compiled = Path(compiled_dir).expanduser().resolve()
@@ -138,8 +230,8 @@ def assemble_package(
         if native:
             if package["composition"] not in compositions or compositions[package["composition"]]["type"] != "single":
                 raise ValidationError("A LLiMa package uses a single deployment composition")
-            if len(package["components"]) != 1:
-                raise ValidationError("A LLiMa package contains one complete deployment")
+            if len(package["components"]) != 1 or model.get("resources"):
+                raise ValidationError("A LLiMa package contains one complete deployment and no extra resources")
             if result.get("format") != "llima":
                 raise ValidationError("Hugging Face compile result must declare format llima")
             native_deployment = result_dir / "deployment"
@@ -171,28 +263,25 @@ def assemble_package(
     else:
         packaged_composition = {"id": composition["id"], "type": composition["type"]}
 
-    occupied_paths: set[str] = set()
-    for package_path, _ in component_files:
-        if package_path in occupied_paths:
-            raise ValidationError(f"package path is declared more than once: {package_path}")
-        occupied_paths.add(package_path)
     profile_dir = compiled / model_id / build_profile_id
-    runtime_files = [(item["path"], profile_dir / item["path"]) for item in read_runtime_files(profile_dir)]
-    if native_deployment is not None and runtime_files:
-        raise ValidationError("LLiMa supporting files belong in its deployment manifest")
-    for package_path, _ in runtime_files:
-        if package_path in occupied_paths:
-            raise ValidationError(f"package path is declared more than once: {package_path}")
-        occupied_paths.add(package_path)
-    for package_path in occupied_paths:
-        if any(parent.as_posix() in occupied_paths for parent in PurePosixPath(package_path).parents):
-            raise ValidationError(f"package paths overlap: {package_path}")
-    packaged_files = sorted((*component_files, *runtime_files))
+    extra_files = [(item["path"], profile_dir / item["path"]) for item in read_runtime_files(profile_dir)]
+    resource_entries: list[dict[str, Any]] = []
+    resources = package_resources(model)
+    if resources:
+        fetcher = Fetcher(resource_cache_dir)
+        for resource in resources:
+            entry, files = _resource_files(fetcher, resource)
+            resource_entries.append(entry)
+            extra_files.extend(files)
+    _reject_overlapping_paths([name for name, _ in (*component_files, *extra_files)])
+    packaged_files = sorted((*component_files, *extra_files))
     installed_files = [
         {"path": name, "sha256": sha256_file(path)[0], "size_bytes": path.stat().st_size}
         for name, path in packaged_files
     ]
     if native_deployment is not None:
+        if extra_files:
+            raise ValidationError("A LLiMa package ships its deployment folder and no runtime files")
         installed_files = native_files
     manifest = {
         "model_id": model_id,
@@ -203,7 +292,7 @@ def assemble_package(
         "target": profiles[build_profile_id]["target"],
         "provenance": provenance_identity or {},
         "components": component_entries,
-        "resources": [],  # Supporting files derived during compilation are recorded in files.
+        "resources": resource_entries,
         "files": installed_files,
         "license": model["license"],
     }
@@ -283,6 +372,7 @@ def assemble_available_packages(
     repository: str | Path,
     compiled_dir: str | Path,
     output_dir: str | Path,
+    resource_cache_dir: str | Path | None = None,
 ) -> list[dict[str, Any]]:
     root = Path(repository).expanduser().resolve()
     results: list[dict[str, Any]] = []
@@ -307,6 +397,7 @@ def assemble_available_packages(
                             model_id=model["id"],
                             build_profile_id=profile_id,
                             package_id=package["id"],
+                            resource_cache_dir=resource_cache_dir,
                         )
                     )
     return results

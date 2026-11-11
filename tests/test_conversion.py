@@ -679,7 +679,9 @@ def test_targeted_plan_publishes_catalog_with_unselected_conversion(
     matrix.write_text(json.dumps(result["compile"]))
     prior = {"id": "yolo26x", "builds": [], "packages": [],
              "build_on_demand": not deferred_pending, "build_requirements": {"unchanged": "requirements"},
-             "documentation": {"source_commit": "b" * 40}}
+             "documentation": {"source_commit": "b" * 40},
+             # Published under an older taxonomy whose architecture ID was since renamed.
+             "categories": {"architecture": {"id": "yolo", "paradigm": "cnn"}}}
     documentation = {model_id: {"source_commit": "a" * 40, "run_id": model_id + "-docs"}
                      for model_id in ("yolo26x", "yolo26l")}
     monkeypatch.setattr(publication, "_revision_documentation_receipts", lambda *args: None)
@@ -698,7 +700,14 @@ def test_targeted_plan_publishes_catalog_with_unselected_conversion(
         entries = {model["id"]: model for model in published["models"]}
         assert "yolo26l" in entries
         if has_previous:
-            assert entries["yolo26x"] == {**prior, "documentation": documentation["yolo26x"]}
+            from model_registry.model import load_and_validate_model
+            from model_registry.taxonomy import canonical_taxonomy_document, load_taxonomy, validate_model_categorization
+            taxonomy = canonical_taxonomy_document(load_taxonomy(repository / "taxonomies/model-taxonomy.yaml"))
+            categories = validate_model_categorization(
+                load_and_validate_model(repository / "models/yolo26x"), taxonomy
+            )
+            assert categories["architecture"]["id"] != "yolo"
+            assert entries["yolo26x"] == {**prior, "documentation": documentation["yolo26x"], "categories": categories}
         else:
             assert "yolo26x" not in entries
         expected_pending_models = {"yolo26l", "yolo26x"} if has_previous and deferred_pending else {"yolo26l"}

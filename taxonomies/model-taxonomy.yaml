@@ -61,6 +61,14 @@ architectures:
     display_name: Gemma4
     paradigm: transformer
     allowed_model_types: [llm, vlm]
+  gpt_oss:
+    display_name: GPT-OSS
+    paradigm: transformer
+    allowed_model_types: [llm]
+  hrnet:
+    display_name: HRNet
+    paradigm: cnn
+    allowed_model_types: [vision]
   inception:
     display_name: Inception
     paradigm: cnn
@@ -69,6 +77,14 @@ architectures:
     display_name: LFM
     paradigm: transformer
     allowed_model_types: [llm]
+  lfm2_5:
+    display_name: LFM2.5
+    paradigm: transformer
+    allowed_model_types: [llm]
+  lfm2_5_vl:
+    display_name: LFM2.5-VL
+    paradigm: transformer
+    allowed_model_types: [vlm]
   lightglue:
     display_name: LightGlue
     paradigm: transformer
@@ -91,6 +107,10 @@ architectures:
     allowed_model_types: [llm]
   phi:
     display_name: Phi
+    paradigm: transformer
+    allowed_model_types: [llm]
+  phi4:
+    display_name: Phi4
     paradigm: transformer
     allowed_model_types: [llm]
   qwen3:
@@ -128,6 +148,14 @@ architectures:
   superglue:
     display_name: SuperGlue
     paradigm: transformer
+    allowed_model_types: [vision]
+  supertonic:
+    display_name: Supertonic
+    paradigm: transformer
+    allowed_model_types: [audio]
+  vgg:
+    display_name: VGG
+    paradigm: cnn
     allowed_model_types: [vision]
   whisper:
     display_name: Whisper
@@ -177,6 +205,9 @@ architectures:
 tasks:
   automatic_speech_recognition:
     display_name: Automatic Speech Recognition
+    allowed_model_types: [audio]
+  text_to_speech:
+    display_name: Text to Speech
     allowed_model_types: [audio]
   anomaly_detection:
     display_name: Anomaly Detection

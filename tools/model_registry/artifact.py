@@ -158,6 +158,7 @@ def validate_compile_outputs(
     fields = {"model_id", "build_profile_id", "compile_invocation_id", "outputs"}
     if grouped:
         fields.add("derived_graphs")
+    # runtime_files lists CPU assets, including tables derived during graph surgery.
     if not isinstance(manifest, dict) or set(manifest) - {"runtime_files"} != fields:
         raise ValidationError(f"{manifest_file}: compile outputs must contain {sorted(fields)}")
     identity = {

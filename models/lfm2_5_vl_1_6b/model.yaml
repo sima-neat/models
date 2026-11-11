@@ -1,0 +1,40 @@
+build-on-demand: true
+display_name: LFM2.5-VL-1.6B
+description: Generates text from instructions, conversation history, and images.
+model_type: vlm
+tasks: [text_generation, visual_question_answering]
+
+modalities:
+  inputs: [text, image]
+  outputs: [text]
+
+architecture: lfm2_5_vl
+
+license:
+  spdx: LicenseRef-LFM-Open-1.0
+  redistribution: restricted
+  attribution: Derived from LiquidAI/LFM2.5-VL-1.6B under the LFM Open License v1.0; AutoRound checkpoint provided by SiMa.ai.
+
+compilation:
+  format: huggingface
+  source:
+    repository: simaai/LFM2.5-VL-1.6B-Autoround-Safetensors
+    revision: c7ba44bd2e9af743a9d2cfd0b3fd5a200b641df0
+    main_file: config.json
+    files:
+      LICENSE.txt: {uri: hf://models/LiquidAI/LFM2.5-VL-1.6B@919fde3d022e3f90a4716006f993938ee8c2eb97/LICENSE, sha256: 5188f2b355da20647257a3156db5834c794e5fb5e6d8dc4d4cdbb3180e75b85b, size_bytes: 10596}
+      chat_template.jinja: {sha256: c20dd9d9f7497c9e520eb51203500604b00f19c9ad54d883066d93a8b8ee8d09, size_bytes: 2596}
+      config.json: {sha256: 1ba36d03b5575e4152299c6b767adc061cfc247e4237e1d3dc6b47f7da15b4e8, size_bytes: 20505}
+      generation_config.json: {sha256: 57c35e9fd5cc70da212feb1d83cd1d31b8f2c9b7d3fe0c1c2b0c77631be849e0, size_bytes: 132}
+      model.safetensors: {sha256: 5d016be78210911e413efad4895efc39842ced6b31d7610c319358a630da45a5, size_bytes: 1304261056}
+      processor_config.json: {sha256: c70448272e6c85a2bf3f3d55359f07e070b746e9f4c7c6271724d8955fac385b, size_bytes: 824}
+      tokenizer.json: {sha256: f3910942aa907c48b0cc20ec426ee38bfa8dcda8feecf035ced981918cb30f14, size_bytes: 4733040}
+      tokenizer_config.json: {sha256: e647a9ccc3240f1c26cb1ef8b80f390e0506719de3df3dc34a482e6ae8b179a2, size_bytes: 828}
+  entrypoint: generate
+
+build_profiles:
+  w4a16:
+    runner_class: expensive
+    components:
+      model:
+        parameters: {precision: a16w4, max_num_tokens: 4096, language_group_size: 128, input_height: 512, input_width: 512}
