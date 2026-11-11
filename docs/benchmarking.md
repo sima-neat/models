@@ -186,7 +186,10 @@ image input, so its own `tests/benchmark/test_performance.py` checks the sample,
 the tensors and the CPU steps.
 
 A model without an accuracy dataset builds a fixed, realistic input in its
-own script and takes no `--dataset`.
+own script and takes no `--dataset`. An image model passes one 1280x720 RGB
+frame on the image route, as above, and the shared fixed-frame test in
+`tests/test_model_report.py` checks that every run benchmarks the same
+non-blank frame.
 
 ## Multi-component models
 

@@ -53,6 +53,14 @@ architectures:
     display_name: DepthART
     paradigm: transformer
     allowed_model_types: [vision]
+  dinov3:
+    display_name: DINOv3
+    paradigm: transformer
+    allowed_model_types: [vision]
+  dinov3_convnext:
+    display_name: DINOv3 ConvNeXt
+    paradigm: cnn
+    allowed_model_types: [vision]
   dla:
     display_name: DLA
     paradigm: cnn
@@ -227,6 +235,9 @@ tasks:
     allowed_model_types: [vision]
   image_classification:
     display_name: Image Classification
+    allowed_model_types: [vision]
+  image_embedding:
+    display_name: Image Embedding
     allowed_model_types: [vision]
   image_super_resolution:
     display_name: Image Super Resolution

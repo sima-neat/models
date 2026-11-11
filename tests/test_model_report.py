@@ -351,7 +351,7 @@ def takes_images(script: Path) -> bool:
 # A model whose inputs are not images, such as a keypoint matcher, benchmarks tensors its own tests cover.
 @pytest.mark.parametrize(
     "script",
-    [path for path in performance_scripts(components=False) if takes_images(path)],
+    [path for path in performance_scripts(components=False) if takes_images(path) and first_accuracy_dataset(path)],
     ids=lambda path: path.parents[1].name,
 )
 def test_every_single_component_script_benchmarks_a_dataset_image(script, monkeypatch, tmp_path):
@@ -447,6 +447,58 @@ def test_every_single_component_script_benchmarks_a_dataset_image(script, monkey
             assert options.preprocess.preset == "ImageNet"
         metadata = yaml.safe_load((script.parents[1] / "model.yaml").read_text(encoding="utf-8"))
         assert IMAGENET_SAMPLES[metadata["accuracy"]["datasets"][0]["variant"]] in report["workload"]
+    assert list(report["components"]) == ["model"]
+    assert report["components"]["model"]["mla_layer_stats"] == CORE_REPORT["mla_layer_stats"]
+    assert report["components"]["model"]["mla_stage_stats"] == CORE_REPORT["mla_stage_stats"]
+
+
+# A model without an accuracy dataset takes no --dataset and builds its own frame.
+@pytest.mark.parametrize(
+    "script",
+    [path for path in performance_scripts(components=False) if takes_images(path) and not first_accuracy_dataset(path)],
+    ids=lambda path: path.parents[1].name,
+)
+def test_every_single_component_script_without_a_dataset_benchmarks_a_fixed_frame(script, monkeypatch, tmp_path):
+    import numpy as np
+
+    loaded, requests = [], []
+
+    class ScriptModel(Model):
+        def __init__(self, *args):
+            super().__init__("model")
+            loaded.append(args)
+
+        def benchmark(self, options):
+            requests.append(options)
+            return Saved(CORE_REPORT)
+
+    monkeypatch.setitem(sys.modules, "pyneat", types.SimpleNamespace(
+        __version__="3.0.0", build_info=lambda: {"version": "3.0.0"}, Model=ScriptModel,
+        ModelOptions=ModelOptions, BenchmarkOptions=BenchmarkOptions, Tensor=Tensor, **SCRIPT_PYNEAT,
+    ))
+    for run in ("first", "second"):
+        monkeypatch.setattr(sys, "argv", [str(script), "--mpk", "model.tar.gz", "--output", str(tmp_path / run)])
+        runpy.run_path(str(script), run_name="__main__")
+
+    assert [args[0] for args in loaded] == ["model.tar.gz"] * 2
+    assert [(r.num_samples, r.min_duration_ms, r.include_mla_layer_stats, r.include_mla_stage_stats)
+            for r in requests] == [(1000, 60000, True, True)] * 2
+    # Neat preprocesses the frame inside the measured pipeline.
+    options = loaded[0][1]
+    assert options.preprocess.kind == "Image"
+    assert (options.preprocess.enable, options.preprocess.resize.enable, options.preprocess.normalize.enable) == (
+        "On", "On", "On"
+    )
+    # Every run measures the same 720p frame, and not a blank one.
+    (first,), (second,) = (request.inputs for request in requests)
+    assert (first.array.shape, str(first.array.dtype), first.options["image_format"]) == (
+        (720, 1280, 3), "uint8", "RGB"
+    )
+    assert np.array_equal(first.array, second.array) and first.array.std() > 10
+    # Neat sizes its input buffers, which the execution plan shows as its input, for the benchmark frame.
+    assert (options.preprocess.input_max_width, options.preprocess.input_max_height) == (1280, 720)
+    report = saved_report(tmp_path / "first")
+    assert report["workload"]
     assert list(report["components"]) == ["model"]
     assert report["components"]["model"]["mla_layer_stats"] == CORE_REPORT["mla_layer_stats"]
     assert report["components"]["model"]["mla_stage_stats"] == CORE_REPORT["mla_stage_stats"]
