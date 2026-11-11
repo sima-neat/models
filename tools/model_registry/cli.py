@@ -173,6 +173,11 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     )
     benchmark_runtime.add_argument("--repository", type=Path, default=Path.cwd())
 
+    core = subcommands.add_parser("ensure-neat-core", help="verify or install the selected benchmark Core artifact")
+    core.add_argument("--repository", type=Path, default=Path.cwd())
+    core.add_argument("--environment", default="production")
+    core.add_argument("--artifacts-base-url", help="Core artifact index for the selected environment")
+
     devkit_accuracy = subcommands.add_parser(
         "resolve-devkit-accuracy", help="resolve each DevKit accuracy dataset of a build profile into the cache"
     )
@@ -1007,6 +1012,13 @@ def _main(argv: Sequence[str] | None, *, author_safe: bool) -> int:
             return _resolve_compiler(args)
         if args.command == "resolve-benchmark-runtime":
             return _resolve_benchmark_runtime(args)
+        if args.command == "ensure-neat-core":
+            from .neat_core import ensure_neat_core
+
+            ensure_neat_core(
+                args.repository, environment=args.environment, artifacts_base_url=args.artifacts_base_url,
+            )
+            return 0
         if args.command == "resolve-devkit-accuracy":
             return _resolve_devkit_accuracy(args)
         if args.command == "model-component-mpks":

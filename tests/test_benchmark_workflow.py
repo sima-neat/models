@@ -215,8 +215,11 @@ def test_benchmark_runs_on_the_devkit_its_caller_resolved() -> None:
     assert "^[[:space:]]*DISTRO_VERSION[[:space:]]*=" in runtime
     assert "Could not read DISTRO_VERSION from /etc/buildinfo" in runtime
     assert "DevKit platform mismatch: expected $platform_version, found $actual_platform" in runtime
-    assert 'sima-cli neat install --env production --type minimal "$target"' in install
-    assert '["neat_core"]["install_target"]' in install
+    assert install == (
+        '"$REGISTRY_PYTHON" -m model_registry ensure-neat-core --repository _source --environment production'
+    )
+    assert "tools/model_registry/neat_core.py" in ACCURACY_TOOLING
+    assert "tools/model_registry/neat_core.py" in PERFORMANCE_TOOLING
     assert "kerrigan" not in BENCHMARK_WORKFLOW.read_text(encoding="utf-8").lower()
 
 

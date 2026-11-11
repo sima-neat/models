@@ -17,12 +17,29 @@ writes the one report the registry publishes.
 
 The DevKit must run the platform version that `deps/manifest.json` pins, and
 the stage uses the Core package named by `neat-core.install_target` in that
-file. CI checks the platform version, then installs Core with:
+file. CI checks the platform version, then prepares Core with:
 
 ```bash
-sima-cli neat install --env production --type minimal '<neat-core.install_target>'
-~/pyneat/bin/python -c 'import pyneat; print(pyneat.__version__, pyneat.__file__)'
+model-registry ensure-neat-core --repository . --environment production
 ```
+
+The command reads `neat-core.install_target` from that repository's manifest.
+It resolves a floating target such as `core@develop` to the published artifact
+tag once, then compares `neat --json` with that artifact's metadata. The Core
+channel, exact tag and artifact environment must match, as must Runner and
+Scheduler. It compares their installed versions with the Debian
+versions in `resolved-deps-manifest.json`, verified against the checksum in
+`metadata-minimal.json`, the same metadata the minimal installer uses.
+A Core tag republished with newer dependencies therefore installs again.
+An exact match skips installation; missing, invalid or ambiguous status or
+metadata takes the normal `sima-cli neat install --env production --type minimal`
+path with the resolved target. An unresolved floating target fails the job.
+Both paths run the PyNeat import/version check and Debian package reporting.
+
+Core artifacts come from production independently of the Model Registry and
+dataset environment. For a non-production Core setup, supply that environment's
+index with `--artifacts-base-url` or `NEAT_ARTIFACTS_BASE_URL`; production metadata
+cannot justify skipping an install from another environment.
 
 Core's board installer also installs Sentinel, the DevKit telemetry daemon.
 Core's benchmark reads power, temperature, CPU usage, and memory from Sentinel

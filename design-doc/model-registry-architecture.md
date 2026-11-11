@@ -92,6 +92,7 @@ this table. Modules marked CI only are removed from the author package by
 | `mla_stage_simulation.py` | after an MPK compile, the Model Compiler simulator's operation counts and latency for each MLA stage (`simulate-mla-stages`) |
 | `package.py` | assembling a profile's `default` package from component MPKs, the model's pinned `resources` and the compile's `runtime_files`, or from a complete native deployment folder, with its numerical fidelity report and MLA stage simulation |
 | `dependencies.py` | resolving the Model Compiler and DevKit runtime pins in `deps/` |
+| `neat_core.py` | resolving the selected Core artifact, checking installed Core/dependency identity and installing only when required before benchmarks (CI only) |
 | `fetch.py` | verified downloads, the cache, and dataset resolution |
 | `conversion.py` | conversion fingerprints, declared outputs, validated bundles, publication, durable plan selections and exact downloads; author CLI exposes only saved-selection fetching |
 | `source.py` | the approved source hosts and their URL checks, source identity, and URL redaction |

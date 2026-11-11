@@ -316,6 +316,13 @@ in the same commit.
   outcome. A failed test fails its check job after publication; the completed
   run is not benchmarked again. On-demand builds are not benchmarked.
   A manual dispatch of the same workflow resolves its own config and runner.
+- Benchmark setup uses `neat-core.install_target` from the measured source's
+  `deps/manifest.json`. `ensure-neat-core` resolves floating targets once and
+  skips installation only when Core's channel/tag/environment and the artifact's
+  Runner/Scheduler versions match
+  `neat --json`. Unverifiable state installs;
+  an unresolved floating target fails. Both paths report PyNeat and packages.
+  Core's production artifact source is independent of the Model Registry environment.
 - Workflow YAML only orchestrates: triggers, jobs, permissions, inputs, and
   the order of steps. A step that needs more than one command calls a named,
   executable script with a usage header: under `scripts/`, or beside the code
