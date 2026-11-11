@@ -500,6 +500,39 @@ def test_benchmark_requirements_rerun_only_their_stage(tmp_path: Path, stage: st
     assert fingerprints() == before
 
 
+@pytest.mark.parametrize("through_helper", [False, True])
+def test_accuracy_fingerprint_tracks_imported_performance_code(tmp_path, through_helper):
+    model_dir = _copy_repository(tmp_path, "rf_detr_small")
+    scripts = model_dir / "scripts"
+    accuracy = scripts / "accuracy.py"
+    if through_helper:
+        (scripts / "shared.py").write_text("from performance import options\n")
+        accuracy.write_text("from shared import options\n")
+    else:
+        accuracy.write_text("from performance import options\n")
+    model = load_and_validate_model(model_dir)
+    selected = {"rf_detr_small": {"sha256": "a" * 64,
+                                 "conversion_fingerprint": conversion_fingerprint(tmp_path, model)}}
+
+    def fingerprints():
+        return {"compile": compile_fingerprint(tmp_path, model["id"], "w8a8_w16a16", "w8a8_w16a16",
+                                                COMPILER_VERSION, conversion_sources=selected),
+                **{stage: benchmark_fingerprint(tmp_path, model, "w8a8_w16a16", RF_DETR_BUILDS, stage)
+                   for stage in ("performance", "accuracy")}}
+
+    before = fingerprints()
+    performance = scripts / "performance.py"
+    performance.write_text(performance.read_text() + "\n# changed prompt preparation\n")
+    after = fingerprints()
+    assert after["compile"] == before["compile"]
+    assert after["performance"] != before["performance"]
+    assert after["accuracy"] != before["accuracy"]
+    accuracy.write_text("# independently implemented accuracy\n")
+    before = fingerprints()
+    performance.write_text(performance.read_text() + "\n# another change\n")
+    assert fingerprints()["accuracy"] == before["accuracy"]
+
+
 def test_matrix_records_fingerprints_without_catalog_carry_forward(model_repository: Path) -> None:
     models = load_models(model_repository)
     matrix = build_matrix(

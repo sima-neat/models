@@ -241,6 +241,16 @@ def benchmark_fingerprint(
         raise ValidationError(f"{stage} of {model_id}/{build_profile_id} needs compiled component {missing[0]!r}")
     model_dir = f"models/{model_id}"
     required = [f"{model_dir}/{SCRIPTS[stage]}", *(PERFORMANCE_TOOLING if stage == "performance" else ACCURACY_TOOLING)]
+    from .conversion import _imported_modules
+
+    # Ordinary helpers already invalidate compilation. Track imported stage scripts too:
+    # accuracy.py may reuse performance.py, which deliberately does not recompile the model.
+    required += sorted(
+        path.relative_to(root).as_posix()
+        for path in _imported_modules(root / model_dir / SCRIPTS_DIR, entrypoint=Path(SCRIPTS[stage]).name)
+        if path.relative_to(root / model_dir).as_posix() in NON_COMPILE_SCRIPTS
+        and path.relative_to(root / model_dir).as_posix() != SCRIPTS[stage]
+    )
     optional = [f"{model_dir}/{ACCURACY_REQUIREMENTS if stage == 'accuracy' else PERFORMANCE_REQUIREMENTS}"]
     baseline = build_profile_for(model, build_profile_id).get("benchmark_baseline") if stage == "performance" else None
     return _fingerprint({
