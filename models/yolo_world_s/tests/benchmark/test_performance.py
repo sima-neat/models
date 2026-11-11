@@ -19,23 +19,27 @@ def test_performance_keeps_encoder_and_detector_separate(performance, model_dir:
         assert component["mla_stage_stats"]["status"] == "ok"
 
 
-def test_component_arguments_are_complete_and_unique(load_script):
-    script = load_script("performance")
+@pytest.mark.parametrize("script_name", ["performance", "accuracy"])
+def test_component_arguments_are_complete_and_unique(load_script, script_name):
+    script = load_script(script_name)
     assert set(script.parse_mpks(["text_encoder=text.tgz", "detector=image.tgz"])) == {"text_encoder", "detector"}
     for values in (["detector=image.tgz"], ["detector=a", "detector=b", "text_encoder=c"]):
         with pytest.raises(ValueError):
             script.parse_mpks(values)
 
 
+@pytest.mark.parametrize("script_name", ["performance", "accuracy"])
 @pytest.mark.parametrize("layout", ["compiled", "installed", "explicit"])
-def test_prompt_assets_load_from_files_beside_unchanged_components(tmp_path, load_script, monkeypatch, layout):
+def test_prompt_assets_load_from_files_beside_unchanged_components(
+    tmp_path, load_script, monkeypatch, layout, script_name
+):
     import json
     import sys
     from types import SimpleNamespace
 
     import numpy as np
 
-    script = load_script("performance")
+    script = load_script(script_name)
     assets = tmp_path / "package/prompt_assets"
     assets.mkdir(parents=True)
     # Sparse on disk: exercise the real NPY loader without generating 96 MiB of fixture values.

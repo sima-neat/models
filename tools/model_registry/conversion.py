@@ -44,10 +44,10 @@ def conversion_outputs(model_dir: str | Path) -> list[str]:
     return _read_model(model_dir)["conversion"].get("outputs", DEFAULT_OUTPUTS)
 
 
-def _imported_modules(scripts: Path, entrypoint: str = "convert.py") -> set[Path]:
-    """Return a script and its transitive imports of modules beside it."""
+def _imported_modules(scripts: Path) -> set[Path]:
+    """Return convert.py and every module beside it that it imports, directly or through another such module."""
     modules = set()
-    pending = [scripts / entrypoint]
+    pending = [scripts / "convert.py"]
     while pending:
         path = pending.pop()
         if path in modules:
