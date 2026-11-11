@@ -1,3 +1,4 @@
+# Baselines: CI 43030447550 at ebd590e; 64-image calibration, full COCO validation.
 conversion:
   run_tests: true
 compile:
@@ -7,14 +8,13 @@ accuracy:
   expected:
     w8a8_mixed_w16a16:
       coco-2017-val:
-        coco_map: 0.4504074269327129
-# Throughput retains the previous MinMax baseline until MSE component benchmarking completes.
+        coco_map: 0.44929553359797153
 performance:
   run_tests: true
   expected:
     w8a8_mixed_w16a16:
       components:
         text_encoder:
-          throughput_fps: 437.8940450846967
+          throughput_fps: 442.9131124325686
         detector:
-          throughput_fps: 118.101415746882
+          throughput_fps: 119.18579713975716
