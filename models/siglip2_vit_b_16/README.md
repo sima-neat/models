@@ -5,13 +5,10 @@
 ## Overview
 
 SigLIP 2 ViT-B/16 is Google's image-text model, trained with a sigmoid loss.
-It embeds images and text in one 768-value space, so an image and a caption
-that match get similar embeddings. It runs as two components: an image
-encoder, which takes a 224×224 RGB image, and a text encoder, which takes a
-64-token prompt. Each component returns embeddings that an application can use
-for image-text search or zero-shot classification. Encode a set of class
-descriptions once and reuse those text embeddings for each image, or encode new
-descriptions as the application needs them.
+Its separate image and text encoders map 224×224 RGB images and 64-token prompts
+to 768-value embeddings in a shared space. Use them for image-text search or
+zero-shot classification. Encode class descriptions once and reuse their
+embeddings for each image, or encode new descriptions as needed.
 
 ## Inputs and outputs
 
@@ -20,6 +17,10 @@ resampling, without keeping its aspect ratio or cropping. Scale the RGB values
 to 0–1, subtract 0.5, and divide by 0.5. Pass this image
 as a 224×224×3 (height, width, channel) float tensor, with Neat's resize, color
 conversion, and normalization turned off.
+
+ImageNet accuracy uses Big Vision's evaluation geometry: bilinear resize to
+256×256, then center-crop 224×224. The checkpoint's processor and compilation
+fidelity checks use the direct 224×224 resize above.
 
 **Text input.** Lowercase the prompt and tokenize it with SigLIP 2's Gemma
 tokenizer (`text_encoder/tokenizer.json` in the package), which appends the

@@ -244,7 +244,7 @@ def build_class_embeddings(mpk: Path, tokenizer, table: np.ndarray, class_names=
                 )
                 if runner is None:
                     runner = model.build([tensor])
-                (output,) = runner.run([tensor], timeout_ms=120000)
+                (output,) = runner.run([tensor], timeout_ms=TIMEOUT_MS)
                 feature = output.to_numpy(copy=False).reshape(EMBED_DIM)
                 features.append(normalize(feature))
             classes.append(normalize(np.mean(features, axis=0)))

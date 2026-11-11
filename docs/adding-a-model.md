@@ -233,6 +233,27 @@ runners](runner-class-requests.md) for manifest examples, evidence, approval,
 validation and dispatch. Update the owning README when changing the request.
 Do not confuse the market with `build-on-demand`, which controls scheduling.
 
+### Ship supporting files
+
+When surgery extracts or derives CPU files needed by the application, write
+those files under the profile's `<output-dir>`. Declare each relative `path`
+and its actual `sha256` in `compile-outputs.json` alongside `outputs`:
+
+```json
+"runtime_files": [
+  {"path": "text_encoder/tokenizer.json", "sha256": "<SHA-256 of tokenizer.json>"},
+  {"path": "text_encoder/token_embeddings.npy", "sha256": "<SHA-256 of token_embeddings.npy>"}
+]
+```
+
+The shared packager verifies these files and ships them beside the MPKs;
+retained-build restoration restores the same files. `accuracy.py` receives
+the verified profile root through `--resources` and reads the declared paths
+relative to it. Keep file loading in the model script independent of registry
+imports and credentials. CLIP and SigLIP use this for their tokenizer and CPU
+lookup weights. Pinned upstream files that a recipe does not derive use the
+model's `resources` declaration instead.
+
 ## 7. Know what the package holds
 
 Every build profile publishes one package, `default`, holding all its

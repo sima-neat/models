@@ -1,3 +1,5 @@
+# Historical gates from before the embedding-only graph and compiled-text
+# evaluation. Replace both stages with this revision's published CI results.
 conversion:
   run_tests: true
 compile:
@@ -15,7 +17,7 @@ accuracy:
         top5_accuracy: 0.9528
 performance:
   run_tests: true
-  # Independent encoder measurements on the published bd3c4a3 packages, 2026-11-10.
+  # Historical manual measurements on bd3c4a3 packages, not registry benchmark runs.
   expected:
     w16a16:
       components:

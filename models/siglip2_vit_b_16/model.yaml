@@ -74,5 +74,5 @@ reference_metrics:
 - source: https://arxiv.org/pdf/2502.14786v1
   dataset: {id: imagenet-2012, split: val}
   conditions: 224x224, zero-shot
-  note: Published zero-shot top-1 of SigLIP 2 B/16 at 224x224 in Table 1. Accuracy follows Big Vision's public ImageNet evaluator defaults, with 81 canonicalized clip_paper templates per class and a 256x256 resize followed by a 224x224 center crop. Class vectors are generated with the compiled text encoder at evaluation startup. The release does not specify the exact evaluation config behind 78.2%; matching that score remains unverified. The paper prints no top-5.
+  note: Published zero-shot top-1 of SigLIP 2 B/16 at 224x224 in Table 1. Accuracy follows Big Vision's public ImageNet evaluator defaults, with 81 canonicalized clip_paper templates per class and a 256x256 resize followed by a 224x224 center crop. Class vectors are generated with the compiled text encoder at evaluation startup. The checkpoint processor and compilation fidelity use a direct 224x224 resize; accuracy uses the Big Vision evaluation geometry above. The release does not specify the exact evaluation config behind 78.2%; matching that score remains unverified. The paper prints no top-5.
   metrics: {top1_accuracy: 0.782}

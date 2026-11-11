@@ -45,6 +45,7 @@ write them under the profile output and declare their relative `path` and
 packager includes them beside the component MPKs, and retained-build restoration
 restores them too. Accuracy scripts receive the verified profile root as
 `--resources`; they must use those local files instead of downloading checkpoints.
+See [Ship supporting files](docs/adding-a-model.md#ship-supporting-files).
 
 A tooling change reruns a stage only when the changed file is in that stage's
 tooling list in `fingerprints.py`. No shared file is a conversion input: a
@@ -349,9 +350,10 @@ in the same commit.
 Conventions the code relies on:
 
 - Model scripts receive verified local paths (`--model`, `--dataset`,
-  `--fidelity-dataset`, `--mpk`); data enters only through the dataset registry
-  declared in `model.yaml`. Benchmark scripts run without registry
-  credentials.
+  `--fidelity-dataset`, `--mpk`, and `--resources` when supporting files are
+  declared). Evaluation datasets come through the Dataset Registry declared
+  in `model.yaml`; supporting files travel with the verified model package.
+  Benchmark scripts run without registry credentials.
 - When a model declares `conversion.outputs`, every script reads those names
   with `conversion_outputs()` and never hard-codes one, so renaming a file only
   changes `model.yaml`.
