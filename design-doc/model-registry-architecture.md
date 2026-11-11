@@ -227,6 +227,10 @@ benchmarks (vulcan-model-benchmarking.yml, called per build profile inside the o
   -> publish each report under the profile's package run with its test outcome; a failed test then fails a check job
 ```
 
+LLiMa publication uses a default Vulcan Ubuntu ARM64 runner with its workspace on
+local NVMe for large deployments and package assembly. ONNX publication stays on
+GitHub-hosted runners.
+
 Pushes and manual build dispatches both use `VULCAN_ENV` as the model build and
 registry publication target. Set it to `production` for production builds or
 `staging` for staging builds. An unset or invalid value fails before compiler

@@ -231,8 +231,9 @@ configuration remain staging:
    `run_llima_compilation.sh` for LLiMa) runs the recipe. Each artifact is
    verified with its provenance, and the model's compile tests check the
    output. A failing test leaves the build unpublished.
-5. **Publish.** A GitHub-hosted job verifies the complete component set,
-   publishes each component and its fidelity report as a compile run,
+5. **Publish.** A default Vulcan Ubuntu runner with local NVMe handles LLiMa
+   deployments; ONNX uses a GitHub-hosted runner. The job verifies the complete
+   component set, publishes each component and its fidelity report as a compile run,
    assembles and publishes the packages the build completes, and records the
    build in the catalog. A new Modalix build is then benchmarked right away,
    while other builds may still compile.
