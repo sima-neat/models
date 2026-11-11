@@ -535,6 +535,23 @@ def test_board_stage_tooling_change_measures_both_stages(stage_repository: Path,
     ]
 
 
+def test_performance_requirements_change_measures_performance_only(stage_repository: Path) -> None:
+    document = _published_catalog(stage_repository)
+    registry = FakeRegistry({BRANCH: document}, _published_runs(document))
+    (stage_repository / "models" / PLAN_MODEL / "scripts/requirements-performance.txt").write_text(
+        "onnxruntime==1.22.1\n", encoding="utf-8"
+    )
+
+    plan = _plan(stage_repository, registry)
+
+    assert plan["compile"]["include"] == []
+    assert _selected(plan, "benchmark") == [
+        ("w16a16", ["performance"]),
+        ("w8a16", ["performance"]),
+        ("w8a8", ["performance"]),
+    ]
+
+
 def test_metric_vocabulary_change_reruns_nothing(stage_repository: Path) -> None:
     document = _published_catalog(stage_repository)
     registry = FakeRegistry({BRANCH: document}, _published_runs(document))

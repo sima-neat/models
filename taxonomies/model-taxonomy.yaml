@@ -153,6 +153,10 @@ architectures:
     display_name: SuperGlue
     paradigm: transformer
     allowed_model_types: [vision]
+  supertonic:
+    display_name: Supertonic
+    paradigm: transformer
+    allowed_model_types: [audio]
   vgg:
     display_name: VGG
     paradigm: cnn
@@ -205,6 +209,9 @@ architectures:
 tasks:
   automatic_speech_recognition:
     display_name: Automatic Speech Recognition
+    allowed_model_types: [audio]
+  text_to_speech:
+    display_name: Text to Speech
     allowed_model_types: [audio]
   anomaly_detection:
     display_name: Anomaly Detection

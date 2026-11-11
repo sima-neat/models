@@ -14,6 +14,11 @@
     "summary": "Permissive license. Redistribution must keep the copyright notice and disclaimer.",
     "downloadable": true
   },
+  "LicenseRef-BigScience-OpenRAIL-M": {
+    "name": "BigScience Open RAIL-M License",
+    "summary": "Responsible AI license. Redistribution must include the license and pass its use restrictions on to every recipient.",
+    "downloadable": true
+  },
   "LicenseRef-DINOv3": {
     "name": "DINOv3 License",
     "summary": "Use and redistribution of the model and its derivatives are subject to Meta’s DINOv3 License, which must accompany every copy and bars military, nuclear, espionage, weapons and other uses that trade controls prohibit. Include the license.",
