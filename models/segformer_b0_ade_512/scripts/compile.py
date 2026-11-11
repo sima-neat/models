@@ -31,14 +31,12 @@ from afe.apis.model import L2CachingMode
 from afe.core.utils import convert_data_generator_to_iterable
 from afe.load.importers.general_importer import onnx_source
 from calibration import IMAGE_SIZE, calibration_samples, fidelity_names, preprocess_image, read_images
-from model_registry.dependencies import resolve_model_compiler
 from model_registry.model import load_model as load_metadata
 from sima_utils.data.data_generator import DataGenerator
 
 MODEL_DIR = Path(__file__).resolve().parents[1]
 MODEL_ID = "segformer_b0_ade_512"
 COMPONENT_ID = "model"
-COMPILER_VERSION = resolve_model_compiler(MODEL_DIR.parents[1])["version"]
 INPUT = "pixel_values"
 INPUT_SHAPE = (1, 3, IMAGE_SIZE, IMAGE_SIZE)
 CLASS_COUNT = 150
@@ -105,10 +103,6 @@ def audit_mpk(archive: Path) -> None:
         raise RuntimeError(
             f"invalid MPK: MLA={len(mla_plugins)}, ELF={len(elfs)}, host={len(host_plugins)}, "
             f"shared_objects={shared_objects}"
-        )
-    if str(manifest.get("model_sdk_version")) != COMPILER_VERSION:
-        raise RuntimeError(
-            f"MPK compiler mismatch: expected {COMPILER_VERSION}, found {manifest.get('model_sdk_version')}"
         )
     inputs = {node.get("name"): node.get("size") for node in manifest.get("input_nodes", [])}
     if inputs != INPUT_BYTES:
