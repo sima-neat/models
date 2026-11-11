@@ -66,7 +66,7 @@ def _two_component_model(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, head_a
     return _compiled_component(tmp_path, "head", head_archive)
 
 
-def test_single_component_package_is_the_compiled_mpk(tmp_path: Path) -> None:
+def test_single_component_package_is_a_zip_of_the_compiled_mpk(tmp_path: Path) -> None:
     compiled = _compiled_component(tmp_path)
     result = assemble_package(
         repository=ROOT,
@@ -78,9 +78,11 @@ def test_single_component_package_is_the_compiled_mpk(tmp_path: Path) -> None:
     )
     package_dir = tmp_path / "packages" / "resnet_50" / "w16a16" / "packages" / "default"
     compiled_mpk = compiled / "resnet_50" / "w16a16" / "model" / MPK_NAME
-    assert result["archive"] == MPK_NAME
-    assert sorted(path.name for path in package_dir.iterdir()) == ["package-result.json", MPK_NAME]
-    assert (package_dir / MPK_NAME).read_bytes() == compiled_mpk.read_bytes()
+    assert result["archive"] == "resnet_50_w16a16_default.zip"
+    assert sorted(path.name for path in package_dir.iterdir()) == ["package-result.json", result["archive"]]
+    with zipfile.ZipFile(package_dir / result["archive"]) as stream:
+        assert stream.namelist() == [MPK_NAME]
+        assert stream.read(MPK_NAME) == compiled_mpk.read_bytes()
     manifest = result["manifest"]
     assert manifest["components"][0]["id"] == "model"
     assert manifest["components"][0]["path"] == MPK_NAME
@@ -162,7 +164,7 @@ def test_package_records_declarative_composition_without_shipping_a_document(
         package_id="default",
     )
 
-    assert result["archive"] == MPK_NAME
+    assert result["archive"] == "resnet_50_w16a16_default.zip"
     assert result["manifest"]["composition"] == {"id": "default", "type": "declarative"}
     assert [item["path"] for item in result["manifest"]["files"]] == [MPK_NAME]
 
@@ -321,7 +323,7 @@ def test_package_rejects_a_runtime_file_that_changed_after_the_compile(
     _declare_runtime_file(compiled, "tables.npz", b"tables")
     (compiled / "resnet_50" / "w16a16" / "tables.npz").write_bytes(b"edited")
 
-    with pytest.raises(ValidationError, match="runtime file tables.npz is missing or changed"):
+    with pytest.raises(ValidationError, match="runtime file is missing or its SHA-256 does not match: tables.npz"):
         assemble_package(
             repository=ROOT, compiled_dir=compiled, output_dir=tmp_path / "packages", model_id="resnet_50",
             build_profile_id="w16a16", package_id="default",
@@ -384,3 +386,34 @@ def test_package_preserves_runner_audit(tmp_path, monkeypatch, grouped):
                 repository=ROOT, compiled_dir=compiled, output_dir=tmp_path / "packages",
                 model_id="resnet_50", build_profile_id="w16a16", package_id="default",
             )
+
+
+@pytest.mark.parametrize("grouped", [False, True])
+def test_package_ships_verified_supporting_files(tmp_path, monkeypatch, grouped):
+    compiled = _two_component_model(monkeypatch, tmp_path, "head.tar.gz") if grouped else _compiled_component(tmp_path)
+    profile = compiled / "resnet_50/w16a16"
+    tokenizer = profile / "model/tokenizer.json"
+    tokenizer.write_bytes(b'{"version":"1.0"}')
+    declared = [{"path": "model/tokenizer.json", "sha256": hashlib.sha256(tokenizer.read_bytes()).hexdigest()}]
+    (profile / "compile-outputs.json").write_text(json.dumps({"runtime_files": declared}))
+    arguments = dict(
+        repository=ROOT,
+        compiled_dir=compiled,
+        output_dir=tmp_path / "packages",
+        model_id="resnet_50",
+        build_profile_id="w16a16",
+        package_id="default",
+    )
+    result = assemble_package(**arguments)
+    archive = tmp_path / "packages/resnet_50/w16a16/packages/default" / result["archive"]
+    with zipfile.ZipFile(archive) as package:
+        assert package.read("model/tokenizer.json") == tokenizer.read_bytes()
+        assert len(package.namelist()) == (3 if grouped else 2)
+    assert result["sha256"] == assemble_package(**arguments)["sha256"]
+    assert next(item for item in result["manifest"]["files"] if item["path"] == "model/tokenizer.json") == {
+        **declared[0],
+        "size_bytes": tokenizer.stat().st_size,
+    }
+    tokenizer.write_bytes(b"corrupted")
+    with pytest.raises(ValidationError, match="SHA-256"):
+        assemble_package(**arguments)

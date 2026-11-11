@@ -37,6 +37,7 @@ BENCHMARK_RUN_TYPES = {"performance": "model_performance", "accuracy": "model_ac
 # metrics.json is left out: it names and labels metrics, so adding or editing one must not rerun every benchmark.
 BOARD_STAGE_TOOLING = (
     ".github/workflows/vulcan-model-benchmarking.yml",
+    "tools/model_registry/neat_core.py",
     "tools/model_report/__init__.py",
     "schemas/model-report.schema.json",
     "tools/model_registry/report_publication.py",
@@ -44,6 +45,7 @@ BOARD_STAGE_TOOLING = (
 PERFORMANCE_TOOLING = (*BOARD_STAGE_TOOLING, "scripts/run_model_performance.sh")
 ACCURACY_TOOLING = (
     *BOARD_STAGE_TOOLING,
+    "tools/model_registry/runtime_files.py",
     "scripts/install_dataset_registry.sh",
     "scripts/cache_accuracy_dataset.sh",
     "scripts/run_model_accuracy.sh",

@@ -1,0 +1,119 @@
+display_name: YOLO-World v2 M
+description: Open-vocabulary detection with a BF16 CLIP text encoder and a mostly INT8 image detector, supporting 80 dynamic
+  prompt slots.
+model_type: vlm
+tasks:
+- object_detection
+modalities:
+  inputs:
+  - image
+  - text
+  outputs:
+  - bounding_boxes
+  - class_scores
+architecture: yolo_world
+license:
+  spdx: GPL-3.0-only
+  redistribution: restricted
+  attribution: YOLO-World is developed by Tencent AI Lab under GPL-3.0. CLIP is developed by OpenAI under MIT.
+upstream:
+  repository: https://huggingface.co/wondervictor/YOLO-World
+  revision: 4340b03f4f59f46279a6581bbb818e0f77765d4d
+  derived_from: https://github.com/AILab-CVC/YOLO-World/tree/b1b09f2f0340ca7dede69e10b7e909c469677fd9
+conversion:
+  outputs:
+  - weights.pth
+  source:
+    repository: wondervictor/YOLO-World
+    revision: 4340b03f4f59f46279a6581bbb818e0f77765d4d
+    main_file: yolo_world_v2_m_obj365v1_goldg_pretrain-c6237d5b.pth
+    files:
+      yolo_world_v2_m_obj365v1_goldg_pretrain-c6237d5b.pth:
+        sha256: c6237d5b8f6cdc02c7e1a49ebca5ca6af2acb40dcc35908f3ac9eca5bee1120f
+        size_bytes: 367602867
+      tokenizer/config.json:
+        uri: hf://models/openai/clip-vit-base-patch32@3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268/config.json
+        sha256: b575ef3c36f2a057fa19e221650105052d61cc9c1a972ec15019c6261ec98770
+        size_bytes: 4186
+      tokenizer/merges.txt:
+        uri: hf://models/openai/clip-vit-base-patch32@3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268/merges.txt
+        sha256: f526393189112391ce6f9795d4695f704121ce452c3aad1f5335cc41337eba85
+        size_bytes: 524657
+      tokenizer/special_tokens_map.json:
+        uri: hf://models/openai/clip-vit-base-patch32@3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268/special_tokens_map.json
+        sha256: f8c0d6c39aee3f8431078ef6646567b0aba7f2246e9c54b8b99d55c22b707cbf
+        size_bytes: 389
+      tokenizer/tokenizer.json:
+        uri: hf://models/openai/clip-vit-base-patch32@3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268/tokenizer.json
+        sha256: b556ac8c99757ffb677208af34bc8c6721572114111a6e0aaf5fa69ff0b8d842
+        size_bytes: 2224041
+      tokenizer/tokenizer_config.json:
+        uri: hf://models/openai/clip-vit-base-patch32@3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268/tokenizer_config.json
+        sha256: 34b7336e4bee12e0a9730eaf5189f582ef3c3eea5027f65730e5717256755aad
+        size_bytes: 592
+      tokenizer/vocab.json:
+        uri: hf://models/openai/clip-vit-base-patch32@3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268/vocab.json
+        sha256: 5047b556ce86ccaf6aa22b3ffccfc52d391ea4accdab9c2f2407da5b742d4363
+        size_bytes: 862328
+compilation:
+  format: onnx
+  source: conversion
+  components:
+  - text_encoder
+  - detector
+calibrations:
+- id: coco-2017-cal
+  dataset: {id: coco-2017, variant: cal, sha256: 54c64d84122eba371ac014d7b43849a461551c2e6c5c430b5ead90ec1dec12b1, size_bytes: 187510866}
+
+build_profiles:
+  w16a16_w8a8_mixed:
+    calibration_dataset: coco-2017-cal
+    components:
+      text_encoder:
+        parameters:
+          precision: w16a16
+          context_tokens: 77
+      detector:
+        parameters:
+          precision: w8a8
+          prompt_slots: 80
+          calibration_samples: 64
+          calibration_method: mse
+          bf16_regions: [projection_attention]
+pipeline:
+- cpu: Tokenize and look up tokens
+- component: text_encoder
+- cpu: Normalize prompts; resize RGB
+- component: detector
+- cpu: DFL decode and NMS
+accuracy:
+  datasets:
+  - id: coco-2017
+    variant: val
+    sha256: a40de1caf42b47c5a8976eb97efe3c83f3a41337c4d16d318eb15d65c293f2da
+    size_bytes: 898368520
+performance:
+  scope: components
+
+reference_metrics:
+- origin: fp32_baseline
+  script: scripts/fp32_baseline_accuracy.py
+  dataset:
+    id: coco-2017
+    split: val
+  conditions: 640x640, all 80 COCO prompts, FP32 image detector with frozen BF16 CLIP vectors, score 0.001, class-aware NMS
+    IoU 0.7, max 300 detections; ONNX Runtime CUDA with TF32 disabled
+  note: Full official 5000-image validation; the same BF16 text encoder is used for the reference and mixed detector.
+  metrics:
+    coco_map: 0.4284161382157907
+    coco_ap50: 0.5819270039910992
+    coco_ap75: 0.4667481138776257
+    coco_ap_small: 0.26877682430737265
+    coco_ap_medium: 0.4739921374977266
+    coco_ap_large: 0.5587468717532671
+    coco_ar1: 0.35801692735022445
+    coco_ar10: 0.6084692036118317
+    coco_ar100: 0.6599766008585075
+    coco_ar_small: 0.48700569060287946
+    coco_ar_medium: 0.7158187498346191
+    coco_ar_large: 0.8186104945102428

@@ -76,5 +76,7 @@
   "recall_at_5": {"stage": "accuracy", "label": "Recall@5", "unit": "ratio", "direction": "higher", "registry_name": "model.accuracy.recall_at_5", "aggregation": "raw", "digits": 3},
   "recall_at_10": {"stage": "accuracy", "label": "Recall@10", "unit": "ratio", "direction": "higher", "registry_name": "model.accuracy.recall_at_10", "aggregation": "raw", "digits": 3},
   "epe": {"stage": "accuracy", "label": "EPE", "unit": "px", "direction": "lower", "registry_name": "model.accuracy.epe", "aggregation": "raw", "digits": 3},
-  "d1_all": {"stage": "accuracy", "label": "D1-all", "unit": "%", "direction": "lower", "registry_name": "model.accuracy.d1_all", "aggregation": "raw", "digits": 3}
+  "d1_all": {"stage": "accuracy", "label": "D1-all", "unit": "%", "direction": "lower", "registry_name": "model.accuracy.d1_all", "aggregation": "raw", "digits": 3},
+  "abs_rel": {"stage": "accuracy", "label": "AbsRel", "unit": "ratio", "direction": "lower", "bounds": [0, null], "display": {"unit": "", "scale": 1}, "registry_name": "model.accuracy.abs_rel", "aggregation": "raw", "digits": 3},
+  "delta1": {"stage": "accuracy", "label": "δ1", "unit": "ratio", "direction": "higher", "registry_name": "model.accuracy.delta1", "aggregation": "raw", "digits": 3}
 }

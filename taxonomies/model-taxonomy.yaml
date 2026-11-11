@@ -45,12 +45,24 @@ architecture_paradigms:
 # A family is the upstream model line, named without size (YOLO26-det, not
 # YOLO26n-det). The model's id and display_name carry the size.
 architectures:
+  yolo_world:
+    display_name: YOLO-World
+    paradigm: cnn
+    allowed_model_types: [vlm]
   clip:
     display_name: CLIP
     paradigm: transformer
     allowed_model_types: [vlm]
+  densenet:
+    display_name: DenseNet
+    paradigm: cnn
+    allowed_model_types: [vision]
   depthart:
     display_name: DepthART
+    paradigm: transformer
+    allowed_model_types: [vision]
+  depth_anything_3:
+    display_name: Depth Anything 3
     paradigm: transformer
     allowed_model_types: [vision]
   dinov3:
@@ -133,6 +145,10 @@ architectures:
     display_name: Qwen3-VL
     paradigm: transformer
     allowed_model_types: [vlm]
+  raft_stereo:
+    display_name: RAFT-Stereo
+    paradigm: cnn
+    allowed_model_types: [vision]
   resnet:
     display_name: ResNet
     paradigm: cnn
@@ -145,6 +161,10 @@ architectures:
     display_name: RF-DETR
     paradigm: transformer
     allowed_model_types: [vision]
+  siglip:
+    display_name: SigLIP
+    paradigm: transformer
+    allowed_model_types: [vlm]
   superpoint:
     display_name: SuperPoint
     paradigm: cnn
@@ -160,6 +180,10 @@ architectures:
   vgg:
     display_name: VGG
     paradigm: cnn
+    allowed_model_types: [vision]
+  vit:
+    display_name: ViT
+    paradigm: transformer
     allowed_model_types: [vision]
   whisper:
     display_name: Whisper
