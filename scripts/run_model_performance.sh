@@ -24,10 +24,11 @@ DATASET_CACHE="${DATASET_CACHE:-/media/nvme/datasets/artifacts}"
 DATASET_LOCK="${DATASET_LOCK:-/media/nvme/datasets/locks/prepare.lock}"
 DATASET_LOCK_SECONDS="${DATASET_LOCK_SECONDS:-1200}"
 RESOLVE_TIMEOUT_SECONDS="${RESOLVE_TIMEOUT_SECONDS:-600}"
-# Scratch space for the extracted dataset; removed on exit. NVMe keeps it off the root filesystem.
+# Scratch space for the extracted dataset and performance wheels; removed on exit. NVMe keeps it off root.
 WORK_DIR="${WORK_DIR:-/media/nvme/neat-tests/model-performance-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}}"
 REPOSITORY="$(cd "$MODEL_DIR/../.." && pwd)"
 MODEL_ID="$(basename "$MODEL_DIR")"
+REQUIREMENTS="$MODEL_DIR/scripts/requirements-performance.txt"
 
 # A single-component model takes its MPK; a multi-component model takes each as <component>=<path>.
 listed="$("$REGISTRY_PYTHON" -m model_registry model-component-mpks "$COMPILED_DIR" \
@@ -48,6 +49,7 @@ json_field() {
 # The script takes the first accuracy dataset as <name>=<path>, unpacked and looking through a single top-level
 # directory, and picks its input from it. A model without an accuracy dataset gets none.
 mkdir -p "$DATASET_CACHE" "$(dirname "$DATASET_LOCK")"
+trap 'rm -rf "$WORK_DIR"' EXIT
 resolutions="$(flock --wait "$DATASET_LOCK_SECONDS" --close "$DATASET_LOCK" \
   timeout --signal=TERM --kill-after=30s "$RESOLVE_TIMEOUT_SECONDS" "$REGISTRY_PYTHON" -m model_registry resolve-devkit-accuracy "$MODEL_DIR" \
   --build-profile "$BUILD_PROFILE_ID" --cache-dir "$DATASET_CACHE")"
@@ -56,7 +58,6 @@ if [[ -n "$resolutions" ]]; then
   resolution="${resolutions%%$'\n'*}"
   name="$(json_field name <<< "$resolution")"
   directory="$WORK_DIR/datasets/$name"
-  trap 'rm -rf "$WORK_DIR"' EXIT
   rm -rf "$directory"
   mkdir -p "$directory"
   tar -xzf "$(json_field path <<< "$resolution")" -C "$directory"
@@ -96,7 +97,14 @@ if (( cpu_frequency_khz != CPU_FREQUENCY_KHZ )); then
 fi
 
 mkdir -p "$OUTPUT_DIR"
-PYTHONPATH="$REPOSITORY/tools" PYTHONDONTWRITEBYTECODE=1 "$PYNEAT_PYTHON" "$MODEL_DIR/scripts/performance.py" \
+# Keep optional wheels beside PyNeat's environment so its numpy stays in place, as for accuracy.
+site="$WORK_DIR/site-packages"
+if [[ -f "$REQUIREMENTS" ]]; then
+  "$PYNEAT_PYTHON" -m pip install --quiet --disable-pip-version-check --no-deps --only-binary=:all: \
+    --target "$site" -r "$REQUIREMENTS"
+fi
+
+PYTHONPATH="$REPOSITORY/tools:$site" PYTHONDONTWRITEBYTECODE=1 "$PYNEAT_PYTHON" "$MODEL_DIR/scripts/performance.py" \
   "${mpks[@]}" "${dataset[@]}" --output "$OUTPUT_DIR" 2>&1 | tee "$OUTPUT_DIR/performance.log"
 "$REGISTRY_PYTHON" -m model_registry check-report "$OUTPUT_DIR" --repository "$REPOSITORY" \
   --stage performance --model "$MODEL_ID" --build-profile "$BUILD_PROFILE_ID"

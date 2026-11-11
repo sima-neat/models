@@ -11,7 +11,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .benchmark_declarations import ACCURACY_REQUIREMENTS, FP32_BASELINE_SCRIPT, SCRIPTS
+from .benchmark_declarations import ACCURACY_REQUIREMENTS, FP32_BASELINE_SCRIPT, PERFORMANCE_REQUIREMENTS, SCRIPTS
 from .dependencies import resolve_benchmark_runtime
 from .errors import ValidationError
 from .model import CONVERSION_FILES, SCRIPTS_DIR, build_profile_for, compile_invocations_for, load_and_validate_model
@@ -234,7 +234,8 @@ def benchmark_fingerprint(
         raise ValidationError(f"{stage} of {model_id}/{build_profile_id} needs compiled component {missing[0]!r}")
     model_dir = f"models/{model_id}"
     required = [f"{model_dir}/{SCRIPTS[stage]}", *(PERFORMANCE_TOOLING if stage == "performance" else ACCURACY_TOOLING)]
-    optional = [f"{model_dir}/{ACCURACY_REQUIREMENTS}"] if stage == "accuracy" else []
+    requirements = ACCURACY_REQUIREMENTS if stage == "accuracy" else PERFORMANCE_REQUIREMENTS
+    optional = [f"{model_dir}/{requirements}"]
     baseline = build_profile_for(model, build_profile_id).get("benchmark_baseline") if stage == "performance" else None
     return _fingerprint({
         "stage": stage,

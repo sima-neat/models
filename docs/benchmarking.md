@@ -60,6 +60,13 @@ PYTHONPATH=tools ~/pyneat/bin/python models/resnet_50/scripts/performance.py \
   --output /workspace/performance
 ```
 
+Optional `scripts/requirements-performance.txt` pins extra wheels needed by
+the performance script. CI installs them without dependencies into a temporary
+folder on NVMe and adds that folder to `PYTHONPATH`; PyNeat's environment stays
+unchanged. When running the script directly, make those wheels available in the
+same way. Changes to this file rerun performance without recompiling the model
+or rerunning accuracy.
+
 The script takes:
 
 - `--mpk`: the MPK, or `<component>=<path>` once per component for a

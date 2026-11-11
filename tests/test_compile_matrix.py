@@ -450,6 +450,36 @@ def test_fingerprints_ignore_the_models_tests(tmp_path: Path) -> None:
     assert fingerprints() == first
 
 
+@pytest.mark.parametrize("stage", ["performance", "accuracy"])
+def test_benchmark_requirements_rerun_only_their_stage(tmp_path: Path, stage: str) -> None:
+    model_dir = _copy_repository(tmp_path, "rf_detr_small")
+    model = load_and_validate_model(model_dir)
+    selected = {"rf_detr_small": {
+        "sha256": "a" * 64, "conversion_fingerprint": conversion_fingerprint(tmp_path, model),
+    }}
+
+    def fingerprints() -> dict[str, str]:
+        return {
+            "conversion": conversion_fingerprint(tmp_path, model),
+            "compile": compile_fingerprint(
+                tmp_path, "rf_detr_small", "w8a8_w16a16", "w8a8_w16a16", COMPILER_VERSION,
+                conversion_sources=selected,
+            ),
+            **{name: benchmark_fingerprint(tmp_path, model, "w8a8_w16a16", RF_DETR_BUILDS, name)
+               for name in ("performance", "accuracy")},
+        }
+
+    requirements = model_dir / "scripts" / f"requirements-{stage}.txt"
+    requirements.unlink(missing_ok=True)
+    before = fingerprints()
+    for content in ("benchmark-wheel==1.0\n", "benchmark-wheel==2.0\n"):
+        requirements.write_text(content)
+        after = fingerprints()
+        assert [name for name in before if before[name] != after[name]] == [stage]
+    requirements.unlink()
+    assert fingerprints() == before
+
+
 def test_matrix_records_fingerprints_without_catalog_carry_forward(model_repository: Path) -> None:
     models = load_models(model_repository)
     matrix = build_matrix(
@@ -545,6 +575,7 @@ def test_publish_fresh_branch_reuses_only_compatible_catalog_runs(model_reposito
         "scripts/accuracy.py",
         "scripts/fp32_baseline_accuracy.py",
         "scripts/requirements-accuracy.txt",
+        "scripts/requirements-performance.txt",
         "scripts/convert.py",
         "scripts/requirements-convert.txt",
     ],
