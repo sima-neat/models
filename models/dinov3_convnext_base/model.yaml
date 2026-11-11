@@ -1,0 +1,87 @@
+display_name: DINOv3 ConvNeXt Base
+description: Embeds an image as one vector and a 7×7 grid of patch vectors for image search and dense tasks.
+model_type: vision
+tasks: [image_embedding]
+
+modalities:
+  inputs: [image]
+  outputs: [embeddings]
+
+architecture: dinov3_convnext
+
+license:
+  spdx: LicenseRef-DINOv3
+  redistribution: restricted
+  attribution: Derived from Meta's facebook/dinov3-convnext-base-pretrain-lvd1689m and distributed under the DINOv3 License, which governs every build derived from it.
+
+upstream:
+  repository: https://huggingface.co/timm/convnext_base.dinov3_lvd1689m
+  revision: 8e953102486d832f58e073cb4080f04001bb71ca
+  derived_from: https://huggingface.co/facebook/dinov3-convnext-base-pretrain-lvd1689m/tree/e619358a5fe272554f17d2fb6cc65a679326bac0
+
+# The pinned timm config.json defaults to a 224x224 bicubic resize with crop_pct 1.0. This package takes 224x224,
+# resized straight to that size with the transform of Meta's DINOv3 README, an antialiased bilinear stretch.
+conversion:
+  source:
+    repository: timm/convnext_base.dinov3_lvd1689m
+    revision: 8e953102486d832f58e073cb4080f04001bb71ca
+    main_file: model.safetensors
+    files:
+      model.safetensors: {sha256: afa69ae6094b5b04a48810de78c52c92d4cbb6d9436462f07bf36defb09e26c1, size_bytes: 350300064}
+      config.json: {sha256: 7714ee48bf3e7b8d42148ae4d8106cbce2e98dc4d861bad0d634b435be43e32e, size_bytes: 595}
+      LICENSE.md: {sha256: 25d122eb8f5b880fd23c736fb6ea8018ee45c12237e00b8a86d14c653904999e, size_bytes: 7503}
+  outputs: [weights.pth, reference.onnx]
+
+compilation:
+  format: onnx
+  source: conversion
+
+# BF16 activations take no ranges from calibration images, so w16a16 skips calibration.
+# No INT8-activation build (on ConvNeXt Tiny, Model Compiler 3.0.0.dev0+develop.2291, cosine with reference.onnx on
+# imagenet-2012 cal images): plain w8a8 keeps class embedding 0.030 (16 images); INT8 activations only into the stem,
+# downsample and MLP layers 0.986, patches 0.958 (8 images). INT8 activations only into the MLP's first layer keep
+# 0.997 and 0.992 (50 images), but on the board that build runs at 359 FPS against w8a16's 390 and its package is 36
+# MB against 27 MB.
+build_profiles:
+  w16a16:
+    components:
+      model:
+        parameters: {precision: w16a16}
+
+  # No w8a16 yet: with Model Compiler 3.0.0.dev0+develop.2291 the compile fails in its MLA simulation step. Quantized
+  # by 3.0.0.dev0+master.402, its graph keeps cosine similarity 0.9982 (class) and 0.9923 (patches) with
+  # reference.onnx on 16 of the numerical-fidelity images. compile.py keeps its recipe.
+  # w8a16:
+  #   components:
+  #     model:
+  #       parameters: {precision: w8a16}
+
+numerical_fidelity:
+  status: diagnostic
+  dataset: {id: imagenet-2012, variant: cal, sha256: e6c18b281f5ac5fc7cf6d36ef9a5f486ce95eb43ead99ee8523bd8162bc49a6f, size_bytes: 112710756}
+  # The cal images at positions 51 to 100 of the seed-42 shuffled order; the fidelity floors in
+  # tests/build/test_compile.py apply to them.
+  selection: {method: seeded_random_without_replacement, seed: 42, offset: 50, samples: 50}
+  outputs: [class_embedding, patch_embeddings]
+
+performance: {}
+
+# timm's ConvNeXt model cards print no scores; the DINOv3 paper's Table 15 does, at 256x256 and 512x512.
+reference_metrics:
+- source: https://arxiv.org/html/2508.10104v1
+  dataset: {id: imagenet-real, split: val}
+  conditions: 256x256 center crop, linear classifier on the frozen pooled embedding, trained on ImageNet-1k train
+  note: >-
+    Top-1 against the ReaL labels of the ImageNet validation images, not the original labels of the registry's
+    imagenet-2012 val. Appendix D.7 of the paper gives the protocol; Meta's linear classifier is not part of
+    these weights.
+  metrics: {top1_accuracy: 0.885}
+- source: https://arxiv.org/html/2508.10104v1
+  dataset: {id: imagenet-r, split: test}
+  conditions: 256x256 center crop, linear classifier on the frozen pooled embedding, trained on ImageNet-1k train
+  note: ImageNet-Rendition.
+  metrics: {top1_accuracy: 0.772}
+- source: https://arxiv.org/html/2508.10104v1
+  dataset: {id: objectnet, split: test}
+  conditions: 256x256 center crop, linear classifier on the frozen pooled embedding, trained on ImageNet-1k train
+  metrics: {top1_accuracy: 0.562}
