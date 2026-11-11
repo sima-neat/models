@@ -65,6 +65,10 @@ architectures:
     display_name: Gemma4
     paradigm: transformer
     allowed_model_types: [llm, vlm]
+  gpt_oss:
+    display_name: GPT-OSS
+    paradigm: transformer
+    allowed_model_types: [llm]
   inception:
     display_name: Inception
     paradigm: cnn
@@ -73,9 +77,21 @@ architectures:
     display_name: LFM
     paradigm: transformer
     allowed_model_types: [llm]
+  lfm2_5:
+    display_name: LFM2.5
+    paradigm: transformer
+    allowed_model_types: [llm]
+  lfm2_5_vl:
+    display_name: LFM2.5-VL
+    paradigm: transformer
+    allowed_model_types: [vlm]
   lightglue:
     display_name: LightGlue
     paradigm: transformer
+    allowed_model_types: [vision]
+  lightstereo:
+    display_name: LightStereo
+    paradigm: cnn
     allowed_model_types: [vision]
   llama:
     display_name: Llama
@@ -91,6 +107,10 @@ architectures:
     allowed_model_types: [llm]
   phi:
     display_name: Phi
+    paradigm: transformer
+    allowed_model_types: [llm]
+  phi4:
+    display_name: Phi4
     paradigm: transformer
     allowed_model_types: [llm]
   qwen3:
@@ -124,6 +144,10 @@ architectures:
   superglue:
     display_name: SuperGlue
     paradigm: transformer
+    allowed_model_types: [vision]
+  vgg:
+    display_name: VGG
+    paradigm: cnn
     allowed_model_types: [vision]
   whisper:
     display_name: Whisper
@@ -163,6 +187,10 @@ architectures:
     allowed_model_types: [vision]
   yolov8_obb:
     display_name: YOLOv8-obb
+    paradigm: cnn
+    allowed_model_types: [vision]
+  yolox:
+    display_name: YOLOX
     paradigm: cnn
     allowed_model_types: [vision]
 
@@ -232,6 +260,9 @@ tasks:
     allowed_model_types: [llm, vlm]
   image_captioning:
     display_name: Image Captioning
+    allowed_model_types: [vlm]
+  image_text_embedding:
+    display_name: Image-Text Embedding
     allowed_model_types: [vlm]
   multimodal_chat:
     display_name: Multimodal Chat

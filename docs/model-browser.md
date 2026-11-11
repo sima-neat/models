@@ -393,3 +393,9 @@ separately through repository administration and checked again at runtime.
 Developer deployments serve model hero illustrations from the matching registry
 environment’s CDN. Existing production illustrations are backfilled before browser
 cutover; image loading retains bounded retries and the registry API fallback.
+
+For models declaring `performance.scope: components`, the Performance section
+shows a component selector. Each selection has its own throughput, latency,
+power, memory, workload and telemetry, with no combined score. The catalog table
+lists the components' measurements separately. Models using the default
+whole-model scope, such as RF-DETR, keep their pipeline-level result.

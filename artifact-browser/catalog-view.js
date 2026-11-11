@@ -298,7 +298,16 @@ function catalogMetric(measurements, key) {
 
 // The whole model's throughput and latency for the build profile.
 function tablePerformance(variant) {
-  const result = readPerformance(variant.performance);
+  const order = variant.details.map((detail) => detail.summary.run.metadata.component_id);
+  const result = readPerformance(variant.performance, order);
+  if (result.kind === "supported" && result.value.scope === "components") {
+    return result.value.components.map(({ id, measurements }) => {
+      const label = id.replaceAll("_", " ");
+      const rate = catalogMetric(measurements, "throughput_fps");
+      const latency = catalogMetric(measurements, "latency_avg_ms");
+      return `<span class="catalog-reading"><small>${escapeHtml(label)}</small><span>${escapeHtml(rate || "Not measured")}</span>${latency ? `<small>${escapeHtml(latency)}</small>` : ""}</span>`;
+    }).join("");
+  }
   const measurements = result.kind === "supported" ? result.value.measurements : {};
   const rate = catalogMetric(measurements, "throughput_fps");
   const latency = catalogMetric(measurements, "latency_avg_ms");

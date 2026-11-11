@@ -19,7 +19,7 @@ model
 ├── pipeline ─────────────── optional run order, for the model browser
 ├── numerical_fidelity ───── compiled outputs compared during compilation
 ├── accuracy ─────────────── whole-model DevKit accuracy
-├── performance ──────────── whole-model DevKit performance
+├── performance ──────────── whole-model or independent-component DevKit performance
 └── reference_metrics ────── scores the source model's authors published
 ```
 
@@ -340,8 +340,18 @@ Measured on a DevKit by `scripts/performance.py` in the performance stage:
 performance: {}
 ```
 
-It takes only the optional `build_profiles`, as `accuracy` does. Every report
-must hold the metrics
+The optional `build_profiles` selects the measured profiles, as for `accuracy`.
+The optional `scope` is `model` by default: one measurement of the whole model,
+including composed pipelines such as RF-DETR. Independent encoders declare:
+
+```yaml
+performance:
+  scope: components
+```
+
+Each component then has separate metrics, workload, telemetry and execution
+statistics in the report's `components` map, with no combined metrics. Both
+scopes publish one performance run per profile. Every measured result must hold the metrics
 [`metrics.json`](../tools/model_report/metrics.json) marks `required`. Decoder selection and measurement settings stay in the script, which
 customers can copy and run with PyNeat; YAML does not duplicate them.
 

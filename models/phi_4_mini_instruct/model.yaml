@@ -1,0 +1,43 @@
+build-on-demand: true
+display_name: Phi-4 Mini Instruct
+description: Generates text from instructions and conversation history.
+model_type: llm
+tasks: [text_generation]
+
+modalities:
+  inputs: [text]
+  outputs: [text]
+
+architecture: phi4
+
+license:
+  spdx: MIT
+  redistribution: allowed
+  attribution: Derived from microsoft/Phi-4-mini-instruct under MIT; AutoRound checkpoint provided by SiMa.ai.
+
+compilation:
+  format: huggingface
+  source:
+    repository: simaai/Phi-4-mini-instruct-Autoround-Safetensors
+    revision: 047f7b157ce23842834c209296d734d56ad0532b
+    main_file: config.json
+    files:
+      LICENSE.txt: {uri: hf://models/microsoft/Phi-4-mini-instruct@cfbefacb99257ffa30c83adab238a50856ac3083/LICENSE, sha256: fa8235e5b48faca34e3ca98cf4f694ef08bd216d28b58071a1f85b1d50cb814d, size_bytes: 1084}
+      added_tokens.json: {sha256: d4f2aceb0f20b71dd1f4bcc7e052e4412946bf281840b8f83d39f259571af486, size_bytes: 249}
+      chat_template.jinja: {sha256: febf589225c9728ab791f52e8897d7607a823d45368f0a4c92fa68997b40cce9, size_bytes: 423}
+      config.json: {sha256: ad67d19320afc00c8ec1f2b1f757ec52d43effb2d91cc4d92a9c5f083d2002fb, size_bytes: 4081}
+      generation_config.json: {sha256: 2cde217cb8ff7d9bd20884fd9034957675b021b7331066f9b8c911e5d9e75a91, size_bytes: 169}
+      merges.txt: {sha256: 856ce61180bb689282eed6b3a6838bb1f438399be23aefe9d20eb379791fb4ad, size_bytes: 2418348}
+      model.safetensors: {sha256: a113838290136370af019f98ead1f73d40c45ae11a2b44aa9f42b271b995b47f, size_bytes: 3480422104}
+      special_tokens_map.json: {sha256: aff38493227d813e29fcf8406e8e90062f1f031aa47d589325e9c31d89ac7cc3, size_bytes: 587}
+      tokenizer.json: {sha256: 7ea8bdf68c3e7549a3fb4342523288ce628f6ab56a618f9a4dfb234a0b4d46a8, size_bytes: 15524476}
+      tokenizer_config.json: {sha256: b0ee04f5d3297e8e35a8e4c10c543f793a2bda1af182d8fee2d76ab8d70555ad, size_bytes: 349}
+      vocab.json: {sha256: 6cb65a857824fa6615bb1782d95d882617a8bbce1da0317118586b36f39e98bd, size_bytes: 3910310}
+  entrypoint: generate
+
+build_profiles:
+  w4a16:
+    runner_class: expensive
+    components:
+      model:
+        parameters: {precision: a16w4, max_num_tokens: 4096, language_group_size: 128}
