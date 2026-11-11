@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import tarfile
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -227,8 +228,18 @@ def test_canonical_sha256_is_stable() -> None:
     assert canonical_sha256({"b": 2, "a": 1}) == canonical_sha256({"a": 1, "b": 2})
 
 
-def _assembled_package(tmp_path: Path) -> tuple[Path, dict]:
+def _assembled_package(tmp_path: Path, *, runtime_files: bool = False) -> tuple[Path, dict]:
     compiled = _packaged_result(tmp_path)
+    if runtime_files:
+        profile = compiled / "resnet_50/w16a16"
+        tokenizer = profile / "model/tokenizer.json"
+        tokenizer.write_text('{"version":"1.0"}')
+        path = profile / "compile-outputs.json"
+        manifest = json.loads(path.read_text())
+        manifest["runtime_files"] = [{
+            "path": "model/tokenizer.json", "sha256": hashlib.sha256(tokenizer.read_bytes()).hexdigest(),
+        }]
+        path.write_text(json.dumps(manifest))
     component_dir = compiled / "resnet_50/w16a16/model"
     (component_dir / "registry-publication.json").write_text(
         json.dumps({"runs": [{
@@ -254,7 +265,7 @@ def _publish_packages(packages: Path, request, store: FakeStore, environment: st
     )
 
 
-def test_publish_full_package_creates_a_package_run_and_uploads_the_mpk(tmp_path: Path) -> None:
+def test_publish_full_package_creates_a_package_run_and_uploads_the_zip(tmp_path: Path) -> None:
     packages, assembled = _assembled_package(tmp_path)
     calls: list[tuple[str, str, dict | None, str]] = []
 
@@ -279,8 +290,8 @@ def test_publish_full_package_creates_a_package_run_and_uploads_the_mpk(tmp_path
     assert calls[0][2]["run_type"] == "model_package"
     assert calls[3][2]["artifact_type"] == "model-package"
     assert store.objects[0][0].name == assembled["archive"]
-    assert store.objects[0][3] == "application/gzip"
-    assert calls[3][2]["media_type"] == "application/gzip"
+    assert store.objects[0][3] == "application/zip"
+    assert calls[3][2]["media_type"] == "application/zip"
 
 
 def test_publish_package_attaches_the_profile_numerical_fidelity(tmp_path: Path) -> None:
@@ -431,12 +442,12 @@ def test_publish_package_rejects_a_simulation_of_another_build_profile(tmp_path:
 @pytest.mark.parametrize(
     ("archive", "expected"),
     [
-        ("resnet_50_w16a16_mpk.tar.gz", "application/gzip"),
+        ("resnet_50_w16a16_mpk.tar.gz", None),
         ("rf_detr_nano_w8a8_w16a16_default.zip", "application/zip"),
         ("resnet_50_w16a16.tar.gz", None),
     ],
 )
-def test_package_media_type_accepts_only_mpk_and_zip_packages(archive: str, expected: str | None) -> None:
+def test_package_media_type_accepts_only_zip_packages(archive: str, expected: str | None) -> None:
     assert _package_media_type(archive) == expected
 
 
@@ -1106,11 +1117,26 @@ def test_publish_catalog_publishes_documentation_when_a_cataloged_model_has_none
     assert published == ["a" * 40]
 
 
-def _stage_catalog_build(tmp_path: Path, packages: list[dict]) -> Path:
+def _stage_catalog_build(tmp_path: Path, packages: list[dict], *, runtime_files: bool = False) -> Path:
     dist = _packaged_result(tmp_path)
     source_archive = next(dist.glob("resnet_50/w16a16/model/*_mpk.tar.gz"))
     payload = source_archive.read_bytes()
     run_id = "00000000-0000-4000-8000-000000000001"
+    descriptors = []
+    package_payload = b""
+    if runtime_files:
+        content = b'{"version":"1.0"}'
+        descriptors = [{"path": "model/tokenizer.json", "sha256": hashlib.sha256(content).hexdigest()}]
+        archive = tmp_path / "package.zip"
+        with zipfile.ZipFile(archive, "w") as package:
+            package.writestr("model/tokenizer.json", content)
+            package.writestr("unrelated.txt", "do not restore")
+        package_payload = archive.read_bytes()
+        packages = [{
+            "package_id": "default", "build_profile_id": "w16a16", "run_id": "package-run",
+            "artifact_sha256": hashlib.sha256(package_payload).hexdigest(), "size_bytes": len(package_payload),
+            "component_run_ids": {"model": run_id},
+        }]
     catalog = {
         "catalog_revision": "a" * 40,
         "models": [{
@@ -1135,6 +1161,14 @@ def _stage_catalog_build(tmp_path: Path, packages: list[dict]) -> Path:
                 "size_bytes": len(payload),
                 "download_url": "https://download.example.invalid/mpk",
             }}
+        if url.endswith("/artifacts/package"):
+            return {"artifact": {
+                "sha256": hashlib.sha256(package_payload).hexdigest(), "size_bytes": len(package_payload),
+                "download_url": "https://download.example.invalid/package",
+                "metadata": (
+                    {"runtime_files": descriptors, "component_run_ids": {"model": run_id}} if runtime_files else {}
+                ),
+            }}
         if url.endswith(run_id):
             return {"run": {"toolchain_version": "2.1.3"}}
         raise AssertionError(url)
@@ -1149,7 +1183,7 @@ def _stage_catalog_build(tmp_path: Path, packages: list[dict]) -> Path:
         build_profile_id="w16a16",
         compile_invocation_id="w16a16",
         read_request=read,
-        download_request=lambda url: payload,
+        download_request=lambda url: payload if url.endswith("/mpk") else package_payload,
     )
     assert result["count"] == 1
     return tmp_path / "staged" / "resnet_50" / "w16a16"
@@ -1284,6 +1318,141 @@ def test_package_run_retains_provenance_when_artifact_is_only_an_mpk(tmp_path):
     parameters = next(body["parameters"] for endpoint, body in calls if endpoint.endswith("/parameters"))
     assert parameters["provenance"] == result["manifest"]["provenance"]
     assert published["packages"][0]["artifact_sha256"] == assembled["sha256"]
+
+
+@pytest.mark.parametrize("continuing_revision", [False, True])
+@pytest.mark.parametrize("published_package", [False, True])
+def test_progress_publication_does_not_reimport_base_packages(
+    monkeypatch, tmp_path: Path, continuing_revision: bool, published_package: bool,
+) -> None:
+    """A sibling publisher must not fill a pending profile from a moving base."""
+    target_profile = {
+        "id": "resnet_50",
+        "builds": [{"build_profile_id": "w16a16", "component_id": "model",
+                    "compile_fingerprint": "old", "run_id": "target-build"}],
+        "packages": ([{"build_profile_id": "w16a16", "package_id": "default",
+                       "run_id": "target-package"}] if published_package else []),
+    }
+    base_profile = {
+        "id": "resnet_50",
+        "builds": [{"build_profile_id": "w16a16", "component_id": "model",
+                    "compile_fingerprint": "new", "run_id": "base-build"}],
+        "packages": [{"build_profile_id": "w16a16", "package_id": "default",
+                      "run_id": "base-package"}],
+    }
+    target = {"canonical_sha256": "c" * 64,
+              "catalog_revision": ("a" if continuing_revision else "b") * 40,
+              "document": {"models": [target_profile]}}
+    matrix = [{"model_id": "resnet_50", "build_profile_id": "w16a16",
+               "component_ids": ["model"], "compile_fingerprint": "new"}]
+    monkeypatch.setattr("model_registry.registry._head_matrix", lambda *args: matrix)
+    captured = {}
+
+    def build_snapshot(**kwargs):
+        captured.update(kwargs)
+        return kwargs["previous"]
+
+    monkeypatch.setattr("model_registry.registry.build_catalog_snapshot", build_snapshot)
+    selected = tmp_path / "selected.json"
+    result = publish_catalog(
+        repository=ROOT, api_url="https://registry.example.invalid",
+        read_api_url="https://models-registry.example.invalid", aws_region="us-west-2",
+        branch="feature", git_sha="a" * 40, base_branches=["develop"],
+        selected_matrix=selected,
+        request=lambda *args: {"stored": True},
+        read_request=lambda url: {"catalog": (
+            {"document": {"models": [base_profile]}} if url.endswith("develop") else target
+        )},
+    )
+    profile = result["catalog"]["models"][0]
+    expected = target_profile if continuing_revision else base_profile
+    assert profile["packages"] == expected["packages"]
+    assert profile["builds"] == expected["builds"]
+    # Retrying initialization must not drop packages already published this revision.
+    assert captured["selected_matrix"] == (None if continuing_revision else selected)
+
+
+@pytest.mark.parametrize("continuing_revision", [False, True])
+@pytest.mark.parametrize("has_previous", [False, True])
+def test_deferred_conversion_inheritance_respects_catalog_revision(monkeypatch, continuing_revision, has_previous):
+    """Unselected conversion entries keep their complete branch state during progress."""
+    prior = {"id": "deferred", "builds": [], "packages": [{"run_id": "target-package"}],
+             "build_requirements": {"unchanged": "requirements"}}
+    base = {**prior, "packages": [{"run_id": "base-package"}]}
+    pending = {"model_id": "deferred", "build_profile_id": "w16a16", "component_ids": ["model"],
+               "compile_fingerprint": "target-fingerprint"}
+    target_document = {"models": [prior] if has_previous else [],
+                       "pending_builds": [pending] if has_previous else []}
+    target = {"catalog_revision": ("a" if continuing_revision else "b") * 40,
+              "canonical_sha256": "c" * 64, "document": target_document}
+    monkeypatch.setattr("model_registry.registry.load_models", lambda root: {"deferred": object()})
+    monkeypatch.setattr("model_registry.registry._catalog_models", lambda models: {})
+    monkeypatch.setattr("model_registry.registry._head_matrix", lambda *args: [])
+    monkeypatch.setattr("model_registry.registry.build_catalog_snapshot", lambda **kwargs: kwargs["previous"])
+    result = publish_catalog(
+        repository=ROOT, api_url="https://registry.example.invalid",
+        read_api_url="https://registry.example.invalid", aws_region="us-west-2",
+        branch="feature", git_sha="a" * 40, base_branches=["develop"],
+        request=lambda *args: {"stored": True},
+        read_request=lambda url: {"catalog": (
+            {"document": {"models": [base], "pending_builds": []}} if url.endswith("develop") else target
+        )},
+    )["catalog"]
+    expected = [prior] if has_previous else ([] if continuing_revision else [base])
+    assert result["models"] == expected
+    assert result.get("pending_builds", []) == ([pending] if has_previous else [])
+
+
+@pytest.mark.parametrize("same_revision", [False, True])
+@pytest.mark.parametrize("force", [False, True])
+@pytest.mark.parametrize("published", [False, True])
+@pytest.mark.parametrize("on_demand", [False, True])
+def test_forced_rebuild_checks_revision_before_publication(
+    monkeypatch, tmp_path, same_revision, force, published, on_demand,
+):
+    selected = tmp_path / "selected.json"
+    selected.write_text(json.dumps({"include": [{
+        "model_id": "resnet_50", "build_profile_id": "w16a16",
+        "compile_invocation_id": "w16a16",
+    }]}))
+    target = {
+        "catalog_revision": ("a" if same_revision else "b") * 40,
+        "canonical_sha256": "c" * 64,
+        "document": {"models": [{
+            "id": "resnet_50", "builds": [], "build_on_demand": on_demand,
+            "packages": [{"build_profile_id": "w16a16", "package_id": "default"}] if published else [],
+        }]},
+    }
+    monkeypatch.setattr("model_registry.registry._head_matrix", lambda *args: [])
+    snapshots = []
+    writes = []
+
+    def build_snapshot(**kwargs):
+        snapshots.append(kwargs)
+        return kwargs["previous"]
+
+    monkeypatch.setattr("model_registry.registry.build_catalog_snapshot", build_snapshot)
+
+    def publish():
+        return publish_catalog(
+            repository=ROOT, api_url="https://registry.example.invalid",
+            read_api_url="https://models-registry.example.invalid", aws_region="us-west-2",
+            branch="feature", git_sha="a" * 40, selected_matrix=selected,
+            force_rebuild_all=force, read_request=lambda url: {"catalog": target},
+            request=lambda *args: writes.append(args) or {"stored": True},
+        )
+
+    if same_revision and force and published and not on_demand:
+        with pytest.raises(ValidationError, match="new Git revision"):
+            publish()
+        assert not snapshots
+        assert not writes
+    else:
+        publish()
+        assert len(writes) == 1
+        assert snapshots[0]["selected_matrix"] == (None if same_revision else selected)
+
+
 def test_iam_registry_reads_sign_only_the_configured_api(monkeypatch):
     import io
 
@@ -1385,3 +1554,76 @@ def test_missing_artifact_download_is_not_retried(tmp_path: Path, monkeypatch: p
     with pytest.raises(RegistryPublicationError, match="HTTP Error 404"):
         _download_registry_file(url, tmp_path / "model.tar.gz", {"sha256": "0" * 64, "size_bytes": 1})
     assert sleeps == []
+
+
+def test_package_publication_records_runtime_files_for_retained_builds(tmp_path):
+    packages, assembled = _assembled_package(tmp_path, runtime_files=True)
+    calls = {}
+
+    def request(method, path, body, key):
+        calls[path] = body
+        return {"run_id": "package-run"} if path == "/v1/runs" else {"ok": True}
+
+    _publish_packages(packages, request, FakeStore())
+    artifact = calls["/v1/runs/package-run/artifacts/package"]
+    file = next(item for item in assembled["manifest"]["files"] if item["path"] == "model/tokenizer.json")
+    assert artifact["media_type"] == "application/zip"
+    assert artifact["metadata"]["runtime_files"] == [{"path": file["path"], "sha256": file["sha256"]}]
+
+
+@pytest.mark.parametrize("runtime_files", [False, True])
+def test_package_publication_excludes_declared_resources_from_runtime_files(tmp_path, monkeypatch, runtime_files):
+    import model_registry.package as package_module
+
+    model = load_model(ROOT / "models/resnet_50")
+    resource_root = tmp_path / "resources"
+    (resource_root / "voices").mkdir(parents=True)
+    payloads = {"config.json": b"{}", "voices/a.json": b"[]"}
+    for name, content in payloads.items():
+        (resource_root / name).write_bytes(content)
+    model["resources"] = {"runtime": {
+        "source": {"repository": "example/runtime", "revision": "0" * 40, "files": {
+            name: {"sha256": hashlib.sha256(content).hexdigest(), "size_bytes": len(content)}
+            for name, content in payloads.items()
+        }},
+        "install_path": "runtime",
+    }}
+
+    class LocalFetcher:
+        def __init__(self, _cache_dir):
+            pass
+
+        def fetch(self, spec):
+            return resource_root / spec.uri.split("@" + "0" * 40 + "/", 1)[1], True
+
+    monkeypatch.setattr(package_module, "load_and_validate_model", lambda *_args: model)
+    monkeypatch.setattr(package_module, "Fetcher", LocalFetcher)
+    monkeypatch.setattr("model_registry.registry.load_models", lambda *_args: {model["id"]: model})
+    packages, assembled = _assembled_package(tmp_path, runtime_files=runtime_files)
+    calls = {}
+
+    def request(method, path, body, key):
+        calls[path] = body
+        return {"run_id": "package-run"} if path == "/v1/runs" else {"ok": True}
+
+    _publish_packages(packages, request, FakeStore())
+
+    metadata = calls["/v1/runs/package-run/artifacts/package"]["metadata"]
+    assert assembled["manifest"]["resources"][0]["paths"] == ["runtime/config.json", "runtime/voices/a.json"]
+    if runtime_files:
+        assert metadata["runtime_files"] == [{
+            "path": "model/tokenizer.json", "sha256": hashlib.sha256(b'{"version":"1.0"}').hexdigest(),
+        }]
+    else:
+        assert "runtime_files" not in metadata
+
+
+def test_retained_build_restores_declared_package_runtime_files(tmp_path):
+    from model_registry.runtime_files import read_runtime_files
+
+    profile = _stage_catalog_build(tmp_path, [], runtime_files=True)
+    assert (profile / "model/tokenizer.json").read_bytes() == b'{"version":"1.0"}'
+    assert read_runtime_files(profile) == [{
+        "path": "model/tokenizer.json", "sha256": hashlib.sha256(b'{"version":"1.0"}').hexdigest(),
+    }]
+    assert not (profile / "unrelated.txt").exists()

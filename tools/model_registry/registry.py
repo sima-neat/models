@@ -22,8 +22,12 @@ from urllib.request import urlopen
 from jsonschema import Draft202012Validator
 
 from .artifact import (
-    compile_output_fields, deployment_files, llima_compiled_parameters,
-    validate_compile_outputs, verify_artifact, verify_llima,
+    compile_output_fields,
+    deployment_files,
+    llima_compiled_parameters,
+    validate_compile_outputs,
+    verify_artifact,
+    verify_llima,
 )
 from .compile_matrix import build_matrix
 from .dependencies import resolve_model_compiler
@@ -37,6 +41,7 @@ from .package import FIDELITY_FILE
 from .registry_http import RegistryPublicationError, SigV4RegistryClient
 from .registry_http import read_registry_json_authenticated as _public_registry_json
 from .runner_approval import runner_provenance
+from .runtime_files import restore_runtime_files
 from .source import source_identity
 from .stage_plan import merge_catalog_sources, read_catalog_sources, read_current_catalog
 from .taxonomy import (
@@ -584,6 +589,9 @@ def build_catalog_snapshot(
         if model["id"] not in deferred:
             continue
         entry = dict(model)
+        # Categories follow this checkout's taxonomy, which may have renamed IDs
+        # since the carried entry was published.
+        entry["categories"] = validate_model_categorization(all_models[model["id"]], taxonomy)
         if documentation_receipts is not None:
             documentation = documentation_receipts.get(model["id"])
             if not isinstance(documentation, dict):
@@ -770,6 +778,7 @@ def publish_catalog(
     compiled_dir: str | Path | None = None,
     package_dir: str | Path | None = None,
     selected_matrix: str | Path | None = None,
+    force_rebuild_all: bool = False,
     base_branches: list[str] | None = None,
     bucket: str | None = None,
     kms_key_id: str | None = None,
@@ -807,7 +816,33 @@ def publish_catalog(
     # before the compare-and-swap POST below.
     root = Path(repository).expanduser().resolve()
     target_catalog, sources = read_catalog_sources(read, read_api_url, branch, base_branches)
+    target_revision = target_catalog.get("catalog_revision") if isinstance(target_catalog, dict) else None
+    continuing_revision = target_revision == git_sha.lower()
+    if continuing_revision and force_rebuild_all:
+        selected = _selected_invocation_keys(
+            Path(selected_matrix).expanduser().resolve() if selected_matrix else None
+        )
+        selected_profiles = {(model_id, profile_id) for model_id, profile_id, _ in selected}
+        published_profiles = {
+            (model["id"], package["build_profile_id"])
+            for model in target_catalog["document"].get("models", [])
+            for package in model.get("packages", [])
+            if not model.get("build_on_demand", False)
+        }
+        conflicts = sorted(selected_profiles & published_profiles)
+        if conflicts:
+            profiles = ", ".join(f"{model}/{profile}" for model, profile in conflicts)
+            raise ValidationError(
+                f"cannot force rebuild published packages in current catalog revision {git_sha}: {profiles}. "
+                "Publish the forced rebuild from a new Git revision; packages are immutable within a revision. "
+                "For an initialization retry, omit --force-rebuild-all."
+            )
+    # Base branches seed a new revision only. During progress publication they
+    # could restore a deliberately withheld package, or replace a published one
+    # when a base branch finishes rebuilding before this branch does.
     models = load_models(root)
+    # Apply the same revision boundary when carrying deferred conversion entries.
+    sources = sources[:1] if continuing_revision else sources
     previous = merge_catalog_sources(sources, _head_matrix(root, models))
     deferred = set(models) - set(_catalog_models(models))
     if deferred:
@@ -826,12 +861,11 @@ def publish_catalog(
         git_sha=git_sha,
         compiled_dir=compiled_dir,
         package_dir=package_dir,
-        selected_matrix=selected_matrix,
+        selected_matrix=None if continuing_revision else selected_matrix,
         previous=previous,
         incremental=True,
         documentation_receipts=documentation_receipts,
     )
-    target_revision = target_catalog.get("catalog_revision") if isinstance(target_catalog, dict) else None
     previous_snapshot = target_catalog.get("canonical_sha256") if isinstance(target_catalog, dict) else None
     snapshot = {
         "initialize": target_revision != git_sha.lower(),
@@ -1048,6 +1082,34 @@ def stage_catalog_build(
             }
         )
     profile_dir = output / model_id / build_profile_id
+    runtime_files = []
+    package = next((
+        item for item in catalog_model.get("packages", [])
+        if isinstance(item, dict) and (item.get("build_profile_id"), item.get("package_id")) == (
+            build_profile_id, "default"
+        )
+    ), None)
+    if package is not None:
+        response = read(f"{base_url}/v1/runs/{package['run_id']}/artifacts/package")
+        artifact = response.get("artifact")
+        if not isinstance(artifact, dict):
+            raise ValidationError("artifact registry returned no package metadata")
+        metadata = artifact.get("metadata") or {}
+        if not isinstance(metadata, dict):
+            raise ValidationError("artifact registry returned invalid package metadata")
+        if "runtime_files" in metadata:
+            component_runs = {item["component_id"]: item["run_id"] for item in staged_outputs}
+            if (artifact.get("sha256") != package.get("artifact_sha256")
+                    or artifact.get("size_bytes") != package.get("size_bytes")
+                    or not isinstance(artifact.get("download_url"), str)
+                    or metadata.get("component_run_ids") != component_runs
+                    or package.get("component_run_ids") != component_runs):
+                raise ValidationError("runtime-file package does not match the current catalog build")
+            with tempfile.TemporaryDirectory(prefix="restore-package-", dir=profile_dir) as temporary:
+                archive = Path(temporary) / "package.zip"
+                _download_registry_file(artifact["download_url"], archive, artifact, download_request)
+                runtime_files = metadata["runtime_files"]
+                restore_runtime_files(archive, runtime_files, profile_dir)
     # The same manifest a compile writes, so later stages read restored and fresh builds alike.
     (profile_dir / "compile-outputs.json").write_text(
         json.dumps({
@@ -1057,20 +1119,18 @@ def stage_catalog_build(
             "outputs": [
                 {key: item[key] for key in ("component_id", *compile_output_fields(item))} for item in staged_outputs
             ],
+            **({"runtime_files": runtime_files} if runtime_files else {}),
         }, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
     # A benchmark runs under the profile's package run, as after a fresh build's publish-package.
-    for package in catalog_model.get("packages", []):
-        if isinstance(package, dict) and (package.get("build_profile_id"), package.get("package_id")) == (
-            build_profile_id, "default"
-        ):
-            receipt = profile_dir / "packages" / "default" / "registry-publication.json"
-            receipt.parent.mkdir(parents=True, exist_ok=True)
-            receipt.write_text(
-                json.dumps({"packages": [{"model_id": model_id, **package}]}, indent=2, sort_keys=True) + "\n",
-                encoding="utf-8",
-            )
+    if package is not None:
+        receipt = profile_dir / "packages" / "default" / "registry-publication.json"
+        receipt.parent.mkdir(parents=True, exist_ok=True)
+        receipt.write_text(
+            json.dumps({"packages": [{"model_id": model_id, **package}]}, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
     return {"count": len(staged_outputs), "outputs": staged_outputs}
 
 
@@ -1710,12 +1770,8 @@ def publish_compilations(
 
 
 def _package_media_type(archive_name: str) -> str | None:
-    """Return the media type of a single-component model's MPK package or a ZIP package, or None otherwise."""
-    if archive_name.endswith("_mpk.tar.gz"):
-        return "application/gzip"
-    if archive_name.endswith(".zip"):
-        return "application/zip"
-    return None
+    """Return the media type of a ZIP package, or None for any other archive."""
+    return "application/zip" if archive_name.endswith(".zip") else None
 
 
 def publish_packages(
@@ -1849,8 +1905,8 @@ def publish_packages(
             "component_run_ids": component_runs,
         }
         run_fingerprint = canonical_sha256({**parameters, "artifact_sha256": artifact_sha})
-        # Single-component packages publish the MPK without an embedded manifest;
-        # retain its provenance in the durable package run as well.
+        # Packages publish without an embedded manifest; retain its provenance
+        # in the durable package run as well.
         parameters["provenance"] = manifest.get("provenance", {})
         environment_document = {
             "vulcan_environment": environment,
@@ -1898,6 +1954,16 @@ def publish_packages(
             "manifest_sha256": manifest_sha, "component_run_ids": component_runs,
             **({"build_on_demand": True} if on_demand else {}),
         }
+        if not native:
+            component_paths = {item["path"] for item in components}
+            resource_paths = {path for resource in manifest["resources"] for path in resource["paths"]}
+            runtime_files = [
+                {"path": item["path"], "sha256": item["sha256"]}
+                for item in manifest["files"]
+                if item["path"] not in component_paths and item["path"] not in resource_paths
+            ]
+            if runtime_files:
+                artifact_metadata["runtime_files"] = runtime_files
         if native:
             _publish_deployment_files(
                 client, store, run_id=run_id, stable_key=stable_key, bucket=bucket,

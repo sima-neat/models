@@ -111,13 +111,17 @@ model-registry fetch-calibration models/<model-id> \
   --build-profile <profile-id> --component <component-id>
 model-registry fetch-fidelity-dataset models/<model-id> \
   --build-profile <profile-id> --component <component-id>
+model-registry fetch-resources models/<model-id> --output-dir <directory>
 ```
 
 `fetch` checks the exact byte size and SHA-256 before installing the source
 into a checksum-addressed cache. `fetch-calibration` does the same for a
 `ready` calibration, which belongs to the profile's first component, and
 `fetch-fidelity-dataset` for the `numerical_fidelity` dataset. Both report
-`kind: none` when the build needs no such input.
+`kind: none` when the build needs no such input. `fetch-resources` verifies a
+model's pinned `resources` and lays them out under the directory as its package
+installs them, then prints the directory; it prints nothing for a model without
+resources.
 
 The default cache is `~/.cache/model-registry`. For an isolated cache, use
 either form:
@@ -271,9 +275,8 @@ model-registry assemble-package \
   --package default
 ```
 
-A single-component package is that component's MPK. Otherwise, confirm the
-ZIP holds every component MPK at its top level. Package assembly does not replace MPK
-validation or application testing.
+Confirm the ZIP holds every component MPK at its top level. Package assembly
+does not replace MPK validation or application testing.
 
 Keep MPKs and compiler intermediates outside the repository or in an ignored
 directory, and never commit them. If the pinned compiler is not installed, get
@@ -365,7 +368,7 @@ When this checklist passes, continue to [Submit for review](contributing.md).
 | `id must match directory name` | Rename the directory or correct `id`; both use the same snake-case value. |
 | Unknown or incompatible taxonomy ID | Select an ID from the canonical taxonomy or propose a reviewed taxonomy change. |
 | `source.sha256` or size mismatch | Hash and measure the exact immutable bytes addressed by `source.uri`. |
-| Source host or URL rejected | Use a full-commit Hugging Face resource or another approved checksum-verified host; GitHub release assets are not accepted. |
+| Source host or URL rejected | Use one of the [approved forms](adding-a-model.md#3-pin-every-input): a full-commit Hugging Face resource, or for a conversion checkpoint a tagged release file of a public GitHub repository. |
 | Referenced file does not exist | Keep recipe and surgery paths under the model's `scripts/`; a declared `conversion` also needs `scripts/convert.py` and `scripts/requirements-convert.txt`. |
 | Unexpected file in the model directory | A model directory holds only `model.yaml`, `README.md`, `hero.png`, `scripts/`, and `tests/`. |
 | `set up exactly the stages this model has` or `unexpected test files` | Give `tests/tests.yaml` one entry per stage the model has, and keep only `tests.yaml`, the stage test files, and `fixtures/` under `tests/` ([write the model's tests](adding-a-model.md#10-write-the-models-tests)). |

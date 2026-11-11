@@ -5,7 +5,7 @@ import json
 import tarfile
 from collections.abc import Callable
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 import numpy as np
 import onnx
@@ -45,7 +45,9 @@ def _write_mpk(path: Path, manifest: dict) -> None:
             stream.addfile(info, io.BytesIO(content))
 
 
-@pytest.mark.parametrize("case", ["valid", "bf16_cast", "inputs", "outputs", "decoder", "two_mla", "host"])
+@pytest.mark.parametrize(
+    "case", ["valid", "bf16_cast", "int8_dequantization", "inputs", "outputs", "decoder", "two_mla", "host"]
+)
 def test_mpk_audit_requires_one_mla_segment_and_the_declared_interface(
     tmp_path: Path,
     case: str,
@@ -56,6 +58,8 @@ def test_mpk_audit_requires_one_mla_segment_and_the_declared_interface(
     plugins = manifest["plugins"]
     if case == "bf16_cast":
         plugins[-1]["config_params"]["kernel"] = "cast_transform"
+    elif case == "int8_dequantization":
+        plugins[-1]["config_params"]["kernel"] = "dequantization_transform"
     elif case == "inputs":
         manifest["input_nodes"] = manifest["input_nodes"][:-1]
     elif case == "decoder":
@@ -69,7 +73,7 @@ def test_mpk_audit_requires_one_mla_segment_and_the_declared_interface(
     archive = tmp_path / "model_mpk.tar.gz"
     _write_mpk(archive, manifest)
 
-    if case in ("valid", "bf16_cast"):
+    if case in ("valid", "bf16_cast", "int8_dequantization"):
         compile_module.audit_mpk(archive)
     else:
         with pytest.raises(RuntimeError):
@@ -127,7 +131,7 @@ def test_compile_reads_the_declared_build_parameters(load_script: Callable[[str]
 
 def test_compile_rejects_an_undeclared_build_profile(load_script: Callable[[str], ModuleType]) -> None:
     with pytest.raises(ValueError, match="no build profile"):
-        load_script("compile")._parameters("w8a8")
+        load_script("compile")._parameters("w4a16")
 
 
 @pytest.mark.parametrize(("precision", "per_token"), [("w16a16", False), ("w8a16", True)])
@@ -136,12 +140,77 @@ def test_quantization_skips_calibration_for_bf16_activations(
 ) -> None:
     recipe = load_script("compile")
 
-    recipe._quantization(precision)
+    recipe._quantization({"precision": precision})
 
     arguments = recipe.QuantizationParams.call_args.kwargs
     assert arguments["calibration_method"] is recipe.SkipCalibration.return_value
     assert arguments["activation_quantization_scheme"] is recipe.bfloat16_scheme.return_value
     assert arguments.get("per_token_quant", False) is per_token
+
+
+def test_w8a8_calibrates_int8_activations_by_histogram_mse(load_script: Callable[[str], ModuleType]) -> None:
+    recipe = load_script("compile")
+
+    recipe._quantization({"precision": "w8a8", "calibration_bins": 2048})
+
+    arguments = recipe.QuantizationParams.call_args.kwargs
+    recipe.HistogramMSEMethod.assert_called_once_with(2048)
+    assert arguments["calibration_method"] is recipe.HistogramMSEMethod.return_value
+    assert recipe.quantization_scheme.call_args_list[0].kwargs == {"asymmetric": True, "per_channel": False, "bits": 8}
+
+
+def test_every_w8a8_profile_calibrates_and_names_its_bf16_regions(load_script: Callable[[str], ModuleType]) -> None:
+    recipe = load_script("compile")
+    mixed = {}
+    for profile in load_metadata(MODEL_DIR)["build_profiles"]:
+        parameters = recipe._parameters(profile["id"])
+        regions = recipe._bf16_regions(profile["id"], parameters)
+        if parameters["precision"] == "w8a8":
+            assert parameters["calibration_samples"] == 32 and parameters["calibration_bins"] == 2048
+        if regions:
+            mixed[profile["id"]] = regions
+    assert mixed == {"w8a8_mixed": list(recipe.BF16_REGIONS)}
+
+
+@pytest.mark.parametrize(
+    ("profile", "parameters", "message"),
+    [
+        ("w8a8", {"precision": "w8a8", "bf16_regions": ["attention"]}, "mixed token"),
+        ("w8a8_mixed", {"precision": "w8a8"}, "mixed token"),
+        ("w16a16_mixed", {"precision": "w16a16", "bf16_regions": ["attention"]}, "W8A8 build"),
+        ("w8a8_mixed", {"precision": "w8a8", "bf16_regions": ["attention", "attention"]}, "distinct"),
+        ("w8a8_mixed", {"precision": "w8a8", "bf16_regions": ["head"]}, "unknown BF16 regions"),
+    ],
+)
+def test_bf16_regions_must_be_known_regions_of_a_mixed_w8a8_profile(
+    load_script: Callable[[str], ModuleType], profile: str, parameters: dict, message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        load_script("compile")._bf16_regions(profile, parameters)
+
+
+@pytest.mark.parametrize(("softmaxes", "accepted"), [(36, True), (0, False), (35, False)])
+def test_a_mixed_build_must_hold_the_bf16_softmaxes(
+    load_script: Callable[[str], ModuleType], softmaxes: int, accepted: bool
+) -> None:
+    recipe = load_script("compile")
+    recipe.QuantizationPrecision.BFLOAT_16 = "bfloat16"
+
+    class SoftmaxOp:
+        pass
+
+    def node(precision: str) -> SimpleNamespace:
+        config = SimpleNamespace(quantization_precision=SimpleNamespace(value=precision))
+        return SimpleNamespace(ir=SimpleNamespace(operation=SoftmaxOp(), quant_config=config))
+
+    nodes = [node("bfloat16")] * softmaxes + [node("int8")] * (36 - softmaxes)
+    quantized = SimpleNamespace(_net=SimpleNamespace(iter_nodes_recursive=lambda: nodes))
+
+    if accepted:
+        recipe._require_bf16_regions(quantized, ["attention"])
+    else:
+        with pytest.raises(RuntimeError, match="36 softmaxes"):
+            recipe._require_bf16_regions(quantized, ["attention"])
 
 
 @pytest.mark.parametrize("precision", ["w16a16", "w8a16"])
@@ -150,12 +219,49 @@ def test_compile_quantizes_without_calibration_data(
 ) -> None:
     recipe = load_script("compile")
     monkeypatch.setattr(recipe, "_parameters", lambda profile_id: {"precision": precision})
-    monkeypatch.setattr(recipe, "check_quantized_matches", lambda source, quantized: 1.0)
+    monkeypatch.setattr(recipe, "check_quantized_matches", lambda source, quantized, minimum: 1.0)
 
     with pytest.raises(RuntimeError, match="expected one MPK"):
-        recipe.compile_model(tmp_path / "model.onnx", tmp_path / "out", precision)
+        recipe.compile_model(tmp_path / "model.onnx", tmp_path / "out", precision, None)
 
     assert recipe.load_model.return_value.quantize.call_args.kwargs["calibration_data"] is None
+
+
+def _write_cal_dataset(root: Path, counts: dict[str, int]) -> None:
+    """A yfcc100m-keypoints cal directory with one pair per two consecutive images."""
+    rng = np.random.default_rng(0)
+    (root / "annotations").mkdir(parents=True)
+    names = list(counts)
+    for name, count in counts.items():
+        directory = root / "cal" / Path(name).with_suffix("")
+        directory.mkdir(parents=True)
+        np.save(directory / "keypoints.npy", rng.uniform(0, 480, (count, 2)).astype(np.float32))
+        np.save(directory / "scores.npy", rng.uniform(0, 1, count).astype(np.float32))
+        np.save(directory / "descriptors.npy", rng.normal(0, 1, (count, 256)).astype(np.float32))
+    images = [f"{name} 640 480 0 {count}" for name, count in counts.items()]
+    (root / "annotations" / "images.txt").write_text("\n".join(images) + "\n", encoding="utf-8")
+    pairs = [f"{first} {second} 0 0" for first, second in zip(names, names[1:])]
+    (root / "annotations" / "pairs_cal.txt").write_text("\n".join(pairs) + "\n", encoding="utf-8")
+
+
+def test_calibration_stacks_the_pairs_whose_images_have_512_keypoints(
+    tmp_path: Path, load_script: Callable[[str], ModuleType]
+) -> None:
+    calibration = load_script("calibration")
+    _write_cal_dataset(tmp_path, {"a/1.jpg": 512, "a/2.jpg": 512, "a/3.jpg": 512, "a/4.jpg": 300})
+
+    samples = calibration.calibration_inputs(tmp_path, 2)
+
+    assert {name: value.shape for name, value in samples.items()} == {
+        name: (2, *shape[1:]) for name, shape in calibration.INPUT_SHAPES.items()
+    }
+    assert all(value.dtype == np.float32 for value in samples.values())
+    first, _ = calibration.seeded_pairs(tmp_path)[0]
+    keypoints = np.load(tmp_path / "cal" / Path(first).with_suffix("") / "keypoints.npy")
+    np.testing.assert_allclose(samples["keypoints0"][0, 0], (keypoints - [320, 240]) / 448, rtol=1e-5)
+    # The pair with the 300-keypoint image is left out, so a third pair does not exist.
+    with pytest.raises(ValueError, match="requires 3 pairs"):
+        calibration.calibration_inputs(tmp_path, 3)
 
 
 def test_synthetic_pair_is_channels_last_per_input(load_script: Callable[[str], ModuleType]) -> None:
@@ -175,7 +281,7 @@ def test_model_preserves_compilation_and_licence_settings() -> None:
     assert model["components"][0]["interface"]["format"] == "onnx"
     assert "w16a16" in [profile["id"] for profile in model["build_profiles"]]
     assert model["license"]["redistribution"] == "restricted"
-    assert model["license"]["spdx"] == "LicenseRef-SiMa-Internal"
+    assert model["license"]["spdx"] == "LicenseRef-MagicLeap-Noncommercial-Research"
 
 
 def test_sinkhorn_and_extraction_find_clear_matches(surgery: ModuleType) -> None:
@@ -247,6 +353,57 @@ def test_fixed_onnx_interface(tmp_path: Path, case: str, surgery: ModuleType) ->
     else:
         with pytest.raises(ValueError):
             surgery.validate_export(path)
+
+
+def _attention_graph() -> onnx.ModelProto:
+    """A query and key convolution, one attention, and the convolution with a Relu that reads it through a Split."""
+    helper = onnx.helper
+    weight = onnx.numpy_helper.from_array(np.ones((4, 4, 1, 1), np.float32), "w")
+    sizes = onnx.numpy_helper.from_array(np.array([2, 2], np.int64), "sizes")
+    attention = "/layers.0/attention"
+    nodes = [
+        helper.make_node("Conv", ["x", "w"], ["q"], name="/q/Conv"),
+        helper.make_node("Conv", ["x", "w"], ["k"], name="/k/Conv"),
+        helper.make_node("Einsum", ["q", "k"], ["scores"], name=f"{attention}/Einsum", equation="nchw,nchq->nqhw"),
+        helper.make_node("Softmax", ["scores"], ["probabilities"], name=f"{attention}/Softmax", axis=1),
+        helper.make_node(
+            "Einsum", ["probabilities", "k"], ["context"], name=f"{attention}/Einsum_1", equation="nchw,nqhc->nqhw"
+        ),
+        helper.make_node("Split", ["context", "sizes"], ["half0", "half1"], name=f"{attention}/Split", axis=2),
+        helper.make_node("Concat", ["half0", "half1"], ["merged"], name=f"{attention}/Concat", axis=1),
+        helper.make_node("Conv", ["merged", "w"], ["projected"], name="/output/Conv"),
+        helper.make_node("Relu", ["projected"], ["y"], name="/output/Relu"),
+    ]
+    values = [helper.make_tensor_value_info(name, onnx.TensorProto.FLOAT, [1, 4, 4, 4]) for name in ("x", "y")]
+    graph = helper.make_graph(nodes, "fixture", values[:1], values[1:], [weight, sizes])
+    return helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)])
+
+
+def test_a_bf16_region_ends_at_the_first_operations_that_read_it(
+    tmp_path: Path, surgery: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setitem(surgery.BF16_REGIONS, "attention", (surgery.BF16_REGIONS["attention"][0], 3))
+    source, annotated = tmp_path / "model.onnx", tmp_path / "annotated.onnx"
+    onnx.save(_attention_graph(), source)
+
+    counts = surgery.annotate_bf16_regions(source, annotated, ["attention"])
+
+    assert counts == {"bfloat16": 3, "int8": 1}
+    nodes = onnx.load(annotated).graph.node
+    marks = {node.input[0]: node.attribute[0].s.decode() for node in nodes if node.op_type == "AnnotatePrecision"}
+    assert marks == {
+        "scores/unannotated": "bfloat16",
+        "probabilities/unannotated": "bfloat16",
+        "context/unannotated": "bfloat16",
+        # The compiler fuses the Relu into its convolution, so the mark follows the Relu.
+        "y/unannotated": "int8",
+    }
+    assert [value.name for value in onnx.load(annotated).graph.output] == ["y"]
+
+
+def test_a_region_must_match_its_operation_count(tmp_path: Path, surgery: ModuleType) -> None:
+    with pytest.raises(ValueError, match="expected 108 attention operations"):
+        surgery.precision_marks(_attention_graph(), ["attention"])
 
 
 def test_initializer_sharing_merges_identical_weights(surgery: ModuleType) -> None:

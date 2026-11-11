@@ -1,0 +1,66 @@
+build-on-demand: true
+display_name: Llama 3.1 Swallow 8B Instruct v0.5 DFlash
+description: Generates text using a draft assistant whose proposals are checked by the target model.
+model_type: llm
+tasks:
+- text_generation
+modalities:
+  inputs:
+  - text
+  outputs:
+  - text
+architecture: llama
+license:
+  spdx: LicenseRef-Swallow-Llama-Gemma
+  redistribution: restricted
+  attribution: Built with Llama. Llama 3.1 is licensed under the Llama 3.1 Community License, Copyright © Meta Platforms,
+    Inc. All Rights Reserved. Derived from tokyotech-llm/Llama-3.1-Swallow-8B-Instruct-v0.5; upstream Llama and Gemma terms
+    apply. GPTQ checkpoint provided by SiMa.ai. Includes the Swallow DFlash draft, prepared by SiMa.ai with INT8 per-channel
+    RTN quantization.
+upstream:
+  repository: https://huggingface.co/simaai/Llama-3.1-Swallow-8B-Instruct-v0.5-GPTQ-Safetensors
+  revision: 9cc2b899cacb6f42cf401c5018292f3a75efd040
+compilation:
+  format: huggingface
+  source:
+    main_file: Llama-3.1-Swallow-8B-Instruct-v0.5-GPTQ-Safetensors/config.json
+    files:
+      Llama-3.1-Swallow-8B-Instruct-v0.5-GPTQ-Safetensors/GEMMA_TERMS_OF_USE.txt: {uri: hf://models/simaai/Llama-3.1-Swallow-8B-Instruct-v0.5-GPTQ-Safetensors@9cc2b899cacb6f42cf401c5018292f3a75efd040/GEMMA_TERMS_OF_USE.md, sha256: ad70549d0beca82c6b99f81f7b30e017ec5b7de4aa589befd7212ca1ebf19172, size_bytes: 8369}
+      Llama-3.1-Swallow-8B-Instruct-v0.5-GPTQ-Safetensors/LICENSE.txt: {uri: hf://models/simaai/Llama-3.1-Swallow-8B-Instruct-v0.5-GPTQ-Safetensors@9cc2b899cacb6f42cf401c5018292f3a75efd040/LICENSE, sha256: 64e1b2889b7892e6bbe7a7ed5bfe6ff793c61f9d584345f8f41cf9f5cb30a369, size_bytes: 7627}
+      Llama-3.1-Swallow-8B-Instruct-v0.5-GPTQ-Safetensors/Notice.txt: {uri: hf://models/simaai/Llama-3.1-Swallow-8B-Instruct-v0.5-GPTQ-Safetensors@9cc2b899cacb6f42cf401c5018292f3a75efd040/Notice, sha256: 8f7acba0437de09fab27974f06e8774b2cbc972f9988ca132eff522503ee90c6, size_bytes: 212}
+      Llama-3.1-Swallow-8B-Instruct-v0.5-GPTQ-Safetensors/USE_POLICY.txt: {uri: hf://models/simaai/Llama-3.1-Swallow-8B-Instruct-v0.5-GPTQ-Safetensors@9cc2b899cacb6f42cf401c5018292f3a75efd040/USE_POLICY.md, sha256: e58d188e20f19b81a7c344cfdb37c688cbcd5f812e07ecab69152170a4984bcf, size_bytes: 6018}
+      Llama-3.1-Swallow-8B-Instruct-v0.5-GPTQ-Safetensors/chat_template.jinja: {uri: hf://models/simaai/Llama-3.1-Swallow-8B-Instruct-v0.5-GPTQ-Safetensors@9cc2b899cacb6f42cf401c5018292f3a75efd040/chat_template.jinja, sha256: ab5a74b4b8e9bdd9e7a76ae59001de3dcdeef37987baceb26910805822a99f57, size_bytes: 862}
+      Llama-3.1-Swallow-8B-Instruct-v0.5-GPTQ-Safetensors/config.json: {uri: hf://models/simaai/Llama-3.1-Swallow-8B-Instruct-v0.5-GPTQ-Safetensors@9cc2b899cacb6f42cf401c5018292f3a75efd040/config.json, sha256: 784b91911b67a94ce5289f54500b1edb4a141a494e5d4072e6e8443f49e67f86, size_bytes: 1822}
+      Llama-3.1-Swallow-8B-Instruct-v0.5-GPTQ-Safetensors/generation_config.json: {uri: hf://models/simaai/Llama-3.1-Swallow-8B-Instruct-v0.5-GPTQ-Safetensors@9cc2b899cacb6f42cf401c5018292f3a75efd040/generation_config.json, sha256: 1446366446680717e1b042152cf2f66196fdc2b74557339583e802c2b2d7d521, size_bytes: 214}
+      Llama-3.1-Swallow-8B-Instruct-v0.5-GPTQ-Safetensors/model.safetensors: {uri: hf://models/simaai/Llama-3.1-Swallow-8B-Instruct-v0.5-GPTQ-Safetensors@9cc2b899cacb6f42cf401c5018292f3a75efd040/model.safetensors, sha256: 4b22f3048be9215bfa351c2aeced22e33ce8031606d78ea4a8a3c2252876872b, size_bytes: 4862253160}
+      Llama-3.1-Swallow-8B-Instruct-v0.5-GPTQ-Safetensors/special_tokens_map.json: {uri: hf://models/simaai/Llama-3.1-Swallow-8B-Instruct-v0.5-GPTQ-Safetensors@9cc2b899cacb6f42cf401c5018292f3a75efd040/special_tokens_map.json, sha256: 94e708c3f5e64acf85bbe5ad01467a1248faadb73e83b41793087ecced586e8f, size_bytes: 454}
+      Llama-3.1-Swallow-8B-Instruct-v0.5-GPTQ-Safetensors/tokenizer.json: {uri: hf://models/simaai/Llama-3.1-Swallow-8B-Instruct-v0.5-GPTQ-Safetensors@9cc2b899cacb6f42cf401c5018292f3a75efd040/tokenizer.json, sha256: 268aef6511a866fd03104209ff6592ded093172c0cdaf8885ff9c97d62e32869, size_bytes: 17209958}
+      Llama-3.1-Swallow-8B-Instruct-v0.5-GPTQ-Safetensors/tokenizer_config.json: {uri: hf://models/simaai/Llama-3.1-Swallow-8B-Instruct-v0.5-GPTQ-Safetensors@9cc2b899cacb6f42cf401c5018292f3a75efd040/tokenizer_config.json, sha256: 9aad4ba4ebcbaed05c747d94be763415c8a924d48d5def1f32b3b4b3394cca08, size_bytes: 423}
+      Llama-3.1-Swallow-8B-Instruct-v0.5-DFlash-RTN-INT8-Safetensors/GEMMA_TERMS_OF_USE.txt: {uri: hf://models/simaai/Llama-3.1-Swallow-8B-Instruct-v0.5-DFlash-RTN-INT8-Safetensors@f476f83d56d0d79e2790c53e1059b91620840ac4/GEMMA_TERMS_OF_USE.md, sha256: ad70549d0beca82c6b99f81f7b30e017ec5b7de4aa589befd7212ca1ebf19172, size_bytes: 8369}
+      Llama-3.1-Swallow-8B-Instruct-v0.5-DFlash-RTN-INT8-Safetensors/LICENSE.txt: {uri: hf://models/simaai/Llama-3.1-Swallow-8B-Instruct-v0.5-DFlash-RTN-INT8-Safetensors@f476f83d56d0d79e2790c53e1059b91620840ac4/LICENSE, sha256: 64e1b2889b7892e6bbe7a7ed5bfe6ff793c61f9d584345f8f41cf9f5cb30a369, size_bytes: 7627}
+      Llama-3.1-Swallow-8B-Instruct-v0.5-DFlash-RTN-INT8-Safetensors/LICENSE.speculators.txt: {uri: hf://models/simaai/Llama-3.1-Swallow-8B-Instruct-v0.5-DFlash-RTN-INT8-Safetensors@f476f83d56d0d79e2790c53e1059b91620840ac4/LICENSE.speculators, sha256: c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4, size_bytes: 11357}
+      Llama-3.1-Swallow-8B-Instruct-v0.5-DFlash-RTN-INT8-Safetensors/Notice.txt: {uri: hf://models/simaai/Llama-3.1-Swallow-8B-Instruct-v0.5-DFlash-RTN-INT8-Safetensors@f476f83d56d0d79e2790c53e1059b91620840ac4/Notice, sha256: 8f7acba0437de09fab27974f06e8774b2cbc972f9988ca132eff522503ee90c6, size_bytes: 212}
+      Llama-3.1-Swallow-8B-Instruct-v0.5-DFlash-RTN-INT8-Safetensors/MODEL_CARD.txt: {uri: hf://models/simaai/Llama-3.1-Swallow-8B-Instruct-v0.5-DFlash-RTN-INT8-Safetensors@f476f83d56d0d79e2790c53e1059b91620840ac4/README.md, sha256: 51612ff73f33ec49df34883495dcb0a06acc8c3cd372aa0c56b15d5e68dc6a19, size_bytes: 2904}
+      Llama-3.1-Swallow-8B-Instruct-v0.5-DFlash-RTN-INT8-Safetensors/USE_POLICY.txt: {uri: hf://models/simaai/Llama-3.1-Swallow-8B-Instruct-v0.5-DFlash-RTN-INT8-Safetensors@f476f83d56d0d79e2790c53e1059b91620840ac4/USE_POLICY.md, sha256: e58d188e20f19b81a7c344cfdb37c688cbcd5f812e07ecab69152170a4984bcf, size_bytes: 6018}
+      Llama-3.1-Swallow-8B-Instruct-v0.5-DFlash-RTN-INT8-Safetensors/config.json: {uri: hf://models/simaai/Llama-3.1-Swallow-8B-Instruct-v0.5-DFlash-RTN-INT8-Safetensors@f476f83d56d0d79e2790c53e1059b91620840ac4/config.json, sha256: 252a3b50b8703eba99fa05ccceb90b65161d4862828b859b32dd5414ab41fe23, size_bytes: 3500}
+      Llama-3.1-Swallow-8B-Instruct-v0.5-DFlash-RTN-INT8-Safetensors/model.safetensors: {uri: hf://models/simaai/Llama-3.1-Swallow-8B-Instruct-v0.5-DFlash-RTN-INT8-Safetensors@f476f83d56d0d79e2790c53e1059b91620840ac4/model.safetensors, sha256: 4efcb742522741ab7e19bf2f35f535b8f55b46bf86bfd94a526d830432eb3889, size_bytes: 1049088520}
+      Llama-3.1-Swallow-8B-Instruct-v0.5-DFlash-RTN-INT8-Safetensors/special_tokens_map.json: {uri: hf://models/simaai/Llama-3.1-Swallow-8B-Instruct-v0.5-DFlash-RTN-INT8-Safetensors@f476f83d56d0d79e2790c53e1059b91620840ac4/special_tokens_map.json, sha256: 94e708c3f5e64acf85bbe5ad01467a1248faadb73e83b41793087ecced586e8f, size_bytes: 454}
+      Llama-3.1-Swallow-8B-Instruct-v0.5-DFlash-RTN-INT8-Safetensors/tokenizer.json: {uri: hf://models/simaai/Llama-3.1-Swallow-8B-Instruct-v0.5-DFlash-RTN-INT8-Safetensors@f476f83d56d0d79e2790c53e1059b91620840ac4/tokenizer.json, sha256: 268aef6511a866fd03104209ff6592ded093172c0cdaf8885ff9c97d62e32869, size_bytes: 17209958}
+      Llama-3.1-Swallow-8B-Instruct-v0.5-DFlash-RTN-INT8-Safetensors/tokenizer_config.json: {uri: hf://models/simaai/Llama-3.1-Swallow-8B-Instruct-v0.5-DFlash-RTN-INT8-Safetensors@f476f83d56d0d79e2790c53e1059b91620840ac4/tokenizer_config.json, sha256: 8df0e6335663d3b8458be0c931a21b8591931cb61f69a893306c7143cd0f6d5d, size_bytes: 51528}
+  entrypoint: generate
+build_profiles:
+  w4a16:
+    runner_class: expensive
+    benchmark_baseline:
+      model_id: llama_3_1_swallow_8b_instruct_v0_5
+      build_profile: w4a16
+    components:
+      model:
+        parameters:
+          precision: a16w4
+          max_num_tokens: 4096
+          language_group_size: 128
+          draft_model_path: Llama-3.1-Swallow-8B-Instruct-v0.5-DFlash-RTN-INT8-Safetensors
+          speculative_method: dflash
+          draft_precision: a16w8
+          speculative_block_size: 8

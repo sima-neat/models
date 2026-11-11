@@ -26,6 +26,9 @@ Before creating files, identify:
 
 Do not add a product whose source, ownership, or license is ambiguous. Record
 ownership in `CODEOWNERS`; do not add owner or maturity boilerplate to YAML.
+Declare the source model's [license](metadata-schema.md#license) with an ID
+from `artifact-browser/licenses.json`, which also decides whether the model page offers a
+download.
 
 ## 2. Create the directory
 
@@ -40,6 +43,7 @@ models/<model-id>/
   scripts/
     compile.py                    # compile stage: writes one MPK per component
     performance.py                # performance stage, when model.yaml declares performance
+    requirements-performance.txt  # optional wheels for performance.py
     accuracy.py                   # accuracy stage, when model.yaml declares accuracy
     requirements-accuracy.txt     # optional wheels for accuracy.py
     convert.py                    # only when model.yaml declares a conversion
@@ -71,12 +75,29 @@ one immutable repository/revision declaration; see [Compilation and
 sources](metadata-schema.md#compilation-and-sources). Exceptional members can
 keep explicit URIs.
 
-Hugging Face sources use a full 40-character repository commit. Approved HTTPS
-sources include pinned Hugging Face resources and the ONNX files the registry
-converts. GitHub release assets are not sources; datasets come only from the
-Dataset Registry.
-Mutable branches, credentials, query parameters, fragments, and unapproved
-hosts are rejected.
+Prefer Hugging Face whenever the required checkpoint is available there. Only
+otherwise use an official upstream GitHub release asset, and explain the
+fallback in a source comment in `model.yaml`.
+
+A source comes from an approved host, in this form:
+
+| Host | Form |
+| --- | --- |
+| Hugging Face | `hf://models/<owner>/<repository>@<commit>/<file>`, with the full 40-character commit |
+| GitHub | `https://github.com/<owner>/<repository>/releases/download/<tag>/<file>`, a release file of a public repository |
+| the registry | the ONNX files the registry converts |
+
+The owner of a repository can replace or delete a GitHub release file, so only
+`conversion.source` pins one: Convert reads the checkpoint once, and the
+registry keeps the converted model. A model whose checkpoint is not on Hugging
+Face also declares [`upstream`](metadata-schema.md#product-identity-and-provenance)
+itself. Datasets come only from the Dataset Registry.
+Mutable branches, `releases/latest`, credentials, query parameters, fragments,
+and unapproved hosts are rejected.
+
+To approve another host, add its entry to `HTTPS_HOST_CHECKS` in
+`tools/model_registry/source.py` with accept and reject tests. That reruns no
+stage.
 
 Record hashes from the exact bytes the registry will fetch:
 
@@ -212,6 +233,27 @@ runners](runner-class-requests.md) for manifest examples, evidence, approval,
 validation and dispatch. Update the owning README when changing the request.
 Do not confuse the market with `build-on-demand`, which controls scheduling.
 
+### Ship supporting files
+
+When surgery extracts or derives CPU files needed by the application, write
+those files under the profile's `<output-dir>`. Declare each relative `path`
+and its actual `sha256` in `compile-outputs.json` alongside `outputs`:
+
+```json
+"runtime_files": [
+  {"path": "text_encoder/tokenizer.json", "sha256": "<SHA-256 of tokenizer.json>"},
+  {"path": "text_encoder/token_embeddings.npy", "sha256": "<SHA-256 of token_embeddings.npy>"}
+]
+```
+
+The shared packager verifies these files and ships them beside the MPKs;
+retained-build restoration restores the same files. `accuracy.py` receives
+the verified profile root through `--resources` and reads the declared paths
+relative to it. Keep file loading in the model script independent of registry
+imports and credentials. CLIP and SigLIP use this for their tokenizer and CPU
+lookup weights. Pinned upstream files that a recipe does not derive use the
+model's `resources` declaration instead.
+
 ## 7. Know what the package holds
 
 Every build profile publishes one package, `default`, holding all its
@@ -264,18 +306,19 @@ builds](#on-demand-builds).
 
 | Stage | Fingerprint inputs |
 | --- | --- |
-| conversion | what can change the ONNX: the upstream checkpoint, `conversion.outputs`, `convert.py` and the files it uses, and the shared export code. See [when to run Convert again](conversion-artifacts.md#when-to-run-convert-again) |
-| compile (ONNX) | the model and profile IDs, the target, each component's ID and the source identity and layout, each component's `parameters`, the profile's calibration pin, the `numerical_fidelity` section, compile/surgery code, the Model Compiler version, `scripts/run_model_compilation.sh`, the shared model loader, and the MLA stage simulation (`tools/model_registry/mla_stage_simulation.py`) |
+| conversion | the model's own conversion inputs: the upstream checkpoint, `conversion.outputs`, and `convert.py` with its requirements and the files it uses. No shared file is an input. See [when to run Convert again](conversion-artifacts.md#when-to-run-convert-again) |
+| compile (ONNX) | the model and profile IDs, the target, each component's ID and the source identity and layout, each component's `parameters`, the model's pinned `resources`, the profile's calibration pin, the `numerical_fidelity` section, compile/surgery code, the Model Compiler version, `scripts/run_model_compilation.sh`, the shared model loader, and the MLA stage simulation (`tools/model_registry/mla_stage_simulation.py`) |
 | compile (LLiMa) | checkpoint content hashes, the target, component graph `parameters`, and the pinned Model Compiler identity including its build revision |
-| performance | the compile run and MPK digest of every component, the `performance` declaration, the profile's optional `benchmark_baseline`, the model's `performance.py`, the shared benchmark tooling and `scripts/run_model_performance.sh`, and the DevKit runtime pin |
-| accuracy | the compile run and MPK digest of every component, each `accuracy` dataset's name, pin, and the metrics its `datasets/<id>.yaml` requires for the model's tasks, `accuracy.py` and `requirements-accuracy.txt`, the shared benchmark tooling, `scripts/run_model_accuracy.sh`, `scripts/cache_accuracy_dataset.sh` and `scripts/install_dataset_registry.sh`, and the DevKit runtime pin |
+| performance | the compile run and MPK digest of every component, the `performance` declaration, the profile's optional `benchmark_baseline`, the model's `performance.py` and `requirements-performance.txt`, the shared benchmark tooling and `scripts/run_model_performance.sh`, and the DevKit runtime pin |
+| accuracy | the compile run and MPK digest of every component, each `accuracy` dataset's name, pin, and the metrics its `datasets/<id>.yaml` requires for the model's tasks, `accuracy.py` and `requirements-accuracy.txt`, the shared benchmark tooling, `scripts/run_model_accuracy.sh`, `scripts/cache_accuracy_dataset.sh`, `scripts/install_dataset_registry.sh`, `tools/model_registry/runtime_files.py` (verified supporting-file inputs), and the DevKit runtime pin |
 
 ONNX compile code includes every `.py` and `.sh` under `scripts/` except
 `performance.py`, `accuracy.py`, `fp32_baseline_accuracy.py`, `convert.py` and
 `requirements-convert.txt`.
 The shared model loader is an input to every ONNX compile fingerprint;
 descriptive preprocessing and surgery declarations are not. The shared
-benchmark tooling is `BOARD_STAGE_TOOLING`: the benchmarking workflow,
+benchmark tooling is `BOARD_STAGE_TOOLING`: the benchmarking workflow, Core
+installation/reuse checks in `tools/model_registry/neat_core.py`,
 `tools/model_report/__init__.py`, `schemas/model-report.schema.json`, and
 `tools/model_registry/report_publication.py`.
 
@@ -284,19 +327,21 @@ is always benchmarked again.
 
 | Change | Reruns |
 | --- | --- |
-| README, display metadata, `pipeline`, `reference_metrics`, `runner_class`, `runner_market`, `tools/model_report/metrics.json`, registry tooling outside a stage's tooling | nothing |
+| README, display metadata, `license`, `artifact-browser/licenses.json`, `pipeline`, `reference_metrics`, `runner_class`, `runner_market`, `tools/model_report/metrics.json`, registry tooling outside a stage's tooling | nothing |
 | `build-on-demand` | nothing; changes scheduling and catalog metadata only |
-| the upstream checkpoint, `conversion.outputs`, `convert.py` and the files it uses, or the shared export code | with `source: conversion`, planning fails until you run Vulcan Model Convert again. The model recompiles only if the ONNX changes. |
+| the upstream checkpoint, `conversion.outputs`, or `convert.py`, its requirements and the files it uses | with `source: conversion`, planning fails until you run Vulcan Model Convert again. The model recompiles only if the ONNX changes. |
+| the Convert workflow, `scripts/run_model_conversion.sh`, or the registry's conversion, fetch or source code | nothing. When the change alters converted output, raise `FINGERPRINT_VERSION` in `conversion.py`, and every conversion-backed model then needs Convert again. |
+| a model's `resources`: a source pin or an `install_path` | that model's compilation, and the stages after it |
 | a model's tests, or `scripts/run_model_tests.sh` | nothing. The changed test runs the next time its stage runs. |
 | a model's `fp32_baseline_accuracy.py` | nothing; no stage runs it |
-| a model's `performance.py` or `performance` declaration | that model's performance stages |
+| a model's `performance.py`, its requirements, or `performance` declaration, including `scope` | that model's performance stages |
 | a profile's `benchmark_baseline` | that profile's performance; no compilation |
 | `accuracy.py`, its requirements, the `accuracy` datasets, or one of their pins | that model's accuracy stages |
 | a task's entry in `datasets/<id>.yaml` | the accuracy stages of models with that task that evaluate the dataset |
 | `accuracy.build_profiles`, a new `datasets/` file, or an entry for a task no such model has | nothing; a newly benchmarked profile runs because it has no run yet |
 | `scripts/run_model_performance.sh` | every performance stage |
-| `scripts/run_model_accuracy.sh`, `scripts/cache_accuracy_dataset.sh`, or `scripts/install_dataset_registry.sh` | every accuracy stage |
-| the DevKit runtime pin, the benchmarking workflow, `tools/model_report/__init__.py`, `schemas/model-report.schema.json`, or `report_publication.py` | every performance and accuracy stage |
+| `scripts/run_model_accuracy.sh`, `scripts/cache_accuracy_dataset.sh`, `scripts/install_dataset_registry.sh`, or `tools/model_registry/runtime_files.py` (verified supporting-file inputs) | every accuracy stage |
+| the DevKit runtime pin, the benchmarking workflow, `tools/model_registry/neat_core.py`, `tools/model_report/__init__.py`, `schemas/model-report.schema.json`, or `report_publication.py` | every performance and accuracy stage |
 | a source, a component's `parameters`, the profile's calibration, or `numerical_fidelity` | that model's affected builds, then their benchmarks |
 | an ONNX compile script or other ONNX compile input | that model's affected builds, then their benchmarks |
 | the Model Compiler pin | every build, then every benchmark |
@@ -312,7 +357,9 @@ The fingerprints are computed by `compile_fingerprint` and `benchmark_fingerprin
 To apply a changed test at once, dispatch **Vulcan Model Orchestrator** with
 `models` set to the model and `force_rebuild_all`: it recompiles the model's
 builds, which runs the compile tests and remeasures every build. To run a changed
-conversion test, dispatch **Vulcan Model Convert**.
+conversion test, dispatch **Vulcan Model Convert**. If a selected package is
+already published in the current catalog revision, use a new Git commit;
+[forced rebuilds cannot replace immutable packages](https://github.com/sima-neat/models/blob/develop/design-doc/model-registry-architecture.md#forced-rebuilds-of-published-packages).
 
 ## 10. Write the model's tests
 
@@ -351,7 +398,7 @@ example before the model has a published report to expect values from.
 
 A running `accuracy` or `performance` entry also states what the model must
 deliver on a DevKit in `expected`, keyed by every build profile the stage
-measures: the latest published values of that profile's whole model. For
+measures: the latest published values for the profile's declared scope. For
 accuracy, key the values by each dataset `accuracy` names, and supply finite
 values of accuracy metrics from
 [`tools/model_report/metrics.json`](../tools/model_report/metrics.json),
@@ -359,6 +406,25 @@ covering at least the metrics that dataset requires. Keep optional expectations 
 top-5: a missing expected measurement fails. For performance, supply
 `throughput_fps`. Take the values from the model browser's latest `develop`
 results, rounded to 4 decimal places for accuracy and 1 for throughput.
+
+When `model.yaml` declares `performance: {scope: components}`, each component
+needs its own throughput expectation. All declared components must appear:
+
+```yaml
+performance:
+  run_tests: true
+  expected:
+    w8a16:
+      components:
+        image_encoder:
+          throughput_fps: 230.5
+        text_encoder:
+          throughput_fps: 643.9
+```
+
+The shared limits apply to each component separately. Whole-model scope keeps
+the flat `expected.<profile>.throughput_fps` form below. See
+[independent components](benchmarking.md#independent-components).
 
 A measured value passes when it falls at most 5% below its expected accuracy
 or 10% below its expected throughput. For a metric that `metrics.json` marks
@@ -404,10 +470,10 @@ def test_performance_meets_its_expected_values(
 
 
 def test_performance_records_the_execution_plan_the_browser_draws(performance: dict[str, Any]) -> None:
-    (component,) = performance["components"].values()
-    plan = component["execution_plan"]
-    assert (plan["schema"], plan["schema_version"]) == ("sima.neat.execution_plan", 1)
-    assert plan["nodes"] and plan["edges"]
+    for component in performance["components"].values():
+        plan = component["execution_plan"]
+        assert (plan["schema"], plan["schema_version"]) == ("sima.neat.execution_plan", 1)
+        assert plan["nodes"] and plan["edges"]
 ```
 
 Update `expected` when a reviewed change moves a published value, such as a

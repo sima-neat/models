@@ -63,6 +63,8 @@
   "coco_mask_ar_large": {"stage": "accuracy", "label": "Mask AR large", "unit": "ratio", "direction": "higher", "registry_name": "model.accuracy.coco_mask_ar_large", "aggregation": "raw", "digits": 3},
   "coco_box_map": {"stage": "accuracy", "label": "Box mAP 50–95", "unit": "ratio", "direction": "higher", "registry_name": "model.accuracy.coco_box_map", "aggregation": "raw", "digits": 3},
   "coco_box_ap50": {"stage": "accuracy", "label": "Box AP50", "unit": "ratio", "direction": "higher", "registry_name": "model.accuracy.coco_box_ap50", "aggregation": "raw", "digits": 3},
+  "dota_obb_map50": {"stage": "accuracy", "label": "DOTA mAP50", "unit": "ratio", "direction": "higher", "registry_name": "model.accuracy.dota_obb_map50", "aggregation": "raw", "digits": 3},
+  "dota_obb_map": {"stage": "accuracy", "label": "DOTA mAP 50–95", "unit": "ratio", "direction": "higher", "registry_name": "model.accuracy.dota_obb_map", "aggregation": "raw", "digits": 3},
   "keypoint_repeatability": {"stage": "accuracy", "label": "Repeatability", "unit": "ratio", "direction": "higher", "registry_name": "model.accuracy.keypoint_repeatability", "aggregation": "raw", "digits": 3},
   "homography_accuracy": {"stage": "accuracy", "label": "Homography accuracy", "unit": "ratio", "direction": "higher", "registry_name": "model.accuracy.homography_accuracy", "aggregation": "raw", "digits": 3},
   "pose_auc_5": {"stage": "accuracy", "label": "Pose AUC@5°", "unit": "ratio", "direction": "higher", "registry_name": "model.accuracy.pose_auc_5", "aggregation": "raw", "digits": 3},

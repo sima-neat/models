@@ -1,3 +1,5 @@
+# A build profile of this model compiles for over 20 minutes, so it builds only on request.
+build-on-demand: true
 display_name: LightGlue
 description: Matches keypoints between two images, taking SuperPoint keypoints and descriptors as input.
 model_type: vision
@@ -51,6 +53,14 @@ build_profiles:
     components:
       model:
         parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 32}
+
+  # W8A8 whose attention and residual sums run BF16; surgery.BF16_REGIONS lists each region's operations. It keeps
+  # w16a16's accuracy, where plain w8a8 is faster and loses 6% of the pose AUC at 5 degrees.
+  w8a8_mixed:
+    calibration_dataset: yfcc100m-keypoints-cal
+    components:
+      model:
+        parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 32, bf16_regions: [attention, residual]}
 
   # W8A16 keeps 95.7% of the ONNX's matches, but Model Compiler 3.0.0's simulator check rejects it ("Check FAILED",
   # no MPK) with per-token quantization on, and every push would retry the failing compile. compile.py keeps its

@@ -172,6 +172,8 @@ A page shows one variant build: the component runs of one model and build
 profile compiled by one workflow. Its header carries the name, description,
 category tags and **Download**, with validation and source-link icons beside it.
 **Copy CLI command** is available inside the download dialog for current catalog builds.
+A model whose license `licenses.json` does not mark `downloadable` shows **Not
+available for download** in place of **Download** and has no package card.
 The model image sits beside the header content on wide screens and stacks below
 it on narrow screens. Both UI modes use this layout. Variant tabs and section
 links to **Overview**, **Performance**, **Accuracy**, **Details**, and **License**
@@ -204,13 +206,14 @@ everything longer sits in one expandable row.
   source or script; a reference score sits beside a measured one only when both
   name the same dataset. A build without an accuracy result shows only the
   reference scores.
-- **Details**, in the developer UI only, shows the package card (size, SHA-256, **Download package**,
-  and **Download components** for a multi-component build) and the package's numerical
+- **Details**, in the developer UI only, shows the package card (size, SHA-256, and
+  **Download package**) and the package's numerical
   fidelity, then rows for build provenance, source models (one
   per distinct digest), and each component: checksum, run identity, and a nested
   **Compile parameters** row.
-- **License** is one line with the SPDX identifier and redistribution, plus
-  the attribution.
+- **License** is one line with the license identifier, its name, and
+  redistribution, then the license's summary from `licenses.json` and the
+  attribution.
 
 The catalog records each build profile's benchmark fingerprints. A fingerprint
 without a run, or a profile without one, shows **Not measured at this
@@ -275,6 +278,9 @@ It also writes `component-pipelines.<revision>.json` from the `pipeline` field
 of each `model.yaml`, which draws the component order on a multi-component
 model page, and `reference-metrics.<revision>.json` from each
 `reference_metrics`; `preview.py` serves the same data from `models/`.
+It copies `licenses.json` to `licenses.<revision>.json`. That file names each
+license and decides whether a model page offers downloads, and it sits in this
+directory so that a static file server serves it with the page.
 `metrics.js` and `accuracy-metrics.js` keep the labels, units, and directions
 of `tools/model_report/metrics.json`, and tests keep them in step. Run
 `build:portal` with the repository installed or `PYTHON` set, as for
@@ -311,8 +317,9 @@ packages covering every shown component are offered as full-model downloads.
 The following confirmation flow applies to archive deployments, including
 previously published LLiMa ZIPs.
 
-The model download button includes every model-pack component from the selected
-variant's workflow build, commit, branch, target, and compiler. All
+A build with no package falls back to a download button that includes every
+model-pack component from the selected variant's workflow build, commit, branch,
+target, and compiler. All
 variants show a confirmation dialog listing component names, actual archive filenames, and file sizes.
 Choose **Download N files** to start the transfers in parallel, or **Cancel**
 (or Escape) to leave without starting any downloads. Cancel also works while
@@ -320,8 +327,9 @@ links are being prepared. Single-file variants require confirmation with **Downl
 Numerical-fidelity **Download JSON** remains a separate report download.
 
 **Download package** saves the published package under its registry filename:
-the MPK itself for a single-component model, or a ZIP of the component MPKs
-and declared resources otherwise. The dialog labels the file MPK or ZIP.
+a ZIP of the component MPKs and declared resources. A single-component build
+published before packages became ZIPs stays a bare MPK until its next compile.
+The dialog labels the file MPK or ZIP.
 
 All temporary URLs are prepared before any transfer starts. If preparation
 fails, the dialog reports the error and allows retrying. Files stream directly
