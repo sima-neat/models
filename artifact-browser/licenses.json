@@ -14,6 +14,11 @@
     "summary": "Permissive license. Redistribution must keep the copyright notice and disclaimer.",
     "downloadable": true
   },
+  "LicenseRef-BigScience-OpenRAIL-M": {
+    "name": "BigScience Open RAIL-M License",
+    "summary": "Responsible AI license. Redistribution must include the license and pass its use restrictions on to every recipient.",
+    "downloadable": true
+  },
   "LicenseRef-LFM-Open-1.0": {
     "name": "LFM Open License v1.0",
     "summary": "Use and redistribution are subject to Liquid AI's license. Commercial use by organizations meeting its revenue threshold requires a separate license. Include the license and notices.",

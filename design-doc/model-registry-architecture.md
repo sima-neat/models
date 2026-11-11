@@ -89,7 +89,7 @@ this table. Modules marked CI only are removed from the author package by
 | `report_publication.py` | the MPKs a benchmark runs, checking a `model-report.json` against `model.yaml`, and publishing one benchmark run under the profile's package run, with whole-model measurements by default or separate component measurements identified by `component_id` (CI only) |
 | `artifact.py` | compile outputs, MPK/deployed LLiMa verification, reproduction recipes, and deployment file indexes |
 | `mla_stage_simulation.py` | after an MPK compile, the Model Compiler simulator's operation counts and latency for each MLA stage (`simulate-mla-stages`) |
-| `package.py` | assembling a profile's `default` package from component MPKs or a complete native deployment folder, with its numerical fidelity report and MLA stage simulation |
+| `package.py` | assembling a profile's `default` package from component MPKs, the model's pinned `resources` and the compile's `runtime_files`, or from a complete native deployment folder, with its numerical fidelity report and MLA stage simulation |
 | `dependencies.py` | resolving the Model Compiler and DevKit runtime pins in `deps/` |
 | `fetch.py` | verified downloads, the cache, and dataset resolution |
 | `conversion.py` | conversion fingerprints, declared outputs, validated bundles, publication, durable plan selections and exact downloads; author CLI exposes only saved-selection fetching |
@@ -226,6 +226,10 @@ benchmarks (vulcan-model-benchmarking.yml, called per build profile inside the o
   -> performance and accuracy on a DevKit, then the model's benchmark tests on each model report
   -> publish each report under the profile's package run with its test outcome; a failed test then fails a check job
 ```
+
+LLiMa publication uses a default Vulcan Ubuntu ARM64 runner with its workspace on
+local NVMe for large deployments and package assembly. ONNX publication stays on
+GitHub-hosted runners.
 
 Pushes and manual build dispatches both use `VULCAN_ENV` as the model build and
 registry publication target. Set it to `production` for production builds or

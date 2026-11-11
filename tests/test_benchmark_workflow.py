@@ -256,7 +256,14 @@ def test_performance_runs_only_at_the_full_cpu_clock() -> None:
 def test_performance_runs_the_model_owned_script() -> None:
     script = (ROOT / "scripts/run_model_performance.sh").read_text(encoding="utf-8")
     assert '"$PYNEAT_PYTHON" "$MODEL_DIR/scripts/performance.py"' in script
-    assert '"${mpks[@]}" "${dataset[@]}" --output "$OUTPUT_DIR"' in script
+    assert '"${mpks[@]}" "${dataset[@]}" "${resources[@]}" --output "$OUTPUT_DIR"' in script
+    # A model's CPU work gets its pinned resources and its pinned wheels, beside PyNeat's environment.
+    assert "model_registry fetch-resources" in script
+    assert 'resources=(--resources "$resource_dir")' in script
+    assert script.index("fetch-resources") < script.index('scripts/performance.py"')
+    assert 'REQUIREMENTS="$MODEL_DIR/scripts/requirements-performance.txt"' in script
+    assert '--target "$site" -r "$REQUIREMENTS"' in script
+    assert 'PYTHONPATH="$REPOSITORY/tools:$site"' in script
     # The script picks its benchmark input from the model's first accuracy dataset, unpacked.
     assert "model_registry resolve-devkit-accuracy" in script
     assert 'dataset=(--dataset "$name=$directory")' in script

@@ -31,6 +31,7 @@ models/<model-id>/README.md
 models/<model-id>/model.yaml                        # identity, builds, fidelity, accuracy, performance
 models/<model-id>/scripts/compile.py
 models/<model-id>/scripts/performance.py
+models/<model-id>/scripts/requirements-performance.txt # optional, with performance.py
 models/<model-id>/scripts/accuracy.py               # only with an accuracy declaration
 models/<model-id>/scripts/requirements-accuracy.txt # optional, with accuracy.py
 models/<model-id>/scripts/convert.py                # only with a declared conversion
@@ -231,8 +232,9 @@ configuration remain staging:
    `run_llima_compilation.sh` for LLiMa) runs the recipe. Each artifact is
    verified with its provenance, and the model's compile tests check the
    output. A failing test leaves the build unpublished.
-5. **Publish.** A GitHub-hosted job verifies the complete component set,
-   publishes each component and its fidelity report as a compile run,
+5. **Publish.** A default Vulcan Ubuntu runner with local NVMe handles LLiMa
+   deployments; ONNX uses a GitHub-hosted runner. The job verifies the complete
+   component set, publishes each component and its fidelity report as a compile run,
    assembles and publishes the packages the build completes, and records the
    build in the catalog. A new Modalix build is then benchmarked right away,
    while other builds may still compile.
