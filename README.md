@@ -83,7 +83,7 @@ tools/model_registry/   shared CLI and lifecycle code
 scripts/                stage runner scripts and CI helpers
 schemas/                JSON Schemas for model.yaml, tests, and reports
 artifact-browser/       the Model Browser
-docs/                   contribution guides
+docs/                   generated contributor-guide snapshot (source: model-tools)
 design-doc/             architecture
 ```
 
@@ -97,3 +97,9 @@ describes every directory.
 - [Model Registry architecture](design-doc/model-registry-architecture.md):
   components, the CI workflows, and the registry release state.
 - [Model taxonomy](docs/model-taxonomy.md): sanctioned category IDs.
+
+The contributor guide is maintained in
+[model-tools](https://github.com/sima-neat/model-tools/tree/main/docs/contributor-guide).
+The copy under `docs/` is a generated snapshot pinned by
+[`docs/.guide-source.json`](docs/.guide-source.json); submit guide edits to model-tools.
+Model definitions, recipes, READMEs and operational evidence remain here.

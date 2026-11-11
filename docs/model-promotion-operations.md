@@ -82,7 +82,7 @@ are directory manifests whose runtime files must each be downloaded and verified
 Promotion does not compile or copy these artifacts. Provisioning the role,
 finalizing a build and approving its Develop selection are separate milestones.
 
-See the [production acceptance record](evidence/production-promotion-2026-11-08.md)
+See the [production acceptance record](https://github.com/sima-neat/models/blob/1078eca263c1d9a017f1666c4e7659685bb78305/docs/evidence/production-promotion-2026-11-08.md)
 for the tested revisions, successful protected LLiMa promotion and selected
 download, and remaining live MPK acceptance. Do not treat source tests or configuration deployment as a successful
 protected promotion. Production automatic cleanup is still disabled: explicitly
@@ -287,7 +287,7 @@ Model ID and build profile remain required and are verified against the candidat
 returned by the selected registry. A staging UUID cannot be used to promote in
 production. Production candidate publication and promotion are separate operations. The
 production Whisper build and finalized candidate are recorded in the
-[acceptance evidence](evidence/production-promotion-2026-11-08.md); automatic
+[acceptance evidence](https://github.com/sima-neat/models/blob/1078eca263c1d9a017f1666c4e7659685bb78305/docs/evidence/production-promotion-2026-11-08.md); automatic
 staging receipt lookup never selects a production candidate.
 
 After the approval/decision job finishes, the report job sends a second Slack

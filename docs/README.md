@@ -1,5 +1,3 @@
-import ContributionPath from '@site/src/components/ContributionPath';
-
 # Contribute a model
 
 The Model Registry makes models discoverable, reproducible, and deployable on
@@ -10,6 +8,22 @@ build profiles, packages, datasets, and the evidence each build must produce.
 This documentation is for model developers who create or update that contract.
 It explains how to define a model, qualify it locally, submit it for review,
 and what trusted automation does after merge.
+
+## Guide ownership and tooling transition
+
+This entire contributor guide is maintained in
+[`model-tools/docs/contributor-guide`](https://github.com/sima-neat/model-tools/tree/main/docs/contributor-guide).
+Models publishes a generated snapshot pinned to a model-tools commit; edit the
+canonical guide and regenerate that snapshot rather than editing the copy.
+The same guide can be consumed by Models and models-private; access and
+publication permissions still belong to each repository and environment.
+
+Unless a page explicitly says otherwise, commands and repository paths describe
+the current Models develop workflow. Run them from a Models checkout. Its
+existing `model-registry` package remains in use until the separate runtime
+migration is qualified. The replacement source lives under `src/tools` in
+model-tools and installs the `model-tools` command. Moving this guide does not
+change credentials, supported private-registry operations, or publication policy.
 
 ## How a build is benchmarked
 
@@ -53,11 +67,16 @@ qualification.
 A contribution moves through six stages. Each produces the input or evidence
 the next one needs. Select a stage to open its guide.
 
-<ContributionPath />
+1. [Define the model contract](adding-a-model.md).
+2. [Qualify locally](local-development.md).
+3. [Submit for review](contributing.md).
+4. [Follow trusted staging automation](contributing.md#after-merge-trusted-staging-automation).
+5. [Review the published results](model-browser.md).
+6. [Promote an approved revision](model-promotion.md).
 
 ## Before you begin
 
-You need a checkout of this repository, `sima-cli`, and the repository-pinned
+You need a checkout of the Models repository, `sima-cli`, and the repository-pinned
 Model Compiler from the NEAT SDK or a standalone installation. The DevKit
 stages need a compatible Modalix DevKit. Models that use calibration,
 fidelity, or accuracy data also need private Artifactory access.

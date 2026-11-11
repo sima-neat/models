@@ -1,10 +1,30 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 MARKDOWN_LINK = re.compile(r"(?<!!)\[[^]]+\]\(([^)]+)\)")
+
+
+def test_contributor_guide_is_an_unmodified_pinned_model_tools_snapshot() -> None:
+    docs = ROOT / "docs"
+    receipt = json.loads((docs / ".guide-source.json").read_text())
+    assert receipt["repository"] == "sima-neat/model-tools"
+    assert receipt["path"] == "docs/contributor-guide"
+    assert re.fullmatch(r"[0-9a-f]{40}", receipt["commit"])
+    assert {p.name for p in docs.glob("*.md")} <= receipt["files"].keys()
+    for name, digest in receipt["files"].items():
+        target = (docs / name).resolve()
+        assert target.is_relative_to(docs.resolve())
+        assert not (docs / name).is_symlink()
+        assert hashlib.sha256(target.read_bytes()).hexdigest() == digest, (
+            f"{name} is generated; edit model-tools/docs/contributor-guide and export a new snapshot"
+        )
+    config = (ROOT / "website/docusaurus.config.ts").read_text()
+    assert "sima-neat/model-tools/edit/main/docs/contributor-guide/" in config
 
 
 def test_local_markdown_links_resolve() -> None:

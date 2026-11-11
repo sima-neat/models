@@ -124,9 +124,9 @@ required_metrics:
 A model must report, on each of its accuracy datasets, the metrics listed for
 any of its `tasks`. Validation fails when a dataset has no file or the file
 lists nothing for the model's tasks.
-[`dataset-requirements.schema.json`](../schemas/dataset-requirements.schema.json)
+[`dataset-requirements.schema.json`](https://github.com/sima-neat/models/blob/1078eca263c1d9a017f1666c4e7659685bb78305/schemas/dataset-requirements.schema.json)
 defines the file, and each metric must be an accuracy metric of
-[`tools/model_report/metrics.json`](../tools/model_report/metrics.json).
+[`tools/model_report/metrics.json`](https://github.com/sima-neat/models/blob/1078eca263c1d9a017f1666c4e7659685bb78305/tools/model_report/metrics.json).
 
 A change to a task's entry reruns accuracy only for the models with that task
 that evaluate the dataset. A new file or an entry for a task no such model has

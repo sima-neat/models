@@ -175,7 +175,7 @@ build_profiles:
 ```
 
 Name the profile by its variant ID: the precision token of each component from
-[`naming-conventions.yaml`](../naming-conventions.yaml), in component order,
+[`naming-conventions.yaml`](https://github.com/sima-neat/models/blob/1078eca263c1d9a017f1666c4e7659685bb78305/naming-conventions.yaml), in component order,
 with a repeated token written once, such as `w8a8`, `w16a16`, or
 `w8a8_w16a16`. Each compiled MPK carries the model and variant ID, such as
 `yolo26n_w8a8_mpk.tar.gz`. See [Build profiles](metadata-schema.md#build-profiles)
@@ -257,7 +257,7 @@ Fidelity is diagnostic numerical agreement, not task accuracy. `accuracy`
 names the datasets it evaluates, and each dataset's
 [requirements file](datasets.md#required-accuracy-metrics) lists the metrics
 its result must hold for the model's tasks. Every `performance` report holds
-the metrics [`metrics.json`](../tools/model_report/metrics.json) marks
+the metrics [`metrics.json`](https://github.com/sima-neat/models/blob/1078eca263c1d9a017f1666c4e7659685bb78305/tools/model_report/metrics.json) marks
 `required`. Decoder choices and measurement settings stay in the scripts. See [Quality and
 performance](metadata-schema.md#quality-and-performance).
 
@@ -377,7 +377,7 @@ deliver on a DevKit in `expected`, keyed by every build profile the stage
 measures: the latest published values for the profile's declared scope. For
 accuracy, key the values by each dataset `accuracy` names, and supply finite
 values of accuracy metrics from
-[`tools/model_report/metrics.json`](../tools/model_report/metrics.json),
+[`tools/model_report/metrics.json`](https://github.com/sima-neat/models/blob/1078eca263c1d9a017f1666c4e7659685bb78305/tools/model_report/metrics.json),
 covering at least the metrics that dataset requires. Keep optional expectations such as
 top-5: a missing expected measurement fails. For performance, supply
 `throughput_fps`. Take the values from the model browser's latest `develop`

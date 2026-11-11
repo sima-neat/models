@@ -5,6 +5,16 @@ model is compiled, benchmarked, and published. `model.yaml` declares a model, th
 model's `scripts/` hold code specific to that model, and `tools/model_registry`
 holds the shared lifecycle.
 
+## Contributor guide ownership
+
+The shared contributor guide is maintained in
+[model-tools](https://github.com/sima-neat/model-tools/tree/main/docs/contributor-guide).
+Files listed in `docs/.guide-source.json` are generated snapshots: do not edit
+them here. Change the canonical guide in model-tools, then open a snapshot
+update PR pinned to its full commit. Preserve consumer-owned `docs/evidence/`.
+See model-tools `docs/guide-maintenance.md` for the export procedure. This does
+not migrate the runtime tooling or CI workflows described below.
+
 ## Vocabulary
 
 A **build** is one build profile of one model, compiled in one compile
@@ -443,7 +453,8 @@ Keep maintainer explanations next to what they explain: in `model.yaml`
 comments, or in the docstrings of `convert.py`, `performance.py`, and
 `accuracy.py`. For ONNX models, every other file under `models/<id>/scripts/`
 is part of the compile fingerprint, so a comment there recompiles the model. Procedures
-that apply to every model belong in `docs/`. Maintainer guides inside a model directory, such
+that apply to every model belong in the canonical contributor guide in
+`model-tools/docs/contributor-guide/`; this repository renders its pinned snapshot. Maintainer guides inside a model directory, such
 as `scripts/qat/README.md`, use whatever structure suits their workflow.
 
 Every model has a hero: a regular (non-symlinked) 1200x480 PNG no

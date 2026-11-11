@@ -92,9 +92,9 @@ report.save(args.output)
 `report.save()` writes `model-report.json`, the whole-model report the
 registry publishes unchanged and the model browser reads, and Core's own
 `benchmark-report.json` beside it as evidence.
-[`model-report.schema.json`](../schemas/model-report.schema.json) defines the
+[`model-report.schema.json`](https://github.com/sima-neat/models/blob/1078eca263c1d9a017f1666c4e7659685bb78305/schemas/model-report.schema.json) defines the
 report. Its `metrics` hold one number per measured metric, named as
-[`tools/model_report/metrics.json`](../tools/model_report/metrics.json)
+[`tools/model_report/metrics.json`](https://github.com/sima-neat/models/blob/1078eca263c1d9a017f1666c4e7659685bb78305/tools/model_report/metrics.json)
 defines them. It also keeps Core's whole `telemetry` and, for each component,
 its execution plan and MLA layer and stage stats. `workload` is one line that says what
 ran, such as the selected decoder and postprocessing.
@@ -107,7 +107,7 @@ performance: {}
 ```
 
 Without `build_profiles`, every build profile is measured. Every report must
-hold the metrics [`metrics.json`](../tools/model_report/metrics.json) marks
+hold the metrics [`metrics.json`](https://github.com/sima-neat/models/blob/1078eca263c1d9a017f1666c4e7659685bb78305/tools/model_report/metrics.json) marks
 `required`: average latency, throughput, average SoM power, and energy per
 inference. Decoder and
 measurement settings have one source of truth in `performance.py`; they are
@@ -302,7 +302,7 @@ After an MPK compile, `scripts/run_model_compilation.sh` runs
 (numbered as Core numbers it), `effective_ops`, `total_ops`, and
 `simulated_latency_us`. A missing or failing `mla-msim` is recorded in the
 component's `status` rather than failing the build.
-[`mla-stage-simulation.schema.json`](../schemas/mla-stage-simulation.schema.json)
+[`mla-stage-simulation.schema.json`](https://github.com/sima-neat/models/blob/1078eca263c1d9a017f1666c4e7659685bb78305/schemas/mla-stage-simulation.schema.json)
 defines the file. The package carries it, and a staging package run publishes it
 as the `performance/mla-stage-simulation` test result.
 
@@ -404,7 +404,7 @@ the performance stage does not run when that step fails.
 4. runs the model's `performance.py`, which writes `model-report.json` and
    `benchmark-report.json`, and copies its output to `performance.log`;
 5. runs `model-registry check-report`, which validates the report against
-   [`model-report.schema.json`](../schemas/model-report.schema.json) and the
+   [`model-report.schema.json`](https://github.com/sima-neat/models/blob/1078eca263c1d9a017f1666c4e7659685bb78305/schemas/model-report.schema.json) and the
    `model.yaml` declaration and writes the board's installed packages and
    clocks to `environment.json`.
 

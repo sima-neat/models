@@ -104,7 +104,7 @@ report.save(args.output)
 
 How the script evaluates each dataset is up to the model. Every score is
 named as an accuracy metric in
-[`tools/model_report/metrics.json`](../tools/model_report/metrics.json) and
+[`tools/model_report/metrics.json`](https://github.com/sima-neat/models/blob/1078eca263c1d9a017f1666c4e7659685bb78305/tools/model_report/metrics.json) and
 given in that metric's unit: a ratio from 0 to 1 for most metrics, a
 percentage from 0 to 100 for `d1_all`, and pixels for `epe`. Each dataset's
 result must hold every metric its requirements file lists for
@@ -137,7 +137,7 @@ and the MPKs it lists. The script:
    and `PYTHONPATH` including `tools`, which writes
    `model-report.json`, and saves its output to `accuracy.log`; and
 6. runs `model-registry check-report`, which validates the report against
-   [`model-report.schema.json`](../schemas/model-report.schema.json), requires
+   [`model-report.schema.json`](https://github.com/sima-neat/models/blob/1078eca263c1d9a017f1666c4e7659685bb78305/schemas/model-report.schema.json), requires
    a result for exactly the declared datasets, each with its required metrics,
    and writes the board's installation to
    `environment.json`.
@@ -182,7 +182,7 @@ script and no fingerprint includes it, so adding or editing it reruns nothing.
 ### Report and publication
 
 `model-report.json` follows
-[`model-report.schema.json`](../schemas/model-report.schema.json): the stage,
+[`model-report.schema.json`](https://github.com/sima-neat/models/blob/1078eca263c1d9a017f1666c4e7659685bb78305/schemas/model-report.schema.json): the stage,
 the PyNeat version and build, and `datasets`, which gives for each dataset source
 ID its evaluated split and sample counts, one number per metric, and free-form
 `details`. The model, build profile, MPK

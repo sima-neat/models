@@ -1,0 +1,31 @@
+{
+  "commit": "79592429f1ae6254c7245ffca7a1b1a2160df08e",
+  "files": {
+    "README.md": "ef0b600e89a801c7b835f1232bc6b0a400d0428baa5b0c242814a0f4fb6356da",
+    "adding-a-model.md": "725372ee955962a0ea19c1c87353eee311dbea07f9b6a8326ad8c9c4f3ae7a37",
+    "assets/examples/resnet_50.png": "28d80e09c7dfa4b597c76022e6056eb84bf544c022fc005bddb2fe7347e8d836",
+    "assets/examples/rf_detr_nano.png": "455332266730675ca213708eef3418ca4baee71996ed86c215aee1f04516c1fa",
+    "assets/examples/rf_detr_small.png": "8fab4934a9e4714e96140a5625b5f8a5aa9bfce2c6d2910339c42c4271f09c8c",
+    "assets/examples/whisper_small.png": "2d3e3b227bf0f5defd2cbf6cd8f499c41a4aec186ec0970f8d0eb421bdb58d69",
+    "assets/examples/yolo26m_seg.png": "1d85bebd783848e4181526596ccbfb8e03fde0489287e7ece313815b7f0ee5b3",
+    "assets/examples/yolo26n_pose.png": "cdc9b9cfd0175fb168f803126b1ab89bc2893d43ab67c289d7d3ccbd91cd15b2",
+    "assets/illustration-guide/palette-with-skin.svg": "4ef576a81984a9bb618a149db13a51648be70e0eb230e6b47e58675f0cab573c",
+    "assets/illustration-guide/palette.svg": "4a1315a40fa0af8c62069391ea987ac2d942b223ddd5da17fc23c85979ba30df",
+    "assets/readme/hero.png": "f1c25e2a5d8db6f3b0b28ec5548703eb454305426d2ef1a4f6053d4863d33220",
+    "benchmarking.md": "7185a901556a9db2cdbc71683cdb26e37e5cd24cb76f8a2b40cd1baac96274b8",
+    "contributing.md": "891c02fd5099ea61d07204aaa613271d37478dca7c6cb9fe254c6d512d056c30",
+    "conversion-artifacts.md": "74403bcc7aea45f5c87d5d793db180da52375065f5460ef80687b108b994e225",
+    "datasets.md": "dfdbdee41a28029e8f4c1cb52e2029f2e0d6dc9a44d2aa1b341b19cf4c1fd2a1",
+    "illustration-guide.md": "2eae8b616f2fd329a6e2af8af8e11274a255b3862474b58b542eaafdd0acbd68",
+    "local-accuracy-development.md": "00e4afcf663e6de51535341f16149636e67839d551b675adfcd8606f5b37c96f",
+    "local-development.md": "de48352d5f9ee0b2d60be8ddf8b4f42808a9bcac7ca5ed7640b82f2e5b6cc0b7",
+    "metadata-schema.md": "67b8f79d5e203785c3c04eb4628f22e331c12d42b1cee54e32474ed9dfd2adee",
+    "model-browser.md": "8ac424249893083a176fb0e6bee2a3c20e3b542809ea3ce8a104c75aa0c531cc",
+    "model-promotion-operations.md": "8456cfa67834c3f3d5ba16ff92c0c62534a0d12fa554e49514617d2fb9bf08ab",
+    "model-promotion.md": "b01318e32e64b1c47ed8685be7cc994164242cf4f04c330fa60c29bba8e0416b",
+    "model-taxonomy.md": "efd0fc1fb423acefce221c9508e347b6789a4f28311b6444a874a9fa3ff62aaf",
+    "runner-class-requests.md": "248783a40611291efc8611f8941ccd47c24ae627b7bd550406f9cf4b564c3025"
+  },
+  "path": "docs/contributor-guide",
+  "repository": "sima-neat/model-tools"
+}

@@ -72,7 +72,7 @@ license:
   attribution: Derived from microsoft/resnet-50 and distributed under Apache-2.0.
 ```
 
-- `spdx` is an ID listed in [`artifact-browser/licenses.json`](../artifact-browser/licenses.json): an SPDX
+- `spdx` is an ID listed in [`artifact-browser/licenses.json`](https://github.com/sima-neat/models/blob/1078eca263c1d9a017f1666c4e7659685bb78305/artifact-browser/licenses.json): an SPDX
   identifier, or a `LicenseRef-` ID for a license SPDX does not list.
 - `redistribution` is `allowed`, `restricted`, `prohibited`, or `unknown`.
   Publication refuses a package marked `prohibited` or `unknown`.
@@ -213,7 +213,7 @@ build_profiles:
 ```
 
 Compose the profile ID from the precision tokens in
-[`naming-conventions.yaml`](../naming-conventions.yaml): one token per
+[`naming-conventions.yaml`](https://github.com/sima-neat/models/blob/1078eca263c1d9a017f1666c4e7659685bb78305/naming-conventions.yaml): one token per
 component in component order, with a repeated token written once. Both
 components W8A8 is `w8a8`; an INT8 backbone followed by a BF16 decoder is
 `w8a8_w16a16`. Leave the target out of the ID. If two profiles of one model
@@ -328,7 +328,7 @@ accuracy:
 The metrics each dataset's result must hold come from
 `datasets/<registry id>.yaml` for the model's `tasks`; see [Required accuracy
 metrics](datasets.md#required-accuracy-metrics). Metric names come from
-[`tools/model_report/metrics.json`](../tools/model_report/metrics.json).
+[`tools/model_report/metrics.json`](https://github.com/sima-neat/models/blob/1078eca263c1d9a017f1666c4e7659685bb78305/tools/model_report/metrics.json).
 `tests/tests.yaml` supplies the expected values per build profile and dataset;
 a missing expected measurement fails.
 
@@ -352,7 +352,7 @@ performance:
 Each component then has separate metrics, workload, telemetry and execution
 statistics in the report's `components` map, with no combined metrics. Both
 scopes publish one performance run per profile. Every measured result must hold the metrics
-[`metrics.json`](../tools/model_report/metrics.json) marks `required`. Decoder selection and measurement settings stay in the script, which
+[`metrics.json`](https://github.com/sima-neat/models/blob/1078eca263c1d9a017f1666c4e7659685bb78305/tools/model_report/metrics.json) marks `required`. Decoder selection and measurement settings stay in the script, which
 customers can copy and run with PyNeat; YAML does not duplicate them.
 
 See [Accuracy and fidelity](local-accuracy-development.md) and [DevKit

@@ -7,8 +7,8 @@ Choose the detail level by the object's size and the information being shown.
 
 | Style | Use for | Detail | References |
 | --- | --- | --- | --- |
-| Simplified icons | Informational graphics, scenes with several objects, diagrams and sequences | Flat silhouettes with the fewest shapes needed for recognition and essential features only | [RF-DETR Nano](../models/rf_detr_nano/hero.png) |
-| Detailed illustrations | Large focal subjects, single-object heroes, close-ups and explanations of features or defects | More facets and selected facial, structural or diagnostic features; quieter unrelated areas | [ResNet-50](../models/resnet_50/hero.png) |
+| Simplified icons | Informational graphics, scenes with several objects, diagrams and sequences | Flat silhouettes with the fewest shapes needed for recognition and essential features only | [RF-DETR Nano](assets/examples/rf_detr_nano.png) |
+| Detailed illustrations | Large focal subjects, single-object heroes, close-ups and explanations of features or defects | More facets and selected facial, structural or diagnostic features; quieter unrelated areas | [ResNet-50](assets/examples/resnet_50.png) |
 
 A hero containing several small objects still uses the simplified style.
 Add detail when the subject has enough space and it helps explain something:
@@ -133,20 +133,20 @@ Use the finished `models/<id>/hero.png` files as visual references.
 
 | Example | Hero | Preserve |
 | --- | --- | --- |
-| Detailed focal subject | [ResNet-50](../models/resnet_50/hero.png) | Seated cat silhouette, curled tail, expressive eyes and visible mouth |
-| Simplified objects | [RF-DETR Nano](../models/rf_detr_nano/hero.png) | Front-on rectangular laptop screen, short centered trapezoid base and one solid keyboard area |
-| Detection | [RF-DETR Small](../models/rf_detr_small/hero.png) | Simple scene, tight boxes and distinct class colors |
-| Segmentation | [YOLO26m Seg](../models/yolo26m_seg/hero.png) | Filled class masks, visible contours and unmasked gaps |
-| Pose | [YOLO26n Pose](../models/yolo26n_pose/hero.png) | Readable simplified people and clearly visible skeleton overlays |
-| Input/output explanation | [Whisper Small](../models/whisper_small/hero.png) | Clear reading direction and explicit input and output |
+| Detailed focal subject | [ResNet-50](assets/examples/resnet_50.png) | Seated cat silhouette, curled tail, expressive eyes and visible mouth |
+| Simplified objects | [RF-DETR Nano](assets/examples/rf_detr_nano.png) | Front-on rectangular laptop screen, short centered trapezoid base and one solid keyboard area |
+| Detection | [RF-DETR Small](assets/examples/rf_detr_small.png) | Simple scene, tight boxes and distinct class colors |
+| Segmentation | [YOLO26m Seg](assets/examples/yolo26m_seg.png) | Filled class masks, visible contours and unmasked gaps |
+| Pose | [YOLO26n Pose](assets/examples/yolo26n_pose.png) | Readable simplified people and clearly visible skeleton overlays |
+| Input/output explanation | [Whisper Small](assets/examples/whisper_small.png) | Clear reading direction and explicit input and output |
 
 **Simplified construction — front-on laptop**
 
-![Front-on geometric laptop with a rectangular screen, centered trapezoid base and solid keyboard area beside a cup and plant](../models/rf_detr_nano/hero.png)
+![Front-on geometric laptop with a rectangular screen, centered trapezoid base and solid keyboard area beside a cup and plant](assets/examples/rf_detr_nano.png)
 
 **Classification — detailed focal subject**
 
-![Geometric cat beside ranked classification labels](../models/resnet_50/hero.png)
+![Geometric cat beside ranked classification labels](assets/examples/resnet_50.png)
 
 ## Reusable prompt
 
