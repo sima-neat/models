@@ -23,7 +23,6 @@ from jsonschema import Draft202012Validator
 
 from .artifact import (
     compile_output_fields,
-    deployment_artifact_name,
     deployment_files,
     llima_compiled_parameters,
     validate_compile_outputs,
@@ -42,6 +41,7 @@ from .package import FIDELITY_FILE
 from .registry_http import RegistryPublicationError, SigV4RegistryClient
 from .registry_http import read_registry_json_authenticated as _public_registry_json
 from .runner_approval import runner_provenance
+from .runtime_files import restore_runtime_files, runtime_file_path
 from .source import source_identity
 from .stage_plan import merge_catalog_sources, read_catalog_sources, read_current_catalog
 from .taxonomy import (
@@ -999,11 +999,7 @@ def stage_catalog_build(
         raise ValidationError("current catalog does not link every component in the compile invocation")
 
     staged_outputs = []
-    runtime_files: dict[str, JsonObject] = {}
-    reserved_paths = {"compile-outputs.json", "compile-timing.json", "fidelity.json", SIMULATION_FILE,
-                      *invocation["component_ids"]}
-    reserved_paths.update(f"{component}/{name}" for component in invocation["component_ids"]
-                          for name in ("compile-result.json", "registry-publication.json", "deployment-manifest.json"))
+    legacy_runtime_files = {}
     for component_id in invocation["component_ids"]:
         build = builds[component_id]
         run_id = build.get("run_id")
@@ -1027,24 +1023,15 @@ def stage_catalog_build(
         archive_name = "deployment-manifest.json" if native else mpk_filename(model, build_profile_id, component_id)
         archive = component_dir / archive_name
         _download_registry_file(download_url, archive, artifact, download_request)
-        if "runtime_files" in artifact.get("metadata", {}):
-            files = deployment_files({"files": artifact["metadata"]["runtime_files"]})
-            for item in files:
-                name = item["path"]
-                path = component_dir.parent / name
-                if (Path(name).parts[0] == "packages" or name in reserved_paths or name.endswith("_mpk.tar.gz")
-                        or any(parent.is_symlink() for parent in (path, *path.parents))):
-                    raise ValidationError(f"unsafe runtime file path: {name}")
-                if name in runtime_files:
-                    if runtime_files[name] != item:
-                        raise ValidationError(f"conflicting runtime file: {name}")
-                    continue
-                registered = read(f"{base_url}/v1/runs/{run_id}/artifacts/{item['artifact']}").get("artifact", {})
-                if (registered.get("sha256") != item["sha256"] or registered.get("size_bytes") != item["size_bytes"]
-                        or not isinstance(registered.get("download_url"), str)):
-                    raise ValidationError(f"inconsistent runtime file artifact: {name}")
-                _download_registry_file(registered["download_url"], path, registered, download_request)
-                runtime_files[name] = item
+        # Earlier publications registered supporting files on compile artifacts.
+        # Keep those builds restorable; new publications use the shared package manifest.
+        metadata = artifact.get("metadata") or {}
+        if "runtime_files" in metadata:
+            for item in deployment_files({"files": metadata["runtime_files"]}):
+                previous = legacy_runtime_files.get(item["path"])
+                if previous is not None and previous[1] != item:
+                    raise ValidationError(f"conflicting runtime file: {item['path']}")
+                legacy_runtime_files.setdefault(item["path"], (run_id, item))
         if native:
             try:
                 manifest = json.loads(archive.read_text(encoding="utf-8"))
@@ -1105,6 +1092,43 @@ def stage_catalog_build(
             }
         )
     profile_dir = output / model_id / build_profile_id
+    runtime_files = []
+    package = next((
+        item for item in catalog_model.get("packages", [])
+        if isinstance(item, dict) and (item.get("build_profile_id"), item.get("package_id")) == (
+            build_profile_id, "default"
+        )
+    ), None)
+    if package is not None:
+        response = read(f"{base_url}/v1/runs/{package['run_id']}/artifacts/package")
+        artifact = response.get("artifact")
+        if not isinstance(artifact, dict):
+            raise ValidationError("artifact registry returned no package metadata")
+        metadata = artifact.get("metadata") or {}
+        if not isinstance(metadata, dict):
+            raise ValidationError("artifact registry returned invalid package metadata")
+        if "runtime_files" in metadata:
+            component_runs = {item["component_id"]: item["run_id"] for item in staged_outputs}
+            if (artifact.get("sha256") != package.get("artifact_sha256")
+                    or artifact.get("size_bytes") != package.get("size_bytes")
+                    or not isinstance(artifact.get("download_url"), str)
+                    or metadata.get("component_run_ids") != component_runs
+                    or package.get("component_run_ids") != component_runs):
+                raise ValidationError("runtime-file package does not match the current catalog build")
+            with tempfile.TemporaryDirectory(prefix="restore-package-", dir=profile_dir) as temporary:
+                archive = Path(temporary) / "package.zip"
+                _download_registry_file(artifact["download_url"], archive, artifact, download_request)
+                runtime_files = metadata["runtime_files"]
+                restore_runtime_files(archive, runtime_files, profile_dir)
+    if not runtime_files:
+        for run_id, item in legacy_runtime_files.values():
+            path = runtime_file_path(profile_dir, item["path"])
+            registered = read(f"{base_url}/v1/runs/{run_id}/artifacts/{item['artifact']}").get("artifact", {})
+            if (registered.get("sha256") != item["sha256"] or registered.get("size_bytes") != item["size_bytes"]
+                    or not isinstance(registered.get("download_url"), str)):
+                raise ValidationError(f"inconsistent runtime file artifact: {item['path']}")
+            _download_registry_file(registered["download_url"], path, registered, download_request)
+            runtime_files.append({"path": item["path"], "sha256": item["sha256"]})
     # The same manifest a compile writes, so later stages read restored and fresh builds alike.
     (profile_dir / "compile-outputs.json").write_text(
         json.dumps({
@@ -1114,22 +1138,18 @@ def stage_catalog_build(
             "outputs": [
                 {key: item[key] for key in ("component_id", *compile_output_fields(item))} for item in staged_outputs
             ],
-            **({"runtime_files": [{"path": item["path"], "sha256": item["sha256"]}
-                                  for item in runtime_files.values()]} if runtime_files else {}),
+            **({"runtime_files": runtime_files} if runtime_files else {}),
         }, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
     # A benchmark runs under the profile's package run, as after a fresh build's publish-package.
-    for package in catalog_model.get("packages", []):
-        if isinstance(package, dict) and (package.get("build_profile_id"), package.get("package_id")) == (
-            build_profile_id, "default"
-        ):
-            receipt = profile_dir / "packages" / "default" / "registry-publication.json"
-            receipt.parent.mkdir(parents=True, exist_ok=True)
-            receipt.write_text(
-                json.dumps({"packages": [{"model_id": model_id, **package}]}, indent=2, sort_keys=True) + "\n",
-                encoding="utf-8",
-            )
+    if package is not None:
+        receipt = profile_dir / "packages" / "default" / "registry-publication.json"
+        receipt.parent.mkdir(parents=True, exist_ok=True)
+        receipt.write_text(
+            json.dumps({"packages": [{"model_id": model_id, **package}]}, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
     return {"count": len(staged_outputs), "outputs": staged_outputs}
 
 
@@ -1362,7 +1382,6 @@ def _preflight_compilations(
     expected_results: set[Path] = set()
     invocation_by_result: dict[Path, str] = {}
     output_by_result: dict[Path, JsonObject] = {}
-    runtime_by_result: dict[Path, list[JsonObject]] = {}
     manifests = sorted(dist.glob("*/*/compile-outputs.json"))
     for manifest_path in manifests:
         model_id, build_profile_id = manifest_path.relative_to(dist).parts[:2]
@@ -1391,19 +1410,11 @@ def _preflight_compilations(
             compile_invocation_id=invocation_id,
             component_ids=list(invocation["components"]),
         )
-        runtime_files = [
-            {**item, "artifact": deployment_artifact_name(item["path"]),
-             "size_bytes": (manifest_path.parent / item["path"]).stat().st_size}
-            for item in validated.get("runtime_files", [])
-        ]
-        if runtime_files:
-            deployment_files({"files": runtime_files})
         for output in validated["outputs"]:
             result_path = manifest_path.parent / output["component_id"] / "compile-result.json"
             expected_results.add(result_path)
             invocation_by_result[result_path] = invocation_id
             output_by_result[result_path] = output
-            runtime_by_result[result_path] = runtime_files
 
     actual_results = set(dist.glob("*/*/*/compile-result.json"))
     if actual_results != expected_results:
@@ -1510,7 +1521,6 @@ def _preflight_compilations(
                 "compiled_parameters": compiled_parameters,
                 "archive": archive,
                 "files": files,
-                "runtime_files": runtime_by_result[result_path],
                 "artifact_sha": artifact_sha,
                 "compiler_version": compiler_version,
                 "compiler_label": compiler_label,
@@ -1706,14 +1716,6 @@ def publish_compilations(
             "component_id": component_id, "target": target,
             **({"build_on_demand": True} if on_demand else {}),
         }
-        if compilation["runtime_files"]:
-            _publish_deployment_files(
-                client, store, run_id=run_id, stable_key=stable_key, bucket=bucket,
-                deployment=archive.parent.parent, files=compilation["runtime_files"],
-                metadata=artifact_metadata, retention_class=retention_class,
-                upload_prefix=candidate["upload_prefix"].rstrip("/") if candidate else None,
-            )
-            artifact_metadata["runtime_files"] = compilation["runtime_files"]
         if native:
             _publish_deployment_files(
                 client, store, run_id=run_id, stable_key=stable_key, bucket=bucket,
@@ -1787,12 +1789,8 @@ def publish_compilations(
 
 
 def _package_media_type(archive_name: str) -> str | None:
-    """Return the media type of a single-component model's MPK package or a ZIP package, or None otherwise."""
-    if archive_name.endswith("_mpk.tar.gz"):
-        return "application/gzip"
-    if archive_name.endswith(".zip"):
-        return "application/zip"
-    return None
+    """Return the media type of a ZIP package, or None for any other archive."""
+    return "application/zip" if archive_name.endswith(".zip") else None
 
 
 def publish_packages(
@@ -1926,8 +1924,8 @@ def publish_packages(
             "component_run_ids": component_runs,
         }
         run_fingerprint = canonical_sha256({**parameters, "artifact_sha256": artifact_sha})
-        # Single-component packages publish the MPK without an embedded manifest;
-        # retain its provenance in the durable package run as well.
+        # Packages publish without an embedded manifest; retain its provenance
+        # in the durable package run as well.
         parameters["provenance"] = manifest.get("provenance", {})
         environment_document = {
             "vulcan_environment": environment,
@@ -1975,6 +1973,16 @@ def publish_packages(
             "manifest_sha256": manifest_sha, "component_run_ids": component_runs,
             **({"build_on_demand": True} if on_demand else {}),
         }
+        if not native:
+            component_paths = {item["path"] for item in components}
+            resource_paths = {path for resource in manifest["resources"] for path in resource["paths"]}
+            runtime_files = [
+                {"path": item["path"], "sha256": item["sha256"]}
+                for item in manifest["files"]
+                if item["path"] not in component_paths and item["path"] not in resource_paths
+            ]
+            if runtime_files:
+                artifact_metadata["runtime_files"] = runtime_files
         if native:
             _publish_deployment_files(
                 client, store, run_id=run_id, stable_key=stable_key, bucket=bucket,

@@ -80,7 +80,9 @@ into a separate folder beside PyNeat's environment, never into it.
 - `--mpk <component>=<path>` once for each component, `model=<path>` for a
   single-component model;
 - `--dataset <source id>=<directory>` for each dataset `accuracy` pins, the
-  extracted archive; and
+  extracted archive;
+- `--resources <directory>` when the compile declares supporting `runtime_files`,
+  the verified profile root with the same relative asset paths as the package; and
 - `--output <directory>`.
 
 It scores the whole model on each dataset and hands the scores to

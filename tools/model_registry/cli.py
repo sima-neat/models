@@ -173,6 +173,11 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     )
     benchmark_runtime.add_argument("--repository", type=Path, default=Path.cwd())
 
+    core = subcommands.add_parser("ensure-neat-core", help="verify or install the selected benchmark Core artifact")
+    core.add_argument("--repository", type=Path, default=Path.cwd())
+    core.add_argument("--environment", default="production")
+    core.add_argument("--artifacts-base-url", help="Core artifact index for the selected environment")
+
     devkit_accuracy = subcommands.add_parser(
         "resolve-devkit-accuracy", help="resolve each DevKit accuracy dataset of a build profile into the cache"
     )
@@ -188,6 +193,13 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     inputs.add_argument("--repository", type=Path, default=Path.cwd())
     inputs.add_argument("--model", required=True)
     inputs.add_argument("--build-profile", required=True)
+
+    resources = subcommands.add_parser(
+        "model-runtime-directory", help="print the verified supporting-file root, or nothing when no files are declared"
+    )
+    resources.add_argument("compiled_dir", type=Path)
+    resources.add_argument("--model", required=True)
+    resources.add_argument("--build-profile", required=True)
 
     check = subcommands.add_parser(
         "check-report", help="check a model report against model.yaml and record the DevKit it ran on"
@@ -1000,12 +1012,26 @@ def _main(argv: Sequence[str] | None, *, author_safe: bool) -> int:
             return _resolve_compiler(args)
         if args.command == "resolve-benchmark-runtime":
             return _resolve_benchmark_runtime(args)
+        if args.command == "ensure-neat-core":
+            from .neat_core import ensure_neat_core
+
+            ensure_neat_core(
+                args.repository, environment=args.environment, artifacts_base_url=args.artifacts_base_url,
+            )
+            return 0
         if args.command == "resolve-devkit-accuracy":
             return _resolve_devkit_accuracy(args)
         if args.command == "model-component-mpks":
             from .report_publication import model_component_mpks
 
             print("\n".join(model_component_mpks(args.compiled_dir, args.repository, args.model, args.build_profile)))
+            return 0
+        if args.command == "model-runtime-directory":
+            from .runtime_files import read_runtime_files
+
+            profile_dir = args.compiled_dir.resolve() / args.model / args.build_profile
+            if read_runtime_files(profile_dir):
+                print(profile_dir)
             return 0
         if args.command == "check-report":
             return _check_report(args)

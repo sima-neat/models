@@ -1,0 +1,88 @@
+display_name: SigLIP 2 ViT-B/16
+description: Embeds images and text in one space for zero-shot classification and image-text search.
+model_type: vlm
+tasks: [image_text_embedding]
+
+modalities:
+  inputs: [image, text]
+  outputs: [embeddings]
+
+architecture: siglip
+
+license:
+  spdx: Apache-2.0
+  redistribution: allowed
+  attribution: SigLIP 2 is distributed by Google under Apache-2.0.
+
+upstream:
+  repository: https://huggingface.co/google/siglip2-base-patch16-224
+  revision: 75de2d55ec2d0b4efc50b3e9ad70dba96a7b2fa2
+
+conversion:
+  outputs: [weights.pth]
+  source:
+    repository: google/siglip2-base-patch16-224
+    revision: 75de2d55ec2d0b4efc50b3e9ad70dba96a7b2fa2
+    main_file: model.safetensors
+    files:
+      model.safetensors: {sha256: 612923381c76ec5a9bed335d1c48827e3f2e506ac31b044b63b2031fadee6a0b, size_bytes: 1500800904}
+      config.json: {sha256: fe8b5fe6d5734360678fd71c11c21e1ea3364bd8598d34295d9206335973ffd7, size_bytes: 253}
+      preprocessor_config.json: {sha256: 9b36b57ebaf20f09bf4c22100ccc21877ea6bfe5aead0c00c59f8af8ccefacfc, size_bytes: 394}
+      special_tokens_map.json: {sha256: baec30ea10906f16adb8c18af7a34023002c1746542612b8b41c9f09e1351351, size_bytes: 636}
+      tokenizer.json: {sha256: cb9140fae3ac5122c972d37adf83e1248471a38147ad76f8215c8872c6fd8322, size_bytes: 34363039}
+      tokenizer.model: {sha256: 61a7b147390c64585d6c3543dd6fc636906c9af3865a5548f27f31aee1d4c8e2, size_bytes: 4241003}
+      tokenizer_config.json: {sha256: 14afe629fe4959b9e0d51e1852b8d9f7ad074f90a1a7125a4fcdd17f06e78fc8, size_bytes: 47164}
+
+resources:
+  license:
+    # The SigLIP checkpoint omits LICENSE. Google's BERT repository carries the standard Apache-2.0 text.
+    source:
+      repository: google-bert/bert-base-uncased
+      revision: 86b5e0934494bd15c9632b12f734a8a67f723594
+      files:
+        LICENSE: {sha256: 43070e2d4e532684de521b885f385d0841030efa2b1a20bafb76133a5e1379c1, size_bytes: 11356}
+    install_path: licenses
+
+compilation:
+  format: onnx
+  source: conversion
+  components: [image_encoder, text_encoder]
+
+# Both profiles use BF16 activations and skip activation calibration.
+build_profiles:
+  w16a16:
+    components:
+      image_encoder:
+        parameters: {precision: w16a16}
+      text_encoder:
+        parameters: {precision: w16a16}
+
+  w8a16:
+    components:
+      image_encoder:
+        parameters: {precision: w8a16}
+      text_encoder:
+        parameters: {precision: w8a16}
+
+# Full INT8 is omitted: the previous recipe scored only 0.0014 ImageNet top-1.
+
+numerical_fidelity:
+  status: diagnostic
+  dataset: {id: imagenet-2012, variant: cal, sha256: e6c18b281f5ac5fc7cf6d36ef9a5f486ce95eb43ead99ee8523bd8162bc49a6f, size_bytes: 112710756}
+  # Keep the existing 50-image selection for comparable fidelity results.
+  # Text fidelity compares all 64 fixed prompts prepared by surgery; none calibrates the model.
+  selection: {method: seeded_random_without_replacement, seed: 42, offset: 50, samples: 50}
+  outputs: [image_embeds, text_embeds]
+
+accuracy:
+  datasets:
+  - {id: imagenet-2012, variant: val, sha256: 018bf95eb75b8b7f1d7766303cdecf3c45ecb02ccf4cf161122ae885c4d7a36f, size_bytes: 6666407650}
+
+performance: {scope: components}
+
+reference_metrics:
+- source: https://arxiv.org/pdf/2502.14786v1
+  dataset: {id: imagenet-2012, split: val}
+  conditions: 224x224, zero-shot
+  note: Published zero-shot top-1 of SigLIP 2 B/16 at 224x224 in Table 1. Accuracy follows Big Vision's public ImageNet evaluator defaults, with 81 canonicalized clip_paper templates per class and a 256x256 resize followed by a 224x224 center crop. Class vectors are generated with the compiled text encoder at evaluation startup. The checkpoint processor and compilation fidelity use a direct 224x224 resize; accuracy uses the Big Vision evaluation geometry above. The release does not specify the exact evaluation config behind 78.2%; matching that score remains unverified. The paper prints no top-5.
+  metrics: {top1_accuracy: 0.782}

@@ -266,10 +266,11 @@ package, and the browser and CLI downloads all use this name.
 ## Packages and pipeline
 
 Every build profile publishes one package, `default`, holding all its
-components. A single-component package is that component's MPK,
-`<model_id>_<profile_id>_mpk.tar.gz`. A multi-component package is a
-deterministic `<model_id>_<profile_id>_default.zip` holding the MPKs at its
-top level. Trusted assembly keeps each MPK intact and records the package
+components. An ONNX model's package is a deterministic
+`<model_id>_<profile_id>_default.zip` holding the MPKs at its top level, one
+for a single-component model. A single-component build published before
+packages became ZIPs stays a bare `<model_id>_<profile_id>_mpk.tar.gz` until
+its next compile. Trusted assembly keeps each MPK intact and records the package
 manifest in `package-result.json`, validated against
 [`package-manifest.schema.json`](https://github.com/sima-neat/models/blob/develop/schemas/package-manifest.schema.json);
 the manifest is not shipped inside the package.
@@ -302,11 +303,17 @@ same revision.
 A file the compile recipe derives for the CPU, such as tables from graph
 surgery, goes in `compile-outputs.json` as `runtime_files`: a list of `path`,
 relative to the profile's output directory, and `sha256`. The package carries
-it at that path, beside the unchanged MPKs it was derived with. Publication also
-registers these files with the compile runs so a reused build restores them,
+it at that path, beside the unchanged MPKs it was derived with. Package publication retains their manifest so a reused build restores them,
 with checksum verification, before benchmarking. A resource is a compile
 input, so changing one recompiles the model; LLiMa packages ship their
 deployment folder and take neither.
+
+CLIP and SigLIP use this same `runtime_files` contract for
+`text_encoder/tokenizer.json` and `text_encoder/token_embeddings.npy`. Surgery
+extracts both from the verified conversion bundle; the shared packager ships
+them beside the encoder MPKs. Registry restoration restores the same checked
+files, and the accuracy runner passes their profile root as `--resources`.
+Class embeddings are generated during accuracy evaluation and are not packaged.
 
 A multi-component model can add `pipeline` so the model browser shows the
 order its components run in. List each component once, in run order, and

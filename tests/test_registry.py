@@ -228,8 +228,18 @@ def test_canonical_sha256_is_stable() -> None:
     assert canonical_sha256({"b": 2, "a": 1}) == canonical_sha256({"a": 1, "b": 2})
 
 
-def _assembled_package(tmp_path: Path) -> tuple[Path, dict]:
+def _assembled_package(tmp_path: Path, *, runtime_files: bool = False) -> tuple[Path, dict]:
     compiled = _packaged_result(tmp_path)
+    if runtime_files:
+        profile = compiled / "resnet_50/w16a16"
+        tokenizer = profile / "model/tokenizer.json"
+        tokenizer.write_text('{"version":"1.0"}')
+        path = profile / "compile-outputs.json"
+        manifest = json.loads(path.read_text())
+        manifest["runtime_files"] = [{
+            "path": "model/tokenizer.json", "sha256": hashlib.sha256(tokenizer.read_bytes()).hexdigest(),
+        }]
+        path.write_text(json.dumps(manifest))
     component_dir = compiled / "resnet_50/w16a16/model"
     (component_dir / "registry-publication.json").write_text(
         json.dumps({"runs": [{
@@ -255,7 +265,7 @@ def _publish_packages(packages: Path, request, store: FakeStore, environment: st
     )
 
 
-def test_publish_full_package_creates_a_package_run_and_uploads_the_mpk(tmp_path: Path) -> None:
+def test_publish_full_package_creates_a_package_run_and_uploads_the_zip(tmp_path: Path) -> None:
     packages, assembled = _assembled_package(tmp_path)
     calls: list[tuple[str, str, dict | None, str]] = []
 
@@ -280,8 +290,8 @@ def test_publish_full_package_creates_a_package_run_and_uploads_the_mpk(tmp_path
     assert calls[0][2]["run_type"] == "model_package"
     assert calls[3][2]["artifact_type"] == "model-package"
     assert store.objects[0][0].name == assembled["archive"]
-    assert store.objects[0][3] == "application/gzip"
-    assert calls[3][2]["media_type"] == "application/gzip"
+    assert store.objects[0][3] == "application/zip"
+    assert calls[3][2]["media_type"] == "application/zip"
 
 
 def test_publish_package_attaches_the_profile_numerical_fidelity(tmp_path: Path) -> None:
@@ -432,12 +442,12 @@ def test_publish_package_rejects_a_simulation_of_another_build_profile(tmp_path:
 @pytest.mark.parametrize(
     ("archive", "expected"),
     [
-        ("resnet_50_w16a16_mpk.tar.gz", "application/gzip"),
+        ("resnet_50_w16a16_mpk.tar.gz", None),
         ("rf_detr_nano_w8a8_w16a16_default.zip", "application/zip"),
         ("resnet_50_w16a16.tar.gz", None),
     ],
 )
-def test_package_media_type_accepts_only_mpk_and_zip_packages(archive: str, expected: str | None) -> None:
+def test_package_media_type_accepts_only_zip_packages(archive: str, expected: str | None) -> None:
     assert _package_media_type(archive) == expected
 
 
@@ -1107,11 +1117,26 @@ def test_publish_catalog_publishes_documentation_when_a_cataloged_model_has_none
     assert published == ["a" * 40]
 
 
-def _stage_catalog_build(tmp_path: Path, packages: list[dict]) -> Path:
+def _stage_catalog_build(tmp_path: Path, packages: list[dict], *, runtime_files: bool = False) -> Path:
     dist = _packaged_result(tmp_path)
     source_archive = next(dist.glob("resnet_50/w16a16/model/*_mpk.tar.gz"))
     payload = source_archive.read_bytes()
     run_id = "00000000-0000-4000-8000-000000000001"
+    descriptors = []
+    package_payload = b""
+    if runtime_files:
+        content = b'{"version":"1.0"}'
+        descriptors = [{"path": "model/tokenizer.json", "sha256": hashlib.sha256(content).hexdigest()}]
+        archive = tmp_path / "package.zip"
+        with zipfile.ZipFile(archive, "w") as package:
+            package.writestr("model/tokenizer.json", content)
+            package.writestr("unrelated.txt", "do not restore")
+        package_payload = archive.read_bytes()
+        packages = [{
+            "package_id": "default", "build_profile_id": "w16a16", "run_id": "package-run",
+            "artifact_sha256": hashlib.sha256(package_payload).hexdigest(), "size_bytes": len(package_payload),
+            "component_run_ids": {"model": run_id},
+        }]
     catalog = {
         "catalog_revision": "a" * 40,
         "models": [{
@@ -1136,6 +1161,14 @@ def _stage_catalog_build(tmp_path: Path, packages: list[dict]) -> Path:
                 "size_bytes": len(payload),
                 "download_url": "https://download.example.invalid/mpk",
             }}
+        if url.endswith("/artifacts/package"):
+            return {"artifact": {
+                "sha256": hashlib.sha256(package_payload).hexdigest(), "size_bytes": len(package_payload),
+                "download_url": "https://download.example.invalid/package",
+                "metadata": (
+                    {"runtime_files": descriptors, "component_run_ids": {"model": run_id}} if runtime_files else {}
+                ),
+            }}
         if url.endswith(run_id):
             return {"run": {"toolchain_version": "2.1.3"}}
         raise AssertionError(url)
@@ -1150,7 +1183,7 @@ def _stage_catalog_build(tmp_path: Path, packages: list[dict]) -> Path:
         build_profile_id="w16a16",
         compile_invocation_id="w16a16",
         read_request=read,
-        download_request=lambda url: payload,
+        download_request=lambda url: payload if url.endswith("/mpk") else package_payload,
     )
     assert result["count"] == 1
     return tmp_path / "staged" / "resnet_50" / "w16a16"
@@ -1176,7 +1209,8 @@ def test_stage_catalog_build_restores_and_verifies_durable_mpk(tmp_path: Path) -
 
 @pytest.mark.parametrize("fault", [None, "checksum", "unsafe-path"])
 @pytest.mark.parametrize("asset_path", ["prompt_assets/tokenizer.json", "model/prompt_assets/tokenizer.json"])
-def test_runtime_files_survive_publication_packaging_and_build_restore(tmp_path, fault, asset_path):
+@pytest.mark.parametrize("transport", ["package", "legacy_compile"])
+def test_runtime_files_survive_publication_packaging_and_build_restore(tmp_path, fault, asset_path, transport):
     from model_registry.artifact import deployment_artifact_name
 
     dist = _packaged_result(tmp_path)
@@ -1212,17 +1246,33 @@ def test_runtime_files_survive_publication_packaging_and_build_restore(tmp_path,
     with zipfile.ZipFile(package_dir / packaged["archive"]) as archive:
         assert archive.read("resnet_50_w16a16_mpk.tar.gz") == original_mpk
         assert archive.read(asset_path) == asset.read_bytes()
+    packages = _publish_packages(tmp_path / "packages", request, store)
+    assert {"mpk", "package"} <= set(artifacts)
+    assert not any(name.startswith("file-") for name in artifacts)  # Supporting files travel only in the package.
     payloads = {digest: path.read_bytes() for path, _, digest, _ in store.objects}
+    owner = artifacts["package"]
+    if transport == "legacy_compile":
+        # Simulate the already published YOLO-World compile-file references.
+        owner["metadata"].pop("runtime_files")
+        item = {**manifest["runtime_files"][0], "artifact": deployment_artifact_name(asset_path),
+                "size_bytes": asset.stat().st_size}
+        owner = artifacts["mpk"]
+        owner["metadata"]["runtime_files"] = [item]
+        artifacts[item["artifact"]] = {"sha256": item["sha256"], "size_bytes": item["size_bytes"],
+                                       "download_url": "https://download.invalid/" + item["sha256"]}
+        payloads[item["sha256"]] = asset.read_bytes()
     if fault == "checksum":
-        payloads[manifest["runtime_files"][0]["sha256"]] = b"corrupt runtime file"
+        payloads[owner["sha256"] if transport == "package" else item["sha256"]] = b"corrupt payload"
     elif fault == "unsafe-path":
-        entry = artifacts["mpk"]["metadata"]["runtime_files"][0]
-        entry.update(path="../escape", artifact=deployment_artifact_name("../escape"))
+        entry = owner["metadata"]["runtime_files"][0]
+        entry["path"] = "../escape"
+        if transport == "legacy_compile":
+            entry["artifact"] = deployment_artifact_name("../escape")
 
     def read(url):
         if "/catalogs/current?" in url:
             return {"catalog": {"document": {"catalog_revision": "a" * 40, "models": [{
-                "id": "resnet_50", "builds": published["runs"], "packages": [],
+                "id": "resnet_50", "builds": published["runs"], "packages": packages["packages"],
             }]}}}
         if "/artifacts/" in url:
             return {"artifact": artifacts[url.rsplit("/", 1)[-1]]}
@@ -1593,3 +1643,76 @@ def test_missing_artifact_download_is_not_retried(tmp_path: Path, monkeypatch: p
     with pytest.raises(RegistryPublicationError, match="HTTP Error 404"):
         _download_registry_file(url, tmp_path / "model.tar.gz", {"sha256": "0" * 64, "size_bytes": 1})
     assert sleeps == []
+
+
+def test_package_publication_records_runtime_files_for_retained_builds(tmp_path):
+    packages, assembled = _assembled_package(tmp_path, runtime_files=True)
+    calls = {}
+
+    def request(method, path, body, key):
+        calls[path] = body
+        return {"run_id": "package-run"} if path == "/v1/runs" else {"ok": True}
+
+    _publish_packages(packages, request, FakeStore())
+    artifact = calls["/v1/runs/package-run/artifacts/package"]
+    file = next(item for item in assembled["manifest"]["files"] if item["path"] == "model/tokenizer.json")
+    assert artifact["media_type"] == "application/zip"
+    assert artifact["metadata"]["runtime_files"] == [{"path": file["path"], "sha256": file["sha256"]}]
+
+
+@pytest.mark.parametrize("runtime_files", [False, True])
+def test_package_publication_excludes_declared_resources_from_runtime_files(tmp_path, monkeypatch, runtime_files):
+    import model_registry.package as package_module
+
+    model = load_model(ROOT / "models/resnet_50")
+    resource_root = tmp_path / "resources"
+    (resource_root / "voices").mkdir(parents=True)
+    payloads = {"config.json": b"{}", "voices/a.json": b"[]"}
+    for name, content in payloads.items():
+        (resource_root / name).write_bytes(content)
+    model["resources"] = {"runtime": {
+        "source": {"repository": "example/runtime", "revision": "0" * 40, "files": {
+            name: {"sha256": hashlib.sha256(content).hexdigest(), "size_bytes": len(content)}
+            for name, content in payloads.items()
+        }},
+        "install_path": "runtime",
+    }}
+
+    class LocalFetcher:
+        def __init__(self, _cache_dir):
+            pass
+
+        def fetch(self, spec):
+            return resource_root / spec.uri.split("@" + "0" * 40 + "/", 1)[1], True
+
+    monkeypatch.setattr(package_module, "load_and_validate_model", lambda *_args: model)
+    monkeypatch.setattr(package_module, "Fetcher", LocalFetcher)
+    monkeypatch.setattr("model_registry.registry.load_models", lambda *_args: {model["id"]: model})
+    packages, assembled = _assembled_package(tmp_path, runtime_files=runtime_files)
+    calls = {}
+
+    def request(method, path, body, key):
+        calls[path] = body
+        return {"run_id": "package-run"} if path == "/v1/runs" else {"ok": True}
+
+    _publish_packages(packages, request, FakeStore())
+
+    metadata = calls["/v1/runs/package-run/artifacts/package"]["metadata"]
+    assert assembled["manifest"]["resources"][0]["paths"] == ["runtime/config.json", "runtime/voices/a.json"]
+    if runtime_files:
+        assert metadata["runtime_files"] == [{
+            "path": "model/tokenizer.json", "sha256": hashlib.sha256(b'{"version":"1.0"}').hexdigest(),
+        }]
+    else:
+        assert "runtime_files" not in metadata
+
+
+def test_retained_build_restores_declared_package_runtime_files(tmp_path):
+    from model_registry.runtime_files import read_runtime_files
+
+    profile = _stage_catalog_build(tmp_path, [], runtime_files=True)
+    assert (profile / "model/tokenizer.json").read_bytes() == b'{"version":"1.0"}'
+    assert read_runtime_files(profile) == [{
+        "path": "model/tokenizer.json", "sha256": hashlib.sha256(b'{"version":"1.0"}').hexdigest(),
+    }]
+    assert not (profile / "unrelated.txt").exists()

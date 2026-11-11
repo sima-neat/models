@@ -34,7 +34,7 @@ from afe.load.importers.general_importer import onnx_source
 from calibration import load_images, select_names
 from model_registry.fetch import sha256_file
 from model_registry.model import load_model as load_metadata
-from surgery import COMPONENT_GRAPHS, prepare_model
+from surgery import COMPONENT_GRAPHS, RUNTIME_FILES, prepare_model
 from surgery import graph_paths as _graph_paths
 
 MODEL_DIR = Path(__file__).resolve().parents[1]
@@ -233,11 +233,10 @@ def _prepare_phase(source: Path, fidelity_dataset: Path, fidelity_names: list[st
     np.savez(temporary_dir / PROMPTS_FILE, prompts=prompts, ends=ends)
 
     images = load_images(fidelity_dataset, fidelity_names).transpose(0, 3, 1, 2)
-    outputs: dict[str, list[np.ndarray]] = {"image_embeds": [], "logits": [], "text_embeds": []}
+    outputs: dict[str, list[np.ndarray]] = {"image_embeds": [], "text_embeds": []}
     for image in images:
-        image_embeds, logits = reference.run(["image_embeds", "logits"], _full_inputs(pixel_values=image[None]))
+        (image_embeds,) = reference.run(["image_embeds"], _full_inputs(pixel_values=image[None]))
         outputs["image_embeds"].append(image_embeds)
-        outputs["logits"].append(logits)
     for prompt, end in zip(prompts, ends, strict=True):
         (text_embeds,) = reference.run(["text_embeds"], _full_inputs(token_embeds=prompt[None]))
         outputs["text_embeds"].append(text_embeds[:, end])
@@ -245,10 +244,10 @@ def _prepare_phase(source: Path, fidelity_dataset: Path, fidelity_names: list[st
 
     # Each encoder alone must reproduce the full ONNX.
     image_encoder, text_encoder = _session(paths["image_encoder"]), _session(paths["text_encoder"])
-    expected_image = reference.run(["image_embeds", "logits"], _full_inputs(pixel_values=images[:1]))
+    expected_image = reference.run(["image_embeds"], _full_inputs(pixel_values=images[:1]))
     expected_text = reference.run(["text_embeds"], _full_inputs(token_embeds=prompts[:1]))
     for expected, actual in (
-        (expected_image, image_encoder.run(["image_embeds", "logits"], {"pixel_values": images[:1]})),
+        (expected_image, image_encoder.run(["image_embeds"], {"pixel_values": images[:1]})),
         (expected_text, text_encoder.run(["text_embeds"], {"token_embeds": prompts[:1]})),
     ):
         for want, got in zip(expected, actual, strict=True):
@@ -281,7 +280,7 @@ def _image_phase(
     encoder = _quantize_component(graph, name, "image_encoder", parameters)
     _compile_component(encoder, temporary_dir / name, "image_encoder")
     with np.load(temporary_dir / REFERENCE_OUTPUTS) as saved:
-        reference = {key: saved[key] for key in ("image_embeds", "logits")}
+        reference = {key: saved[key] for key in ("image_embeds",)}
     errors = [_OutputError(key) for key in reference]
     for index, image in enumerate(load_images(fidelity_dataset, fidelity_names).transpose(0, 3, 1, 2)):
         outputs = _execute(encoder, "pixel_values", image[None])
@@ -382,6 +381,10 @@ def _write_compile_outputs(
             }
             for component_id in COMPONENT_IDS
         ],
+        "runtime_files": [
+            {"path": f"text_encoder/{name}", "sha256": sha256_file(output_dir / "text_encoder" / name)[0]}
+            for name in RUNTIME_FILES
+        ],
         "derived_graphs": [
             {"component_id": component_id, "sha256": graph_hashes[component_id]} for component_id in COMPONENT_IDS
         ],
@@ -435,6 +438,8 @@ def compile_model(source: Path, profile_id: str, fidelity_dataset: Path, output_
         _write_fidelity(temporary_dir, profile_id, fidelity_config, precision)
         output_dir.mkdir(parents=True)
         archives = _copy_component_archives(temporary_dir, profile_id, output_dir)
+        for name in RUNTIME_FILES:
+            shutil.copyfile(temporary_dir / "graphs" / "text_encoder" / name, output_dir / "text_encoder" / name)
         shutil.copyfile(temporary_dir / FIDELITY_REPORT, output_dir / FIDELITY_REPORT)
         _write_compile_outputs(output_dir, profile_id, archives, graph_hashes)
         return archives

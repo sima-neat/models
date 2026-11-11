@@ -407,12 +407,8 @@ jobs:
         id: core
         # Each stage checks the dataset step itself.
         if: ${{ !cancelled() && steps.runtime.outcome == 'success' }}
-        run: |
-          set -euo pipefail
-          target="$("$REGISTRY_PYTHON" -c 'import json, sys; print(json.load(sys.stdin)["neat_core"]["install_target"])' <<< "$BENCHMARK_RUNTIME")"
-          sima-cli neat install --env production --type minimal "$target"
-          "$HOME/pyneat/bin/python" -c 'import pyneat; print("Core:", pyneat.__version__, pyneat.__file__)'
-          dpkg-query -W '*neat*' 'simaai-*'
+        run: >-
+          "$REGISTRY_PYTHON" -m model_registry ensure-neat-core --repository _source --environment production
 
       - name: Measure performance on DevKit
         id: performance

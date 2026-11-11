@@ -53,6 +53,10 @@ architectures:
     display_name: CLIP
     paradigm: transformer
     allowed_model_types: [vlm]
+  densenet:
+    display_name: DenseNet
+    paradigm: cnn
+    allowed_model_types: [vision]
   depthart:
     display_name: DepthART
     paradigm: transformer
@@ -141,6 +145,10 @@ architectures:
     display_name: RF-DETR
     paradigm: transformer
     allowed_model_types: [vision]
+  siglip:
+    display_name: SigLIP
+    paradigm: transformer
+    allowed_model_types: [vlm]
   superpoint:
     display_name: SuperPoint
     paradigm: cnn
@@ -156,6 +164,10 @@ architectures:
   vgg:
     display_name: VGG
     paradigm: cnn
+    allowed_model_types: [vision]
+  vit:
+    display_name: ViT
+    paradigm: transformer
     allowed_model_types: [vision]
   whisper:
     display_name: Whisper

@@ -201,13 +201,14 @@ for compiler runners and registry publication. Set it to `staging` or
 capacity. Dispatch inputs cannot override it. The frontend build and publication
 configuration remain staging:
 
-1. **Check the portal.** The model browser is built and smoke-tested in
-   Chromium. If it fails, nothing is planned, compiled, benchmarked, or published
-   for the revision. Every push runs this check, not only merges, and a
+1. **Check the portal.** The model browser is built and smoke-tested in Chromium
+   independently of planning, compilation, benchmarks, and registry publication.
+   The check remains required for pull requests and browser publication.
+   Every push runs this check, not only merges, and a
    push to `main` or `develop` publishes the checked browser to staging using
    `resolve-staging-browser-config`, independently of model environment selection.
-2. **Resolve configuration and plan.** `plan` waits for `select`, the portal
-   check and `resolve-vulcan-config`. It requests OIDC permission; only a production
+2. **Resolve configuration and plan.** `plan` waits for `select` and
+   `resolve-vulcan-config`. It requests OIDC permission; only a production
    run assumes the selected GitHub environment's
    `VULCAN_ARTIFACT_REGISTRY_PUBLISHER_ROLE_ARN` before reading registry state.
    That publisher-capable role must trust the workflow and permit this repository's
@@ -232,8 +233,9 @@ configuration remain staging:
    `run_llima_compilation.sh` for LLiMa) runs the recipe. Each artifact is
    verified with its provenance, and the model's compile tests check the
    output. A failing test leaves the build unpublished.
-5. **Publish.** A GitHub-hosted job verifies the complete component set,
-   publishes each component and its fidelity report as a compile run,
+5. **Publish.** A default Vulcan Ubuntu runner with local NVMe handles LLiMa
+   deployments; ONNX uses a GitHub-hosted runner. The job verifies the complete
+   component set, publishes each component and its fidelity report as a compile run,
    assembles and publishes the packages the build completes, and records the
    build in the catalog. A new Modalix build is then benchmarked right away,
    while other builds may still compile.

@@ -138,7 +138,7 @@ jobs:
           fi
           echo "publishable=$publishable" >> "$GITHUB_OUTPUT"
 
-  # A portal that does not build or load stops the run before anything compiles or publishes.
+  # Portal checks run independently of model processing and gate browser publication.
   portal:
     name: Check the model browser portal
     uses: ./.github/workflows/developer-docs.yml
@@ -205,7 +205,7 @@ jobs:
 
   plan:
     name: Plan compilations and benchmarks against the registry
-    needs: [select, portal, resolve-vulcan-config]
+    needs: [select, resolve-vulcan-config]
     permissions:
       contents: read
       id-token: write
