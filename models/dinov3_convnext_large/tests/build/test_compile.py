@@ -16,10 +16,10 @@ import pytest
 from PIL import Image
 
 # The least cosine with reference.onnx a build keeps on the 50 fidelity images, per output. Model Compiler
-# 3.0.0.dev0+develop.2291 measured the least output on 16 of them at w16a16 0.999464; CI compiles with Model Compiler
-# 3.0.0.1. A floor allows twice the measured loss, 1 - cosine, when measured on all 50 images and three times when
-# measured on fewer, rounded down to three decimals.
-FIDELITY_FLOORS = {"w16a16": 0.998}
+# 3.0.0.dev0+develop.2291 measured the least output of surgery.py's sliced graph on 16 of them at w16a16 0.999435,
+# w8a16 0.99235; CI compiles with Model Compiler 3.0.0.1. A floor allows twice the measured loss, 1 - cosine, when
+# measured on all 50 images and three times when measured on fewer, rounded down to three decimals.
+FIDELITY_FLOORS = {"w16a16": 0.998, "w8a16": 0.977}
 
 
 def _png(width: int, height: int, colour: tuple[int, int, int] = (255, 0, 0)) -> bytes:

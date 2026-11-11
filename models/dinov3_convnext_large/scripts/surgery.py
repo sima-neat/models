@@ -10,6 +10,15 @@ images, and 0.9999 and 0.9995 with the tanh form. The tanh form runs as BF16 mul
 sigmoid. In float, on the seeded inputs export_network checks, its least cosine similarity with the exact reference
 is 0.999973.
 
+A second change is for the code generator: the first stage's MLPs run as MLP_SLICES[0] slices of fc1's output
+channels, each through its own GELU and its slice of fc2's input channels, and the slices' outputs are added. The sum
+is the same MLP. With INT8 weights, Model Compiler 3.0.0.dev0+develop.2291 splits those MLPs into 4 channel parts
+itself (conv_bounded_split), and the w8a16 package then keeps cosine similarity only 0.515 (class) and 0.377
+(patches) with the reference on the device, on the 50 numerical-fidelity images, against 0.9985 and 0.9920 in its
+simulation on 16 of them. Sliced here, the code generator leaves the MLPs whole and the package keeps 0.9987 and
+0.9920 on the device. The w16a16 package keeps 0.9999 and 0.9994 on the device either way, and sliced its MLA stage
+time falls from 29515 to 27977 microseconds, measured on one board at a 600 MHz MLA clock.
+
 compile.py calls export_network. To get the FP32 ONNX on a host, run:
 
     python models/dinov3_convnext_large/scripts/surgery.py --weights weights.pth --reference reference.onnx \
@@ -44,6 +53,8 @@ SEEDS = range(123, 127)
 # The least cosine similarity of each output with the exact reference on the synthetic inputs, just under the
 # 0.999973 the tanh GELU measures.
 MIN_COSINE = 0.99996
+# Slices of each stage's MLP; the first stage's 192 -> 768 -> 192 MLPs run as four 192-channel slices.
+MLP_SLICES = (4, 1, 1, 1)
 
 
 def build_network() -> Any:
@@ -51,6 +62,7 @@ def build_network() -> Any:
     imported here so the tests can load this script without it."""
     import torch
     from torch import nn
+    from torch.nn import functional as F
 
     class LayerNorm2d(nn.LayerNorm):
         """A LayerNorm over the channels of an NCHW map, as timm's LayerNorm2d."""
@@ -58,28 +70,47 @@ def build_network() -> Any:
         def forward(self, x: torch.Tensor) -> torch.Tensor:
             return super().forward(x.permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
 
+    def gelu(x: torch.Tensor) -> torch.Tensor:
+        # In this order the compiler fuses x * x * (GELU_CUBIC * GELU_SCALE) + GELU_SCALE into one multiply-add.
+        # Spelled x * sigmoid(x * (a + b * x * x)) instead, it quantizes to one operation more; on the board the
+        # ConvNeXt Tiny w16a16 MLA stage took 3116 us with either spelling, measured alternately in one session, so the
+        # shorter form stays.
+        return x * torch.sigmoid(x * (x * x * (GELU_CUBIC * GELU_SCALE) + GELU_SCALE))
+
     class Mlp(nn.Module):
-        def __init__(self, width: int) -> None:
+        def __init__(self, width: int, slices: int) -> None:
             super().__init__()
             self.fc1, self.fc2 = nn.Linear(width, 4 * width), nn.Linear(4 * width, width)
+            self.slices = slices
 
         def forward(self, x: torch.Tensor) -> torch.Tensor:
-            x = self.fc1(x)
-            # In this order the compiler fuses x * x * (GELU_CUBIC * GELU_SCALE) + GELU_SCALE into one multiply-add.
-            # Spelled x * sigmoid(x * (a + b * x * x)) instead, it quantizes to one operation more; on the board
-            # the ConvNeXt Tiny w16a16 MLA stage took 3116 us with either spelling, measured alternately in one
-            # session, so the shorter form stays.
-            return self.fc2(x * torch.sigmoid(x * (x * x * (GELU_CUBIC * GELU_SCALE) + GELU_SCALE)))
+            if self.slices == 1:
+                return self.fc2(gelu(self.fc1(x)))
+            size = self.fc1.out_features // self.slices
+            parts = [slice(start, start + size) for start in range(0, self.fc1.out_features, size)]
+            # fc2's bias goes with the first slice.
+            outputs = [
+                F.linear(
+                    gelu(F.linear(x, self.fc1.weight[part], self.fc1.bias[part])),
+                    self.fc2.weight[:, part],
+                    self.fc2.bias if index == 0 else None,
+                )
+                for index, part in enumerate(parts)
+            ]
+            total = outputs[0]
+            for output in outputs[1:]:
+                total = total + output
+            return total
 
     class Block(nn.Module):
         """A depthwise 7x7 convolution, then a LayerNorm and MLP over the channels of each position, scaled and added
         to the input."""
 
-        def __init__(self, width: int) -> None:
+        def __init__(self, width: int, slices: int) -> None:
             super().__init__()
             self.conv_dw = nn.Conv2d(width, width, 7, padding=3, groups=width)
             self.norm = nn.LayerNorm(width, eps=EPSILON)
-            self.mlp = Mlp(width)
+            self.mlp = Mlp(width, slices)
             self.gamma = nn.Parameter(torch.ones(width))
 
         def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -96,7 +127,7 @@ def build_network() -> Any:
                 )
             else:
                 self.downsample = nn.Identity()
-            self.blocks = nn.Sequential(*(Block(width) for _ in range(DEPTHS[index])))
+            self.blocks = nn.Sequential(*(Block(width, MLP_SLICES[index]) for _ in range(DEPTHS[index])))
 
         def forward(self, x: torch.Tensor) -> torch.Tensor:
             return self.blocks(self.downsample(x))

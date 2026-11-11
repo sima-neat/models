@@ -48,14 +48,11 @@ build_profiles:
       model:
         parameters: {precision: w16a16}
 
-  # No w8a16 yet: compiled with Model Compiler 3.0.0.dev0+develop.2291, the package runs on the device, but its
-  # embeddings keep cosine similarity only 0.515 (class) and 0.377 (patches) with reference.onnx on the 50
-  # numerical-fidelity images, while the same compiler's simulation keeps 0.9985 and 0.9920 on 16 of them.
-  # compile.py keeps its recipe.
-  # w8a16:
-  #   components:
-  #     model:
-  #       parameters: {precision: w8a16}
+  # w8a16 depends on surgery.py's sliced first-stage MLPs, which keep the code generator from splitting them.
+  w8a16:
+    components:
+      model:
+        parameters: {precision: w8a16}
 
 numerical_fidelity:
   status: diagnostic
