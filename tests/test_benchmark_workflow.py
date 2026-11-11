@@ -67,7 +67,12 @@ def test_manual_benchmarks_keep_their_actions_identity() -> None:
     )
     assert workflow["concurrency"]["cancel-in-progress"] == "false"
     assert list(workflow["jobs"]) == [
-        "resolve-vulcan-config", "resolve-benchmark-runner", "stage", "benchmark", "publish", "check",
+        "resolve-vulcan-config",
+        "resolve-benchmark-runner",
+        "stage",
+        "benchmark",
+        "publish",
+        "check",
     ]
 
 
@@ -116,7 +121,7 @@ def test_benchmark_stages_only_its_compiled_artifact() -> None:
     assert verify["env"]["STAGES"] == "${{ inputs.stages }}"
     assert '[[ "$stage" == performance || "$stage" == accuracy ]]' in verify["run"]
     assert "COMPONENT_IDS" not in BENCHMARK_WORKFLOW.read_text(encoding="utf-8")
-    assert 'actions/runs/$SOURCE_RUN_ID' in verify["run"]
+    assert "actions/runs/$SOURCE_RUN_ID" in verify["run"]
     assert ".head_sha == $sha" in verify["run"]
     assert ".head_branch == $branch" in verify["run"]
     assert '[[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]' in verify["run"]
@@ -176,7 +181,13 @@ def test_benchmark_runs_on_the_devkit_its_caller_resolved() -> None:
 
     assert resolver["uses"].endswith("/vulcan-resolve-modalix-runner.yml@main")
     assert json.loads(resolver["with"]["runner-labels"]) == [
-        "self-hosted", "Linux", "ARM64", "modalix", "modalix-som-16gig", "model-registry", "vulcan-staging",
+        "self-hosted",
+        "Linux",
+        "ARM64",
+        "modalix",
+        "modalix-som-16gig",
+        "model-registry",
+        "vulcan-staging",
     ]
     assert benchmark["needs"] == "stage"
     assert benchmark["environment"] == ENVIRONMENT
@@ -227,15 +238,19 @@ def test_devkit_job_runs_only_on_a_staged_build(branch, expected) -> None:
 
     # A skipped resolver would skip the board under the implicit success(), so the board names the stage's result.
     assert benchmark["needs"] == "stage"
-    values = {"inputs.source_branch": branch, "github.ref_name": "develop", "needs.stage.result": "success",
-              "cancelled()": False}
+    values = {
+        "inputs.source_branch": branch,
+        "github.ref_name": "develop",
+        "needs.stage.result": "success",
+        "cancelled()": False,
+    }
     assert evaluate(condition[3:-3], values) is expected
     assert evaluate(condition[3:-3], {**values, "needs.stage.result": "skipped"}) is False
 
 
 def test_performance_runs_only_at_the_full_mla_clock() -> None:
     script = (ROOT / "scripts/run_model_performance.sh").read_text(encoding="utf-8")
-    clock = script.index('MLA_DEVFREQ=/sys/class/devfreq/5000000.mla')
+    clock = script.index("MLA_DEVFREQ=/sys/class/devfreq/5000000.mla")
 
     assert clock < script.index('"$PYNEAT_PYTHON" "$MODEL_DIR/scripts/performance.py"')
     assert 'if (( $(cat "$MLA_DEVFREQ/cur_freq") < MLA_FREQUENCY_HZ )); then' in script
@@ -263,6 +278,7 @@ def test_performance_runs_the_model_owned_script() -> None:
     assert script.index("resolve-devkit-accuracy") < script.index('scripts/performance.py"')
     assert "model_registry model-component-mpks" in script
     assert script.index('scripts/performance.py"') < script.index("model_registry check-report")
+
 
 def test_benchmarks_run_only_when_requested() -> None:
     benchmark = load_workflow()["jobs"]["benchmark"]
@@ -295,8 +311,11 @@ def test_benchmarks_run_only_when_requested() -> None:
     assert accuracy_evidence["if"] == "always() && steps.stages.outputs.accuracy == 'true'"
     assert accuracy_evidence["with"]["name"] == f"accuracy-{artifact_suffix}"
     assert accuracy_evidence["with"]["if-no-files-found"] == "error"
-    for name in ("Install trusted dataset tooling", "Configure dataset reader credentials",
-                 "Cache the accuracy dataset on NVMe"):
+    for name in (
+        "Install trusted dataset tooling",
+        "Configure dataset reader credentials",
+        "Cache the accuracy dataset on NVMe",
+    ):
         assert step(steps, name)["if"] == (
             "steps.stages.outputs.accuracy == 'true' || steps.stages.outputs.performance == 'true'"
         ), name
@@ -314,12 +333,17 @@ def test_benchmarks_run_only_when_requested() -> None:
 def test_benchmarks_run_only_the_requested_stages_the_profile_declares(
     tmp_path: Path, profile: str, stages: str, selected: str
 ) -> None:
-    run = step(load_workflow()["jobs"]["benchmark"]["steps"],
-               "Select the requested stages the profile declares")["run"]
+    run = step(load_workflow()["jobs"]["benchmark"]["steps"], "Select the requested stages the profile declares")["run"]
     (tmp_path / "_source").symlink_to(repository_without_w16a16_accuracy(tmp_path))
     output = tmp_path / "github-output"
-    env = {**os.environ, "REGISTRY_PYTHON": sys.executable, "MODEL_ID": "resnet_50", "BUILD_PROFILE_ID": profile,
-           "STAGES": stages, "GITHUB_OUTPUT": str(output)}
+    env = {
+        **os.environ,
+        "REGISTRY_PYTHON": sys.executable,
+        "MODEL_ID": "resnet_50",
+        "BUILD_PROFILE_ID": profile,
+        "STAGES": stages,
+        "GITHUB_OUTPUT": str(output),
+    }
     subprocess.run(["bash", "-c", run], cwd=tmp_path, env=env, check=True)
     assert output.read_text(encoding="utf-8") == selected
 
@@ -518,13 +542,19 @@ def test_each_measured_stage_is_published_under_the_registered_build() -> None:
     assert '[[ -f "_$stage/test-status.txt" ]] || continue' in run
     assert run.count("model-registry publish-report") == 1
     for argument in (
-        'model-registry publish-report "_$stage"', '--stage "$stage"', "--repository _source",
-        "--compiled-dir _compiled", '--model "$MODEL_ID"', '--build-profile "$BUILD_PROFILE_ID"',
-        '--branch "$SOURCE_BRANCH"', '--git-sha "$SOURCE_SHA"', '--test-status "$(<"_$stage/test-status.txt")"',
+        'model-registry publish-report "_$stage"',
+        '--stage "$stage"',
+        "--repository _source",
+        "--compiled-dir _compiled",
+        '--model "$MODEL_ID"',
+        '--build-profile "$BUILD_PROFILE_ID"',
+        '--branch "$SOURCE_BRANCH"',
+        '--git-sha "$SOURCE_SHA"',
+        '--test-status "$(<"_$stage/test-status.txt")"',
     ):
         assert argument in run, argument
     # One stage's failed publication does not stop the other's, but still fails the step.
-    assert '|| failed=1' in run
+    assert "|| failed=1" in run
     assert run.rstrip().endswith('exit "$failed"')
 
 
@@ -550,11 +580,17 @@ def test_run_fails_after_publication_on_a_failed_model_test(
         (tmp_path / relative).write_text(f"{status}\n", encoding="utf-8")
     output = tmp_path / "github-output"
 
-    subprocess.run(["bash", "-c", record["run"]], cwd=tmp_path, env={**os.environ, "GITHUB_OUTPUT": str(output)},
-                   check=True)
+    subprocess.run(
+        ["bash", "-c", record["run"]], cwd=tmp_path, env={**os.environ, "GITHUB_OUTPUT": str(output)}, check=True
+    )
     recorded = output.read_text(encoding="utf-8").splitlines()
-    result = subprocess.run(["bash", "-c", check["run"]], env={**os.environ, "FAILED_STAGES": failed},
-                            capture_output=True, text=True, check=False)
+    result = subprocess.run(
+        ["bash", "-c", check["run"]],
+        env={**os.environ, "FAILED_STAGES": failed},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
 
     assert record["name"] == "Record the stages whose model tests failed"
     assert record["id"] == "tests"
@@ -577,9 +613,16 @@ def test_run_fails_after_publication_on_a_failed_model_test(
 def test_model_tests_are_checked_only_after_publication(cancelled, publish, expected) -> None:
     condition = load_workflow()["jobs"]["check"]["if"]
 
-    assert evaluate(condition[3:-3], {
-        "!cancelled()": not cancelled, "needs.publish.result": publish,
-    }) is expected
+    assert (
+        evaluate(
+            condition[3:-3],
+            {
+                "!cancelled()": not cancelled,
+                "needs.publish.result": publish,
+            },
+        )
+        is expected
+    )
 
 
 @pytest.mark.parametrize(
@@ -610,34 +653,53 @@ def test_cleanup_removes_input_and_both_evidence_artifacts(tmp_path: Path) -> No
     (bin_dir / "gh").write_text(
         f'#!/bin/sh\necho "$*" >> {calls}\n'
         'case "$*" in *"--method DELETE"*) ;; *name=benchmark-input-*) echo 1;; *name=performance-*) echo 2;; '
-        '*name=accuracy-*) echo 3;; esac\n',
+        "*name=accuracy-*) echo 3;; esac\n",
         encoding="utf-8",
     )
     (bin_dir / "gh").chmod(0o755)
-    env = {**os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}", "GITHUB_REPOSITORY": "o/r",
-           "GITHUB_RUN_ID": "9", "MODEL_ID": "m", "BUILD_PROFILE_ID": "p", "COMPILE_INVOCATION_ID": "c"}
+    env = {
+        **os.environ,
+        "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+        "GITHUB_REPOSITORY": "o/r",
+        "GITHUB_RUN_ID": "9",
+        "MODEL_ID": "m",
+        "BUILD_PROFILE_ID": "p",
+        "COMPILE_INVOCATION_ID": "c",
+    }
 
     subprocess.run(["bash", "-c", script], env=env, check=True)
 
     # The lookups and deletions run as one pipeline, so their calls interleave.
-    assert sorted(calls.read_text(encoding="utf-8").splitlines()) == sorted([
-        *(f"api /repos/o/r/actions/runs/9/artifacts?name={prefix}-m-p-c --jq .artifacts[].id"
-          for prefix in ("benchmark-input", "performance", "accuracy")),
-        *(f"api --method DELETE /repos/o/r/actions/artifacts/{artifact_id}" for artifact_id in (1, 2, 3)),
-    ])
+    assert sorted(calls.read_text(encoding="utf-8").splitlines()) == sorted(
+        [
+            *(
+                f"api /repos/o/r/actions/runs/9/artifacts?name={prefix}-m-p-c --jq .artifacts[].id"
+                for prefix in ("benchmark-input", "performance", "accuracy")
+            ),
+            *(f"api --method DELETE /repos/o/r/actions/artifacts/{artifact_id}" for artifact_id in (1, 2, 3)),
+        ]
+    )
 
 
-@pytest.mark.parametrize("relative", [
-    "tools/model_registry/report_publication.py",
-    "tools/model_registry/benchmark_declarations.py", "tools/model_registry/model.py",
-])
+@pytest.mark.parametrize(
+    "relative",
+    [
+        "tools/model_registry/report_publication.py",
+        "tools/model_registry/benchmark_declarations.py",
+        "tools/model_registry/model.py",
+    ],
+)
 def test_board_runs_require_the_measured_revisions_tooling(tmp_path, relative) -> None:
     stage = load_workflow()["jobs"]["stage"]
     guard = step(stage["steps"], "Require the measured revision's board-stage tooling")
     assert guard["run"] == "scripts/require_source_board_tooling.sh _source"
     source = tmp_path / "_source"
-    for item in {*PERFORMANCE_TOOLING, *ACCURACY_TOOLING,
-                 "tools/model_registry/benchmark_declarations.py", "tools/model_registry/model.py"}:
+    for item in {
+        *PERFORMANCE_TOOLING,
+        *ACCURACY_TOOLING,
+        "tools/model_registry/benchmark_declarations.py",
+        "tools/model_registry/model.py",
+    }:
         (source / item).parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / item, source / item)
     python_bin = tmp_path / "bin"
@@ -650,7 +712,10 @@ def test_board_runs_require_the_measured_revisions_tooling(tmp_path, relative) -
     def check() -> subprocess.CompletedProcess:
         return subprocess.run(
             [ROOT / "scripts" / "require_source_board_tooling.sh", source],
-            cwd=ROOT, env=env, capture_output=True, text=True,
+            cwd=ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
         )
 
     assert check().returncode == 0
@@ -662,60 +727,99 @@ def test_board_runs_require_the_measured_revisions_tooling(tmp_path, relative) -
 
 
 @pytest.mark.parametrize(
-    ('override', 'default', 'expected'),
-    [('default', 'production', 'production'), ('default', 'staging', 'staging'),
-     ('default', '', 'staging'), ('staging', 'production', 'staging'),
-     ('production', 'staging', 'production')],
+    ("override", "default", "expected"),
+    [
+        ("default", "production", "production"),
+        ("default", "staging", "staging"),
+        ("default", "", "staging"),
+        ("staging", "production", "staging"),
+        ("production", "staging", "production"),
+    ],
 )
 def test_registry_selection_is_independent_of_devkit_placement(override, default, expected):
-    jobs = load_workflow()['jobs']
-    values = {'inputs.environment': override, 'vars.VULCAN_ENV': default}
+    jobs = load_workflow()["jobs"]
+    values = {"inputs.environment": override, "vars.VULCAN_ENV": default}
     # A manual dispatch may pass "default"; the orchestrator passes staging or production.
     assert evaluate(ENVIRONMENT[3:-3], values) == expected
-    assert jobs['resolve-vulcan-config']['with']['vulcan_env'] == ENVIRONMENT
-    assert 'vulcan-staging' in json.loads(jobs['resolve-benchmark-runner']['with']['runner-labels'])
-    resolved = {'inputs.environment': expected, 'vars.VULCAN_ENV': default}
-    for name in ('stage', 'benchmark', 'publish'):
-        assert jobs[name]['environment'] == ENVIRONMENT
-        assert "inputs.environment == 'staging'" not in jobs[name]['if']
-    board = jobs['benchmark']
-    dataset = step(board['steps'], 'Install trusted dataset tooling')['env']['DATASET_REGISTRY_ENVIRONMENT']
+    assert jobs["resolve-vulcan-config"]["with"]["vulcan_env"] == ENVIRONMENT
+    assert "vulcan-staging" in json.loads(jobs["resolve-benchmark-runner"]["with"]["runner-labels"])
+    resolved = {"inputs.environment": expected, "vars.VULCAN_ENV": default}
+    for name in ("stage", "benchmark", "publish"):
+        assert jobs[name]["environment"] == ENVIRONMENT
+        assert "inputs.environment == 'staging'" not in jobs[name]["if"]
+    board = jobs["benchmark"]
+    dataset = step(board["steps"], "Install trusted dataset tooling")["env"]["DATASET_REGISTRY_ENVIRONMENT"]
     assert dataset == ENVIRONMENT
-    reader = step(jobs['stage']['steps'], 'Configure authenticated production registry reads')
-    for source_run in ('', '123'):
-        assert evaluate(reader['if'], {**resolved, 'inputs.source_run_id': source_run}) == (
-            expected == 'production' and not source_run
+    reader = step(jobs["stage"]["steps"], "Configure authenticated production registry reads")
+    for source_run in ("", "123"):
+        assert evaluate(reader["if"], {**resolved, "inputs.source_run_id": source_run}) == (
+            expected == "production" and not source_run
         )
-    restore = step(jobs['stage']['steps'],
-                   'Restore the current immutable compilation from the registry')
-    urls = {**resolved, 'vars.VULCAN_ARTIFACT_REGISTRY_API_URL': 'https://iam.example',
-            'vars.VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL': 'https://public.example'}
-    assert evaluate(restore['env']['REGISTRY_API_URL'][3:-3], urls) == 'https://public.example'
-    assert evaluate(restore['env']['MODEL_REGISTRY_IAM_READ_API_URL'][3:-3], urls) == (
-        'https://iam.example' if expected == 'production' else ''
+    restore = step(jobs["stage"]["steps"], "Restore the current immutable compilation from the registry")
+    urls = {
+        **resolved,
+        "vars.VULCAN_ARTIFACT_REGISTRY_API_URL": "https://iam.example",
+        "vars.VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL": "https://public.example",
+    }
+    assert evaluate(restore["env"]["REGISTRY_API_URL"][3:-3], urls) == "https://public.example"
+    assert evaluate(restore["env"]["MODEL_REGISTRY_IAM_READ_API_URL"][3:-3], urls) == (
+        "https://iam.example" if expected == "production" else ""
     )
 
 
-@pytest.mark.parametrize('environment', ['staging', 'production'])
+@pytest.mark.parametrize("environment", ["staging", "production"])
 def test_report_command_publishes_both_stages_to_selected_registry(tmp_path, environment):
-    publication = step(load_workflow()['jobs']['publish']['steps'],
-                       "Publish each measured stage's run")
-    assert publication['env']['VULCAN_ENV'] == ENVIRONMENT
-    selected = evaluate(ENVIRONMENT[3:-3], {'inputs.environment': 'default', 'vars.VULCAN_ENV': environment})
-    executable = tmp_path / 'model-registry'
+    publication = step(load_workflow()["jobs"]["publish"]["steps"], "Publish each measured stage's run")
+    assert publication["env"]["VULCAN_ENV"] == ENVIRONMENT
+    selected = evaluate(ENVIRONMENT[3:-3], {"inputs.environment": "default", "vars.VULCAN_ENV": environment})
+    executable = tmp_path / "model-registry"
     executable.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$CALLS"\n')
     executable.chmod(0o755)
-    for stage_name in ('performance', 'accuracy'):
-        directory = tmp_path / f'_{stage_name}'
+    for stage_name in ("performance", "accuracy"):
+        directory = tmp_path / f"_{stage_name}"
         directory.mkdir()
-        (directory / 'test-status.txt').write_text('passed\n')
-    env = {**os.environ, 'PATH': f"{tmp_path}{os.pathsep}{os.environ['PATH']}",
-           'CALLS': str(tmp_path / 'calls'), 'VULCAN_ENV': selected,
-           **dict.fromkeys(('MODEL_ID', 'BUILD_PROFILE_ID', 'REGISTRY_API_URL', 'AWS_REGION',
-                            'ARTIFACT_BUCKET', 'KMS_KEY_ID', 'SOURCE_BRANCH', 'SOURCE_SHA',
-                            'GITHUB_SERVER_URL', 'GITHUB_REPOSITORY', 'GITHUB_RUN_ID'), 'fixture')}
-    subprocess.run(['bash', '-c', publication['run']], cwd=tmp_path, env=env, check=True)
-    calls = (tmp_path / 'calls').read_text().splitlines()
+        (directory / "test-status.txt").write_text("passed\n")
+    env = {
+        **os.environ,
+        "PATH": f"{tmp_path}{os.pathsep}{os.environ['PATH']}",
+        "CALLS": str(tmp_path / "calls"),
+        "VULCAN_ENV": selected,
+        **dict.fromkeys(
+            (
+                "MODEL_ID",
+                "BUILD_PROFILE_ID",
+                "REGISTRY_API_URL",
+                "AWS_REGION",
+                "ARTIFACT_BUCKET",
+                "KMS_KEY_ID",
+                "SOURCE_BRANCH",
+                "SOURCE_SHA",
+                "GITHUB_SERVER_URL",
+                "GITHUB_REPOSITORY",
+                "GITHUB_RUN_ID",
+            ),
+            "fixture",
+        ),
+    }
+    subprocess.run(["bash", "-c", publication["run"]], cwd=tmp_path, env=env, check=True)
+    calls = (tmp_path / "calls").read_text().splitlines()
     assert len(calls) == 2
-    assert all(f'--environment {environment} ' in call for call in calls)
-    assert all('--compiled-dir _compiled ' in call for call in calls)
+    assert all(f"--environment {environment} " in call for call in calls)
+    assert all("--compiled-dir _compiled " in call for call in calls)
+
+
+@pytest.mark.parametrize(("performance", "required"), [("true", "ON"), ("false", "OFF")])
+def test_trusted_core_install_requires_sentinel_only_for_performance(performance: str, required: str) -> None:
+    steps = load_workflow()["jobs"]["benchmark"]["steps"]
+    install = step(steps, "Install selected Neat Core")
+    expression = install["env"]["NEAT_INSTALLER_SENTINEL_REQUIRED"]
+    assert evaluate(expression[3:-3], {"steps.stages.outputs.performance": performance}) == required
+
+
+def test_performance_checks_fresh_power_before_running_the_model() -> None:
+    script = (ROOT / "scripts/run_model_performance.sh").read_text(encoding="utf-8")
+    preflight = '"$PYNEAT_PYTHON" "$REPOSITORY/scripts/check_benchmark_telemetry.py"'
+    assert script.index(preflight) < script.index('"$PYNEAT_PYTHON" "$MODEL_DIR/scripts/performance.py"')
+    assert 'tee -a "$OUTPUT_DIR/performance.log"' in script
+    assert "scripts/check_benchmark_telemetry.py" in PERFORMANCE_TOOLING
+    assert "scripts/check_benchmark_telemetry.py" not in ACCURACY_TOOLING

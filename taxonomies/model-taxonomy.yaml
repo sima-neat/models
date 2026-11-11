@@ -145,6 +145,10 @@ architectures:
     display_name: SuperGlue
     paradigm: transformer
     allowed_model_types: [vision]
+  ssd_mobilenet:
+    display_name: SSD-MobileNet
+    paradigm: cnn
+    allowed_model_types: [vision]
   vgg:
     display_name: VGG
     paradigm: cnn

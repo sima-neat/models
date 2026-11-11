@@ -25,9 +25,27 @@ sima-cli neat install --env production --type minimal '<neat-core.install_target
 ```
 
 Core's board installer also installs Sentinel, the DevKit telemetry daemon.
-Core's benchmark reads power, temperature, CPU usage, and memory from Sentinel
-over the throughput pass. Without Sentinel the benchmark still measures speed,
-and the report names why the board telemetry is missing.
+The trusted CI installation requires Sentinel when performance is requested;
+accuracy-only runs do not need power readings. Before running the model, the
+shared performance runner starts an unprivileged `TelemetryMonitor` and waits
+up to 10 seconds for a fresh, finite, positive SoM power reading in watts.
+It stops the monitor even when the check fails. This preflight does not install
+or change the service, and its readings are not added to the measured report.
+
+Core's benchmark collects its own power, temperature, CPU usage, and memory
+samples over the throughput pass. A standalone speed-only benchmark can still
+run without Sentinel, but publication requires measured SoM power and energy
+per inference; the shared runner fails before starting a long model run when
+those readings are unavailable.
+
+The benchmark fingerprint covers the declared runtime selector, not an automatic
+resolution of a moving branch such as `core@develop`. For reproducible
+qualification, select an already published `core@<branch>:<commit>` package in
+`deps/manifest.json` and retain the actual runtime and environment records. If
+you keep a moving branch selector, explicitly remeasure after updating Core;
+installation alone does not invalidate an existing benchmark. The orchestrator's
+`force_rebuild_all` input rebuilds and remeasures the selected models; it does
+not change the repository's runtime selection policy.
 
 Results are measured with the MLA at 1 GHz, the highest clock its devfreq
 governor offers. Throughput and power depend on the clock, while model outputs
@@ -118,6 +136,11 @@ the latency pass. Scripts also keep the throughput pass running for at least
 60 seconds (`BenchmarkOptions.min_duration_ms`) rather than Core's default of
 30, so Sentinel, which samples every 2 seconds, records about 30 readings of
 the loaded board instead of about 15.
+
+The shared runner writes `environment.json` beside the reports after validation.
+Publication retains it as a SHA-256-bound artifact with the platform build,
+installed package versions, kernel, CPU governor, and CPU and MLA clock readings.
+It is separate from the model-report schema and the measurements.
 
 The report records each component's execution plan: each step, the processor
 it runs on, and the tensors between steps. The plan comes from the same Model
@@ -401,9 +424,12 @@ the performance stage does not run when that step fails.
    `/media/nvme/neat-tests/`, which it removes when it exits; a build profile
    that accuracy does not measure gets no `--dataset`;
 3. sets the MLA and CPU clocks;
-4. runs the model's `performance.py`, which writes `model-report.json` and
-   `benchmark-report.json`, and copies its output to `performance.log`;
-5. runs `model-registry check-report`, which validates the report against
+4. runs `scripts/check_benchmark_telemetry.py`, which requires a fresh SoM
+   power sample before starting the model and records the preflight in
+   `performance.log`;
+5. runs the model's `performance.py`, which writes `model-report.json` and
+   `benchmark-report.json`, and appends its output to `performance.log`;
+6. runs `model-registry check-report`, which validates the report against
    [`model-report.schema.json`](../schemas/model-report.schema.json) and the
    `model.yaml` declaration and writes the board's installed packages and
    clocks to `environment.json`.
@@ -419,7 +445,7 @@ A hosted job then runs `model-registry publish-report`, which publishes the
 report as one `model_performance` run under the build profile's `model_package`
 run. Its `run_fingerprint` is the performance benchmark fingerprint. The run
 has one `compiled-model-<component>` input per component, the `model-report`,
-Core report, and log artifacts, a `performance/model` test result whose summary
+Core report, environment, and log artifacts, a `performance/model` test result whose summary
 is the whole report and whose status is the test outcome, and one measurement
 per metric. The board's clocks and installation go in the run environment. A
 failed test still publishes the report and completes its run, then fails the

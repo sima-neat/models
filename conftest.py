@@ -10,12 +10,14 @@ commented out until it builds.
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import sys
+import tarfile
 from collections.abc import Callable
 from functools import cache
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from types import ModuleType
 from typing import Any
 from unittest.mock import MagicMock
@@ -189,6 +191,49 @@ def compiled(request: pytest.FixtureRequest) -> Path:
 
 
 @pytest.fixture
+def mpk_json(compiled: Path) -> Callable[[str], dict[str, Any]]:
+    """Read a component's actual MPK manifest; use mpk_json() for component `model`.
+
+    The existing compiled fixture owns stage selection. It may point at a fresh
+    compile output or a Registry download staged in the same component layout.
+    No network call or copied JSON snapshot belongs in the model test itself.
+    """
+
+    def read(component_id: str = "model") -> dict[str, Any]:
+        if not component_id or Path(component_id).name != component_id or component_id in {".", ".."}:
+            raise pytest.UsageError("mpk_json requires a single component directory name")
+        archives = sorted((compiled / component_id).glob("*_mpk.tar.gz"))
+        if len(archives) != 1:
+            raise pytest.UsageError(f"{compiled / component_id}: expected exactly one compiled MPK")
+        with tarfile.open(archives[0], "r:gz") as archive:
+            manifests = [
+                member
+                for member in archive
+                if PurePosixPath(member.name).name == "mpk.json"
+                or PurePosixPath(member.name).name.endswith("_mpk.json")
+            ]
+            if len(manifests) != 1:
+                raise pytest.UsageError(f"{archives[0]}: expected exactly one authoritative MPK manifest")
+            member = manifests[0]
+            path = PurePosixPath(member.name)
+            if (
+                not member.isfile()
+                or path.is_absolute()
+                or ".." in path.parts
+                or "\\" in member.name
+                or not 0 < member.size <= 8 * 1024 * 1024
+            ):
+                raise pytest.UsageError(f"{archives[0]}: unsafe MPK manifest member")
+            with archive.extractfile(member) as stream:
+                manifest = json.load(stream)
+            if not isinstance(manifest, dict):
+                raise pytest.UsageError(f"{archives[0]}: MPK manifest must be a JSON object")
+            return manifest
+
+    return read
+
+
+@pytest.fixture
 def accuracy(request: pytest.FixtureRequest) -> dict[str, Any]:
     """The build profile's DevKit accuracy report, as published (schemas/model-report.schema.json)."""
     return json.loads(_given(request, "accuracy").read_text(encoding="utf-8"))
@@ -212,3 +257,18 @@ def build_profile(request: pytest.FixtureRequest) -> str:
         outputs = json.loads((_given(request, "compiled") / "compile-outputs.json").read_text(encoding="utf-8"))
         return outputs["build_profile_id"]
     raise pytest.UsageError(f"build_profile needs --compiled, --accuracy or --performance: {request.node.nodeid}")
+
+
+@pytest.fixture
+def coco_source_images() -> tuple[Path, ...]:
+    """Three licensed real images for source parity, not a COCO accuracy estimate."""
+    directory = Path(__file__).resolve().parent / "tests/fixtures/coco_source_parity"
+    manifest = json.loads((directory / "attribution.json").read_text())
+    images = []
+    for row in manifest["images"]:
+        path = directory / row["file_name"]
+        content = path.read_bytes()
+        assert len(content) == row["bytes"]
+        assert hashlib.sha256(content).hexdigest() == row["sha256"]
+        images.append(path)
+    return tuple(images)

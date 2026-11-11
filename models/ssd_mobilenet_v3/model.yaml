@@ -1,0 +1,48 @@
+display_name: SSD-MobileNet V3
+description: TorchVision SSDLite320 with a MobileNet V3 Large backbone and COCO weights.
+model_type: vision
+tasks: [object_detection]
+modalities:
+  inputs: [image]
+  outputs: [bounding_boxes, class_scores]
+architecture: ssd_mobilenet
+license:
+  spdx: BSD-3-Clause
+  redistribution: allowed
+  attribution: Derived from the TorchVision SSDLite320 MobileNet V3 Large COCO weights; see scripts/LICENSE.torchvision.
+upstream:
+  repository: https://github.com/pytorch/vision
+  revision: 824e8c8726b65fd9d5abdc9702f81c2b0c4c0dc8
+  derived_from: https://download.pytorch.org/models/ssdlite320_mobilenet_v3_large_coco-a79551df.pth
+conversion:
+  # Canonical public TorchVision checkpoint, verified by full SHA-256 and byte count.
+  source:
+    uri: https://download.pytorch.org/models/ssdlite320_mobilenet_v3_large_coco-a79551df.pth
+    sha256: a79551df90c79834bcd3bb3845ef9d966b5449a3a9b2833ae8404778ca5d65d2
+    size_bytes: 14069355
+compilation:
+  format: onnx
+  source: conversion
+calibrations:
+- id: coco-2017-cal
+  dataset: {id: coco-2017, variant: cal, sha256: 54c64d84122eba371ac014d7b43849a461551c2e6c5c430b5ead90ec1dec12b1, size_bytes: 187510866}
+build_profiles:
+  # A new PTQ build from the original FP32 source, NOT the historical QAT export.
+  w8a8:
+    calibration_dataset: coco-2017-cal
+    components:
+      model:
+        parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 128}
+  w16a16:
+    components:
+      model:
+        parameters: {precision: w16a16}
+accuracy:
+  datasets:
+  - {id: coco-2017, variant: val, sha256: a40de1caf42b47c5a8976eb97efe3c83f3a41337c4d16d318eb15d65c293f2da, size_bytes: 898368520}
+performance: {}
+reference_metrics:
+- source: https://github.com/pytorch/vision/blob/824e8c8726b65fd9d5abdc9702f81c2b0c4c0dc8/torchvision/models/detection/ssdlite.py
+  dataset: {id: coco-2017, split: val}
+  conditions: TorchVision COCO_V1, 320x320, original FP32 weights
+  metrics: {coco_map: 0.213}

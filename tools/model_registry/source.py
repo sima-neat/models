@@ -19,9 +19,8 @@ HF_URI_RE = re.compile(
 )
 HF_RESOLVE_RE = re.compile(r"^/(?:(?:datasets|spaces)/)?[^/]+/[^/]+/resolve/[a-f0-9]{40}/.+$")
 VULCAN_ONNX_RE = re.compile(r"^/models-onnx/[a-z][a-z0-9_]*/[a-f0-9]{64}/[0-9]+-[0-9]+/model\.onnx$")
-GITHUB_RELEASE_RE = re.compile(
-    r"^/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/releases/download/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$"
-)
+TORCHVISION_WEIGHTS_RE = re.compile(r"^/models/[a-z][a-z0-9_]*-(?P<hash_prefix>[a-f0-9]{8})\.pth$")
+GITHUB_RELEASE_RE = re.compile(r"^/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/releases/download/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$")
 
 
 def _require_hugging_face_commit(path: str) -> None:
@@ -29,9 +28,14 @@ def _require_hugging_face_commit(path: str) -> None:
         raise SourcePolicyError("Hugging Face HTTPS sources must use a full commit in a resolve URL")
 
 
-def _require_vulcan_onnx(path: str) -> None:
+def _require_vulcan_source(path: str) -> None:
     if not VULCAN_ONNX_RE.fullmatch(path):
         raise SourcePolicyError("Vulcan sources must identify a versioned ONNX file")
+
+
+def _require_torchvision_weights(path: str) -> None:
+    if not TORCHVISION_WEIGHTS_RE.fullmatch(path):
+        raise SourcePolicyError("TorchVision sources must identify an official hashed PTH weight file")
 
 
 def _require_github_release_file(path: str) -> None:
@@ -41,7 +45,8 @@ def _require_github_release_file(path: str) -> None:
 
 # Every approved HTTPS host and the check its URL path must pass. Approving a host is one entry here.
 HTTPS_HOST_CHECKS: dict[str, Callable[[str], None]] = {
-    "artifacts.stg.neat.sima.ai": _require_vulcan_onnx,
+    "artifacts.stg.neat.sima.ai": _require_vulcan_source,
+    "download.pytorch.org": _require_torchvision_weights,
     "github.com": _require_github_release_file,
     "huggingface.co": _require_hugging_face_commit,
 }
@@ -135,4 +140,12 @@ class SourceSpec:
         require_path = HTTPS_HOST_CHECKS.get(hostname)
         if require_path:
             require_path(parts.path)
+        if hostname == "download.pytorch.org":
+            weights = TORCHVISION_WEIGHTS_RE.fullmatch(parts.path)
+            if weights is None or parts.port is not None:
+                raise SourcePolicyError("TorchVision sources must identify an official hashed PTH weight file")
+            if not SHA256_RE.fullmatch(self.sha256) or self.size_bytes < 1:
+                raise SourcePolicyError("TorchVision sources require a full SHA256 and positive byte size")
+            if weights.group("hash_prefix") != self.sha256[:8]:
+                raise SourcePolicyError("TorchVision filename hash prefix must match the declared SHA256")
         return self.uri

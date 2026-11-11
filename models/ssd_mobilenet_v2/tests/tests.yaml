@@ -1,0 +1,43 @@
+compile:
+  run_tests: true
+accuracy:
+  run_tests: true
+  expected:
+    w16a16:
+      coco-2017-val:
+        coco_map: 0.2796
+        coco_ap50: 0.4464
+        coco_ap75: 0.2963
+        coco_ap_small: 0.0382
+        coco_ap_medium: 0.2355
+        coco_ap_large: 0.5980
+        coco_ar1: 0.2522
+        coco_ar10: 0.3593
+        coco_ar100: 0.3768
+        coco_ar_small: 0.0754
+        coco_ar_medium: 0.3777
+        coco_ar_large: 0.7265
+    w8a8:
+      coco-2017-val:
+        coco_map: 0.2722
+        coco_ap50: 0.4396
+        coco_ap75: 0.2891
+        coco_ap_small: 0.0339
+        coco_ap_medium: 0.2297
+        coco_ap_large: 0.5836
+        coco_ar1: 0.2459
+        coco_ar10: 0.3520
+        coco_ar100: 0.3700
+        coco_ar_small: 0.0703
+        coco_ar_medium: 0.3717
+        coco_ar_large: 0.7130
+performance:
+  run_tests: true
+  # CI uses the shared relative-regression policy; absolute release targets are separate.
+  # Historical raw-head references, not new whole-detector qualification. Refresh only
+  # from reviewed current-stack target results; the absolute 1700 FPS gate stays unchanged.
+  expected:
+    w16a16:
+      throughput_fps: 571.1
+    w8a8:
+      throughput_fps: 1466.1

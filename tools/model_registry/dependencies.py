@@ -35,10 +35,7 @@ def resolve_model_compiler(repository: str | Path) -> dict[str, str]:
         raise ValidationError("dependency manifest must define model-compiler as an object")
     version = dependency.get("version")
     if not isinstance(version, str) or MODEL_COMPILER_VERSION.fullmatch(version) is None:
-        raise ValidationError(
-            "model-compiler.version must use MAJOR.MINOR.PATCH or "
-            "MAJOR.MINOR.PATCH.SERVICE format"
-        )
+        raise ValidationError("model-compiler.version must use MAJOR.MINOR.PATCH or MAJOR.MINOR.PATCH.SERVICE format")
     channel = dependency.get("channel")
     revision = dependency.get("revision")
     if channel is None and revision is None:
@@ -52,6 +49,20 @@ def resolve_model_compiler(repository: str | Path) -> dict[str, str]:
         "label": f"model-compiler-{channel}-{revision}",
         "version": version,
     }
+
+
+def resolve_model_sdk_version(repository: str | Path) -> str:
+    """The MPK SDK version, not the independently pinned compiler package version.
+
+    The value comes from the official compiler bundle's source.json sdk_version.
+    A service release may update compiler components without changing this field;
+    package provenance and build fingerprints must still use resolve_model_compiler.
+    """
+    resolve_model_compiler(repository)  # Validate the package identity independently.
+    version = _load_manifest(repository)["model-compiler"].get("sdk_version")
+    if not isinstance(version, str) or SEMANTIC_VERSION.fullmatch(version) is None:
+        raise ValidationError("model-compiler.sdk_version must use MAJOR.MINOR.PATCH format")
+    return version
 
 
 def resolve_benchmark_runtime(repository: str | Path) -> dict[str, Any]:
@@ -74,9 +85,10 @@ def resolve_benchmark_runtime(repository: str | Path) -> dict[str, Any]:
         raise ValidationError("devkit.board must be a non-empty string")
     if not isinstance(os_type, str) or not os_type:
         raise ValidationError("devkit.os_type must be a non-empty string")
-    if not isinstance(install_target, str) or re.fullmatch(
-        r"core@[A-Za-z0-9][A-Za-z0-9._/-]*(?::[a-f0-9]{12,40})?", install_target
-    ) is None:
+    if (
+        not isinstance(install_target, str)
+        or re.fullmatch(r"core@[A-Za-z0-9][A-Za-z0-9._/-]*(?::[a-f0-9]{12,40})?", install_target) is None
+    ):
         raise ValidationError("neat-core.install_target must name a Core release or branch package")
 
     return {

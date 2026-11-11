@@ -16,6 +16,7 @@ import platform
 import subprocess
 import uuid
 from collections.abc import Callable
+from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -114,9 +115,10 @@ def _run_id(value: Any, path: Path) -> str:
 
 def runner_environment() -> JsonObject:
     """The DevKit's installation and clocks, without taking performance measurements."""
-    # Core installs the Neat runtime as Scheduler packages named simaai-*.
+    # Enumerate once: dpkg-query exits nonzero if even one requested glob has no matches. Core's runtime
+    # packages are named simaai-*; a valid installation need not have packages matching *neat* as well.
     packages = subprocess.run(
-        ["dpkg-query", "-W", "-f=${db:Status-Abbrev}\t${binary:Package}\t${Version}\n", "*neat*", "simaai-*"],
+        ["dpkg-query", "-W", "-f=${db:Status-Abbrev}\t${binary:Package}\t${Version}\n"],
         capture_output=True,
         text=True,
         check=True,
@@ -124,7 +126,12 @@ def runner_environment() -> JsonObject:
     installed = {}
     for line in packages.splitlines():
         fields = line.split("\t", 2)
-        if len(fields) == 3 and fields[0] == "ii " and fields[2].strip():
+        if (
+            len(fields) == 3
+            and fields[0][1:] == "i "  # Installed without errors, including packages selected on hold.
+            and fields[2].strip()
+            and any(fnmatchcase(fields[1], pattern) for pattern in ("*neat*", "simaai-*"))
+        ):
             installed[fields[1]] = fields[2]
     return {
         "buildinfo": Path("/etc/buildinfo").read_text(encoding="utf-8"),
@@ -344,7 +351,10 @@ def publish_report(
         f"{stable_key}-parameters",
     )
 
-    files = {"model-report": (REPORT_FILE, "model-report", "application/json")}
+    files = {
+        "model-report": (REPORT_FILE, "model-report", "application/json"),
+        "environment": (ENVIRONMENT_FILE, "environment", "application/json"),
+    }
     if (output / CORE_REPORT_FILE).is_file():
         files["core-benchmark-report"] = (CORE_REPORT_FILE, "benchmark-report", "application/json")
     if report.get("scope") == "components":

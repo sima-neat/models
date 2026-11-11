@@ -145,3 +145,54 @@ def test_only_conversion_sources_pin_github_release_files() -> None:
 def test_vulcan_onnx_source() -> None:
     uri = f"https://artifacts.stg.neat.sima.ai/models-onnx/rf_detr_small/{DIGEST}/123-1/model.onnx"
     assert SourceSpec(uri=uri, sha256=DIGEST, size_bytes=10).resolve_url() == uri
+
+
+@pytest.mark.parametrize("name", ["source.pth", "weights.pth", "source.pt"])
+def test_vulcan_does_not_admit_unused_checkpoint_transports(name: str) -> None:
+    uri = f"https://artifacts.stg.neat.sima.ai/models-onnx/ssd_mobilenet_v3/{DIGEST}/123-2/{name}"
+    with pytest.raises(SourcePolicyError):
+        SourceSpec(uri=uri, sha256=DIGEST, size_bytes=10).resolve_url()
+
+
+TORCHVISION_SHA256 = "a79551df90c79834bcd3bb3845ef9d966b5449a3a9b2833ae8404778ca5d65d2"
+TORCHVISION_PATH = "/models/ssdlite320_mobilenet_v3_large_coco-a79551df.pth"
+
+
+def test_official_torchvision_weights_are_content_pinned() -> None:
+    uri = f"https://download.pytorch.org{TORCHVISION_PATH}"
+    source = SourceSpec.from_mapping({"uri": uri, "sha256": TORCHVISION_SHA256, "size_bytes": 14069355})
+    assert source.resolve_url() == uri
+    assert source.filename == "ssdlite320_mobilenet_v3_large_coco-a79551df.pth"
+
+
+@pytest.mark.parametrize(
+    "uri",
+    [
+        f"http://download.pytorch.org{TORCHVISION_PATH}",
+        f"https://download.pytorch.org:443{TORCHVISION_PATH}",
+        f"https://download.pytorch.org:444{TORCHVISION_PATH}",
+        f"https://user:secret@download.pytorch.org{TORCHVISION_PATH}",
+        f"https://download.pytorch.org{TORCHVISION_PATH}?download=1",
+        f"https://download.pytorch.org{TORCHVISION_PATH}#weights",
+        f"https://download.pytorch.org/other{TORCHVISION_PATH}",
+        f"https://download.pytorch.org/../{TORCHVISION_PATH.lstrip('/')}",
+        "https://download.pytorch.org/models/%2e%2e/ssdlite-a79551df.pth",
+        "https://download.pytorch.org/models/ssdlite%2da79551df.pth",
+        "https://download.pytorch.org/models/nested/ssdlite-a79551df.pth",
+        "https://download.pytorch.org/models/ssdlite-a79551df.onnx",
+        "https://download.pytorch.org/models/ssdlite-a79551df.tar.gz",
+        "https://download.pytorch.org/models/ssdlite.pth",
+        "https://download.pytorch.org/models/ssdlite-00000000.pth",
+        f"https://download.pytorch.org.example.com{TORCHVISION_PATH}",
+        f"https://pytorch.org{TORCHVISION_PATH}",
+    ],
+)
+def test_torchvision_weight_source_is_narrowly_bounded(uri: str) -> None:
+    with pytest.raises(SourcePolicyError):
+        SourceSpec(uri=uri, sha256=TORCHVISION_SHA256, size_bytes=14069355).resolve_url()
+
+
+@pytest.mark.parametrize(("digest", "size"), [("a79551df", 1), (TORCHVISION_SHA256, 0)])
+def test_direct_torchvision_source_cannot_omit_integrity(digest: str, size: int) -> None:
+    with pytest.raises(SourcePolicyError):
+        SourceSpec(uri=f"https://download.pytorch.org{TORCHVISION_PATH}", sha256=digest, size_bytes=size).resolve_url()

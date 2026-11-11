@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import ast
+import io
 import json
 import os
 import shutil
 import subprocess
 import sys
+import tarfile
 from pathlib import Path
 
 import pytest
@@ -29,7 +31,7 @@ performance:
     w8a8:
       throughput_fps: 100.0
 """
-PERFORMANCE_TESTS = '''
+PERFORMANCE_TESTS = """
 def test_needs_no_output() -> None:
     assert True
 
@@ -37,7 +39,7 @@ def test_needs_no_output() -> None:
 def test_throughput_meets_its_minimum(performance, build_profile) -> None:
     assert build_profile == "w8a8"
     assert performance["metrics"]["throughput_fps"] >= 100
-'''
+"""
 
 
 @pytest.fixture
@@ -91,6 +93,73 @@ def test_given_stage_output_runs_only_the_tests_that_check_it(model_dir: Path, t
     assert result.returncode == 0, result.stdout
     assert "test_throughput_meets_its_minimum PASSED" in result.stdout
     assert "1 passed, 1 deselected" in result.stdout
+
+
+@pytest.mark.parametrize("member_name", ["model/mpk.json", "model/demo_mpk.json"])
+def test_mpk_json_uses_the_real_stage_archive_and_is_deselected_without_it(
+    model_dir: Path,
+    tmp_path: Path,
+    member_name: str,
+) -> None:
+    tests = model_dir / "tests/build/test_compile.py"
+    tests.parent.mkdir()
+    tests.write_text(
+        'def test_real_manifest(mpk_json):\n    assert mpk_json("model") == {"plugins": [], "name": "actual"}\n',
+        encoding="utf-8",
+    )
+    with (model_dir / "tests/tests.yaml").open("a") as stream:
+        stream.write("compile:\n  run_tests: true\n")
+    output = tmp_path / "output/model"
+    output.mkdir(parents=True)
+    with tarfile.open(output / "demo_mpk.tar.gz", "w:gz") as archive:
+        for name, content in ((member_name, b'{"plugins":[],"name":"actual"}'), ("etc/sidecar.json", b"not JSON")):
+            member = tarfile.TarInfo(name)
+            member.size = len(content)
+            archive.addfile(member, io.BytesIO(content))
+    plain = pytest_in(model_dir.parents[1], str(tests))
+    assert "1 deselected" in plain.stdout
+    result = run_model_tests("compile", model_dir, output.parent)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "passed\n"
+    assert "1 passed" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "case", ["missing", "duplicate", "symlink", "traversal", "invalid", "not_object", "no_archive", "two_archives"]
+)
+def test_mpk_json_never_falls_back_to_a_sidecar_or_an_unsafe_manifest(
+    model_dir: Path,
+    tmp_path: Path,
+    case: str,
+) -> None:
+    tests = model_dir / "tests/build/test_compile.py"
+    tests.parent.mkdir()
+    tests.write_text('def test_real_manifest(mpk_json):\n    mpk_json("model")\n', encoding="utf-8")
+    with (model_dir / "tests/tests.yaml").open("a") as stream:
+        stream.write("compile:\n  run_tests: true\n")
+    output = tmp_path / "output/model"
+    output.mkdir(parents=True)
+    with tarfile.open(output / "demo_mpk.tar.gz", "w:gz") as archive:
+        names = ["sidecar.json"] if case == "missing" else ["../mpk.json" if case == "traversal" else "mpk.json"]
+        if case == "duplicate":
+            names.append("other_mpk.json")
+        for name in names:
+            content = b"not JSON" if case == "invalid" else b"[]" if case == "not_object" else b"{}"
+            member = tarfile.TarInfo(name)
+            member.size = len(content)
+            if case == "symlink":
+                member.type = tarfile.SYMTYPE
+                member.linkname = "sidecar.json"
+                archive.addfile(member)
+            else:
+                archive.addfile(member, io.BytesIO(content))
+    if case == "no_archive":
+        (output / "demo_mpk.tar.gz").unlink()
+    elif case == "two_archives":
+        shutil.copyfile(output / "demo_mpk.tar.gz", output / "second_mpk.tar.gz")
+    result = run_model_tests("compile", model_dir, output.parent)
+    assert result.returncode != 0
+    assert result.stdout == "failed\n", result.stderr
 
 
 @pytest.mark.parametrize(("fps", "outcome", "exit_code"), [(150, "passed", 0), (50, "failed", 1)])
@@ -203,8 +272,10 @@ def test_a_test_with_its_own_fixture_of_a_stage_output_name_still_runs(model_dir
         ({"imagenet": {"top1_accuracy": 0.7601, "top5_accuracy": 0.95}, "coco": {"coco_map": 0.4}}, []),
         (
             {"imagenet": {"top1_accuracy": 0.7599, "top5_accuracy": 0.95}, "coco": {"coco_map": 0.3}},
-            ["imagenet: top1_accuracy 0.7599 is below 0.8 by more than 5%",
-             "coco: coco_map 0.3 is below 0.4 by more than 5%"],
+            [
+                "imagenet: top1_accuracy 0.7599 is below 0.8 by more than 5%",
+                "coco: coco_map 0.3 is below 0.4 by more than 5%",
+            ],
         ),
         (
             {"imagenet": {"top1_accuracy": 0.80}, "coco": {"coco_map": 0.4}},
@@ -254,9 +325,12 @@ def test_measured_shortfalls_allow_performance_its_own_drop_and_rise(tmp_path: P
 
 ACCURACY_MODEL = {
     "build_profiles": [{"id": "w8a8"}],
-    "accuracy": {"datasets": {
-        "imagenet": {"required_metrics": ["top1_accuracy"]}, "coco": {"required_metrics": ["coco_map"]},
-    }},
+    "accuracy": {
+        "datasets": {
+            "imagenet": {"required_metrics": ["top1_accuracy"]},
+            "coco": {"required_metrics": ["coco_map"]},
+        }
+    },
 }
 COCO = {"coco": {"coco_map": 0.4}}
 
@@ -307,8 +381,11 @@ def test_accuracy_expectations_give_each_measured_build_profile_its_required_met
 
 
 def test_accuracy_expectations_reject_a_declared_profile_that_is_not_measured(model_dir: Path) -> None:
-    model = {**ACCURACY_MODEL, "build_profiles": [{"id": "w8a8"}, {"id": "w16a16"}],
-             "accuracy": {**ACCURACY_MODEL["accuracy"], "build_profiles": ["w8a8"]}}
+    model = {
+        **ACCURACY_MODEL,
+        "build_profiles": [{"id": "w8a8"}, {"id": "w16a16"}],
+        "accuracy": {**ACCURACY_MODEL["accuracy"], "build_profiles": ["w8a8"]},
+    }
     tests = model_dir / "tests"
     (tests / "build").mkdir()
     (tests / "build" / "test_compile.py").write_text("", encoding="utf-8")
@@ -335,14 +412,27 @@ def test_accuracy_expectations_may_be_skipped_explicitly(model_dir: Path) -> Non
 
 
 def test_component_expectations_gate_each_result_without_combining(model_dir):
-    tests = {"performance": {"run_tests": True, "expected": {"w8a16": {"components": {
-        "image_encoder": {"throughput_fps": 200.0}, "text_encoder": {"throughput_fps": 600.0},
-    }}}}}
+    tests = {
+        "performance": {
+            "run_tests": True,
+            "expected": {
+                "w8a16": {
+                    "components": {
+                        "image_encoder": {"throughput_fps": 200.0},
+                        "text_encoder": {"throughput_fps": 600.0},
+                    }
+                }
+            },
+        }
+    }
     (model_dir / "tests/tests.yaml").write_text(yaml.safe_dump(tests))
-    report = {"scope": "components", "components": {
-        "image_encoder": {"metrics": {"throughput_fps": 195.0}},
-        "text_encoder": {"metrics": {"throughput_fps": 500.0}},
-    }}
+    report = {
+        "scope": "components",
+        "components": {
+            "image_encoder": {"metrics": {"throughput_fps": 195.0}},
+            "text_encoder": {"metrics": {"throughput_fps": 500.0}},
+        },
+    }
     shortfalls = measured_shortfalls(model_dir, "performance", "w8a16", report)
     assert len(shortfalls) == 1 and shortfalls[0].startswith("text_encoder: throughput_fps")
     report["components"]["text_encoder"]["metrics"]["throughput_fps"] = 600.0

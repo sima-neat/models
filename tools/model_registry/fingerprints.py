@@ -11,7 +11,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .benchmark_declarations import ACCURACY_REQUIREMENTS, FP32_BASELINE_SCRIPT, SCRIPTS
+from .benchmark_declarations import ACCURACY_REQUIREMENTS, FP32_BASELINE_SCRIPT, SCRIPTS, benchmarked_profiles
 from .dependencies import resolve_benchmark_runtime
 from .errors import ValidationError
 from .model import CONVERSION_FILES, SCRIPTS_DIR, build_profile_for, compile_invocations_for, load_and_validate_model
@@ -40,7 +40,11 @@ BOARD_STAGE_TOOLING = (
     "schemas/model-report.schema.json",
     "tools/model_registry/report_publication.py",
 )
-PERFORMANCE_TOOLING = (*BOARD_STAGE_TOOLING, "scripts/run_model_performance.sh")
+PERFORMANCE_TOOLING = (
+    *BOARD_STAGE_TOOLING,
+    "scripts/run_model_performance.sh",
+    "scripts/check_benchmark_telemetry.py",
+)
 ACCURACY_TOOLING = (
     *BOARD_STAGE_TOOLING,
     "scripts/install_dataset_registry.sh",
@@ -125,20 +129,10 @@ def _component_compile_projection(component: dict[str, Any]) -> dict[str, Any]:
     return {"id": component["id"], "source": source}
 
 
-def _binding_compile_projection(
-    model: dict[str, Any], binding: dict[str, Any]
-) -> dict[str, Any]:
+def _binding_compile_projection(model: dict[str, Any], binding: dict[str, Any]) -> dict[str, Any]:
     return {
-        **{
-            key: binding[key]
-            for key in ("id", "parameters")
-            if key in binding
-        },
-        **(
-            {"calibration": _calibration_projection(model, binding)}
-            if binding.get("calibration") is not None
-            else {}
-        ),
+        **{key: binding[key] for key in ("id", "parameters") if key in binding},
+        **({"calibration": _calibration_projection(model, binding)} if binding.get("calibration") is not None else {}),
     }
 
 
@@ -159,13 +153,9 @@ def compile_fingerprint(
     model = load_and_validate_model(root / "models" / model_id, root / "schemas" / "model.schema.json")
     try:
         profile = next(item for item in model["build_profiles"] if item["id"] == profile_id)
-        invocation = next(
-            item for item in compile_invocations_for(profile) if item["id"] == compile_invocation_id
-        )
+        invocation = next(item for item in compile_invocations_for(profile) if item["id"] == compile_invocation_id)
     except StopIteration as exc:
-        raise ValidationError(
-            f"unknown compile invocation: {model_id}/{profile_id}/{compile_invocation_id}"
-        ) from exc
+        raise ValidationError(f"unknown compile invocation: {model_id}/{profile_id}/{compile_invocation_id}") from exc
     from .conversion import apply_selection
 
     apply_selection(model, conversion_sources, root=root)
@@ -173,17 +163,19 @@ def compile_fingerprint(
     bindings = {item["id"]: item for item in profile["components"]}
     if any(components[item]["interface"]["format"] == "huggingface" for item in invocation["components"]):
         # LLiMa recipes orchestrate a pinned compiler; graph options belong in parameters.
-        return _fingerprint({
-            "compiler_version": compiler,
-            "target": profile["target"],
-            "components": [
-                {
-                    "source_sha256": source_identity(components[component_id]["source"]),
-                    "parameters": bindings[component_id]["parameters"],
-                }
-                for component_id in invocation["components"]
-            ],
-        })
+        return _fingerprint(
+            {
+                "compiler_version": compiler,
+                "target": profile["target"],
+                "components": [
+                    {
+                        "source_sha256": source_identity(components[component_id]["source"]),
+                        "parameters": bindings[component_id]["parameters"],
+                    }
+                    for component_id in invocation["components"]
+                ],
+            }
+        )
     identity = {
         "model_id": model_id,
         "compile_invocation": {
@@ -209,6 +201,18 @@ def compile_fingerprint(
     return digest.hexdigest()
 
 
+def _performance_input_dataset(model: dict[str, Any], build_profile_id: str) -> dict[str, Any] | None:
+    """The dataset the performance runner supplies to this profile, or none.
+
+    resolve-devkit-accuracy emits datasets in declaration order only for profiles
+    that measure accuracy; run_model_performance.sh takes its first result.
+    """
+    if build_profile_id not in benchmarked_profiles(model, "accuracy"):
+        return None
+    name, dataset = next(iter(model["accuracy"]["datasets"].items()))
+    return {"name": name, **{key: dataset[key] for key in ("id", "variant", "sha256", "size_bytes")}}
+
+
 def benchmark_fingerprint(
     repository: str | Path,
     model: dict[str, Any],
@@ -221,8 +225,9 @@ def benchmark_fingerprint(
     ``builds`` maps each component ID to its compile ``run_id`` and ``artifact_sha256``; the fingerprint covers
     the build of every component, the stage's declaration, the model's script, and the shared tooling. An
     accuracy declaration holds each dataset it evaluates with the metrics its datasets/<id>.yaml requires for
-    the model's tasks, so changing another task's entry or another dataset's file keeps this fingerprint. The
-    declaration's ``build_profiles`` are left out, so benchmarking another profile keeps it too.
+    the model's tasks, so changing another task's entry or another dataset's file keeps this fingerprint.
+    Performance also covers the first dataset supplied to this profile, or none when it measures no accuracy.
+    The stage declaration's ``build_profiles`` are left out, so adding another benchmarked profile keeps it.
     """
     root = Path(repository).expanduser().resolve()
     model_id = str(model["id"])
@@ -236,19 +241,24 @@ def benchmark_fingerprint(
     required = [f"{model_dir}/{SCRIPTS[stage]}", *(PERFORMANCE_TOOLING if stage == "performance" else ACCURACY_TOOLING)]
     optional = [f"{model_dir}/{ACCURACY_REQUIREMENTS}"] if stage == "accuracy" else []
     baseline = build_profile_for(model, build_profile_id).get("benchmark_baseline") if stage == "performance" else None
-    return _fingerprint({
-        "stage": stage,
-        "model_id": model_id,
-        "build_profile_id": build_profile_id,
-        "builds": {
-            component_id: {
-                "compile_run_id": builds[component_id]["run_id"],
-                "artifact_sha256": builds[component_id]["artifact_sha256"],
-            }
-            for component_id in components
-        },
-        stage: {key: value for key, value in model[stage].items() if key != "build_profiles"},
-        **({"benchmark_baseline": baseline} if baseline else {}),
-        "files": _file_digests(root, required, optional),
-        "runtime": resolve_benchmark_runtime(root),
-    })
+    return _fingerprint(
+        {
+            "stage": stage,
+            "model_id": model_id,
+            "build_profile_id": build_profile_id,
+            "builds": {
+                component_id: {
+                    "compile_run_id": builds[component_id]["run_id"],
+                    "artifact_sha256": builds[component_id]["artifact_sha256"],
+                }
+                for component_id in components
+            },
+            stage: {key: value for key, value in model[stage].items() if key != "build_profiles"},
+            **({"benchmark_baseline": baseline} if baseline else {}),
+            **(
+                {"input_dataset": _performance_input_dataset(model, build_profile_id)} if stage == "performance" else {}
+            ),
+            "files": _file_digests(root, required, optional),
+            "runtime": resolve_benchmark_runtime(root),
+        }
+    )

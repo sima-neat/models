@@ -407,6 +407,9 @@ jobs:
         id: core
         # Each stage checks the dataset step itself.
         if: ${{ !cancelled() && steps.runtime.outcome == 'success' }}
+        env:
+          # Accuracy alone needs no power readings; performance publication does.
+          NEAT_INSTALLER_SENTINEL_REQUIRED: ${{ steps.stages.outputs.performance == 'true' && 'ON' || 'OFF' }}
         run: |
           set -euo pipefail
           target="$("$REGISTRY_PYTHON" -c 'import json, sys; print(json.load(sys.stdin)["neat_core"]["install_target"])' <<< "$BENCHMARK_RUNTIME")"

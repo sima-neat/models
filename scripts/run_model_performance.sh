@@ -96,7 +96,11 @@ if (( cpu_frequency_khz != CPU_FREQUENCY_KHZ )); then
 fi
 
 mkdir -p "$OUTPUT_DIR"
+# Fail before the long model run when the publication-required power reading is
+# unavailable. The measured benchmark still collects its own throughput telemetry.
+PYTHONDONTWRITEBYTECODE=1 "$PYNEAT_PYTHON" "$REPOSITORY/scripts/check_benchmark_telemetry.py" \
+  2>&1 | tee "$OUTPUT_DIR/performance.log"
 PYTHONPATH="$REPOSITORY/tools" PYTHONDONTWRITEBYTECODE=1 "$PYNEAT_PYTHON" "$MODEL_DIR/scripts/performance.py" \
-  "${mpks[@]}" "${dataset[@]}" --output "$OUTPUT_DIR" 2>&1 | tee "$OUTPUT_DIR/performance.log"
+  "${mpks[@]}" "${dataset[@]}" --output "$OUTPUT_DIR" 2>&1 | tee -a "$OUTPUT_DIR/performance.log"
 "$REGISTRY_PYTHON" -m model_registry check-report "$OUTPUT_DIR" --repository "$REPOSITORY" \
   --stage performance --model "$MODEL_ID" --build-profile "$BUILD_PROFILE_ID"

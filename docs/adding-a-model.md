@@ -30,6 +30,18 @@ Declare the source model's [license](metadata-schema.md#license) with an ID
 from `artifact-browser/licenses.json`, which also decides whether the model page offers a
 download.
 
+### Compiler package and MPK SDK versions
+
+`deps/manifest.json` pins the Model Compiler **package** version used by CI and
+compile fingerprints. Its explicit `model-compiler.sdk_version` comes from the
+official bundle's `source.json` and is the value to check in an MPK's
+`model_sdk_version`. Resolve it with `resolve_model_sdk_version`; do not truncate
+the package version. These identities can differ: package
+[3.0.0.1](https://github.com/sima-neat/model-compiler/blob/8821a191220de67ba2d9653ac21c8755f4c24a57/scripts/source.json)
+ships SDK version `3.0.0`. An MPK SDK match alone does **not** prove it was built
+with the pinned package; preserve the separate compiler installation receipt
+and compile fingerprint checks.
+
 ## 2. Create the directory
 
 The directory name supplies the lowercase snake-case model ID; `model.yaml`
@@ -84,6 +96,7 @@ A source comes from an approved host, in this form:
 | --- | --- |
 | Hugging Face | `hf://models/<owner>/<repository>@<commit>/<file>`, with the full 40-character commit |
 | GitHub | `https://github.com/<owner>/<repository>/releases/download/<tag>/<file>`, a release file of a public repository |
+| TorchVision | official `https://download.pytorch.org/models/<name>-<hash-prefix>.pth` weights, pinned by full SHA-256 and size |
 | the registry | the ONNX files the registry converts |
 
 The owner of a repository can replace or delete a GitHub release file, so only
@@ -97,6 +110,8 @@ and unapproved hosts are rejected.
 To approve another host, add its entry to `HTTPS_HOST_CHECKS` in
 `tools/model_registry/source.py` with accept and reject tests. That reruns no
 stage.
+
+TorchVision filenames must contain an eight-character prefix of the declared full SHA-256. The full SHA-256 and byte count are verified before use.
 
 Record hashes from the exact bytes the registry will fetch:
 
@@ -287,7 +302,7 @@ builds](#on-demand-builds).
 | conversion | the model's own conversion inputs: the upstream checkpoint, `conversion.outputs`, and `convert.py` with its requirements and the files it uses. No shared file is an input. See [when to run Convert again](conversion-artifacts.md#when-to-run-convert-again) |
 | compile (ONNX) | the model and profile IDs, the target, each component's ID and the source identity and layout, each component's `parameters`, the profile's calibration pin, the `numerical_fidelity` section, compile/surgery code, the Model Compiler version, `scripts/run_model_compilation.sh`, the shared model loader, and the MLA stage simulation (`tools/model_registry/mla_stage_simulation.py`) |
 | compile (LLiMa) | checkpoint content hashes, the target, component graph `parameters`, and the pinned Model Compiler identity including its build revision |
-| performance | the compile run and MPK digest of every component, the `performance` declaration, the profile's optional `benchmark_baseline`, the model's `performance.py`, the shared benchmark tooling and `scripts/run_model_performance.sh`, and the DevKit runtime pin |
+| performance | the compile run and MPK digest of every component, the `performance` declaration, the profile's optional `benchmark_baseline`, the selected input dataset (name, ID, variant, SHA-256 and size, or none), the model's `performance.py`, the shared benchmark tooling, `scripts/run_model_performance.sh` and `scripts/check_benchmark_telemetry.py`, and the DevKit runtime pin |
 | accuracy | the compile run and MPK digest of every component, each `accuracy` dataset's name, pin, and the metrics its `datasets/<id>.yaml` requires for the model's tasks, `accuracy.py` and `requirements-accuracy.txt`, the shared benchmark tooling, `scripts/run_model_accuracy.sh`, `scripts/cache_accuracy_dataset.sh` and `scripts/install_dataset_registry.sh`, and the DevKit runtime pin |
 
 ONNX compile code includes every `.py` and `.sh` under `scripts/` except
@@ -302,6 +317,11 @@ benchmark tooling is `BOARD_STAGE_TOOLING`: the benchmarking workflow,
 A new compile run changes the benchmark fingerprints too, so a recompiled build
 is always benchmarked again.
 
+For performance, the shared runner supplies the first accuracy dataset in declaration
+order when the profile measures accuracy. Changing that selection, its archive
+pin, or whether the profile receives a dataset invalidates performance. Changes
+to later, unselected datasets or accuracy metric requirements do not.
+
 | Change | Reruns |
 | --- | --- |
 | README, display metadata, `license`, `artifact-browser/licenses.json`, `pipeline`, `reference_metrics`, `runner_class`, `runner_market`, `tools/model_report/metrics.json`, registry tooling outside a stage's tooling | nothing |
@@ -312,10 +332,12 @@ is always benchmarked again.
 | a model's `fp32_baseline_accuracy.py` | nothing; no stage runs it |
 | a model's `performance.py` or `performance` declaration, including `scope` | that model's performance stages |
 | a profile's `benchmark_baseline` | that profile's performance; no compilation |
-| `accuracy.py`, its requirements, the `accuracy` datasets, or one of their pins | that model's accuracy stages |
+| `accuracy.py` or its requirements | that model's accuracy stages |
+| an `accuracy` dataset or its pin | that model's accuracy stages, and performance stages whose selected input dataset changes |
 | a task's entry in `datasets/<id>.yaml` | the accuracy stages of models with that task that evaluate the dataset |
-| `accuracy.build_profiles`, a new `datasets/` file, or an entry for a task no such model has | nothing; a newly benchmarked profile runs because it has no run yet |
-| `scripts/run_model_performance.sh` | every performance stage |
+| `accuracy.build_profiles` | performance stages that gain or lose their dataset input; a newly benchmarked accuracy profile runs because it has no run yet |
+| a new `datasets/` file, or an entry for a task no such model has | nothing |
+| `scripts/run_model_performance.sh` or `scripts/check_benchmark_telemetry.py` | every performance stage |
 | `scripts/run_model_accuracy.sh`, `scripts/cache_accuracy_dataset.sh`, or `scripts/install_dataset_registry.sh` | every accuracy stage |
 | the DevKit runtime pin, the benchmarking workflow, `tools/model_report/__init__.py`, `schemas/model-report.schema.json`, or `report_publication.py` | every performance and accuracy stage |
 | a source, a component's `parameters`, the profile's calibration, or `numerical_fidelity` | that model's affected builds, then their benchmarks |
@@ -355,6 +377,19 @@ A test without a stage-output fixture runs in `python -m pytest` on every pull
 request. Import a model script with the `load_script` fixture, as in
 `load_script("compile")`; it stubs Model Compiler and DevKit modules the host
 lacks. `build_profile` names the build profile of the given output.
+
+To inspect the actual compiled contract, take the shared `mpk_json` fixture and
+call `mpk_json("model")` (or another component ID). It reads exactly one
+authoritative `mpk.json` or `*_mpk.json` from that component's archive; it never
+uses sidecar JSON. The fixture depends on `compiled`, so these checks run after
+compilation, not during an offline plain pytest run. Keep independent expected
+values in the test rather than generating them from the manifest being checked.
+Do not check copied MPK manifests into a model's test fixtures. For local tests,
+download the model with `sima-cli models download`, stage the verified archive in
+the usual component directory, and record its compile-output inventory with
+`model_registry.artifact.record_compile_outputs`. Then pass that directory to
+`scripts/run_model_tests.sh compile`. This reuses the existing stage-test route;
+it adds no separate downloader or Registry client to model tests.
 
 A failing conversion or compile test stops the ONNX upload or the build's
 publication. A failing measurement test publishes its report with test status

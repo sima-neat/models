@@ -1,0 +1,49 @@
+conversion:
+  run_tests: true
+compile:
+  run_tests: true
+accuracy:
+  run_tests: true
+  # Keep the original FP32 source mAP gate unchanged for both candidates.
+  # The other eleven metrics are full 5000-image native regression baselines
+  # from ssd-finish-20261031-r3, not yet registry-published develop baselines.
+  # The repository's unchanged 5% relative-drop policy applies to every metric.
+  expected:
+    w16a16:
+      coco-2017-val:
+        coco_map: 0.2126872437
+        coco_ap50: 0.34207924793600697
+        coco_ap75: 0.2194952984829649
+        coco_ap_small: 0.010611083368471365
+        coco_ap_medium: 0.2008661820491798
+        coco_ap_large: 0.4402827909789424
+        coco_ar1: 0.20777106300593523
+        coco_ar10: 0.3059879857306003
+        coco_ar100: 0.33357227985397453
+        coco_ar_small: 0.041922759918037664
+        coco_ar_medium: 0.34477914120823855
+        coco_ar_large: 0.6422763163132268
+    w8a8:
+      coco-2017-val:
+        coco_map: 0.2126872437
+        coco_ap50: 0.3291579087132025
+        coco_ap75: 0.211495393515323
+        coco_ap_small: 0.009182275436411794
+        coco_ap_medium: 0.19234427695024378
+        coco_ap_large: 0.42569607707147555
+        coco_ar1: 0.20256867217694208
+        coco_ar10: 0.2980562785560448
+        coco_ar100: 0.3235953610655993
+        coco_ar_small: 0.03698924984919759
+        coco_ar_medium: 0.3322688170530721
+        coco_ar_large: 0.6346428085531316
+performance:
+  run_tests: true
+  # CI uses the shared relative-regression policy; absolute release targets are separate.
+  # Initial regression references from whole-detector native characterization,
+  # not MLA-only timing. Refresh only after current-stack canonical target qualification.
+  expected:
+    w16a16:
+      throughput_fps: 681.4
+    w8a8:
+      throughput_fps: 1778.4

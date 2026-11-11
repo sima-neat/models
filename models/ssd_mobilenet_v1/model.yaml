@@ -1,0 +1,66 @@
+display_name: SSD-MobileNet V1
+description: A classic lightweight single-shot detector for COCO objects.
+model_type: vision
+tasks: [object_detection]
+
+modalities:
+  inputs: [image]
+  outputs: [bounding_boxes, class_scores]
+
+architecture: ssd_mobilenet
+
+license:
+  spdx: Apache-2.0
+  redistribution: allowed
+  attribution: Derived from the ONNX Model Zoo SSD-MobileNet V1 model distributed under Apache-2.0.
+
+upstream:
+  repository: https://huggingface.co/onnxmodelzoo/ssd_mobilenet_v1_12
+  revision: 019281f3fcb151a90e491f3b2f0273f9f31bd6be
+  derived_from: https://github.com/tensorflow/models/tree/master/research/object_detection
+
+# The source is TensorFlow's ssd_mobilenet_v1_coco export with its preprocessing and NMS in the graph;
+# surgery.py keeps the normalized 300x300 input and the six raw box and six raw class heads.
+compilation:
+  format: onnx
+  source:
+    uri: hf://models/onnxmodelzoo/ssd_mobilenet_v1_12@019281f3fcb151a90e491f3b2f0273f9f31bd6be/ssd_mobilenet_v1_12.onnx
+    sha256: b8fba5e404077d4048d27fcd1667e85e27e192eb9bf51e696c46a3acd7d21058
+    size_bytes: 29461455
+
+calibrations:
+- id: coco-2017-cal
+  dataset: {id: coco-2017, variant: cal, sha256: 54c64d84122eba371ac014d7b43849a461551c2e6c5c430b5ead90ec1dec12b1, size_bytes: 187510866}
+
+build_profiles:
+  w8a8:
+    calibration_dataset: coco-2017-cal
+    components:
+      model:
+        parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 128}
+
+  w16a16:
+    components:
+      model:
+        parameters: {precision: w16a16}
+
+accuracy:
+  # accuracy.py measures the native Image/SSD route; independent decoder references live in tests.
+  # The source model zoo used a different COCO 2014 minival holdout. Most val2017 images are
+  # outside that holdout; exact training membership of these exports is not independently proven.
+  datasets:
+  - {id: coco-2017, variant: val, sha256: a40de1caf42b47c5a8976eb97efe3c83f3a41337c4d16d318eb15d65c293f2da, size_bytes: 898368520}
+
+performance: {}
+
+reference_metrics:
+- source: https://github.com/tensorflow/models/blob/ac8d0651935ecf8a5e7c73ff4aaa97ca1b3623b5/research/object_detection/g3doc/tf1_detection_zoo.md
+  dataset: {id: coco-2014, split: minival}
+  conditions: >-
+    300x300, TensorFlow Object Detection API released-model reference, not an
+    exact-checkpoint paper comparison. TensorFlow's 8,059-image COCO 2014 minival
+    differs from this recipe's 5,000-image val2017 (996 shared images). Possible
+    overlap with the checkpoint training pool is not independently established;
+    these scores must not be compared directly.
+  note: This identifies the released SSD300 family, not weight identity with the original paper experiment.
+  metrics: {coco_map: 0.21}
