@@ -41,13 +41,16 @@ compilation:
 # weights: w8a8 kept class embedding cosine 0.006 with reference.onnx, and 0.58 with attention, residuals, norms,
 # MLP activation and rotary encoding left in BF16. INT8 activations into the convolutions lose the per-token scales
 # w8a16 relies on; without those scales w8a16 itself fell to 0.46 on that graph.
+# Both builds compile on-demand: each takes 18 to 26 minutes in CI, and a Spot reclamation would discard that work.
 build_profiles:
   w16a16:
+    runner_market: on-demand
     components:
       model:
         parameters: {precision: w16a16}
 
   w8a16:
+    runner_market: on-demand
     components:
       model:
         parameters: {precision: w8a16}
