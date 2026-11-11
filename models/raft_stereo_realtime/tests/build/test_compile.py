@@ -15,6 +15,8 @@ from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[4]
 MODEL_DIR = ROOT / "models" / "raft_stereo_realtime"
+# Floors under the published w16a16 fidelity on the 8 fidelity pairs: cosine 0.99983, mean absolute error 0.176 px.
+FIDELITY_FLOORS = {"w16a16": {"cosine_similarity": 0.999, "mean_absolute_error": 0.25}}
 
 
 @pytest.fixture
@@ -319,3 +321,6 @@ def test_compiled_build_holds_the_audited_mpk_and_a_disparity_fidelity_report(
     (metric,) = report["metrics"]
     assert metric["name"] == "disparity"
     assert np.isfinite([metric["mean_absolute_error"], metric["cosine_similarity"]]).all()
+    floor = FIDELITY_FLOORS[build_profile]
+    assert metric["cosine_similarity"] >= floor["cosine_similarity"], metric
+    assert metric["mean_absolute_error"] <= floor["mean_absolute_error"], metric
