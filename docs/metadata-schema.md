@@ -303,8 +303,7 @@ same revision.
 A file the compile recipe derives for the CPU, such as tables from graph
 surgery, goes in `compile-outputs.json` as `runtime_files`: a list of `path`,
 relative to the profile's output directory, and `sha256`. The package carries
-it at that path, beside the unchanged MPKs it was derived with. Package publication retains their manifest so a reused build restores them,
-with checksum verification, before benchmarking. A resource is a compile
+it at that path, beside the MPKs it was derived with. A resource is a compile
 input, so changing one recompiles the model; LLiMa packages ship their
 deployment folder and take neither.
 

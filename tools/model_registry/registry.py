@@ -41,7 +41,7 @@ from .package import FIDELITY_FILE
 from .registry_http import RegistryPublicationError, SigV4RegistryClient
 from .registry_http import read_registry_json_authenticated as _public_registry_json
 from .runner_approval import runner_provenance
-from .runtime_files import restore_runtime_files, runtime_file_path
+from .runtime_files import restore_runtime_files
 from .source import source_identity
 from .stage_plan import merge_catalog_sources, read_catalog_sources, read_current_catalog
 from .taxonomy import (
@@ -999,7 +999,6 @@ def stage_catalog_build(
         raise ValidationError("current catalog does not link every component in the compile invocation")
 
     staged_outputs = []
-    legacy_runtime_files = {}
     for component_id in invocation["component_ids"]:
         build = builds[component_id]
         run_id = build.get("run_id")
@@ -1023,15 +1022,6 @@ def stage_catalog_build(
         archive_name = "deployment-manifest.json" if native else mpk_filename(model, build_profile_id, component_id)
         archive = component_dir / archive_name
         _download_registry_file(download_url, archive, artifact, download_request)
-        # Earlier publications registered supporting files on compile artifacts.
-        # Keep those builds restorable; new publications use the shared package manifest.
-        metadata = artifact.get("metadata") or {}
-        if "runtime_files" in metadata:
-            for item in deployment_files({"files": metadata["runtime_files"]}):
-                previous = legacy_runtime_files.get(item["path"])
-                if previous is not None and previous[1] != item:
-                    raise ValidationError(f"conflicting runtime file: {item['path']}")
-                legacy_runtime_files.setdefault(item["path"], (run_id, item))
         if native:
             try:
                 manifest = json.loads(archive.read_text(encoding="utf-8"))
@@ -1120,15 +1110,6 @@ def stage_catalog_build(
                 _download_registry_file(artifact["download_url"], archive, artifact, download_request)
                 runtime_files = metadata["runtime_files"]
                 restore_runtime_files(archive, runtime_files, profile_dir)
-    if not runtime_files:
-        for run_id, item in legacy_runtime_files.values():
-            path = runtime_file_path(profile_dir, item["path"])
-            registered = read(f"{base_url}/v1/runs/{run_id}/artifacts/{item['artifact']}").get("artifact", {})
-            if (registered.get("sha256") != item["sha256"] or registered.get("size_bytes") != item["size_bytes"]
-                    or not isinstance(registered.get("download_url"), str)):
-                raise ValidationError(f"inconsistent runtime file artifact: {item['path']}")
-            _download_registry_file(registered["download_url"], path, registered, download_request)
-            runtime_files.append({"path": item["path"], "sha256": item["sha256"]})
     # The same manifest a compile writes, so later stages read restored and fresh builds alike.
     (profile_dir / "compile-outputs.json").write_text(
         json.dumps({

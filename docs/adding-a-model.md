@@ -322,10 +322,7 @@ installation/reuse checks in `tools/model_registry/neat_core.py`,
 `tools/model_report/__init__.py`, `schemas/model-report.schema.json`, and
 `tools/model_registry/report_publication.py`.
 
-A benchmark also hashes any excluded stage script it imports, directly or
-through local helpers. For example, when `accuracy.py` imports prompt handling
-from `performance.py`, changes to that file rerun both benchmarks without
-recompiling. Models with independent scripts retain their existing fingerprints.
+Benchmark fingerprints include stage scripts imported directly or through local helpers.
 
 A new compile run changes the benchmark fingerprints too, so a recompiled build
 is always benchmarked again.

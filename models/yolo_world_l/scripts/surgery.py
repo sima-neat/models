@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 import onnx
 import onnxruntime as ort
-from onnx import helper, numpy_helper
+from onnx import numpy_helper
 from precision import annotate, regions
 
 SLOTS = 80

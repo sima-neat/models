@@ -2,8 +2,8 @@
 
 One text sample is one prepared 77-token prompt. One detector sample is one
 640x640 normalized RGB image plus 80 cached prompt vectors and a mask, with
-normal cast and YOLOv8 BoxDecode/NMS. CPU JPEG loading/letterboxing and prompt
-updates are outside these independent model timings, as requested.
+input quantization and YOLOv8 BoxDecode/NMS. CPU JPEG loading/letterboxing and prompt
+updates are outside these independent model timings.
 """
 from __future__ import annotations
 
@@ -165,9 +165,9 @@ def benchmark(mpks, dataset, output, resources=None):
             settings.original_width = settings.original_height = 640
             settings.resize_mode = pyneat.ResizeMode.Letterbox
             workload = ("One prepared prompt, 77-token context; BF16 transformer, EOS pooling, projection and L2 normalization; "
-                        "normal cast included; CPU tokenization and lookup excluded" if name == "text_encoder" else
+                        "FP32-to-BF16 input cast included; CPU tokenization and lookup excluded" if name == "text_encoder" else
                         f"COCO val2017 {record['file_name']}, prepared 640x640 RGB /255, 80 cached BF16 CLIP vectors, all slots active; "
-                        "normal cast, detector, YOLOv8 GroupedByRoleProbability BoxDecode, top 10 above .25, NMS .7; "
+                        "input quantization, detector, YOLOv8 GroupedByRoleProbability BoxDecode, top 10 above .25, NMS .7; "
                         "CPU image preparation and prompt encoding excluded")
             reports[name] = model_report.from_performance(component.model.benchmark(settings), {name: component.model},
                                                           workload=workload)
