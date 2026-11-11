@@ -1960,9 +1960,11 @@ def publish_packages(
         }
         if not native:
             component_paths = {item["path"] for item in components}
+            resource_paths = {path for resource in manifest["resources"] for path in resource["paths"]}
             runtime_files = [
                 {"path": item["path"], "sha256": item["sha256"]}
-                for item in manifest["files"] if item["path"] not in component_paths
+                for item in manifest["files"]
+                if item["path"] not in component_paths and item["path"] not in resource_paths
             ]
             if runtime_files:
                 artifact_metadata["runtime_files"] = runtime_files

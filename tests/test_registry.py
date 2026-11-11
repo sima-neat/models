@@ -1571,6 +1571,53 @@ def test_package_publication_records_runtime_files_for_retained_builds(tmp_path)
     assert artifact["metadata"]["runtime_files"] == [{"path": file["path"], "sha256": file["sha256"]}]
 
 
+@pytest.mark.parametrize("runtime_files", [False, True])
+def test_package_publication_excludes_declared_resources_from_runtime_files(tmp_path, monkeypatch, runtime_files):
+    import model_registry.package as package_module
+
+    model = load_model(ROOT / "models/resnet_50")
+    resource_root = tmp_path / "resources"
+    (resource_root / "voices").mkdir(parents=True)
+    payloads = {"config.json": b"{}", "voices/a.json": b"[]"}
+    for name, content in payloads.items():
+        (resource_root / name).write_bytes(content)
+    model["resources"] = {"runtime": {
+        "source": {"repository": "example/runtime", "revision": "0" * 40, "files": {
+            name: {"sha256": hashlib.sha256(content).hexdigest(), "size_bytes": len(content)}
+            for name, content in payloads.items()
+        }},
+        "install_path": "runtime",
+    }}
+
+    class LocalFetcher:
+        def __init__(self, _cache_dir):
+            pass
+
+        def fetch(self, spec):
+            return resource_root / spec.uri.split("@" + "0" * 40 + "/", 1)[1], True
+
+    monkeypatch.setattr(package_module, "load_and_validate_model", lambda *_args: model)
+    monkeypatch.setattr(package_module, "Fetcher", LocalFetcher)
+    monkeypatch.setattr("model_registry.registry.load_models", lambda *_args: {model["id"]: model})
+    packages, assembled = _assembled_package(tmp_path, runtime_files=runtime_files)
+    calls = {}
+
+    def request(method, path, body, key):
+        calls[path] = body
+        return {"run_id": "package-run"} if path == "/v1/runs" else {"ok": True}
+
+    _publish_packages(packages, request, FakeStore())
+
+    metadata = calls["/v1/runs/package-run/artifacts/package"]["metadata"]
+    assert assembled["manifest"]["resources"][0]["paths"] == ["runtime/config.json", "runtime/voices/a.json"]
+    if runtime_files:
+        assert metadata["runtime_files"] == [{
+            "path": "model/tokenizer.json", "sha256": hashlib.sha256(b'{"version":"1.0"}').hexdigest(),
+        }]
+    else:
+        assert "runtime_files" not in metadata
+
+
 def test_retained_build_restores_declared_package_runtime_files(tmp_path):
     from model_registry.runtime_files import read_runtime_files
 
