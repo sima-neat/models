@@ -909,6 +909,30 @@ def publish_model_documentation(
     return receipts
 
 
+def _remaining_pending_builds(prior: JsonObject, document: JsonObject) -> list[JsonObject]:
+    """The prior catalog's pending builds this snapshot does not publish, in the prior order.
+
+    A progress snapshot may only clear the pending entries whose builds it carries. The
+    registry rejects every other change to the list: a different order, or entries a base
+    branch started pending after this revision was initialized, which the inherited
+    carry above would otherwise add or reorder.
+    """
+    builds = {
+        (model["id"], build["build_profile_id"], build["component_id"]): build.get("compile_fingerprint")
+        for model in document.get("models", [])
+        for build in model.get("builds", [])
+    }
+    remaining = []
+    for pending in prior.get("pending_builds", []):
+        published = [
+            builds.get((pending["model_id"], pending["build_profile_id"], component)) == pending["compile_fingerprint"]
+            for component in pending["component_ids"]
+        ]
+        if not all(published):
+            remaining.append(pending)
+    return remaining
+
+
 def publish_catalog(
     *,
     repository: str | Path,
@@ -1024,6 +1048,8 @@ def publish_catalog(
         incremental=True,
         documentation_receipts=documentation_receipts,
     )
+    if continuing_revision and isinstance(target_catalog, dict):
+        document["pending_builds"] = _remaining_pending_builds(target_catalog["document"], document)
     previous_snapshot = target_catalog.get("canonical_sha256") if isinstance(target_catalog, dict) else None
     snapshot = {
         "initialize": target_revision != git_sha.lower(),
