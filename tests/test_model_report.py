@@ -260,7 +260,7 @@ class Tensor:
 PYNEAT_ENUMS = {
     "InputKind": ("Image", "Tensor"),
     "AutoFlag": ("On", "Off"),
-    "ResizeMode": ("Letterbox", "Stretch", "Crop"),
+    "ResizeMode": ("Letterbox", "Stretch"),
     "NormalizePreset": ("ImageNet",),
     "PixelFormat": ("RGB",),
     "TensorMemory": ("EV74",),
