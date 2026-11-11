@@ -10,10 +10,14 @@ from pathlib import Path
 from types import ModuleType
 
 import numpy as np
+import onnx
 import pytest
+from onnx import helper, numpy_helper
 from PIL import Image
 
 MODEL_DIR = Path(__file__).resolve().parents[2]
+# A small stand-in for the export: the same node names and block structure at 8 channels in 2 heads.
+CHANNELS, HEADS, TOKENS = 8, 2, 196
 
 
 def _png(width: int, height: int, colour: tuple[int, int, int] = (255, 0, 0)) -> bytes:
@@ -146,6 +150,129 @@ def test_fidelity_selection_is_the_declared_seeded_sample(
         calibration.fidelity_names(tmp_path, 42, 1, 10)
 
 
+def _export_graph(head_scale: float = 8**-0.5) -> onnx.ModelProto:
+    """The export's structure at a small width: patch embedding, twelve attention blocks, and the class-token head.
+
+    Each block projects query, key and value separately and scales the query and key heads by head_scale each.
+    """
+    rng = np.random.default_rng(0)
+    head_size = CHANNELS // HEADS
+    nodes, initializers = [], []
+
+    def constant(name: str, array: np.ndarray) -> str:
+        initializers.append(numpy_helper.from_array(np.asarray(array), name))
+        return name
+
+    def node(op_type: str, inputs: list[str], output: str, **attributes) -> str:
+        nodes.append(helper.make_node(op_type, inputs, [output], name=output.removesuffix("_output_0"), **attributes))
+        return output
+
+    patch = constant("patch.weight", rng.normal(0, 0.05, (CHANNELS, 3, 16, 16)).astype(np.float32))
+    nodes.append(
+        helper.make_node("Constant", [], ["patch_shape"], value=numpy_helper.from_array(np.int64([1, CHANNELS, -1])))
+    )
+    patches = node("Conv", ["pixel_values", patch], "/vit/embeddings/Conv_output_0", strides=[16, 16])
+    patches = node("Reshape", [patches, "patch_shape"], "/vit/embeddings/Reshape_output_0")
+    tokens = node("Transpose", [patches], "/vit/embeddings/Transpose_output_0", perm=[0, 2, 1])
+    heads_shape = constant("heads_shape", np.int64([1, TOKENS, HEADS, head_size]))
+    tokens_shape = constant("tokens_shape", np.int64([1, TOKENS, CHANNELS]))
+    scale = constant("head_scale", np.float32([head_scale]))
+    for layer in range(12):
+        prefix = f"/vit/encoder/layer.{layer}/attention/attention"
+        projected = {}
+        for projection in ("query", "key", "value"):
+            weight = constant(
+                f"{prefix}/{projection}.weight", rng.normal(0, 0.3, (CHANNELS, CHANNELS)).astype(np.float32)
+            )
+            bias = constant(f"{prefix}/{projection}.bias", rng.normal(0, 0.1, CHANNELS).astype(np.float32))
+            output = node("MatMul", [tokens, weight], f"{prefix}/{projection}/MatMul_output_0")
+            projected[projection] = node("Add", [bias, output], f"{prefix}/{projection}/Add_output_0")
+        query = node("Reshape", [projected["query"], heads_shape], f"{prefix}/Reshape_2_output_0")
+        query = node("Transpose", [query], f"{prefix}/Transpose_1_output_0", perm=[0, 2, 1, 3])
+        key = node("Reshape", [projected["key"], heads_shape], f"{prefix}/Reshape_output_0")
+        key = node("Transpose", [key], f"{prefix}/Transpose_2_output_0", perm=[0, 2, 3, 1])
+        value = node("Reshape", [projected["value"], heads_shape], f"{prefix}/Reshape_1_output_0")
+        value = node("Transpose", [value], f"{prefix}/Transpose_output_0", perm=[0, 2, 1, 3])
+        query = node("Mul", [query, scale], f"{prefix}/Mul_output_0")
+        key = node("Mul", [key, scale], f"{prefix}/Mul_1_output_0")
+        scores = node(
+            "Softmax", [node("MatMul", [query, key], f"{prefix}/MatMul_output_0")], f"{prefix}/Softmax_output_0"
+        )
+        context = node("MatMul", [scores, value], f"{prefix}/MatMul_1_output_0")
+        context = node("Transpose", [context], f"{prefix}/Transpose_3_output_0", perm=[0, 2, 1, 3])
+        context = node("Reshape", [context, tokens_shape], f"{prefix}/Reshape_3_output_0")
+        tokens = node("Add", [context, tokens], f"/vit/encoder/layer.{layer}/Add_output_0")
+    class_token = node("Gather", [tokens, constant("class_index", np.int64(0))], "/Gather_output_0", axis=1)
+    classifier = constant("classifier.weight", rng.normal(0, 0.3, (CHANNELS, 1000)).astype(np.float32))
+    node("MatMul", [class_token, classifier], "logits")
+    graph = helper.make_graph(
+        nodes,
+        "vit_b_16_fixture",
+        [helper.make_tensor_value_info("pixel_values", onnx.TensorProto.FLOAT, ["batch_size", 3, 224, 224])],
+        [helper.make_tensor_value_info("logits", onnx.TensorProto.FLOAT, ["batch_size", 1000])],
+        initializers,
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_opsetid("", 14)], ir_version=7)
+
+
+def test_surgery_matches_the_export(tmp_path: Path, load_script: Callable[[str], ModuleType]) -> None:
+    import onnxruntime
+
+    surgery = load_script("surgery")
+    source = tmp_path / "model.onnx"
+    onnx.save(_export_graph(), source)
+
+    fused = surgery.prepare_model(source, tmp_path / "out")
+
+    pixels = np.random.default_rng(1).uniform(-1, 1, (1, 3, 224, 224)).astype(np.float32)
+
+    def logits(path: Path) -> np.ndarray:
+        session = onnxruntime.InferenceSession(str(path), providers=["CPUExecutionProvider"])
+        return session.run(None, {"pixel_values": pixels})[0]
+
+    np.testing.assert_allclose(logits(fused), logits(source), rtol=1e-5, atol=1e-5)
+
+
+def test_surgery_fuses_each_blocks_projections_and_scale(
+    tmp_path: Path, load_script: Callable[[str], ModuleType]
+) -> None:
+    surgery = load_script("surgery")
+    source = tmp_path / "model.onnx"
+    export = _export_graph()
+    onnx.save(export, source)
+
+    fused = onnx.load(surgery.prepare_model(source, tmp_path / "out"))
+
+    operations = [node.op_type for node in fused.graph.node]
+    assert operations.count("Split") == 12
+    assert "Mul" not in operations and "Constant" not in operations
+    # Two attention MatMuls and one projection per block, then the classifier.
+    assert operations.count("MatMul") == 12 * 3 + 1
+    source_weights = {value.name: numpy_helper.to_array(value) for value in export.graph.initializer}
+    weights = {value.name: numpy_helper.to_array(value) for value in fused.graph.initializer}
+    prefix = "/vit/encoder/layer.3/attention/attention"
+    expected = np.concatenate(
+        [
+            source_weights[f"{prefix}/query.weight"] / 8,
+            source_weights[f"{prefix}/key.weight"],
+            source_weights[f"{prefix}/value.weight"],
+        ],
+        axis=1,
+    )
+    np.testing.assert_array_equal(weights[f"{prefix}/qkv/weight"], expected)
+
+
+def test_surgery_rejects_an_attention_scale_it_cannot_fold_exactly(
+    tmp_path: Path, load_script: Callable[[str], ModuleType]
+) -> None:
+    surgery = load_script("surgery")
+    source = tmp_path / "model.onnx"
+    onnx.save(_export_graph(head_scale=0.5), source)
+
+    with pytest.raises(ValueError, match="layer 0 scales attention by 0.25"):
+        surgery.prepare_model(source, tmp_path / "out")
+
+
 @pytest.mark.parametrize("profile_id", ["w16a16", "w8a16"])
 def test_compile_reads_each_declared_build_profile(load_script: Callable[[str], ModuleType], profile_id: str) -> None:
     recipe = load_script("compile")
@@ -188,14 +315,17 @@ def test_quantization_rejects_an_undeclared_precision(load_script: Callable[[str
         recipe._quantization("w8a8")
 
 
-def test_bf16_builds_quantize_without_calibration_data(
+def test_bf16_builds_quantize_the_prepared_graph_without_calibration_data(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
     load_script: Callable[[str], ModuleType],
 ) -> None:
     recipe = load_script("compile")
+    monkeypatch.setattr(recipe, "prepare_model", lambda source, output_dir: output_dir / "fused.onnx")
 
     with pytest.raises(RuntimeError, match="expected exactly one MPK archive"):
         recipe.compile_model(tmp_path / "model.onnx", tmp_path / "model", "w16a16")
+    assert recipe.onnx_source.call_args.args[0].endswith("fused.onnx")
     assert recipe.load_model.return_value.quantize.call_args.args[0] is None
 
 

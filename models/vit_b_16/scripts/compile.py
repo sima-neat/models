@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Compile the pinned ViT-B/16 ONNX source into a Modalix MPK and measure its numerical fidelity."""
+"""Compile the pinned ViT-B/16 ONNX source, after surgery.py, into a Modalix MPK and measure its numerical fidelity."""
 
 from __future__ import annotations
 
 import argparse
 import json
 import logging
+import os
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +27,7 @@ from afe.ir.tensor_type import ScalarType
 from afe.load.importers.general_importer import onnx_source
 from calibration import fidelity_names, preprocess_image, read_images
 from model_registry.model import load_model as load_metadata
+from surgery import INPUT, INPUT_SHAPE, prepare_model
 
 LOG = logging.getLogger("vit_b_16.compile")
 MODEL_DIR = Path(__file__).resolve().parents[1]
@@ -68,15 +71,16 @@ def compile_model(source: Path, component_dir: Path, profile_id: str) -> AfeMode
 
     input_name = str(parameters["input_name"])
     input_shape = tuple(int(value) for value in parameters["input_shape"])
-    if input_shape != (1, 3, 224, 224):
-        raise ValueError(f"unsupported ViT-B/16 input shape: {input_shape}")
+    if (input_name, input_shape) != (INPUT, tuple(INPUT_SHAPE)):
+        raise ValueError(f"surgery.py prepares {INPUT} {INPUT_SHAPE}, not {input_name} {list(input_shape)}")
 
     component_dir.mkdir(parents=True, exist_ok=False)
-    importer = onnx_source(str(source), {input_name: input_shape}, {input_name: ScalarType.float32})
-    loaded = load_model(importer, target=gen2_target)
-
     model_name = f"{MODEL_ID}_{profile_id}"
-    quantized = loaded.quantize(None, _quantization(precision), model_name=model_name)
+    with tempfile.TemporaryDirectory(prefix=f"{MODEL_ID}-", dir=os.environ.get("RUNNER_TEMP")) as temporary:
+        graph = prepare_model(source, Path(temporary))
+        importer = onnx_source(str(graph), {input_name: input_shape}, {input_name: ScalarType.float32})
+        loaded = load_model(importer, target=gen2_target)
+        quantized = loaded.quantize(None, _quantization(precision), model_name=model_name)
     quantized.save(model_name=model_name, output_directory=str(component_dir))
     saved = AfeModel.load(model_name=f"{model_name}.sima", network_directory=str(component_dir))
     saved.compile(output_path=str(component_dir))
