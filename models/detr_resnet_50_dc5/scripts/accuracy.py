@@ -1,6 +1,6 @@
 """Score one compiled DETR ResNet-50 DC5 MPK on COCO val2017 and save its accuracy report.
 
-Each image is letterboxed into the 1280x720 input and ImageNet-normalized on the CPU, as
+Each image is stretched to the 1280x720 input and ImageNet-normalized on the CPU, as
 calibration.preprocess_image does. Every one of the 100 queries becomes one detection, as DETR's own COCO
 evaluation scores them: the class with the highest softmax probability, excluding "no object", and its box
 mapped back to the image.
@@ -24,7 +24,7 @@ from typing import Any
 import cv2
 import model_report
 import numpy as np
-from calibration import INPUT_HEIGHT, INPUT_WIDTH, MEAN, STD, letterbox, letterbox_geometry
+from calibration import MEAN, STD, stretch
 from faster_coco_eval import COCO, COCOeval_faster
 from PIL import Image
 
@@ -63,8 +63,8 @@ NORMALIZE = ((np.arange(256, dtype=np.float32)[:, None] / 255.0 - MEAN) / STD).r
 def preprocess(content: bytes) -> np.ndarray:
     """Return the same values as calibration.preprocess_image, in the MPK's HWC layout."""
     with Image.open(io.BytesIO(content)) as image:
-        letterboxed = letterbox(image.convert("RGB"))
-    return cv2.LUT(np.asarray(letterboxed), NORMALIZE)
+        stretched = stretch(image.convert("RGB"))
+    return cv2.LUT(np.asarray(stretched), NORMALIZE)
 
 
 def prefetched(load: Callable, items: Sequence) -> Iterator:
@@ -88,15 +88,13 @@ def decode(logits: np.ndarray, boxes: np.ndarray, image_id: int, width: int, hei
     probabilities = shifted / shifted.sum(axis=1, keepdims=True)
     categories = probabilities[:, :-1].argmax(axis=1)
     scores = probabilities[np.arange(QUERY_COUNT), categories]
-    # Boxes are (center x, center y, width, height) as fractions of the letterboxed input. Remove the padding
-    # and undo the resize to reach image pixels.
-    (resized_width, resized_height), (left, top) = letterbox_geometry(width, height)
-    scale_x, scale_y = resized_width / width, resized_height / height
+    # Boxes are (center x, center y, width, height) as fractions of the stretched input, so the same fractions
+    # of the image give image pixels.
     cx, cy, w, h = boxes[0].T
-    x1 = ((cx - w / 2) * INPUT_WIDTH - left) / scale_x
-    y1 = ((cy - h / 2) * INPUT_HEIGHT - top) / scale_y
     ids = np.full(QUERY_COUNT, image_id)
-    return np.stack([ids, x1, y1, w * INPUT_WIDTH / scale_x, h * INPUT_HEIGHT / scale_y, scores, categories], axis=1)
+    return np.stack(
+        [ids, (cx - w / 2) * width, (cy - h / 2) * height, w * width, h * height, scores, categories], axis=1
+    )
 
 
 def coco_stats(scorer: COCOeval_faster) -> dict[str, float]:

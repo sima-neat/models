@@ -1,7 +1,7 @@
 """Measure the FP32 baseline: the converted ONNX on a host, scored exactly as accuracy.py scores the MPK.
 
 The baseline is the accuracy the package would reach without compilation or quantization, on the same COCO
-val2017 images, 1280x720 letterboxed inputs and decoding. model.yaml publishes the result as the
+val2017 images, 1280x720 stretched inputs and decoding. model.yaml publishes the result as the
 reference_metrics entry with origin fp32_baseline. Run it on a host with the packages in
 requirements-accuracy.txt, onnxruntime, and tools/model_report on PYTHONPATH:
 

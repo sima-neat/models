@@ -10,7 +10,8 @@ import numpy as np
 import pyneat
 
 IMAGES = "val2017"
-# The benchmark input is a 720p camera frame, letterboxed with grey padding.
+# The benchmark input is a COCO image letterboxed into a 720p camera frame. The frame already has the
+# model's 1280x720 size, so Neat's stretch does not resize it.
 FRAME_WIDTH, FRAME_HEIGHT, FILL = 1280, 720, 114
 
 
@@ -48,15 +49,14 @@ dataset_id, dataset_dir = args.dataset.split("=", 1)
 image = sample_image(Path(dataset_dir))
 
 options = pyneat.ModelOptions()
-# Neat letterboxes, normalizes, quantizes and tessellates the frame inside the measured pipeline.
+# Neat normalizes, quantizes and tessellates the frame inside the measured pipeline.
 options.preprocess.kind = pyneat.InputKind.Image
 # Size Neat's input buffers for the benchmark frame, not the 1920x1080 default.
 options.preprocess.input_max_width = FRAME_WIDTH
 options.preprocess.input_max_height = FRAME_HEIGHT
 options.preprocess.enable = pyneat.AutoFlag.On
 options.preprocess.resize.enable = pyneat.AutoFlag.On
-options.preprocess.resize.mode = pyneat.ResizeMode.Letterbox
-options.preprocess.resize.pad_value = FILL
+options.preprocess.resize.mode = pyneat.ResizeMode.Stretch
 options.preprocess.normalize.enable = pyneat.AutoFlag.On
 # Without a preset Neat only scales pixels to [0, 1]; the model expects ImageNet mean and std.
 options.preprocess.preset = pyneat.NormalizePreset.ImageNet

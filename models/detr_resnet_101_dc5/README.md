@@ -13,12 +13,13 @@ object once, so the application does not need to remove overlapping boxes.
 
 ## Inputs and outputs
 
-**Input.** Scale the image with bilinear resampling to fit 1280×720 (width ×
-height), keeping the aspect ratio, and center it on a 1280×720 canvas filled
-with the pixel value 114. Scale the RGB values to 0–1, subtract the ImageNet
-mean (0.485, 0.456, 0.406), and divide by the standard deviation (0.229, 0.224,
-0.225). Pass this image as a 720×1280×3 (height, width, channel) float tensor,
-or let Neat letterbox and normalize the frame with its ImageNet preset.
+**Input.** Resize the image with bilinear resampling to exactly 1280×720
+(width × height), without padding, so a 720p camera frame passes unchanged.
+Padding lowers the model's accuracy, because the model reads it as part of the
+scene. Scale the RGB values to 0–1, subtract the ImageNet mean (0.485, 0.456,
+0.406), and divide by the standard deviation (0.229, 0.224, 0.225). Pass this
+image as a 720×1280×3 (height, width, channel) float tensor, or let Neat
+stretch and normalize the frame with its ImageNet preset.
 
 **Outputs.** The package returns `logits`, 92 class logits for each of 100
 queries, and `pred_boxes`, 100 boxes as normalized (cx, cy, w, h).
@@ -27,7 +28,7 @@ queries, and `pred_boxes`, 100 boxes as normalized (cx, cy, w, h).
 2. Drop the last class, which means no object, and take the best remaining class and its probability as the score.
 3. Keep the queries whose score passes your threshold.
 4. Convert each box to corners: (cx - w/2, cy - h/2) and (cx + w/2, cy + h/2).
-5. Multiply x by 1280 and y by 720, subtract the left and top padding, and divide by the resize scale to reach image pixels.
+5. Multiply x by the image width and y by the image height to reach image pixels.
 
 Class index i is COCO category ID i. Eleven of the first 91 indexes are unused.
 No Neat box decoder reads these outputs, so decode them on the CPU.

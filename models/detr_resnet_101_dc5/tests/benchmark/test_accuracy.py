@@ -35,19 +35,12 @@ def test_each_query_keeps_its_best_class_other_than_no_object(scorer: ModuleType
     assert rows[0, 5] > rows[1, 5]
 
 
-def test_boxes_map_from_fractions_of_the_letterboxed_input_to_image_pixels(scorer: ModuleType) -> None:
-    # An 800x600 image letterboxes to 960x720 at a 1.2 scale, 160 padding columns to its left.
-    (resized_width, resized_height), (left, top) = scorer.letterbox_geometry(800, 600)
-    assert (resized_width, resized_height, left, top) == (960, 720, 160, 0)
+def test_boxes_map_from_fractions_of_the_stretched_input_to_image_pixels(scorer: ModuleType) -> None:
     logits = np.zeros((1, scorer.QUERY_COUNT, scorer.CLASSES), dtype=np.float32)
     boxes = np.zeros((1, scorer.QUERY_COUNT, 4), dtype=np.float32)
-    # The box (100, 150) to (500, 270) in image pixels, as fractions of the 1280x720 input.
-    x1, y1, x2, y2 = (
-        (left + 100 * 1.2) / 1280,
-        150 * 1.2 / 720,
-        (left + 500 * 1.2) / 1280,
-        270 * 1.2 / 720,
-    )
+    # The box (100, 150) to (500, 270) in pixels of an 800x600 image, as fractions of the image, which the
+    # stretched input covers exactly.
+    x1, y1, x2, y2 = 100 / 800, 150 / 600, 500 / 800, 270 / 600
     boxes[0, 0] = [(x1 + x2) / 2, (y1 + y2) / 2, x2 - x1, y2 - y1]
     (x, y, w, h) = scorer.decode(logits, boxes, image_id=1, width=800, height=600)[0, 1:5]
     assert (x, y, w, h) == pytest.approx((100.0, 150.0, 400.0, 120.0), abs=1e-3)

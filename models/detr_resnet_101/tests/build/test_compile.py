@@ -19,19 +19,19 @@ def _png(width: int, height: int, color: tuple[int, int, int]) -> bytes:
     return stream.getvalue()
 
 
-def test_preprocessing_letterboxes_to_the_input_and_normalizes_with_imagenet_statistics(
+def test_preprocessing_stretches_to_the_input_and_normalizes_with_imagenet_statistics(
     load_script: Callable[[str], ModuleType],
 ) -> None:
     calibration = load_script("calibration")
 
-    # A 4:3 image fills the 720-pixel height at 960 pixels wide, centered between 160 padding columns on each side.
+    # A 4:3 image fills the whole 16:9 input, with no padding at any edge.
     result = calibration.preprocess_image(_png(500, 375, (255, 0, 0)))
 
     assert result.shape == (720, 1280, 3)
     assert result.dtype == np.float32
-    red, padding = ((np.array(pixel) / 255 - calibration.MEAN) / calibration.STD for pixel in ([255, 0, 0], [114] * 3))
-    for column, expected in ((159, padding), (160, red), (1119, red), (1120, padding)):
-        np.testing.assert_allclose(result[400, column], expected, rtol=1e-6)
+    red = (np.array([255, 0, 0]) / 255 - calibration.MEAN) / calibration.STD
+    for row, column in ((0, 0), (0, 1279), (719, 0), (719, 1279), (400, 640)):
+        np.testing.assert_allclose(result[row, column], red, rtol=1e-6)
 
 
 def test_calibration_draws_a_seeded_sample_from_cal2017_only(
