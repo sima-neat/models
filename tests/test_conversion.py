@@ -684,7 +684,7 @@ def test_targeted_plan_publishes_catalog_with_unselected_conversion(
              "categories": {"architecture": {"id": "yolo", "paradigm": "cnn"}}}
     documentation = {model_id: {"source_commit": "a" * 40, "run_id": model_id + "-docs"}
                      for model_id in ("yolo26x", "yolo26l")}
-    monkeypatch.setattr(publication, "_revision_documentation_receipts", lambda *args: None)
+    monkeypatch.setattr(publication, "read_current_catalog", lambda *args: (None, None))
     monkeypatch.setattr(publication, "publish_model_documentation", lambda **kwargs: documentation)
     pending = [{"model_id": "yolo26x", "build_profile_id": "w16a16", "compile_invocation_id": "w16a16",
                 "component_ids": ["model"], "compile_fingerprint": "c" * 64}] if deferred_pending else []

@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import tarfile
 import zipfile
 from pathlib import Path
+from unittest.mock import Mock
 
+import boto3
 import pytest
+from botocore.exceptions import ClientError
 from model_registry.compile_matrix import build_matrix
 from model_registry.dependencies import resolve_model_compiler
 from model_registry.errors import ValidationError
@@ -15,6 +19,7 @@ from model_registry.model import load_model, load_models
 from model_registry.package import assemble_package
 from model_registry.registry import (
     RegistryPublicationError,
+    S3ArtifactStore,
     S3Object,
     SigV4RegistryClient,
     _compile_timing,
@@ -130,6 +135,136 @@ def test_publish_model_documentation_keys_bind_create_request_identity() -> None
     assert first == create_keys("staging", "https://github.example.invalid/actions/runs/123")
     assert first != create_keys("staging", "https://github.example.invalid/actions/runs/456")
     assert first != create_keys("production", "https://github.example.invalid/actions/runs/123")
+
+
+def test_documentation_reuse_preserves_publication_provenance_and_uploads_only_changed_files(monkeypatch, tmp_path):
+    from model_registry.documentation import load_model_documentation
+
+    model_id = "resnet_50"
+    documentation = load_model_documentation(ROOT / "models" / model_id, "ResNet-50", repository=ROOT)
+    monkeypatch.setattr("model_registry.registry.load_models", lambda _: {model_id: {"display_name": "ResNet-50"}})
+    monkeypatch.setattr("model_registry.registry.load_model_documentation", lambda *args, **kwargs: documentation)
+    calls = []
+    sdk_clients = []
+    read_urls = []
+
+    def request(method, path, body, key):
+        calls.append((method, path, body, key))
+        return {"run_id": "run-" + body["commit_sha"][0]} if path == "/v1/runs" else {}
+
+    def publish(commit, previous=None, **options):
+        return publish_model_documentation(
+            repository=ROOT,
+            api_url="https://writer.example.invalid",
+            aws_region="us-west-2",
+            bucket="model-artifacts",
+            kms_key_id="alias/models",
+            environment="staging",
+            branch="feat/cards",
+            git_sha=commit * 40,
+            previous_receipts=previous,
+            request=request,
+            **options,
+        )
+
+    first = publish("a", artifact_store=FakeStore())
+    calls.clear()
+    monkeypatch.setattr(boto3, "client", lambda *args, **kwargs: pytest.fail("unchanged files opened S3"))
+    second = publish("b", first)
+    third = publish("c", second)
+    assert calls == []
+    assert second[model_id] == {
+        **first[model_id], "source_commit": "b" * 40, "publication_commit": "a" * 40,
+    }
+    assert third[model_id] == {**second[model_id], "source_commit": "c" * 40}
+
+    hero = third[model_id]["hero"]
+    legacy_key = f"models/feat%2Fcards/{'a' * 40}/documentation/{model_id}/hero.png"
+    objects = {
+        legacy_key: {
+            "VersionId": "original-hero-version",
+            "ChecksumSHA256": base64.b64encode(bytes.fromhex(hero["artifact_sha256"])).decode(),
+            "ContentLength": hero["size_bytes"],
+        },
+    }
+    uploads = []
+
+    class S3:
+        def head_object(self, *, Bucket, Key, ChecksumMode, VersionId=None):
+            assert Bucket == "model-artifacts" and ChecksumMode == "ENABLED"
+            if Key not in objects:
+                raise ClientError({"ResponseMetadata": {"HTTPStatusCode": 403}}, "HeadObject")
+            record = objects[Key]
+            assert VersionId is None or record["VersionId"] == VersionId
+            return record
+
+        def put_object(self, *, Body, **kwargs):
+            payload = Body.read()
+            assert kwargs["Bucket"] == "model-artifacts"
+            assert kwargs["IfNoneMatch"] == "*"
+            assert kwargs["ServerSideEncryption"] == "aws:kms" and kwargs["SSEKMSKeyId"] == "alias/models"
+            assert kwargs["ChecksumSHA256"] == base64.b64encode(hashlib.sha256(payload).digest()).decode()
+            key = kwargs["Key"]
+            assert key not in objects
+            uploads.append(key)
+            objects[key] = {
+                "VersionId": f"new-{len(uploads)}",
+                "ChecksumSHA256": kwargs["ChecksumSHA256"],
+                "ContentLength": len(payload),
+            }
+            return {"VersionId": objects[key]["VersionId"]}
+
+    def client(service, *, region_name):
+        assert service == "s3" and region_name == "us-west-2"
+        sdk_clients.append(S3())
+        return sdk_clients[-1]
+
+    def read(url):
+        read_urls.append(url)
+        return {"artifact": {
+            "s3_bucket": "model-artifacts", "s3_key": legacy_key, "s3_version_id": "original-hero-version",
+            "sha256": hero["artifact_sha256"], "size_bytes": hero["size_bytes"],
+        }}
+
+    monkeypatch.setattr(boto3, "client", client)
+    readme = tmp_path / "README.md"
+    readme.write_bytes(documentation["path"].read_bytes() + b"\nChanged text.\n")
+    documentation["path"] = readme
+    documentation["readme_sha256"] = hashlib.sha256(readme.read_bytes()).hexdigest()
+
+    fourth = publish("d", third, read_api_url="https://reader.example.invalid", read_request=read)
+    assert len(sdk_clients) == 1
+    assert uploads == [f"models/feat%2Fcards/documentation/{model_id}/{documentation['readme_sha256']}/README.md"]
+    assert read_urls == ["https://reader.example.invalid/v1/runs/run-a/artifacts/hero"]
+    assert len(calls) == 5 and calls[0][2]["commit_sha"] == "d" * 40
+    hero_registration = next(body for _, path, body, _ in calls if path.endswith("/artifacts/hero"))
+    assert hero_registration["s3_key"] == legacy_key
+    assert hero_registration["s3_version_id"] == "original-hero-version"
+    assert hero_registration["metadata"]["source_commit"] == "d" * 40
+    assert fourth[model_id]["run_id"] == "run-d"
+    assert "publication_commit" not in fourth[model_id]
+    assert third[model_id]["run_id"] == "run-a"
+
+
+def test_documentation_s3_concurrent_upload_reuses_only_verified_winner(tmp_path):
+    path = tmp_path / "README.md"
+    path.write_bytes(b"immutable documentation")
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    checksum = base64.b64encode(bytes.fromhex(digest)).decode()
+    head = {"VersionId": "winning-version", "ContentLength": path.stat().st_size, "ChecksumSHA256": checksum}
+    error = ClientError({"ResponseMetadata": {"HTTPStatusCode": 412}}, "PutObject")
+    client = Mock()
+    client.put_object.side_effect = error
+    store = S3ArtifactStore("model-artifacts", s3_client=client)
+
+    client.head_object.side_effect = [{}, head, head]
+    stored = store.ensure_native_sha256(path, "documentation/key", digest)
+    assert stored.version_id == "winning-version"
+    assert client.head_object.call_args.kwargs["VersionId"] == "winning-version"
+
+    client.head_object.side_effect = [{}, head | {"ChecksumSHA256": "unexpected"}]
+    with pytest.raises(RegistryPublicationError, match="Could not publish immutable"):
+        store.ensure_native_sha256(path, "documentation/key", digest)
 
 
 COMPILE_TIMING = {

@@ -388,6 +388,14 @@ Ordinary catalog README and hero publication stays branch-retained and is not
 part of the candidate. DevKit qualification is separate; it is not claimed as
 frozen candidate evidence in this iteration.
 
+When the README, hero image, and their presentation metadata match the current
+catalog on the same branch, the next catalog reuses the completed documentation
+run and its immutable S3 versions. The catalog's `source_commit` still identifies
+the current checkout, and `publication_commit` identifies the run's original
+commit. Changed documentation gets a new run. The publisher verifies each
+object's checksum and size, reuses matching versions, and writes new objects
+under branch-scoped content hashes with a single S3 client.
+
 The backend protects assembly for seven days. The newest successful candidate
 per source branch/model/profile receives `latest_successful` protection;
 older late completions receive bounded protection. Source-branch deletion does
