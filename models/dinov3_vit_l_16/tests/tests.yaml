@@ -3,5 +3,9 @@ conversion:
 compile:
   run_tests: true
 performance:
-  run_tests: false
-  skip_reason: No build has a published report to expect values from yet.
+  run_tests: true
+  expected:
+    w16a16:
+      throughput_fps: 37.3
+    w8a16:
+      throughput_fps: 71.9
