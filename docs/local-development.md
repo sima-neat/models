@@ -94,6 +94,8 @@ python3 -m venv .venv
 ```
 
 `.venv/bin/python -m pytest` with no path runs the whole repository suite.
+Pull requests also run `.venv/bin/python -m ruff check .`; run it before you
+commit.
 
 Run a stage's tests on an output you produced with
 `scripts/run_model_tests.sh <stage> models/<model-id> <output> [<profile-id>]`,

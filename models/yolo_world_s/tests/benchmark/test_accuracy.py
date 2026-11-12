@@ -1,6 +1,6 @@
 from pathlib import Path
-import numpy as np
 
+import numpy as np
 from model_registry.model_tests import measured_shortfalls
 
 

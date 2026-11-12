@@ -29,7 +29,7 @@ dev = [
   "opencv-python-headless>=4.10,<5",
   "Pillow>=10,<13",
   "pytest>=8,<9",
-  "ruff>=0.12,<1",
+  "ruff==0.17.4",
 ]
 
 [project.scripts]
@@ -58,3 +58,7 @@ target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP"]
+
+[tool.ruff.lint.per-file-ignores]
+# Compile and benchmark inputs: reformatting them reruns those stages. Clean them up with the model's next change.
+"models/yolo_world_*/scripts/{accuracy,calibration,clip,compile,performance,precision,surgery}.py" = ["E501", "I001"]

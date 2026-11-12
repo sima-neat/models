@@ -100,8 +100,11 @@ git push --set-upstream origin HEAD
 If the change includes a separately reviewed taxonomy or shared-tool update,
 stage that explicit path too. Before committing, confirm that no downloaded
 input, generated output, result, log, cache, or credential appears in the
-staged diff. Write a commit message that describes the model or lifecycle
-contract, not just the filenames.
+staged diff. Pull requests reject any committed file that `.gitignore`
+excludes, even when added with `git add -f`, and any file over 2 MiB; a test
+fixture that must be committed anyway goes in `ALLOWED_FILES` in
+`tests/test_target_branch_checks.py`. Write a commit message that describes
+the model or lifecycle contract, not just the filenames.
 
 Open a pull request against `develop`. `Target Branch Checks` reruns
 validation on the merge result. It does not compile or measure pull-request
@@ -135,10 +138,10 @@ provenance and are reserved for CI.
 ## CI and trust boundaries
 
 Pull requests run `Target Branch Checks` on the merge result, on
-GitHub-hosted infrastructure: the repository tests and every model's tests
-that need no stage output, which also validate the complete catalog and
-taxonomy and resolve the compiler pin, the `model-registry` package
-build, and the model browser checks. They do not schedule
+GitHub-hosted infrastructure: `ruff check .`, the repository tests and every
+model's tests that need no stage output, which also validate the complete
+catalog and taxonomy, resolve the compiler pin, and reject committed binaries,
+the `model-registry` package build, and the model browser checks. They do not schedule
 contributor-controlled recipe, surgery, or measurement code on a self-hosted
 runner, and they read no registry state.
 
