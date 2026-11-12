@@ -35,8 +35,8 @@ from model_registry.registry import (
     S3Object,
     _download_registry_file,
     _preflight_compilations,
-    build_catalog_snapshot,
     canonical_sha256,
+    publish_catalog,
     publish_compilations,
     stage_catalog_build,
 )
@@ -258,23 +258,32 @@ def test_native_deployment_publish_package_and_retrieve_without_archiving(
 
         model = load_and_validate_model(ROOT / "models" / MODEL)
         monkeypatch.setattr(module, "load_models", lambda root: {MODEL: model})
-        snapshot = build_catalog_snapshot(repository=ROOT, branch="develop", git_sha="b" * 40, previous=catalog)
-        entry = snapshot["models"][0]
-        # Publishing metadata must not rewrite approval-owned outputs.
-        assert entry["builds"] == entry["packages"] == []
-        assert entry["benchmark_fingerprints"][PROFILE]["performance"] == benchmark_fingerprint(
-            ROOT, model, PROFILE, {"model": published["runs"][0]}, "performance",
-        )
 
     def read(url):
         if "/catalogs/current?" in url:
-            assert "git_ref=refs%2Fheads%2Fdevelop" in url
+            assert any(f"git_ref=refs%2Fheads%2F{branch}" in url for branch in ("develop", "main"))
             return {"catalog": {"document": catalog}}
         path = url.removeprefix("https://registry.example.invalid")
         if path in registry.artifacts:
             record = registry.artifacts[path]
             return {"artifact": {**record, "download_url": record["s3_key"]}}
         return {"run": {"toolchain_version": resolve_model_compiler(ROOT)["version"]}}
+
+    if selection_field == "approved_deployments":
+        for branch in ("develop", "main"):
+            publication = publish_catalog(
+                repository=ROOT, branch=branch, git_sha="b" * 40,
+                api_url="https://registry.example.invalid", read_api_url="https://registry.example.invalid",
+                aws_region="us-west-2", request=registry.request, read_request=read,
+            )
+            entry = publication["catalog"]["models"][0]
+            # Publishing metadata must not rewrite approval-owned outputs.
+            assert entry["builds"] == entry["packages"] == []
+            assert "approved_deployments" not in entry and "branch_deployments" not in entry
+            assert entry["benchmark_fingerprints"][PROFILE]["performance"] == benchmark_fingerprint(
+                ROOT, model, PROFILE, {"model": published["runs"][0]}, "performance",
+            )
+            assert registry.calls[-1][2]["catalog"] == publication["catalog"]
 
     restore_args = dict(
         repository=ROOT, output_dir=tmp_path / "restored", api_url="https://registry.example.invalid",

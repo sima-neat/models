@@ -205,6 +205,23 @@ def test_merge_keeps_the_first_unmatched_profile_and_drops_models_outside_head()
     assert merge_catalog_sources([], MERGE_MATRIX) is None
 
 
+def test_merge_preserves_matching_approved_deployments():
+    selection = {"requirements": {"invocations": [{"component_ids": ["model"], "compile_fingerprint": "k1"}]}}
+    own = {"models": [{"id": "x", "builds": [], "packages": [], "approved_deployments": {"p1": selection},
+                       "benchmark_fingerprints": {"p1": {"performance": "selected-benchmark"}}}]}
+    base = _source(("p1", "k1", "base"))
+
+    merged = merge_catalog_sources([own, base], MERGE_MATRIX)["models"][0]
+
+    assert merged["approved_deployments"] == {"p1": selection}
+    assert merged["benchmark_fingerprints"] == {"p1": {"performance": "selected-benchmark"}}
+    assert merged["builds"] == merged["packages"] == []
+    selection["requirements"]["invocations"][0]["compile_fingerprint"] = "stale"
+    merged = merge_catalog_sources([own, base], MERGE_MATRIX)["models"][0]
+    assert "approved_deployments" not in merged
+    assert merged["builds"][0]["run_id"] == "base"
+
+
 def test_merge_requires_every_component_fingerprint_of_a_profile() -> None:
     matrix = [{"model_id": "x", "build_profile_id": "p1", "component_ids": ["a", "b"], "compile_fingerprint": "k1"}]
     partial = {"models": [{"id": "x", "builds": [
