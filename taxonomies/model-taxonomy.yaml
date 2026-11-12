@@ -157,6 +157,7 @@ architectures:
     allowed_model_types: [llm]
   netvlad:
     display_name: NetVLAD
+    description: Describes a whole image as one place descriptor for recognizing places seen before.
     paradigm: cnn
     allowed_model_types: [vision]
   phi:
