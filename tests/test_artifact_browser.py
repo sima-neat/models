@@ -97,8 +97,8 @@ def test_browser_links_home_relative_to_the_deployed_subpath() -> None:
     assert '<a id="nav-models" href="./" aria-current="page">Browse models</a>' in html
     assert '<a id="nav-compare" href="./?view=compare">Compare</a>' in html
     assert (
-        '<a class="developer-only" href="./docs"><span class="nav-long">Developer docs</span><span class="nav-short">Docs</span></a>'
-        in html
+        '<a class="developer-only" href="./docs"><span class="nav-long">Developer docs</span>'
+        '<span class="nav-short">Docs</span></a>' in html
     )
     assert 'class="sectionbar"' in html
     assert 'href="./docs/metadata-schema">YAML reference</a>' not in html
@@ -774,7 +774,8 @@ def test_developer_docs_workflow_only_validates_the_combined_portal() -> None:
     assert any(step.get("run") == "npm run build:portal" for step in build["steps"])
     portal_build = next(step for step in build["steps"] if step.get("run") == "npm run build:portal")
     assert portal_build["env"] == {
-        "DOCS_SITE_URL": "${{ inputs.environment == 'production' && 'https://developer.sima.ai' || 'https://developer-stg.sima.ai' }}",
+        "DOCS_SITE_URL": "${{ inputs.environment == 'production' && 'https://developer.sima.ai'"
+        " || 'https://developer-stg.sima.ai' }}",
         "DOCS_BASE_URL": "/models/",
     }
     assert not any("pages" in step.get("uses", "") for step in build["steps"])
@@ -891,7 +892,10 @@ def test_branch_switch_loads_builds_even_if_taxonomy_refresh_fails() -> None:
 
     assert 'await loadTaxonomy(state.preferredBranch || DEFAULT_BRANCH);\n  } catch (error) {' in branch_change
     assert 'setCategoryFiltersDisabled(true);' in branch_change
-    assert 'if (navigationId !== state.navigationId) return;\n  try {\n    await loadRuns({ branch: state.preferredBranch });' in branch_change
+    assert (
+        'if (navigationId !== state.navigationId) return;\n  try {\n'
+        '    await loadRuns({ branch: state.preferredBranch });' in branch_change
+    )
     assert 'elements[elementId].disabled ? "" :' in script
 
 
@@ -969,7 +973,10 @@ def test_browser_history_restores_category_filters_and_empty_detail() -> None:
     script = _browser_source("app.js")
     initialize = script.split("async function initialize()", 1)[1].split('elements["theme-toggle"]', 1)[0]
 
-    assert 'Object.entries(CATEGORY_QUERY_FIELDS).map(([elementId, queryName]) => [elementId, link.get(queryName) || ""])' in initialize
+    assert (
+        'Object.entries(CATEGORY_QUERY_FIELDS).map(([elementId, queryName]) => '
+        '[elementId, link.get(queryName) || ""])' in initialize
+    )
     assert "state.taxonomy = null" in initialize
     assert "if (state.selectedId || linkedVariant) detailSkeleton();\n  else showEmptyDetail();" in initialize
     assert "if (state.taxonomy) populateCategoryFilters();" in initialize
@@ -1089,7 +1096,10 @@ def test_model_catalog_is_default_with_explicit_build_history_mode() -> None:
     assert 'allPages(api, `${base}/runs`, packageQuery, "runs")' in script
     assert 'allPages(api, `${base}/models`, modelQuery, "models")' in script
     assert 'query.set("run_type", "model_compile")' in script
-    assert 'if (historical && !elements["history-filter"].checked) query.set("latest_per_model_compiler", "true")' in script
+    assert (
+        'if (historical && !elements["history-filter"].checked) query.set("latest_per_model_compiler", "true")'
+        in script
+    )
     assert 'link.get("history") === "1"' in script
     assert 'url.searchParams.set("history", "1")' in script
     assert 'elements["history-filter"].checked = false' in script
@@ -1289,7 +1299,10 @@ def test_only_model_packs_are_presented_as_artifacts() -> None:
 
     assert 'artifact.artifact_type === "model-pack"' in script
     assert "const artifacts = modelPackArtifacts(detail.summary.artifacts)" in script
-    assert 'artifacts.map((artifact) => keyValue(artifactDelivery(artifact) === "archive" ? "SHA-256" : "Manifest SHA-256", artifact.sha256, { copy: true, mono: true }))' in script
+    assert (
+        'artifacts.map((artifact) => keyValue(artifactDelivery(artifact) === "archive" ? "SHA-256" : '
+        '"Manifest SHA-256", artifact.sha256, { copy: true, mono: true }))' in script
+    )
     assert '|| artifacts[0]' not in browser
 
 
@@ -1300,7 +1313,10 @@ def test_detail_links_to_the_original_model_whatever_was_compiled() -> None:
 
     # The declared card decides the link, so converted models link to their checkpoint's page too.
     assert 'url.protocol === "https:" && !url.username && !url.password' in script
-    assert "trustedHttpsUrl(input.metadata?.model_card) || huggingFaceRepositoryUrl(input.source_reference)" in original_model_link
+    assert (
+        "trustedHttpsUrl(input.metadata?.model_card) || huggingFaceRepositoryUrl(input.source_reference)"
+        in original_model_link
+    )
     assert "startsWith(\"hf://\")" not in original_model_link
     assert "hf:\\/\\/(models|datasets|spaces)" in script
     assert 'url.hostname === "huggingface.co"' in original_model_link
@@ -1356,7 +1372,10 @@ def test_performance_rendering_reads_the_model_report_and_is_charted() -> None:
     assert 'return [reading(sum("mean")), reading(sum("maximum"))];' in script
     assert "≤" not in script
     # The other SoM rails are rows at the SoC's level, and the bar above the table replaces the legend.
-    assert "...Object.keys(RAILS).filter((key) => !SOC_RAILS.includes(key)).map((key) => [RAILS[key][0], key, RAILS[key][1], null, 1])" in script
+    assert (
+        "...Object.keys(RAILS).filter((key) => !SOC_RAILS.includes(key))"
+        ".map((key) => [RAILS[key][0], key, RAILS[key][1], null, 1])" in script
+    )
     assert "rail-legend" not in script and "rail-legend" not in styles
     assert 'title="Average SoM power by rail"' in script
     assert '</h4>${lead || ""}<table>' in script
@@ -1757,7 +1776,8 @@ const catalog = [{model_id: 'rf_detr_small', display_name: 'RF-DETR', builds: [
   {run_id: 'stale-backbone', build_profile_id: 'w8a8_w16a16', component_id: 'backbone'},
   {run_id: 'stale-decoder', build_profile_id: 'w8a8_w16a16', component_id: 'decoder'},
 ], benchmark_fingerprints: {w8a8_w16a16: {performance: 'stale-performance-fingerprint'}}},
-                 {model_id: 'ssd_mobilenet', display_name: 'SSD', builds: [{run_id: 'inherited', build_profile_id: 'w8a8_w16a16'}]}];
+                 {model_id: 'ssd_mobilenet', display_name: 'SSD',
+                  builds: [{run_id: 'inherited', build_profile_id: 'w8a8_w16a16'}]}];
 const packageRun = (id, components) => ({id, run_type: 'model_package', status: 'completed',
   git_ref: 'refs/heads/perf/rfdetr-attention-layout', commit_sha: 'workflow-2', metadata: {
   model_id: 'rf_detr_small', build_profile_id: 'w8a8_w16a16', component_run_ids: components,
@@ -1778,10 +1798,12 @@ assert.deepEqual(branchModels(current, [], matched)[0].benchmark_fingerprints,
 assert.deepEqual(models[0].packages.map(item => item.run_id), ['good']);
 assert.deepEqual(branchModels([...old, ...current], packages, catalog, '2.1')[0].builds.map(build => build.run_id),
                  ['old-backbone', 'old-decoder']);
-const sameCompilerOld = [run('same-old-backbone', 'rf_detr_small', 'backbone', 'workflow-0', '3.0', '2026-08-01T12:00:00Z'),
-                         run('same-old-decoder', 'rf_detr_small', 'decoder', 'workflow-0', '3.0', '2026-08-01T12:00:00Z')];
-assert.deepEqual(branchModels([...sameCompilerOld, ...current], packages, catalog, '3.0')[0].builds.map(build => build.run_id),
-                 ['backbone', 'decoder']);
+const sameCompilerOld = [
+  run('same-old-backbone', 'rf_detr_small', 'backbone', 'workflow-0', '3.0', '2026-08-01T12:00:00Z'),
+  run('same-old-decoder', 'rf_detr_small', 'decoder', 'workflow-0', '3.0', '2026-08-01T12:00:00Z')];
+assert.deepEqual(
+  branchModels([...sameCompilerOld, ...current], packages, catalog, '3.0')[0].builds.map(build => build.run_id),
+  ['backbone', 'decoder']);
 assert.deepEqual(branchModels([], packages, catalog), []);
 const performanceRun = {...run('benchmark', 'inherited', 'model', 'workflow-2'), run_type: 'model_performance'};
 assert.deepEqual(branchModels([performanceRun], [], catalog), []);

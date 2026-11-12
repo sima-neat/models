@@ -402,7 +402,8 @@ def test_llima_runner_passes_yaml_settings_to_the_recipe(tmp_path, model_id, ima
         draft_name = parameters["draft_model_path"]
         draft = deployment(source / draft_name)
         draft_config = json.loads((draft / "devkit/vlm_config.json").read_text())
-        draft_config["lm_cfg"]["speculative_decoding_cfg"] = {"is_draft": True, "method": parameters["speculative_method"]}
+        method = parameters["speculative_method"]
+        draft_config["lm_cfg"]["speculative_decoding_cfg"] = {"is_draft": True, "method": method}
         (draft / "devkit/vlm_config.json").write_text(json.dumps(draft_config))
         (checkpoint.parent / draft_name).mkdir()
         (checkpoint.parent / draft_name / "config.json").write_text("{}")

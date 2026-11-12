@@ -77,7 +77,8 @@ def test_calibration_is_pinned_in_model_registry(model_dir):
 
     model = load_model(model_dir)
     assert model["calibrations"] == [{"id": "coco-2017-cal", "dataset": {
-        "id": "coco-2017", "variant": "cal", "sha256": "54c64d84122eba371ac014d7b43849a461551c2e6c5c430b5ead90ec1dec12b1",
+        "id": "coco-2017", "variant": "cal",
+        "sha256": "54c64d84122eba371ac014d7b43849a461551c2e6c5c430b5ead90ec1dec12b1",
         "size_bytes": 187510866,
     }}]
     (profile,) = model["build_profiles"]
@@ -115,7 +116,8 @@ def test_prompt_rows_preserve_order_and_share_a_content_bound_cache(tmp_path, lo
     from types import SimpleNamespace
 
     calibration = load_script("calibration")
-    monkeypatch.setitem(sys.modules, "jax", SimpleNamespace(default_matmul_precision=lambda _: contextlib.nullcontext()))
+    jax = SimpleNamespace(default_matmul_precision=lambda _: contextlib.nullcontext())
+    monkeypatch.setitem(sys.modules, "jax", jax)
     monkeypatch.setattr(sys.modules["afe.apis.defines"], "InputName", str)
     prompts = [str(i) for i in range(65)]
     table = np.zeros((1, 512), np.float32)

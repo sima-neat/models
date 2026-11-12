@@ -238,6 +238,13 @@ format. A model test imports a script with the root `conftest.py` fixture
 `load_script("<name>")`, which stubs the Model Compiler and DevKit modules a
 host lacks.
 
+The benchmark tests under `tests/benchmark/` also run on the DevKit, in
+PyNeat, which has no `onnx`, `onnxruntime` or `torch`. A test that needs one
+imports it inside the test with `pytest.importorskip("onnx")`. A module-level
+import stops pytest at collection on the DevKit, and the benchmark then
+publishes no result for that stage. Pull request CI has these packages, so it
+cannot catch the mistake.
+
 A test's fixtures decide where it runs:
 
 | A test that takes | Runs | A failure |
@@ -291,9 +298,9 @@ in the same commit.
 
 - **Pull request.** `Target Branch Checks` is the only workflow that builds or
   tests a pull request, on the merge result and GitHub-hosted runners:
-  `model-registry-package.yml` runs `python -m pytest`, collects every
-  model's stage-output tests, and builds the `model-registry` package, and
-  `developer-docs.yml` checks the model browser.
+  `model-registry-package.yml` runs `ruff check .` and `python -m pytest`,
+  collects every model's stage-output tests, and builds the `model-registry`
+  package, and `developer-docs.yml` checks the model browser.
   `PR Sanitization` checks the pull request's description. Contributor code
   never runs on self-hosted runners for a pull request.
 - **Push.** Every push runs `Vulcan Model Orchestrator`. Its `portal` job builds and
@@ -345,7 +352,9 @@ in the same commit.
    `tests/`, following [adding a model](docs/adding-a-model.md) and the
    [metadata schema](docs/metadata-schema.md). Record the source model's
    published scores in `reference_metrics`.
-2. Run `python -m pytest` and `model-registry validate models/<model_id>`.
+2. Run `ruff check .`, `python -m pytest`, and `model-registry validate models/<model_id>`.
+   `tests/test_target_branch_checks.py` rejects committed files that
+   `.gitignore` excludes or that exceed 2 MiB, except its `ALLOWED_FILES`.
 3. Compile each changed build in the pinned Model Compiler with
    the backend's runner (`run_model_compilation.sh` or `run_llima_compilation.sh`)
    and check each compiled artifact with
@@ -449,7 +458,8 @@ outputs. Start from the template in
    numbered list, give the class-index mapping, and name the Neat decoder that
    handles the outputs when one exists.
 5. `## Building applications`: the `BUILDING_APPLICATIONS` text from
-   `tools/model_registry/documentation.py`, unchanged.
+   `tools/model_registry/documentation.py`, unchanged. LLiMa deployments
+   (`interface.format: huggingface`) use `GENAI_BUILDING_APPLICATIONS` instead.
 
 Write the README for an application developer:
 
