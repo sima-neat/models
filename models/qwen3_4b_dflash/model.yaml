@@ -1,5 +1,6 @@
 build-on-demand: true
 display_name: Qwen3-4B DFlash
+parameter_count_billion: 4.0
 description: Generates text using a draft assistant whose proposals are checked by the target model.
 model_type: llm
 tasks:

@@ -1,5 +1,6 @@
 build-on-demand: true
 display_name: LFM2.5-VL-450M
+parameter_count_billion: 0.45
 description: Generates text from instructions, conversation history, and images.
 model_type: vlm
 tasks: [text_generation, visual_question_answering]

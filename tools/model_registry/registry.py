@@ -383,6 +383,31 @@ def _head_matrix(root: Path, models: dict[str, Any]) -> list[JsonObject]:
     )["include"]
 
 
+def _catalog_outputs(model: JsonObject) -> tuple[list[JsonObject], list[JsonObject]]:
+    """Resolve selected deployments without changing server-owned approval records."""
+    selections = {**model.get("approved_deployments", {}), **model.get("branch_deployments", {})}
+    builds = [item for item in model.get("builds", []) if item.get("build_profile_id") not in selections]
+    packages = [item for item in model.get("packages", []) if item.get("build_profile_id") not in selections]
+    for profile_id, selection in selections.items():
+        requirements = selection["requirements"]
+        components = [item for item in selection["artifacts"] if item.get("component_id")]
+        for component in components:
+            invocation = next(item for item in requirements["invocations"]
+                              if component["component_id"] in item["component_ids"])
+            builds.append({
+                **component, "build_profile_id": profile_id, "compile_invocation_id": profile_id,
+                "compile_fingerprint": invocation["compile_fingerprint"],
+            })
+        for package in (item for item in selection["artifacts"] if item.get("package_id")):
+            requirement = next(item for item in requirements["packages"] if item["id"] == package["package_id"])
+            packages.append({
+                **package, "build_profile_id": profile_id,
+                "component_run_ids": {item["component_id"]: item["run_id"] for item in components
+                                      if item["component_id"] in requirement["component_ids"]},
+            })
+    return builds, packages
+
+
 def build_catalog_snapshot(
     *,
     repository: str | Path,
@@ -427,10 +452,13 @@ def build_catalog_snapshot(
     selected_profiles = {(model_id, profile_id) for model_id, profile_id, _ in selected_invocations}
     previous_builds: dict[tuple[str, str, str], JsonObject] = {}
     previous_packages: dict[tuple[str, str, str], JsonObject] = {}
+    selected_builds: dict[tuple[str, str, str], JsonObject] = {}
     previous_benchmark_fingerprints: dict[tuple[str, str], JsonObject] = {}
     for model in (previous or {}).get("models", []):
         if not isinstance(model, dict) or not isinstance(model.get("id"), str):
             continue
+        for build in _catalog_outputs(model)[0]:
+            selected_builds[(model["id"], build["build_profile_id"], build["component_id"])] = build
         for profile_id, fingerprints in (model.get("benchmark_fingerprints") or {}).items():
             previous_benchmark_fingerprints[(model["id"], profile_id)] = fingerprints
         for build in model.get("builds", []):
@@ -471,7 +499,9 @@ def build_catalog_snapshot(
             # A manual build publishes a candidate. Only approved catalog entries
             # carry forward here, retaining the inputs and provenance they used.
             carry_forward(keys)
-            prior = {key[2]: previous_builds[key] for key in keys if key in previous_builds}
+            native = models[invocation["model_id"]]["components"][0]["interface"]["format"] == "huggingface"
+            available = selected_builds if native else previous_builds
+            prior = {key[2]: available[key] for key in keys if key in available}
             if len(prior) == len(keys) and all(
                 build.get("compile_fingerprint") == invocation["compile_fingerprint"] for build in prior.values()
             ):
@@ -1149,9 +1179,10 @@ def stage_catalog_build(
     )
     if invocation is None:
         raise ValidationError(f"compile invocation is absent from the current model: {compile_invocation_id}")
+    catalog_builds, catalog_packages = _catalog_outputs(catalog_model)
     builds = {
         item["component_id"]: item
-        for item in catalog_model.get("builds", [])
+        for item in catalog_builds
         if isinstance(item, dict)
         and item.get("build_profile_id") == build_profile_id
         and item.get("compile_invocation_id") == compile_invocation_id
@@ -1180,7 +1211,7 @@ def stage_catalog_build(
         download_url = artifact.get("download_url")
         if not isinstance(digest, str) or len(digest) != 64 or not isinstance(download_url, str):
             raise ValidationError(f"artifact registry returned incomplete MPK metadata for {run_id}")
-        if digest != build.get("artifact_sha256"):
+        if digest != build.get("artifact_sha256", digest):
             raise ValidationError(f"registry MPK checksum does not match the current catalog for {run_id}")
         component_dir = output / model_id / build_profile_id / component_id
         component_dir.mkdir(parents=True, exist_ok=True)
@@ -1249,7 +1280,7 @@ def stage_catalog_build(
     profile_dir = output / model_id / build_profile_id
     runtime_files = []
     package = next((
-        item for item in catalog_model.get("packages", [])
+        item for item in catalog_packages
         if isinstance(item, dict) and (item.get("build_profile_id"), item.get("package_id")) == (
             build_profile_id, "default"
         )
@@ -1264,8 +1295,8 @@ def stage_catalog_build(
             raise ValidationError("artifact registry returned invalid package metadata")
         if "runtime_files" in metadata:
             component_runs = {item["component_id"]: item["run_id"] for item in staged_outputs}
-            if (artifact.get("sha256") != package.get("artifact_sha256")
-                    or artifact.get("size_bytes") != package.get("size_bytes")
+            if (artifact.get("sha256") != package.get("artifact_sha256", artifact.get("sha256"))
+                    or artifact.get("size_bytes") != package.get("size_bytes", artifact.get("size_bytes"))
                     or not isinstance(artifact.get("download_url"), str)
                     or metadata.get("component_run_ids") != component_runs
                     or package.get("component_run_ids") != component_runs):

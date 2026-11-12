@@ -16,7 +16,14 @@ from .documentation import load_model_documentation
 from .errors import ModelRegistryError
 from .fetch import Fetcher, resolve_dataset
 from .mla_stage_simulation import write_mla_stage_simulation
-from .model import component_for, component_pipelines, load_and_validate_model, load_models, profile_component_for
+from .model import (
+    build_profile_for,
+    component_for,
+    component_pipelines,
+    load_and_validate_model,
+    load_models,
+    profile_component_for,
+)
 from .model_tests import TEST_OUTCOMES
 from .runner_approval import authorize_runner_matrix
 from .stage_plan import plan_stages, resolve_base_branches
@@ -172,6 +179,11 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
         "resolve-benchmark-runtime", help="resolve pinned DevKit and benchmark runtime dependencies"
     )
     benchmark_runtime.add_argument("--repository", type=Path, default=Path.cwd())
+
+    benchmark_job = subcommands.add_parser("benchmark-job", help="print benchmark job settings for GitHub Actions")
+    benchmark_job.add_argument("model_dir", type=Path)
+    benchmark_job.add_argument("--build-profile", required=True)
+    benchmark_job.add_argument("--stages", required=True)
 
     core = subcommands.add_parser("ensure-neat-core", help="verify or install the selected benchmark Core artifact")
     core.add_argument("--repository", type=Path, default=Path.cwd())
@@ -683,6 +695,20 @@ def _resolve_benchmark_runtime(args: argparse.Namespace) -> int:
     return 0
 
 
+def _benchmark_job(args: argparse.Namespace) -> int:
+    model = load_and_validate_model(args.model_dir)
+    profile = build_profile_for(model, args.build_profile)
+    native = model["components"][0]["interface"]["format"] == "huggingface"
+    performance = (
+        "performance" in args.stages.split(",") and args.build_profile in benchmarked_profiles(model, "performance")
+    )
+    baseline = performance and bool(profile.get("benchmark_baseline"))
+    print(f"backend={'llima' if native else 'core'}")
+    print(f"needs_baseline={str(baseline).lower()}")
+    print(f"timeout_minutes={4320 if native and baseline else 45}")
+    return 0
+
+
 def _verify_mpk(args: argparse.Namespace) -> int:
     fields = (
         "model_id",
@@ -1018,6 +1044,8 @@ def _main(argv: Sequence[str] | None, *, author_safe: bool) -> int:
             return _resolve_compiler(args)
         if args.command == "resolve-benchmark-runtime":
             return _resolve_benchmark_runtime(args)
+        if args.command == "benchmark-job":
+            return _benchmark_job(args)
         if args.command == "ensure-neat-core":
             from .neat_core import ensure_neat_core
 

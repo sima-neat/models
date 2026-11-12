@@ -139,6 +139,8 @@ jobs:
       source_branch: ${{ steps.source.outputs.branch }}
       vulcan_config: ${{ inputs.vulcan_config || toJSON(needs.resolve-vulcan-config.outputs) }}
       devkit_runner: ${{ inputs.devkit_runner || toJSON(needs.resolve-benchmark-runner.outputs) }}
+      benchmark_backend: ${{ steps.settings.outputs.backend }}
+      timeout_minutes: ${{ steps.settings.outputs.timeout_minutes }}
     steps:
       - name: Verify the source run and compiled artifact
         id: source
@@ -217,8 +219,18 @@ jobs:
       - name: Require the measured revision's board-stage tooling
         run: scripts/require_source_board_tooling.sh _source
 
+      - name: Resolve benchmark job settings
+        id: settings
+        env:
+          MODEL_ID: ${{ inputs.model_id }}
+          BUILD_PROFILE_ID: ${{ inputs.build_profile_id }}
+          STAGES: ${{ inputs.stages }}
+        run: model-registry benchmark-job "_source/models/$MODEL_ID" --build-profile "$BUILD_PROFILE_ID" --stages "$STAGES" >> "$GITHUB_OUTPUT"
+
       - name: Configure authenticated production registry reads
-        if: (inputs.environment != 'default' && inputs.environment || vars.VULCAN_ENV || 'staging') == 'production'
+        if: >-
+          (inputs.environment != 'default' && inputs.environment || vars.VULCAN_ENV || 'staging') == 'production' &&
+          (inputs.source_run_id == '' || steps.settings.outputs.needs_baseline == 'true')
         id: registry-reader-credentials
         uses: aws-actions/configure-aws-credentials@v6
         with:
@@ -262,7 +274,7 @@ jobs:
           name: benchmark-input-${{ inputs.model_id }}-${{ inputs.build_profile_id }}-${{ inputs.compile_invocation_id }}
           path: _compiled
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 7
 
   benchmark:
     name: Benchmark on DevKit
@@ -272,7 +284,7 @@ jobs:
     runs-on:
       group: ${{ fromJSON(needs.stage.outputs.devkit_runner).modalix_runner_group }}
       labels: ${{ fromJSON(fromJSON(needs.stage.outputs.devkit_runner).runner_labels) }}
-    timeout-minutes: 4320
+    timeout-minutes: ${{ fromJSON(needs.stage.outputs.timeout_minutes) }}
     permissions:
       actions: read
       contents: read
@@ -287,6 +299,7 @@ jobs:
       BUILD_PROFILE_ID: ${{ inputs.build_profile_id }}
       SOURCE_BRANCH: ${{ needs.stage.outputs.source_branch }}
       SOURCE_SHA: ${{ inputs.source_sha }}
+      BENCHMARK_BACKEND: ${{ needs.stage.outputs.benchmark_backend }}
       SIMA_CLI_AUTO_ACCEPT_UPDATE: "1"
       # One orchestrator run benchmarks many builds under the same run ID, so each build gets its own scratch.
       WORK_DIR: /media/nvme/neat-tests/model-benchmark-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.model_id }}-${{ inputs.build_profile_id }}
@@ -337,16 +350,6 @@ jobs:
               if stage in requested and not declared:
                   print(f"{profile} declares no {stage} benchmark; skipping it.", file=sys.stderr)
               print(f"{stage}={str(stage in requested and declared).lower()}")
-          PY
-
-      - name: Select benchmark backend
-        run: |
-          "$REGISTRY_PYTHON" - "_source/models/$MODEL_ID" >> "$GITHUB_ENV" <<'PY'
-          import sys
-          from model_registry.model import load_model
-          model = load_model(sys.argv[1])
-          backend = "llima" if model["components"][0]["interface"]["format"] == "huggingface" else "core"
-          print(f"BENCHMARK_BACKEND={backend}")
           PY
 
       - name: Resolve and verify benchmark runtime

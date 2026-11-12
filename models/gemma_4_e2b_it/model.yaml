@@ -1,5 +1,6 @@
 build-on-demand: true
 display_name: Gemma 4 E2B
+parameter_count_billion: 5.1
 description: Generates text from instructions, conversation history, and images.
 model_type: vlm
 tasks: [text_generation, visual_question_answering]

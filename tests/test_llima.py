@@ -27,7 +27,7 @@ from model_registry.artifact import (
 from model_registry.candidates import DEPLOYMENTS, publish_candidate
 from model_registry.dependencies import resolve_model_compiler
 from model_registry.errors import ValidationError
-from model_registry.fingerprints import COMPILE_TOOLING, compile_fingerprint
+from model_registry.fingerprints import COMPILE_TOOLING, benchmark_fingerprint, compile_fingerprint
 from model_registry.model import load_and_validate_model, load_models, mpk_filename
 from model_registry.registry import (
     RegistryPublicationError,
@@ -35,6 +35,7 @@ from model_registry.registry import (
     S3Object,
     _download_registry_file,
     _preflight_compilations,
+    build_catalog_snapshot,
     canonical_sha256,
     publish_compilations,
     stage_catalog_build,
@@ -185,7 +186,10 @@ def compiled(tmp_path, request):
 
 @pytest.mark.parametrize("compiled,environment", [("staging", "staging"), ("production", "production")],
                          indirect=["compiled"])
-def test_native_deployment_publish_package_and_retrieve_without_archiving(compiled, tmp_path, environment):
+@pytest.mark.parametrize("selection_field", [None, "approved_deployments", "branch_deployments"])
+def test_native_deployment_publish_package_and_retrieve_without_archiving(
+    compiled, tmp_path, environment, selection_field, monkeypatch,
+):
     component = compiled / MODEL / PROFILE / "model"
     source = component / "deployment"
     manifest = validate_compile_outputs(
@@ -233,6 +237,34 @@ def test_native_deployment_publish_package_and_retrieve_without_archiving(compil
         "build_profile_id": PROFILE, "compile_invocation_id": PROFILE, "component_id": "model",
         "run_id": compile_run, "artifact_sha256": published["runs"][0]["artifact_sha256"],
     }]}]}
+    fingerprint = compile_fingerprint(ROOT, MODEL, PROFILE, PROFILE, resolve_model_compiler(ROOT)["identity"])
+    if selection_field:
+        catalog["models"][0] = {"id": MODEL, "builds": [], "packages": [], selection_field: {PROFILE: {
+            "requirements": {
+                "invocations": [{"id": "model", "component_ids": ["model"], "compile_fingerprint": fingerprint}],
+                "packages": [{"id": "default", "component_ids": ["model"]}],
+            },
+            "artifacts": [
+                {"role": "compile-model", "component_id": "model", "run_id": compile_run, "artifact_name": "llima"},
+                {"role": "package-default", "package_id": "default", "run_id": package_run, "artifact_name": "package"},
+            ],
+        }}}
+        if selection_field == "branch_deployments":
+            # A branch selection supersedes an approved deployment for the same profile.
+            catalog["models"][0]["approved_deployments"] = {
+                PROFILE: {"requirements": {}, "artifacts": []},
+            }
+        from model_registry import registry as module
+
+        model = load_and_validate_model(ROOT / "models" / MODEL)
+        monkeypatch.setattr(module, "load_models", lambda root: {MODEL: model})
+        snapshot = build_catalog_snapshot(repository=ROOT, branch="develop", git_sha="b" * 40, previous=catalog)
+        entry = snapshot["models"][0]
+        # Publishing metadata must not rewrite approval-owned outputs.
+        assert entry["builds"] == entry["packages"] == []
+        assert entry["benchmark_fingerprints"][PROFILE]["performance"] == benchmark_fingerprint(
+            ROOT, model, PROFILE, {"model": published["runs"][0]}, "performance",
+        )
 
     def read(url):
         if "/catalogs/current?" in url:
@@ -248,7 +280,14 @@ def test_native_deployment_publish_package_and_retrieve_without_archiving(compil
         branch="develop", catalog_revision="b" * 40, model_id=MODEL, build_profile_id=PROFILE,
         compile_invocation_id=PROFILE, read_request=read, download_request=registry.objects.__getitem__,
     )
-    stage_catalog_build(**restore_args)
+    stage_catalog_build(**restore_args, expected_compile_fingerprint=fingerprint if selection_field else None)
+    if selection_field:
+        receipt = tmp_path / "restored" / MODEL / PROFILE / "packages/default/registry-publication.json"
+        restored_package = json.loads(receipt.read_text())["packages"][0]
+        assert restored_package["run_id"] == package_run
+        assert restored_package["component_run_ids"] == {"model": compile_run}
+        with pytest.raises(ValidationError, match="current model/compiler"):
+            stage_catalog_build(**restore_args, expected_compile_fingerprint="f" * 64)
     restored = tmp_path / "restored" / MODEL / PROFILE / "model/deployment"
     assert verify_llima(restored) == verify_llima(source)
     assert json.loads((restored / "devkit/vlm_config.json").read_text())["vm_cfg"]["image_size"] == [448, 448]
@@ -402,7 +441,9 @@ def test_llima_runner_passes_yaml_settings_to_the_recipe(tmp_path, model_id, ima
         draft_name = parameters["draft_model_path"]
         draft = deployment(source / draft_name)
         draft_config = json.loads((draft / "devkit/vlm_config.json").read_text())
-        draft_config["lm_cfg"]["speculative_decoding_cfg"] = {"is_draft": True, "method": parameters["speculative_method"]}
+        draft_config["lm_cfg"]["speculative_decoding_cfg"] = {
+            "is_draft": True, "method": parameters["speculative_method"],
+        }
         (draft / "devkit/vlm_config.json").write_text(json.dumps(draft_config))
         (checkpoint.parent / draft_name).mkdir()
         (checkpoint.parent / draft_name / "config.json").write_text("{}")

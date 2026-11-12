@@ -1,5 +1,6 @@
 build-on-demand: true
 display_name: Qwen3-4B-Instruct-2507
+parameter_count_billion: 4.0
 description: Generates text from instructions and conversation history.
 model_type: llm
 tasks: [text_generation]

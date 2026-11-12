@@ -1,5 +1,6 @@
 build-on-demand: true
 display_name: GPT-OSS 20B
+parameter_count_billion: 20.9
 description: Generates text from instructions and conversation history.
 model_type: llm
 tasks: [text_generation]

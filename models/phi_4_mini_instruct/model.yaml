@@ -1,5 +1,6 @@
 build-on-demand: true
 display_name: Phi-4 Mini Instruct
+parameter_count_billion: 3.8
 description: Generates text from instructions and conversation history.
 model_type: llm
 tasks: [text_generation]

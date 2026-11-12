@@ -83,14 +83,9 @@ def test_trace_excludes_warmup_and_stops_only_its_id_even_if_generation_raises()
     assert sampler.report()["telemetry"]["samples"] == 2
 
 
-def test_busy_sentinel_does_not_stop_another_trace_or_fail_generation():
+def test_busy_sentinel_fails_before_generation_without_stopping_another_trace():
     sampler = board.BoardTelemetry("image")
     with patch.object(board, "request", side_effect=RuntimeError("another trace is active")) as request:
-        for _ in range(2):
-            with sampler.measure():
-                pass
+        with pytest.raises(RuntimeError, match="another trace is active"), sampler.measure():
+            pytest.fail("generation must not run without required telemetry")
     request.assert_called_once()
-    report = sampler.report()
-    assert report["telemetry"]["status"] == "another trace is active"
-    assert report["telemetry"]["samples"] == 0
-    assert telemetry_metrics(report["telemetry"]) == {}

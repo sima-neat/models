@@ -507,4 +507,4 @@ metadata and packages retain their format.
 
 ### Parameter counts
 
-Optional `parameter_count_billion` records the published parameter count before quantization, including embeddings and all experts, in billions (for example `0.8` or `5.1`). It is catalog metadata used by the generative-model comparison graph and does not change compilation. Native generation benchmarks use `performance: {}`.
+Optional `parameter_count_billion` records the published parameter count before quantization, including embeddings and all experts, in billions (for example `0.8` or `5.1`). Speculative deployments use the target's count. It is catalog metadata used by the generative-model comparison graph and does not change compilation. Native generation benchmarks use `performance: {}`.

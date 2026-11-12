@@ -1,5 +1,6 @@
 build-on-demand: true
 display_name: Qwen3-VL-8B Instruct
+parameter_count_billion: 8.8
 description: Generates text from instructions, conversation history, and images.
 model_type: vlm
 tasks: [text_generation, visual_question_answering]

@@ -233,7 +233,7 @@ def benchmark_fingerprint(
 ) -> str:
     """Identity of a build profile's whole-model benchmark on a DevKit.
 
-    ``builds`` maps each component ID to its compile ``run_id`` and ``artifact_sha256``; the fingerprint covers
+    ``builds`` maps each component ID to its compile ``run_id`` and, for MPKs, ``artifact_sha256``; it covers
     the build of every component, the stage's declaration, the model's script, and the shared tooling. An
     accuracy declaration holds each dataset it evaluates with the metrics its datasets/<id>.yaml requires for
     the model's tasks, so changing another task's entry or another dataset's file keeps this fingerprint. The
@@ -269,7 +269,8 @@ def benchmark_fingerprint(
         "builds": {
             component_id: {
                 "compile_run_id": builds[component_id]["run_id"],
-                "artifact_sha256": builds[component_id]["artifact_sha256"],
+                # Completed native runs are immutable; selection records identify them without file digests.
+                **({} if native else {"artifact_sha256": builds[component_id]["artifact_sha256"]}),
             }
             for component_id in components
         },

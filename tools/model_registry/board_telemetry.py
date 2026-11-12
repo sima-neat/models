@@ -97,50 +97,41 @@ def summarize(run: dict) -> dict:
 
 
 class BoardTelemetry:
-    """Collect only owned traces; a missing or busy Sentinel leaves timing measurements usable."""
+    """Collect owned traces; required telemetry failures stop the benchmark immediately."""
 
     def __init__(self, workload: str):
         self.workload = workload
         self.runs = []
         self.duration_ms = 0.0
-        self.error = None
 
     @contextmanager
     def measure(self, enabled: bool = True):
         trace_id = None
-        if enabled and self.error is None:
-            try:
-                trace_id = request(
-                    "POST",
-                    "/v1/traces",
-                    {
-                        "name": f"llima-benchmark-{uuid.uuid4().hex}",
-                        "note": self.workload,
-                        "tags": ["llima-benchmark", self.workload],
-                    },
-                )["trace"]["id"]
-            except (OSError, ValueError, RuntimeError, http.client.HTTPException) as error:
-                self.error = str(error)
+        if enabled:
+            trace_id = request(
+                "POST",
+                "/v1/traces",
+                {
+                    "name": f"llima-benchmark-{uuid.uuid4().hex}",
+                    "note": self.workload,
+                    "tags": ["llima-benchmark", self.workload],
+                },
+            )["trace"]["id"]
         started = time.monotonic()
         try:
             yield
         finally:
             if trace_id is not None:
                 self.duration_ms += (time.monotonic() - started) * 1000
-                try:
-                    request("POST", f"/v1/traces/{quote(trace_id, safe='')}/stop")
-                    self.runs.append(request("GET", f"/v1/runs/{quote(trace_id, safe='')}"))
-                except (OSError, ValueError, RuntimeError, http.client.HTTPException) as error:
-                    self.error = str(error)
+                request("POST", f"/v1/traces/{quote(trace_id, safe='')}/stop")
+                self.runs.append(request("GET", f"/v1/runs/{quote(trace_id, safe='')}"))
 
     def report(self) -> dict:
         run = self.runs[0] if self.runs else {}
         telemetry = summarize(
-            {**run, "samples": [] if self.error else [sample for row in self.runs for sample in row.get("samples", [])]}
+            {**run, "samples": [sample for row in self.runs for sample in row.get("samples", [])]}
         )
         telemetry["trace_ids"] = [row["metadata"]["id"] for row in self.runs]
-        if self.error:
-            telemetry["status"] = self.error
         result = {"telemetry": telemetry, "throughput_duration_ms": self.duration_ms}
         if telemetry["power_som_watts"]["samples"]:
             result["avg_power_watts"] = telemetry["power_som_watts"]["mean"]

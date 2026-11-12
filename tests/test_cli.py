@@ -23,6 +23,17 @@ def test_author_parser_exposes_only_supported_model_contributor_commands() -> No
     assert set(subcommands.choices) == cli.AUTHOR_COMMANDS
 
 
+@pytest.mark.parametrize("model,profile,stages,backend,baseline,timeout", [
+    ("resnet_50", "w8a8", "performance,accuracy", "core", "false", "45"),
+    ("qwen3_5_0_8b", "w4a16", "performance", "llima", "false", "45"),
+    ("gemma_4_e2b_it_mtp", "w4a16", "performance", "llima", "true", "4320"),
+    ("gemma_4_e2b_it_mtp", "w4a16", "accuracy", "llima", "false", "45"),
+])
+def test_benchmark_job_scopes_baseline_and_timeout(model, profile, stages, backend, baseline, timeout, capsys):
+    assert main(["benchmark-job", str(ROOT / "models" / model), "--build-profile", profile, "--stages", stages]) == 0
+    assert capsys.readouterr().out == f"backend={backend}\nneeds_baseline={baseline}\ntimeout_minutes={timeout}\n"
+
+
 @pytest.mark.parametrize(
     "command",
     [
@@ -38,6 +49,7 @@ def test_author_parser_exposes_only_supported_model_contributor_commands() -> No
         "publish-catalog",
         "resolve-base",
         "resolve-benchmark-runtime",
+        "benchmark-job",
         "stage-registry-build",
     ],
 )

@@ -1,5 +1,6 @@
 build-on-demand: true
 display_name: LFM2.5-1.2B Instruct
+parameter_count_billion: 1.2
 description: Generates text from instructions and conversation history.
 model_type: llm
 tasks: [text_generation]

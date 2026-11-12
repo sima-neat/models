@@ -84,6 +84,19 @@ def test_manual_dispatch_takes_the_called_inputs() -> None:
     assert all("default" not in value for name, value in call.items() if name not in optional)
 
 
+def test_benchmark_inputs_outlive_long_speculative_runs():
+    jobs = load_workflow()["jobs"]
+    stage = jobs["stage"]
+    retained = step(stage["steps"], "Retain benchmark input independently of compile-run cleanup")
+    assert int(retained["with"]["retention-days"]) * 24 * 60 > 4320
+    assert jobs["benchmark"]["timeout-minutes"] == "${{ fromJSON(needs.stage.outputs.timeout_minutes) }}"
+    assert stage["outputs"]["timeout_minutes"] == "${{ steps.settings.outputs.timeout_minutes }}"
+    assert jobs["benchmark"]["env"]["BENCHMARK_BACKEND"] == "${{ needs.stage.outputs.benchmark_backend }}"
+    settings = step(stage["steps"], "Resolve benchmark job settings")
+    reader = step(stage["steps"], "Configure authenticated production registry reads")
+    assert stage["steps"].index(settings) < stage["steps"].index(reader)
+
+
 def test_only_a_manual_dispatch_resolves_the_config_and_runner() -> None:
     jobs = load_workflow()["jobs"]
     stage = jobs["stage"]
@@ -697,9 +710,10 @@ def test_registry_selection_is_independent_of_devkit_placement(override, default
     assert dataset == ENVIRONMENT
     reader = step(jobs['stage']['steps'], 'Configure authenticated production registry reads')
     for source_run in ('', '123'):
-        assert evaluate(reader['if'], {**resolved, 'inputs.source_run_id': source_run}) == (
-            expected == 'production'
-        )
+        for baseline in ('true', 'false'):
+            assert evaluate(reader['if'], {
+                **resolved, 'inputs.source_run_id': source_run, 'steps.settings.outputs.needs_baseline': baseline,
+            }) == (expected == 'production' and (source_run == '' or baseline == 'true'))
     restore = step(jobs['stage']['steps'],
                    'Restore the current immutable compilation from the registry')
     urls = {**resolved, 'vars.VULCAN_ARTIFACT_REGISTRY_API_URL': 'https://iam.example',
