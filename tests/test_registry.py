@@ -142,7 +142,9 @@ def test_documentation_reuse_preserves_publication_provenance_and_uploads_only_c
 
     model_id = "resnet_50"
     documentation = load_model_documentation(ROOT / "models" / model_id, "ResNet-50", repository=ROOT)
-    monkeypatch.setattr("model_registry.registry.load_models", lambda _: {model_id: {"display_name": "ResNet-50"}})
+    monkeypatch.setattr("model_registry.registry.load_models", lambda _: {
+        model_id: {"display_name": "ResNet-50", "components": [{"interface": {"format": "onnx"}}]},
+    })
     monkeypatch.setattr("model_registry.registry.load_model_documentation", lambda *args, **kwargs: documentation)
     calls = []
     sdk_clients = []
