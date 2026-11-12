@@ -125,6 +125,9 @@ def audit_mpk(archive: Path) -> None:
 
 def compile_model(quantized: Any, component_dir: Path) -> Path:
     component_dir.mkdir(parents=True, exist_ok=False)
+    # The compiler verifies the compiled model in its MLA simulator. With several threads the simulator ended in a
+    # segmentation fault on the w16a16 build, which failed the compile; with one thread it completed.
+    os.environ["SIMA_MLA_SIM_PARALLEL"] = "1"
     try:
         quantized.compile(
             output_path=str(component_dir),
