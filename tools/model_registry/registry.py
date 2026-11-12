@@ -31,6 +31,7 @@ from .artifact import (
     verify_artifact,
     verify_llima,
 )
+from .benchmark_declarations import benchmarked_profiles
 from .compile_matrix import build_matrix
 from .dependencies import resolve_model_compiler
 from .documentation import load_model_documentation
@@ -409,6 +410,55 @@ def _catalog_outputs(model: JsonObject) -> tuple[list[JsonObject], list[JsonObje
     return builds, packages
 
 
+def _refresh_approved_benchmarks(
+    root: Path, document: JsonObject, source: JsonObject, read_api_url: str, read: ReadRequest,
+    *, model_id: str | None = None, profile_id: str | None = None,
+) -> None:
+    """Point at the approved producing runs, without changing approval-owned outputs or fingerprint formats."""
+    if document.get("git_ref") not in {"refs/heads/develop", "refs/heads/main"}:
+        return
+    previous = {model["id"]: model for model in source.get("models", [])}
+    digests = {}
+    for entry in document.get("models", []):
+        if model_id is not None and entry["id"] != model_id:
+            continue
+        selections = previous.get(entry["id"], {}).get("approved_deployments", {})
+        if not selections:
+            continue
+        model = load_and_validate_model(root / "models" / entry["id"])
+        fingerprints = dict(entry.get("benchmark_fingerprints", {}))
+        for selected_profile, selection in selections.items():
+            if profile_id is not None and selected_profile != profile_id:
+                continue
+            # Raw builds may still describe an older automatic build of this profile.
+            fingerprints.pop(selected_profile, None)
+            stages = [stage for stage in ("performance", "accuracy")
+                      if selected_profile in benchmarked_profiles(model, stage)]
+            if not stages:
+                continue
+            builds = {build["component_id"]: build for build in _catalog_outputs({
+                "approved_deployments": {selected_profile: selection},
+            })[0]}
+            if set(builds) != {component["id"] for component in model["components"]}:
+                continue
+            for component in model["components"]:
+                if component["interface"]["format"] == "huggingface":
+                    continue
+                build = builds[component["id"]]
+                run_id = build["run_id"]
+                if run_id not in digests:
+                    artifact = read(f"{read_api_url.rstrip('/')}/v1/runs/{quote(run_id, safe='')}/artifacts/mpk")
+                    digests[run_id] = _require_sha256(artifact.get("artifact", {}).get("sha256"), "artifact sha256")
+                build["artifact_sha256"] = digests[run_id]
+            fingerprints[selected_profile] = {
+                stage: benchmark_fingerprint(root, model, selected_profile, builds, stage) for stage in stages
+            }
+        if fingerprints:
+            entry["benchmark_fingerprints"] = fingerprints
+        else:
+            entry.pop("benchmark_fingerprints", None)
+
+
 def build_catalog_snapshot(
     *,
     repository: str | Path,
@@ -453,13 +503,10 @@ def build_catalog_snapshot(
     selected_profiles = {(model_id, profile_id) for model_id, profile_id, _ in selected_invocations}
     previous_builds: dict[tuple[str, str, str], JsonObject] = {}
     previous_packages: dict[tuple[str, str, str], JsonObject] = {}
-    selected_builds: dict[tuple[str, str, str], JsonObject] = {}
     previous_benchmark_fingerprints: dict[tuple[str, str], JsonObject] = {}
     for model in (previous or {}).get("models", []):
         if not isinstance(model, dict) or not isinstance(model.get("id"), str):
             continue
-        for build in _catalog_outputs(model)[0]:
-            selected_builds[(model["id"], build["build_profile_id"], build["component_id"])] = build
         for profile_id, fingerprints in (model.get("benchmark_fingerprints") or {}).items():
             previous_benchmark_fingerprints[(model["id"], profile_id)] = fingerprints
         for build in model.get("builds", []):
@@ -500,23 +547,6 @@ def build_catalog_snapshot(
             # A manual build publishes a candidate. Only approved catalog entries
             # carry forward here, retaining the inputs and provenance they used.
             carry_forward(keys)
-            native = models[invocation["model_id"]]["components"][0]["interface"]["format"] == "huggingface"
-            if native and branch not in {"develop", "main"}:
-                continue
-            available = selected_builds if native else previous_builds
-            prior = {key[2]: available[key] for key in keys if key in available}
-            if len(prior) == len(keys) and all(
-                build.get("compile_fingerprint") == invocation["compile_fingerprint"] for build in prior.values()
-            ):
-                fingerprints = {
-                    stage: benchmark_fingerprint(
-                        root, models[invocation["model_id"]], invocation["build_profile_id"], prior, stage
-                    )
-                    for stage in invocation["stages"]
-                }
-                if fingerprints:
-                    profiles = benchmark_fingerprints_by_model[invocation["model_id"]]
-                    profiles[invocation["build_profile_id"]] = fingerprints
             continue
         invocation_receipts = [receipts.get(key) for key in keys]
         if any(receipt is not None for receipt in invocation_receipts) and not all(
@@ -1107,6 +1137,9 @@ def publish_catalog(
         previous=previous,
         incremental=True,
         documentation_receipts=documentation_receipts,
+    )
+    _refresh_approved_benchmarks(
+        root, document, target_catalog.get("document", {}) if target_catalog else {}, read_api_url, read,
     )
     if continuing_revision and isinstance(target_catalog, dict) and "pending_builds" in target_catalog["document"]:
         document["pending_builds"] = _remaining_pending_builds(target_catalog["document"], document)

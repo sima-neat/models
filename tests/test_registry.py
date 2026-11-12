@@ -1134,6 +1134,69 @@ def test_publish_catalog_reads_current_then_publishes_complete_snapshot(monkeypa
     )
 
 
+@pytest.mark.parametrize("branch", ["develop", "main"])
+@pytest.mark.parametrize("model_id,profile", [
+    ("resnet_50", "w8a8"), ("hrnet_w32", "w8a8"), ("rf_detr_nano", "w8a8_w16a16"),
+])
+def test_approved_onnx_catalog_and_manual_benchmark_use_the_same_fingerprint(
+    monkeypatch, tmp_path, branch, model_id, profile,
+):
+    """Also cover Main entries copied unchanged because their conversion was not selected."""
+    from tests.test_report_publication import performance_report, publish, registered_build
+
+    model = load_models(ROOT)[model_id]
+    model["build-on-demand"] = True
+    components = [item["id"] for item in model["components"]]
+    builds = registered_build(tmp_path / "_compiled", model_id, profile, components)
+    legacy = [{"build_profile_id": profile, "component_id": name, "compile_invocation_id": profile,
+               "run_id": "old-run", "artifact_sha256": "e" * 64, "compile_fingerprint": "f" * 64}
+              for name in components]
+    previous = {"id": model_id, "builds": legacy, "packages": [],
+                "benchmark_fingerprints": {profile: {"performance": "d" * 64}}, "approved_deployments": {profile: {
+                    "deployment_id": "selected", "requirements": {"invocations": [{
+                        "id": profile, "component_ids": components, "compile_fingerprint": "f" * 64,
+                    }], "packages": []},
+                    "artifacts": [{"component_id": name, "run_id": build["run_id"], "artifact_name": "mpk"}
+                                  for name, build in builds.items()],
+                }}}
+    catalog = {"catalog_revision": "a" * 40, "canonical_sha256": "c" * 64, "document": {"models": [previous]}}
+    reads = []
+
+    def read(url):
+        reads.append(url)
+        if "/catalogs/current?" in url:
+            return {"catalog": catalog}
+        build = next(build for build in builds.values() if f"/runs/{build['run_id']}/artifacts/mpk" in url)
+        return {"artifact": {"sha256": build["artifact_sha256"]}}
+
+    monkeypatch.setattr("model_registry.registry.load_models", lambda root: {model_id: model})
+    result = publish_catalog(repository=ROOT, branch=branch, git_sha="b" * 40,
+        api_url="https://writer.example.invalid", read_api_url="https://reader.example.invalid", aws_region="us-west-2",
+        read_request=read, request=lambda *args: {"stored": True})
+    entry = result["catalog"]["models"][0]
+    assert entry["builds"] == legacy  # Approved outputs remain server-owned.
+    assert previous["benchmark_fingerprints"][profile]["performance"] == "d" * 64
+    _, measurement = publish(tmp_path, model_id, profile, "performance", performance_report(components))
+    assert entry["benchmark_fingerprints"][profile]["performance"] == measurement["benchmark_fingerprint"]
+    assert entry["benchmark_fingerprints"][profile]["performance"] != "d" * 64
+    assert len([url for url in reads if "/artifacts/mpk" in url]) == len(components)
+
+
+def test_approved_profile_without_a_benchmark_declaration_drops_legacy_fingerprints(monkeypatch):
+    from model_registry.registry import _refresh_approved_benchmarks
+
+    # Old automatic measurements must not survive approval after a declaration is removed.
+    model_id = "gpt_oss_20b"
+    model = load_models(ROOT)[model_id]
+    model.pop("performance", None)
+    model.pop("accuracy", None)
+    monkeypatch.setattr("model_registry.registry.load_and_validate_model", lambda *args: model)
+    document = {"git_ref": "refs/heads/develop", "models": [{"id": model_id, "builds": [],
+        "approved_deployments": {"w4a16": {}}, "benchmark_fingerprints": {"w4a16": {"accuracy": "a" * 64}}}]}
+    _refresh_approved_benchmarks(ROOT, document, document, "https://reader.example.invalid", lambda url: {})
+    assert "benchmark_fingerprints" not in document["models"][0]
+
+
 def test_publish_catalog_keys_bind_dispatch_specific_documentation_receipts(monkeypatch) -> None:
     calls: list[tuple[str, str, dict | None, str]] = []
     target_catalog = {"canonical_sha256": "c" * 64, "catalog_revision": "b" * 40, "document": {"models": []}}

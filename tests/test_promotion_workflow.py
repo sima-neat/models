@@ -49,6 +49,17 @@ def test_workflow_inputs_are_environment_data_not_shell_code():
             assert '${{ inputs.' not in step.get('run', '')
 
 
+def test_promotion_refresh_reads_target_revision_without_scheduling_benchmarks():
+    steps = workflow()['jobs']['report']['steps']
+    source = next(step for step in steps if step.get('id') == 'benchmark_source')
+    assert source['run'] == 'python scripts/model_promotion.py benchmark-source'
+    checkout = next(step for step in steps if step.get('with', {}).get('path') == '_benchmark-source')
+    assert checkout['with']['ref'] == '${{ steps.benchmark_source.outputs.revision }}'
+    report = next(step for step in steps if step.get('id') == 'report')
+    assert report['env']['BENCHMARK_CATALOG_REVISION'] == '${{ steps.benchmark_source.outputs.revision }}'
+    assert all('benchmarking.yml' not in str(job) for job in workflow()['jobs'].values())
+
+
 def orchestration(monkeypatch, tmp_path):
     import importlib.util
     spec = importlib.util.spec_from_file_location('model_promotion_workflow', ROOT / 'scripts/model_promotion.py')
