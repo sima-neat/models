@@ -58,3 +58,9 @@ numerical_fidelity:
 
 performance: {}
 
+reference_metrics:
+- source: https://arxiv.org/abs/2105.15203v3
+  dataset: {id: ade20k, split: val}
+  conditions: 512x512 training crops; evaluation resizes the short side to 512 and keeps the aspect ratio; single-scale
+  note: Table 2 of the SegFormer paper, MiT-B0 row. This package stretches every image to 512x512 instead, so its scores are not directly comparable.
+  metrics: {miou: 0.374}
