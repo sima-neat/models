@@ -412,6 +412,7 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     stage_registry.add_argument("--output-dir", type=Path, required=True)
     stage_registry.add_argument("--api-url", required=True)
     stage_registry.add_argument("--branch", required=True)
+    stage_registry.add_argument("--deployment-branch", help="restore deployments from another branch's current catalog")
     stage_registry.add_argument("--catalog-revision", required=True)
     stage_registry.add_argument("--model-id", required=True)
     stage_registry.add_argument("--build-profile-id", required=True)
@@ -968,6 +969,7 @@ def _stage_registry_build(args: argparse.Namespace) -> int:
         api_url=args.api_url,
         branch=args.branch,
         catalog_revision=args.catalog_revision,
+        deployment_branch=args.deployment_branch,
         model_id=args.model_id,
         build_profile_id=args.build_profile_id,
         **({} if args.benchmark_baseline else {"compile_invocation_id": args.compile_invocation_id}),

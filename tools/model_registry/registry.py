@@ -1188,19 +1188,23 @@ def stage_catalog_build(
     read_request: ReadRequest | None = None,
     download_request: DownloadRequest | None = None,
     expected_compile_fingerprint: str | None = None,
+    deployment_branch: str | None = None,
 ) -> JsonObject:
     """Restore a complete invocation from durable registry MPKs for later stages."""
     root = Path(repository).expanduser().resolve()
     output = Path(output_dir).expanduser().resolve()
     read = read_request or _public_registry_json
     base_url = api_url.rstrip("/")
+    catalog_branch = deployment_branch or branch
     catalog_payload = read(
         f"{base_url}/v1/repositories/sima-neat/models/catalogs/current?"
-        f"git_ref={quote(f'refs/heads/{branch}', safe='')}"
+        f"git_ref={quote(f'refs/heads/{catalog_branch}', safe='')}"
     )
     catalog_record = catalog_payload.get("catalog")
     document = catalog_record.get("document") if isinstance(catalog_record, dict) else None
-    if not isinstance(document, dict) or document.get("catalog_revision") != catalog_revision:
+    if not isinstance(document, dict) or (
+        catalog_branch == branch and document.get("catalog_revision") != catalog_revision
+    ):
         raise ValidationError("current catalog does not match the requested catalog revision")
     catalog_model = next(
         (item for item in document.get("models", []) if isinstance(item, dict) and item.get("id") == model_id),
@@ -1218,6 +1222,10 @@ def stage_catalog_build(
     )
     if invocation is None:
         raise ValidationError(f"compile invocation is absent from the current model: {compile_invocation_id}")
+    if catalog_branch != branch and expected_compile_fingerprint is None:
+        expected_compile_fingerprint = compile_fingerprint(
+            root, model_id, build_profile_id, compile_invocation_id, resolve_model_compiler(root)["identity"]
+        )
     catalog_builds, catalog_packages = _catalog_outputs(catalog_model)
     builds = {
         item["component_id"]: item
@@ -1231,7 +1239,7 @@ def stage_catalog_build(
     if expected_compile_fingerprint and any(
         build.get("compile_fingerprint") != expected_compile_fingerprint for build in builds.values()
     ):
-        raise ValidationError("benchmark baseline needs a registered build matching its current model/compiler")
+        raise ValidationError("benchmark needs a registered build matching its current model/compiler")
 
     staged_outputs = []
     for component_id in invocation["component_ids"]:

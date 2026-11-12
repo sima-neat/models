@@ -49,12 +49,13 @@ def test_manual_benchmarks_keep_their_actions_identity() -> None:
         "source_run_id",
         "source_sha",
         "source_branch",
+        "deployment_branch",
         "model_id",
         "build_profile_id",
         "compile_invocation_id",
         "stages",
     }
-    optional = {"source_run_id", "stages"}
+    optional = {"source_run_id", "deployment_branch", "stages"}
     assert all(inputs[name]["required"] == "false" for name in optional)
     assert all(value["required"] == "true" for name, value in inputs.items() if name not in optional)
     assert inputs["stages"]["default"] == "performance,accuracy"
@@ -78,7 +79,7 @@ def test_manual_dispatch_takes_the_called_inputs() -> None:
     # The resolvers' outputs are the only inputs a person does not type.
     assert set(inputs) == set(call) - {"vulcan_config", "devkit_runner"}
     assert all(value["type"] == "string" for value in call.values())
-    optional = {"source_run_id", "vulcan_config", "devkit_runner"}
+    optional = {"source_run_id", "deployment_branch", "vulcan_config", "devkit_runner"}
     assert {name for name, value in call.items() if value["required"] == "false"} == optional
     assert all(call[name]["default"] == "" for name in optional)
     assert all("default" not in value for name, value in call.items() if name not in optional)

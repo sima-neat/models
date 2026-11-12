@@ -268,6 +268,7 @@ def test_native_deployment_publish_package_and_retrieve_without_archiving(
 
     def read(url):
         if "/catalogs/current?" in url:
+            assert "git_ref=refs%2Fheads%2Fdevelop" in url
             return {"catalog": {"document": catalog}}
         path = url.removeprefix("https://registry.example.invalid")
         if path in registry.artifacts:
@@ -280,7 +281,16 @@ def test_native_deployment_publish_package_and_retrieve_without_archiving(
         branch="develop", catalog_revision="b" * 40, model_id=MODEL, build_profile_id=PROFILE,
         compile_invocation_id=PROFILE, read_request=read, download_request=registry.objects.__getitem__,
     )
-    stage_catalog_build(**restore_args, expected_compile_fingerprint=fingerprint if selection_field else None)
+    if selection_field == "approved_deployments":
+        restore_args.update(branch="feature/test-benchmark", catalog_revision="c" * 40, deployment_branch="develop")
+        stage_catalog_build(**restore_args)
+        invocation = catalog["models"][0][selection_field][PROFILE]["requirements"]["invocations"][0]
+        invocation["compile_fingerprint"] = "f" * 64
+        with pytest.raises(ValidationError, match="current model/compiler"):
+            stage_catalog_build(**restore_args)
+        invocation["compile_fingerprint"] = fingerprint
+    else:
+        stage_catalog_build(**restore_args, expected_compile_fingerprint=fingerprint if selection_field else None)
     if selection_field:
         receipt = tmp_path / "restored" / MODEL / PROFILE / "packages/default/registry-publication.json"
         restored_package = json.loads(receipt.read_text())["packages"][0]

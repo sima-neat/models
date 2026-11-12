@@ -19,12 +19,17 @@ on:
         default: ""
         type: string
       source_sha:
-        description: Source revision used to compile the model
+        description: Source revision containing the benchmark and model definitions
         required: true
         type: string
       source_branch:
-        description: Source branch used to compile the model
+        description: Branch containing the source revision and benchmark workflow
         required: true
+        type: string
+      deployment_branch:
+        description: Registry catalog supplying compiled deployments; empty uses source_branch
+        required: false
+        default: ""
         type: string
       model_id:
         description: Model ID to benchmark
@@ -56,12 +61,17 @@ on:
         default: ""
         type: string
       source_sha:
-        description: Source revision used to compile the model
+        description: Source revision containing the benchmark and model definitions
         required: true
         type: string
       source_branch:
-        description: Source branch used to compile the model
+        description: Branch containing the source revision and benchmark workflow
         required: true
+        type: string
+      deployment_branch:
+        description: Registry catalog supplying compiled deployments; empty uses source_branch
+        required: false
+        default: ""
         type: string
       model_id:
         description: Model ID to benchmark
@@ -249,6 +259,7 @@ jobs:
           MODEL_REGISTRY_IAM_READ_API_URL: ${{ (inputs.environment != 'default' && inputs.environment || vars.VULCAN_ENV || 'staging') == 'production' && vars.VULCAN_ARTIFACT_REGISTRY_API_URL || '' }}
           REGISTRY_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL || vars.VULCAN_ARTIFACT_REGISTRY_API_URL }}
           SOURCE_BRANCH: ${{ steps.source.outputs.branch }}
+          DEPLOYMENT_BRANCH: ${{ inputs.deployment_branch }}
           SOURCE_SHA: ${{ inputs.source_sha }}
           SOURCE_RUN_ID: ${{ inputs.source_run_id }}
           MODEL_ID: ${{ inputs.model_id }}
