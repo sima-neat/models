@@ -30,7 +30,7 @@ FIELDS = ("s3_bucket", "s3_key", "s3_version_id", "sha256", "size_bytes", "media
 # conversion-backed model then needs Vulcan Model Convert again.
 FINGERPRINT_VERSION = 1
 # Other stages' dependencies, which never reach the conversion environment.
-OTHER_STAGE_REQUIREMENTS = {"requirements-compile.txt", "requirements-accuracy.txt"}
+OTHER_STAGE_REQUIREMENTS = {"requirements-compile.txt", "requirements-accuracy.txt", "requirements-performance.txt"}
 DEFAULT_OUTPUTS = ["model.onnx"]
 
 

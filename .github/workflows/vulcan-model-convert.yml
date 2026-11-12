@@ -68,7 +68,7 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: ${{ env.PIP_CACHE_DIR }}
-          key: onnx-python312-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles(format('models/{0}/scripts/requirements-convert.txt', inputs.model)) }}
+          key: onnx-python312-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles(format('models/{0}/scripts/requirements-convert*.txt', inputs.model)) }}
       - name: Convert and smoke-test with the model's convert script
         env:
           CONVERSION_VENV: ${{ env.EXPORT_VENV }}

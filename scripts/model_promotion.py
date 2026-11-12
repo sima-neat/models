@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Usage: model_promotion.py configure|prepare|request|approve|report
+"""Usage: model_promotion.py configure|prepare|request|approve|benchmark-source|report
 
 GitHub orchestration only. Inputs come from environment variables; registry
 semantics live in model_registry.promotions. Run only from trusted Develop code.
@@ -187,11 +187,20 @@ def main():
                           reason=plan['decision_reason'], identity=plan['identity'])
         p.save(DIRECTORY / 'decision.json', result)
         show(result)
+    elif phase == 'benchmark-source':
+        current = p.inspect(client, p.read(RECORD)['promotion_id'])
+        catalog = p.benchmark_catalog(current, read_api_url=config['read_api_url'])
+        if catalog is not None:
+            output('revision', catalog['catalog_revision'])
     elif phase == 'report':
         plan, record = p.read(PLAN), p.read(RECORD)
         current = None
         try:
             current = p.inspect(client, record['promotion_id'])
+            revision = os.environ.get('BENCHMARK_CATALOG_REVISION')
+            if revision:
+                p.refresh_benchmarks(client, current, repository=Path('_benchmark-source'), revision=revision,
+                                     read_api_url=config['read_api_url'])
         finally:
             if plan['operation'] != 'status':
                 completion_notice(plan, current or record, verified=current is not None)

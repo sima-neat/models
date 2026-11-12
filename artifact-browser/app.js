@@ -27,13 +27,14 @@ import {
 
 installHeroImageRecovery(document);
 
-function writeCategoryFilterUrl() {
+function writeCategoryFilterUrl({ push = false } = {}) {
   const url = new URL(location.href);
   Object.entries(categoryFilters()).forEach(([queryName, value]) => {
     if (value) url.searchParams.set(queryName, value);
     else url.searchParams.delete(queryName);
   });
-  history.replaceState({}, "", url);
+  if (push) history.pushState({}, "", url);
+  else history.replaceState({}, "", url);
 }
 
 function writeSearchUrl() {
@@ -70,7 +71,7 @@ function setTheme(theme) {
 // The page a link opens: a model page (`run`, or `model` and `variant`), the Compare page (`view` and
 // `build`), or the catalog when none is set.
 function deletePageParams(url) {
-  ["run", "model", "variant", "view", "build", "compare_task", "compare_precision"].forEach((name) => url.searchParams.delete(name));
+  ["run", "model", "variant", "view", "build", "compare_task", "compare_precision", "compare_graph", "compare_workload"].forEach((name) => url.searchParams.delete(name));
 }
 
 function writeVariantUrl(run) {
@@ -423,6 +424,7 @@ async function initialize() {
   if (compareLink) state.comparePicks = picksFromUrl(link);
   if (compareLink) {
     state.compareTask = link.get("compare_task") || "";
+    state.compareWorkload = link.get("compare_workload") || "";
   }
   const linkedVariant = link.get("model") && link.get("variant")
     ? { modelId: link.get("model"), profile: link.get("variant") } : null;
@@ -655,9 +657,10 @@ elements["history-filter"].addEventListener("change", async () => {
     showToast(error.message, true);
   }
 });
-Object.keys(CATEGORY_QUERY_FIELDS).forEach((elementId) => elements[elementId].addEventListener("change", async () => {
-  state.categorySelection[elementId] = elements[elementId].value;
-  writeCategoryFilterUrl();
+async function selectCategoryFilter(elementId, value) {
+  elements[elementId].value = value;
+  state.categorySelection[elementId] = value;
+  writeCategoryFilterUrl({ push: true });
   updateFilterIndicators();
   if (branchSnapshotMode()) {
     renderRuns();
@@ -668,7 +671,14 @@ Object.keys(CATEGORY_QUERY_FIELDS).forEach((elementId) => elements[elementId].ad
   } catch (error) {
     showToast(error.message, true);
   }
+}
+Object.keys(CATEGORY_QUERY_FIELDS).forEach((elementId) => elements[elementId].addEventListener("change", () => {
+  selectCategoryFilter(elementId, elements[elementId].value);
 }));
+elements["clear-family"].addEventListener("click", async () => {
+  await selectCategoryFilter("architecture-filter", "");
+  elements["result-title"].focus({ preventScroll: true });
+});
 elements["clear-filters"].addEventListener("click", async () => {
   elements.search.value = "";
   const resetBranch = !branchSelectionEnabled || state.availableBranches.includes(DEFAULT_BRANCH) ? DEFAULT_BRANCH : state.availableBranches[0] || "";
@@ -700,6 +710,13 @@ elements["clear-filters"].addEventListener("click", async () => {
   }
 });
 elements["result-list"].addEventListener("click", (event) => {
+  const family = event.target.closest("[data-family-id]");
+  if (family) {
+    selectCategoryFilter("architecture-filter", family.dataset.familyId);
+    elements["result-title"].focus({ preventScroll: true });
+    window.scrollTo({ top: 0 });
+    return;
+  }
   const run = event.target.closest("[data-run-id]");
   if (run) selectRun(run.dataset.runId);
   if (event.target.closest('[data-action="clear"]')) elements["clear-filters"].click();
@@ -755,9 +772,12 @@ elements["compare-pane"].addEventListener("change", (event) => {
     if (!add.value) return;
     toggleComparison(add.value);
   } else {
-    const fields = {task: "compareTask", axis: "compareAxis"};
+    const fields = {task: "compareTask", axis: "compareAxis", workload: "compareWorkload"};
     state[fields[key]] = control.value;
-    if (key === "task") renderComparison();
+    if (key === "task") {
+      state.compareWorkload = "";
+      renderComparison();
+    }
     else updateComparisonChart();
   }
   const url = new URL(location.href);
@@ -834,6 +854,13 @@ window.addEventListener("scroll", (event) => {
 window.addEventListener("resize", hideExecutionTooltip);
 window.addEventListener("popstate", hideExecutionTooltip);
 elements["detail-pane"].addEventListener("input", updateLayerAnalysis);
+elements["detail-pane"].addEventListener("change", (event) => {
+  const picker = event.target.closest("[data-genai-workload]");
+  if (!picker) return;
+  picker.closest("[data-generative-benchmark]").querySelectorAll("[data-genai-details]").forEach((panel) => {
+    panel.hidden = panel.dataset.genaiDetails !== picker.value;
+  });
+});
 elements["detail-pane"].addEventListener("click", updateLayerAnalysis);
 elements["detail-pane"].addEventListener("click", selectComponentPanel);
 elements["detail-pane"].addEventListener("click", (event) => {

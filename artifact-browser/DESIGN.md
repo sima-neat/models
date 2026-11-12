@@ -37,8 +37,16 @@ are the catalog filters. Developer view also exposes Branch, Compiler and Build 
 Avoid crowded toolbars, repeated status
 indicators, and decorative effects that compete with model information.
 
-The catalog opens as a grid of model cards because people recognize a model by what
-it does before they know its name. A Cards/Table switch also offers a compact
+The catalog opens as a grid of family cards because people recognize a model by what
+it does before they know its name. Cards group and sort by the existing architecture
+ID, with the taxonomy's display label and short family description. Each uses the
+first available hero in the existing model order and the visible models' tasks.
+Branch, compiler and task filters apply before grouping. Choosing a family selects
+the existing Model family filter and shows its model cards in place; a single-model
+family opens its model directly. An All model families action clears just this
+filter. Search results always show individual models, including matches on family
+descriptions. URL navigation and Back preserve the catalog context.
+A Cards/Table switch also offers a compact
 table for scanning model names, tasks, precisions, accuracy, and performance.
 Both views use the same filters; the table groups models by task and keeps the
 model-family ordering within each group. Multi-task models appear in each applicable
@@ -66,7 +74,8 @@ are available. A point popup identifies its model, variant and measurements. Mut
 compact table below aligns up to three selections. A compact Add model selector supports keyboard and mobile selection, including
 variants with missing measurements. The graph legend includes plotted selections only;
 variants without matching measurements remain in the table. Selection colors use the shared SiMa blue,
-green and orange palette. LLM/VLM comparisons remain TBD.
+green and orange palette. GenAI tasks compare parameters in billions against
+decode speed for matching text or image workloads.
 
 The model page reads at a glance first and expands on request.
 The header pairs its title, description and Download action with a compact model

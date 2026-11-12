@@ -108,7 +108,8 @@ How the script evaluates each dataset is up to the model. Every score is
 named as an accuracy metric in
 [`tools/model_report/metrics.json`](../tools/model_report/metrics.json) and
 given in that metric's unit: a ratio from 0 to 1 for most metrics, a
-percentage from 0 to 100 for `d1_all`, and pixels for `epe`. Each dataset's
+nonnegative ratio without an upper bound for `abs_rel`, a percentage from 0 to 100
+for `d1_all`, and pixels for `epe`. Each dataset's
 result must hold every metric its requirements file lists for
 the model's tasks. Other known accuracy metrics are allowed. Existing scripts also accept
 `--limit <images>` to evaluate a subset for a quick local check; CI never

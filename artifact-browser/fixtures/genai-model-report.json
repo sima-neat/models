@@ -1,0 +1,762 @@
+{
+  "schema": "sima.model-report",
+  "schema_version": 1,
+  "stage": "performance",
+  "runtime": {
+    "llima": "0.6.0+develop.e2f0884ad877",
+    "mole": "0.6.0+develop.e2f0884ad877",
+    "build": {}
+  },
+  "metrics": {},
+  "components": {},
+  "workload": "Text buckets and an encoder-sized image",
+  "telemetry": {
+    "status": "ok",
+    "trace_id": "20261017T151234.304Z-llima-benchmark-311489c51bcb4a25951bf05dd032958e",
+    "sentinel_version": "main:766066b74f49",
+    "sample_interval_ms": 2010,
+    "samples": 8,
+    "power_som_watts": {
+      "key": "power_current_watts",
+      "label": "Current board power",
+      "unit": "W",
+      "samples": 8,
+      "mean": 11.46875,
+      "minimum": 10.84375,
+      "maximum": 11.8125
+    },
+    "power_mla_watts": {
+      "key": "power_rail_mla_watts",
+      "label": "MLA 0.68V",
+      "unit": "W",
+      "samples": 8,
+      "mean": 1.03125,
+      "minimum": 0.75,
+      "maximum": 2.0
+    },
+    "power_rails_watts": [
+      {
+        "key": "power_rail_soc_ddr_vdd_watts",
+        "label": "SoC and DDR VDD",
+        "unit": "W",
+        "samples": 8,
+        "mean": 4.28125,
+        "minimum": 4.0,
+        "maximum": 4.5
+      },
+      {
+        "key": "power_rail_hdmi_watts",
+        "label": "HDMI 1.2V",
+        "unit": "W",
+        "samples": 8,
+        "mean": 0.59375,
+        "minimum": 0.59375,
+        "maximum": 0.59375
+      },
+      {
+        "key": "power_rail_soc_ddr_vddq_watts",
+        "label": "SoC and DDR VDDQ",
+        "unit": "W",
+        "samples": 8,
+        "mean": 0.109375,
+        "minimum": 0.0625,
+        "maximum": 0.125
+      },
+      {
+        "key": "power_rail_soc_ddr_vdd2h_watts",
+        "label": "SoC and DDR VDD2H",
+        "unit": "W",
+        "samples": 8,
+        "mean": 1.4765625,
+        "minimum": 1.0625,
+        "maximum": 1.59375
+      },
+      {
+        "key": "power_rail_mla_watts",
+        "label": "MLA 0.68V",
+        "unit": "W",
+        "samples": 8,
+        "mean": 1.03125,
+        "minimum": 0.75,
+        "maximum": 2.0
+      },
+      {
+        "key": "power_rail_pcie_eth_watts",
+        "label": "PCIe and ETH VP",
+        "unit": "W",
+        "samples": 8,
+        "mean": 0.6875,
+        "minimum": 0.6875,
+        "maximum": 0.6875
+      },
+      {
+        "key": "power_rail_platform_1v8_watts",
+        "label": "SOM Platform 1.8V",
+        "unit": "W",
+        "samples": 8,
+        "mean": 1.4609375,
+        "minimum": 1.4375,
+        "maximum": 1.5625
+      },
+      {
+        "key": "power_rail_platform_3v3_watts",
+        "label": "SOM Platform 3.3V",
+        "unit": "W",
+        "samples": 8,
+        "mean": 1.828125,
+        "minimum": 1.78125,
+        "maximum": 1.84375
+      }
+    ],
+    "die_temperatures_c": [
+      {
+        "key": "rtsn_0",
+        "label": "MLA RTSN-0",
+        "unit": "C",
+        "samples": 8,
+        "mean": 44.19125,
+        "minimum": 43.69,
+        "maximum": 44.8
+      },
+      {
+        "key": "rtsn_1",
+        "label": "MLA RTSN-1",
+        "unit": "C",
+        "samples": 8,
+        "mean": 44.415,
+        "minimum": 43.69,
+        "maximum": 44.93
+      },
+      {
+        "key": "rtsn_2",
+        "label": "MLA RTSN-2",
+        "unit": "C",
+        "samples": 8,
+        "mean": 43.93125,
+        "minimum": 43.55,
+        "maximum": 44.52
+      },
+      {
+        "key": "rtsn_3",
+        "label": "MLA RTSN-3",
+        "unit": "C",
+        "samples": 8,
+        "mean": 43.91625,
+        "minimum": 43.0,
+        "maximum": 44.8
+      },
+      {
+        "key": "rtsn_4",
+        "label": "APU RTSN-4",
+        "unit": "C",
+        "samples": 8,
+        "mean": 44.19,
+        "minimum": 43.55,
+        "maximum": 44.66
+      },
+      {
+        "key": "rtsn_5",
+        "label": "CVU RTSN-5",
+        "unit": "C",
+        "samples": 8,
+        "mean": 43.105000000000004,
+        "minimum": 42.31,
+        "maximum": 43.69
+      },
+      {
+        "key": "rtsn_6",
+        "label": "TOP RTSN-6",
+        "unit": "C",
+        "samples": 8,
+        "mean": 44.84875,
+        "minimum": 44.52,
+        "maximum": 45.63
+      }
+    ],
+    "die_temperature_max_c": {
+      "key": "die_max",
+      "label": "Die max",
+      "unit": "C",
+      "samples": 8,
+      "mean": 44.84875,
+      "minimum": 44.52,
+      "maximum": 45.63
+    },
+    "board_temperatures_c": [
+      {
+        "key": "lm96163_temp1",
+        "label": "LM96163 temp1",
+        "unit": "C",
+        "samples": 8,
+        "mean": 43.375,
+        "minimum": 43.0,
+        "maximum": 44.0
+      },
+      {
+        "key": "lm96163_temp2",
+        "label": "LM96163 temp2",
+        "unit": "C",
+        "samples": 8,
+        "mean": 46.28125,
+        "minimum": 45.625,
+        "maximum": 46.625
+      }
+    ],
+    "cpu_usage_pct": {
+      "key": "cpu_usage_pct",
+      "label": "CPU usage",
+      "unit": "%",
+      "samples": 8,
+      "mean": 3.044445381503215,
+      "minimum": 2.662073285311617,
+      "maximum": 3.753518923991239
+    },
+    "cpu_cores_usage_pct": [
+      {
+        "key": "cpu_core_0_usage_pct",
+        "label": "CPU core 0 usage",
+        "unit": "%",
+        "samples": 8,
+        "mean": 8.251505433199974,
+        "minimum": 5.555555555555558,
+        "maximum": 12.562814070351758
+      },
+      {
+        "key": "cpu_core_1_usage_pct",
+        "label": "CPU core 1 usage",
+        "unit": "%",
+        "samples": 8,
+        "mean": 1.2478326654948566,
+        "minimum": 0.0,
+        "maximum": 2.500000000000002
+      },
+      {
+        "key": "cpu_core_2_usage_pct",
+        "label": "CPU core 2 usage",
+        "unit": "%",
+        "samples": 8,
+        "mean": 4.457869315238786,
+        "minimum": 0.5000000000000004,
+        "maximum": 9.999999999999998
+      },
+      {
+        "key": "cpu_core_3_usage_pct",
+        "label": "CPU core 3 usage",
+        "unit": "%",
+        "samples": 8,
+        "mean": 0.9451146036303995,
+        "minimum": 0.0,
+        "maximum": 2.0408163265306145
+      },
+      {
+        "key": "cpu_core_4_usage_pct",
+        "label": "CPU core 4 usage",
+        "unit": "%",
+        "samples": 8,
+        "mean": 3.7478671341783563,
+        "minimum": 0.5000000000000004,
+        "maximum": 6.999999999999995
+      },
+      {
+        "key": "cpu_core_5_usage_pct",
+        "label": "CPU core 5 usage",
+        "unit": "%",
+        "samples": 8,
+        "mean": 1.997549938748469,
+        "minimum": 0.0,
+        "maximum": 6.467661691542292
+      },
+      {
+        "key": "cpu_core_6_usage_pct",
+        "label": "CPU core 6 usage",
+        "unit": "%",
+        "samples": 8,
+        "mean": 3.4422866253474504,
+        "minimum": 0.5000000000000004,
+        "maximum": 6.499999999999995
+      },
+      {
+        "key": "cpu_core_7_usage_pct",
+        "label": "CPU core 7 usage",
+        "unit": "%",
+        "samples": 8,
+        "mean": 0.37562814070351835,
+        "minimum": 0.0,
+        "maximum": 1.005025125628145
+      },
+      {
+        "key": "cpu_core_8_usage_pct",
+        "label": "CPU core 8 usage",
+        "unit": "%",
+        "samples": 8,
+        "mean": 5.316407037391839,
+        "minimum": 0.0,
+        "maximum": 10.499999999999998
+      },
+      {
+        "key": "cpu_core_9_usage_pct",
+        "label": "CPU core 9 usage",
+        "unit": "%",
+        "samples": 8,
+        "mean": 0.062189054726367876,
+        "minimum": 0.0,
+        "maximum": 0.497512437810943
+      },
+      {
+        "key": "cpu_core_10_usage_pct",
+        "label": "CPU core 10 usage",
+        "unit": "%",
+        "samples": 8,
+        "mean": 1.9353233830845764,
+        "minimum": 0.0,
+        "maximum": 10.499999999999998
+      },
+      {
+        "key": "cpu_core_11_usage_pct",
+        "label": "CPU core 11 usage",
+        "unit": "%",
+        "samples": 8,
+        "mean": 6.99890674350192,
+        "minimum": 5.555555555555558,
+        "maximum": 8.499999999999996
+      },
+      {
+        "key": "cpu_core_12_usage_pct",
+        "label": "CPU core 12 usage",
+        "unit": "%",
+        "samples": 8,
+        "mean": 5.13254393859846,
+        "minimum": 0.0,
+        "maximum": 6.999999999999995
+      },
+      {
+        "key": "cpu_core_13_usage_pct",
+        "label": "CPU core 13 usage",
+        "unit": "%",
+        "samples": 8,
+        "mean": 3.7625628140703498,
+        "minimum": 0.0,
+        "maximum": 7.499999999999996
+      },
+      {
+        "key": "cpu_core_14_usage_pct",
+        "label": "CPU core 14 usage",
+        "unit": "%",
+        "samples": 8,
+        "mean": 0.9965796019900497,
+        "minimum": 0.0,
+        "maximum": 3.482587064676612
+      },
+      {
+        "key": "cpu_core_15_usage_pct",
+        "label": "CPU core 15 usage",
+        "unit": "%",
+        "samples": 8,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "maximum": 0.0
+      }
+    ],
+    "mla_memory_mib": {
+      "key": "mla_mem_allocated_mb",
+      "label": "MLA memory allocated",
+      "unit": "MiB",
+      "samples": 8,
+      "mean": 815.71875,
+      "minimum": 815.71875,
+      "maximum": 815.71875
+    },
+    "cma_memory_mib": {
+      "key": "ev74_cma_used_mb",
+      "label": "EV74 CMA used",
+      "unit": "MiB",
+      "samples": 8,
+      "mean": 3219.2392578125,
+      "minimum": 3216.20703125,
+      "maximum": 3225.52734375
+    },
+    "linux_memory_used_mib": {
+      "key": "linux_mem_used_mb",
+      "label": "Linux memory used MB",
+      "unit": "MiB",
+      "samples": 8,
+      "mean": 2096.97509765625,
+      "minimum": 2092.58203125,
+      "maximum": 2103.3046875
+    },
+    "trace_ids": [
+      "20261017T151234.304Z-llima-benchmark-311489c51bcb4a25951bf05dd032958e",
+      "20261017T151237.949Z-llima-benchmark-72e7f03135304bcaafdcf58959ed9df9",
+      "20261017T151241.617Z-llima-benchmark-20134d6f86dd4c46a74c20f6cea00ae3",
+      "20261017T151245.272Z-llima-benchmark-29a9bf52c507405b87677ec4892c3504",
+      "20261017T151248.923Z-llima-benchmark-b8c960090ff84c02ab31404301b93412"
+    ]
+  },
+  "generation": {
+    "workloads": [
+      {
+        "id": "text_n128",
+        "kind": "text",
+        "input_tokens": 128,
+        "metrics": {
+          "ttft_ms": {
+            "value": 43.3411878,
+            "unit": "ms",
+            "direction": "lower",
+            "aggregation": "mean",
+            "sample_count": 5,
+            "minimum": null,
+            "maximum": null
+          },
+          "prefill_tps": {
+            "value": 2953.3108458093525,
+            "unit": "tokens/s",
+            "direction": "higher",
+            "aggregation": "mean",
+            "sample_count": 5,
+            "minimum": null,
+            "maximum": null
+          },
+          "decode_tps": {
+            "value": 74.27112084634966,
+            "unit": "tokens/s",
+            "direction": "higher",
+            "aggregation": "mean",
+            "sample_count": 5,
+            "minimum": null,
+            "maximum": null
+          }
+        },
+        "throughput_duration_ms": 17472.71353100041,
+        "avg_power_watts": 11.46875
+      },
+      {
+        "id": "text_n256",
+        "kind": "text",
+        "input_tokens": 256,
+        "metrics": {
+          "ttft_ms": {
+            "value": 77.5501866,
+            "unit": "ms",
+            "direction": "lower",
+            "aggregation": "mean",
+            "sample_count": 5,
+            "minimum": null,
+            "maximum": null
+          },
+          "prefill_tps": {
+            "value": 3301.0881240097497,
+            "unit": "tokens/s",
+            "direction": "higher",
+            "aggregation": "mean",
+            "sample_count": 5,
+            "minimum": null,
+            "maximum": null
+          },
+          "decode_tps": {
+            "value": 73.97174548683579,
+            "unit": "tokens/s",
+            "direction": "higher",
+            "aggregation": "mean",
+            "sample_count": 5,
+            "minimum": null,
+            "maximum": null
+          }
+        },
+        "throughput_duration_ms": 17712.8688089997,
+        "avg_power_watts": 11.09765625
+      },
+      {
+        "id": "text_n512",
+        "kind": "text",
+        "input_tokens": 512,
+        "metrics": {
+          "ttft_ms": {
+            "value": 146.39444260000002,
+            "unit": "ms",
+            "direction": "lower",
+            "aggregation": "mean",
+            "sample_count": 5,
+            "minimum": null,
+            "maximum": null
+          },
+          "prefill_tps": {
+            "value": 3497.4005222244687,
+            "unit": "tokens/s",
+            "direction": "higher",
+            "aggregation": "mean",
+            "sample_count": 5,
+            "minimum": null,
+            "maximum": null
+          },
+          "decode_tps": {
+            "value": 73.35725678760247,
+            "unit": "tokens/s",
+            "direction": "higher",
+            "aggregation": "mean",
+            "sample_count": 5,
+            "minimum": null,
+            "maximum": null
+          }
+        },
+        "throughput_duration_ms": 18208.178418000898,
+        "avg_power_watts": 11.89453125
+      },
+      {
+        "id": "text_n1024",
+        "kind": "text",
+        "input_tokens": 1024,
+        "metrics": {
+          "ttft_ms": {
+            "value": 286.9443432,
+            "unit": "ms",
+            "direction": "lower",
+            "aggregation": "mean",
+            "sample_count": 5,
+            "minimum": null,
+            "maximum": null
+          },
+          "prefill_tps": {
+            "value": 3568.6363027072216,
+            "unit": "tokens/s",
+            "direction": "higher",
+            "aggregation": "mean",
+            "sample_count": 5,
+            "minimum": null,
+            "maximum": null
+          },
+          "decode_tps": {
+            "value": 71.98520283013394,
+            "unit": "tokens/s",
+            "direction": "higher",
+            "aggregation": "mean",
+            "sample_count": 5,
+            "minimum": null,
+            "maximum": null
+          }
+        },
+        "throughput_duration_ms": 19249.630361999152,
+        "avg_power_watts": 12.075892857142858
+      },
+      {
+        "id": "text_n2048",
+        "kind": "text",
+        "input_tokens": 2048,
+        "metrics": {
+          "ttft_ms": {
+            "value": 578.5162318,
+            "unit": "ms",
+            "direction": "lower",
+            "aggregation": "mean",
+            "sample_count": 5,
+            "minimum": null,
+            "maximum": null
+          },
+          "prefill_tps": {
+            "value": 3540.0908175520617,
+            "unit": "tokens/s",
+            "direction": "higher",
+            "aggregation": "mean",
+            "sample_count": 5,
+            "minimum": null,
+            "maximum": null
+          },
+          "decode_tps": {
+            "value": 67.72250943001328,
+            "unit": "tokens/s",
+            "direction": "higher",
+            "aggregation": "mean",
+            "sample_count": 5,
+            "minimum": null,
+            "maximum": null
+          }
+        },
+        "throughput_duration_ms": 21831.30492899909,
+        "avg_power_watts": 11.815625
+      },
+      {
+        "id": "text_n3072",
+        "kind": "text",
+        "input_tokens": 3072,
+        "metrics": {
+          "ttft_ms": {
+            "value": 910.4801878000001,
+            "unit": "ms",
+            "direction": "lower",
+            "aggregation": "mean",
+            "sample_count": 5,
+            "minimum": null,
+            "maximum": null
+          },
+          "prefill_tps": {
+            "value": 3374.0437641184662,
+            "unit": "tokens/s",
+            "direction": "higher",
+            "aggregation": "mean",
+            "sample_count": 5,
+            "minimum": null,
+            "maximum": null
+          },
+          "decode_tps": {
+            "value": 65.57050299472533,
+            "unit": "tokens/s",
+            "direction": "higher",
+            "aggregation": "mean",
+            "sample_count": 5,
+            "minimum": null,
+            "maximum": null
+          }
+        },
+        "throughput_duration_ms": 24116.17723499876,
+        "avg_power_watts": 11.913461538461538
+      },
+      {
+        "id": "image",
+        "kind": "image_text",
+        "prompt": "Describe what you see in the image.",
+        "image_size": [
+          448,
+          448
+        ],
+        "metrics": {
+          "ttft_ms": {
+            "value": 132.32543139999999,
+            "unit": "ms",
+            "direction": "lower",
+            "aggregation": "mean",
+            "sample_count": 5,
+            "minimum": null,
+            "maximum": null
+          },
+          "decode_tps": {
+            "value": 73.45558481365083,
+            "unit": "tokens/s",
+            "direction": "higher",
+            "aggregation": "mean",
+            "sample_count": 5,
+            "minimum": null,
+            "maximum": null
+          }
+        },
+        "throughput_duration_ms": 30163.564872998904,
+        "avg_power_watts": 11.4296875
+      }
+    ],
+    "synthetic": true,
+    "settings": {
+      "max_context": 4096,
+      "max_new_tokens": 256,
+      "warmup": 1,
+      "repetitions": 5,
+      "decoding": "ordinary",
+      "image_size": [
+        448,
+        448
+      ],
+      "cache_policy": "empty target/draft KV cache before every request"
+    }
+  },
+  "preview_model_id": "qwen3_5_0_8b",
+  "preview_speculative_workloads": [
+    {
+      "id": "dataset_gsm8k",
+      "kind": "text_dataset",
+      "dataset": {
+        "name": "gsm8k",
+        "available_samples": 5,
+        "selection": "illustrative"
+      },
+      "metrics": {
+        "ttft_ms": {
+          "value": 80,
+          "sample_count": 5
+        },
+        "decode_tps": {
+          "value": 32,
+          "sample_count": 5
+        },
+        "draft_contribution_pct": {
+          "value": 50,
+          "sample_count": 5
+        },
+        "decode_speedup": {
+          "value": 1.6,
+          "sample_count": 5
+        },
+        "prefill_tps": {
+          "value": 2000,
+          "sample_count": 5
+        }
+      },
+      "baseline": {
+        "id": "dataset_gsm8k",
+        "kind": "text_dataset",
+        "dataset": {
+          "name": "gsm8k",
+          "available_samples": 5,
+          "selection": "illustrative"
+        },
+        "metrics": {
+          "ttft_ms": {
+            "value": 80,
+            "sample_count": 5
+          },
+          "decode_tps": {
+            "value": 20,
+            "sample_count": 5
+          },
+          "prefill_tps": {
+            "value": 2000,
+            "sample_count": 5
+          }
+        }
+      }
+    },
+    {
+      "id": "dataset_chartqa",
+      "kind": "image_dataset",
+      "dataset": {
+        "name": "chartqa",
+        "available_samples": 5,
+        "selection": "illustrative"
+      },
+      "metrics": {
+        "ttft_ms": {
+          "value": 200,
+          "sample_count": 5
+        },
+        "decode_tps": {
+          "value": 32,
+          "sample_count": 5
+        },
+        "draft_contribution_pct": {
+          "value": 50,
+          "sample_count": 5
+        },
+        "decode_speedup": {
+          "value": 1.6,
+          "sample_count": 5
+        }
+      },
+      "baseline": {
+        "id": "dataset_chartqa",
+        "kind": "image_dataset",
+        "dataset": {
+          "name": "chartqa",
+          "available_samples": 5,
+          "selection": "illustrative"
+        },
+        "metrics": {
+          "ttft_ms": {
+            "value": 200,
+            "sample_count": 5
+          },
+          "decode_tps": {
+            "value": 20,
+            "sample_count": 5
+          }
+        }
+      }
+    }
+  ]
+}

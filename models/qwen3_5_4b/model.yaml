@@ -1,5 +1,6 @@
 build-on-demand: true
 display_name: Qwen3.5-4B
+parameter_count_billion: 4.7
 description: Generates text from instructions, conversation history, and images.
 model_type: vlm
 tasks: [text_generation, visual_question_answering]
@@ -46,3 +47,5 @@ build_profiles:
     components:
       model:
         parameters: {precision: a16w4, max_num_tokens: 4096, language_group_size: 128, input_height: 448, input_width: 448}
+
+performance: {}

@@ -44,7 +44,7 @@ scripts/                   Stage runner scripts and CI helpers
 taxonomies/                Sanctioned model categories and display labels
 tests/                     Repository-wide unit and contract tests and their fixtures
 tools/model_registry/      Shared CLI and lifecycle implementation
-tools/model_report/        Board-side model report writer and metric vocabulary
+tools/model_report/        Board-side benchmarks, telemetry, model reports and metric vocabulary
 website/                   Developer documentation site
 ```
 
@@ -83,10 +83,10 @@ this table. Modules marked CI only are removed from the author package by
 | `stage_plan.py` | which builds compile and which benchmarks run on a push or explicit on-demand dispatch (`plan_stages`), the registry reads that decision needs, and base-branch resolution |
 | `registry_http.py` | HTTP transport and authenticated read-only access shared with the author package. |
 | `registry.py` | publishing compile runs, packages (with their MLA stage simulation), model documentation, and the branch catalog the browser reads (CI only) |
-| `promotions.py` | pinned environment/target-specific Develop and production Main requests, inspection, decisions, receipts and review summaries (CI only) |
+| `promotions.py` | pinned Develop/Main requests, decisions, receipts, review summaries and post-promotion benchmark reference refresh (CI only) |
 | `candidates.py` | complete model/profile candidate contracts, run publication and binding, finalization, feature selection and retry receipts (CI only) |
 | `benchmark_declarations.py` | the `performance` and `accuracy` declarations: the profiles each benchmarks, their scripts and required metrics, and validating `reference_metrics`, which the portal ships |
-| `report_publication.py` | the MPKs a benchmark runs, checking a `model-report.json` against `model.yaml`, and publishing one benchmark run under the profile's package run, with whole-model measurements by default or separate component measurements identified by `component_id` (CI only) |
+| `report_publication.py` | the artifacts a benchmark runs, checking a `model-report.json` against `model.yaml`, and publishing one benchmark run under the profile's package run, with whole-model measurements by default or separate component measurements identified by `component_id` (CI only) |
 | `artifact.py` | compile outputs, MPK/deployed LLiMa verification, reproduction recipes, and deployment file indexes |
 | `runtime_files.py` | supporting-file path/checksum validation, reading compile declarations, and restoration from package ZIPs |
 | `mla_stage_simulation.py` | after an MPK compile, the Model Compiler simulator's operation counts and latency for each MLA stage (`simulate-mla-stages`) |
@@ -141,12 +141,12 @@ reruns](../docs/adding-a-model.md#9-know-what-a-change-reruns).
 
 | Workflow | Trigger | What it does |
 | --- | --- | --- |
-| `Target Branch Checks` | pull request | Runs `python -m pytest`, builds the `model-registry` package, and builds, browser-tests, and smoke-tests the model browser on the merge result. Contributor code never reaches a self-hosted runner. |
+| `Target Branch Checks` | pull request | Runs `ruff check .` and `python -m pytest`, which also rejects committed files that `.gitignore` excludes or that exceed 2 MiB, builds the `model-registry` package, and builds, browser-tests, and smoke-tests the model browser on the merge result. Contributor code never reaches a self-hosted runner. |
 | `Vulcan Model Orchestrator` | every push, manual dispatch | Plans each stage against the registry, runs `Vulcan Model Compile` for each changed build and the benchmark workflow for each reused build that lacks a benchmark, and publishes the branch catalog. Each build's jobs are grouped under the build's name. A newer push cancels the running orchestrator with its compiles and benchmarks. A push that changes no fingerprint only publishes the catalog. On `main` and `develop`, it also publishes the model browser it checked to staging, independently of `VULCAN_ENV`. |
 | `Vulcan Model Compile` | called by the orchestrator | Compiles one build, runs the model's compile tests on it, publishes it, and benchmarks it. |
 | `Vulcan Model Benchmarking` | called by `Vulcan Model Compile` and the orchestrator, manual dispatch | Runs the requested `performance` and `accuracy` stages of one build on a Modalix DevKit, runs the model's benchmark tests on each result, and publishes each result with its test outcome. |
 | `Vulcan Model Convert` | manual dispatch | Runs `scripts/run_model_conversion.sh` and the model's conversion tests, publishes a validated ONNX bundle and its provenance to Vulcan. |
-| `Build and Publish Model Registry` | push, manual dispatch | Runs `python -m pytest`, builds the `model-registry` package with `packaging/model-registry/build.sh`, publishes it, and moves the branch's `latest` tag. |
+| `Build and Publish Model Registry` | push, manual dispatch | Runs `ruff check .` and `python -m pytest`, builds the `model-registry` package with `packaging/model-registry/build.sh`, publishes it, and moves the branch's `latest` tag. |
 | `Model branch lifecycle` | branch create or delete | Cancels a deleted branch's unfinished runs and purges or restores its registry state. |
 
 ### Registry release state
@@ -388,6 +388,14 @@ Ordinary catalog README and hero publication stays branch-retained and is not
 part of the candidate. DevKit qualification is separate; it is not claimed as
 frozen candidate evidence in this iteration.
 
+When the README, hero image, and their presentation metadata match the current
+catalog on the same branch, the next catalog reuses the completed documentation
+run and its immutable S3 versions. The catalog's `source_commit` still identifies
+the current checkout, and `publication_commit` identifies the run's original
+commit. Changed documentation gets a new run. The publisher verifies each
+object's checksum and size, reuses matching versions, and writes new objects
+under branch-scoped content hashes with a single S3 client.
+
 The backend protects assembly for seven days. The newest successful candidate
 per source branch/model/profile receives `latest_successful` protection;
 older late completions receive bounded protection. Source-branch deletion does
@@ -469,9 +477,9 @@ through public resolved URLs. See the [metadata contract](../docs/metadata-schem
 for manifest fields, publication metadata, and the temporary 5 GiB per-file
 upload limit. Aggregate deployment size has no limit.
 
-Empty benchmark declarations schedule no benchmarks. Qwen's defaults
-and the separate performance and accuracy follow-ups are in the
-[author guide](../docs/adding-a-model.md#llima-language-and-vision-language-models).
+Only declared stages run. LLM/VLM performance uses
+[MoLE workloads](../docs/benchmarking.md#llima-text-and-image-performance),
+dispatched manually after compilation.
 
 ### Forced rebuilds of published packages
 

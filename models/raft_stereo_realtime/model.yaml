@@ -1,0 +1,81 @@
+# A build profile of this model compiles for over 20 minutes, so it builds only on request.
+build-on-demand: true
+display_name: RAFT-Stereo (realtime)
+description: RAFT-Stereo's realtime model, estimating disparity from a rectified stereo image pair.
+model_type: vision
+tasks: [depth_estimation]
+
+modalities:
+  inputs: [image]
+  outputs: [depth_map]
+
+architecture: raft_stereo
+
+license:
+  spdx: MIT
+  redistribution: allowed
+  attribution: RAFT-Stereo is developed by Lahav Lipson, Zachary Teed and Jia Deng at Princeton University's Vision & Learning Lab and distributed under the MIT license.
+
+upstream:
+  repository: https://github.com/princeton-vl/RAFT-Stereo
+  revision: 6e93ed2169bd858dbb43033988563f3b0bb49506
+
+conversion:
+  # princeton-vl releases its checkpoints in one Dropbox archive (download_models.sh), which no approved host serves;
+  # this Hugging Face mirror holds raftstereo-realtime.pth with the same bytes as the archive's copy, SHA-256
+  # bf296740… in both.
+  source:
+    uri: hf://models/shriarul5273/RAFT-Stereo@97526bde05a11452d25cce032ccb1ad030bb775e/raftstereo-realtime.pth
+    sha256: bf296740354438cdb318e3873117d2c742de1f95881e42047c7d608368930489
+    size_bytes: 39603288
+  # The checkpoint's state dict under the network's own module names; surgery.py builds and exports the network.
+  outputs: [weights.pth]
+
+compilation:
+  format: onnx
+  source: conversion
+
+calibrations:
+- id: scene-flow-cal
+  dataset: {id: scene-flow, variant: cal, sha256: bc17d4c23539824b4dc5d159579a59c1727a80e6d7f82597a13c90be493a66ff, size_bytes: 1688561036}
+
+build_profiles:
+  w16a16:
+    calibration_dataset: scene-flow-cal
+    components:
+      model:
+        parameters: {precision: w16a16, calibration_bins: 2048, calibration_samples: 4}
+
+  # w8a8 is held back: on the 8 Scene Flow fidelity pairs its disparity's end-point error was 6.449 px, against
+  # 1.111 px for the ONNX and 1.174 px for w16a16 (1.143 px since surgery.py's lookup, abs and upsampling rewrites).
+  # Uncomment it once an INT8 recipe keeps RAFT-Stereo's accuracy, for example one that runs the operations INT8
+  # rounding hurts most in BF16.
+  # w8a8:
+  #   calibration_dataset: scene-flow-cal
+  #   components:
+  #     model:
+  #       parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 16}
+
+numerical_fidelity:
+  # Mean absolute error of the disparity output is its end-point error against the ONNX source, in pixels.
+  status: diagnostic
+  dataset: {id: scene-flow, variant: cal, sha256: bc17d4c23539824b4dc5d159579a59c1727a80e6d7f82597a13c90be493a66ff, size_bytes: 1688561036}
+  # Calibration takes the first pairs of the same seeded order, so the fidelity pairs start after the largest sample.
+  selection: {method: seeded_random_without_replacement, seed: 42, offset: 16, samples: 8}
+  outputs: [disparity]
+
+accuracy:
+  # scene-flow-val holds the Scene Flow finalpass test list: 4,370 FlyingThings3D pairs and their left-view disparity.
+  datasets:
+  - {id: scene-flow, variant: val, sha256: f355b01ceab38e3ac1e3fd069bf3af61a140fff88d7cf21acaa610195799c500, size_bytes: 14868088916}
+
+performance: {}
+
+reference_metrics:
+# princeton-vl publishes no Scene Flow score for the realtime model, and the paper's ablations report only 1px error
+# for other configurations, so the reference is the FP32 ONNX on the package's own protocol.
+- origin: fp32_baseline
+  script: scripts/fp32_baseline_accuracy.py
+  dataset: {id: scene-flow, split: test}
+  conditions: FP32 ONNX from surgery.py on ONNX Runtime CPU, each 960x540 view ImageNet-normalized and padded to 544 rows by the graph, all 4,370 finalpass test pairs, pixels with true disparity above 0 and under 192
+  metrics: {epe: 0.8345, d1_all: 3.3486}

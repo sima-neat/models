@@ -1,6 +1,11 @@
 // Metric definitions and value formatting. Each performance metric matches tools/model_report/metrics.json,
 // whose `display` unit and scale it shows.
 export const METRIC_DEFINITIONS = {
+  ttft_ms: { label: "Time to first token", unit: "ms", digits: 1, scale: 1, direction: "lower" },
+  prefill_tps: { label: "Prefill throughput", unit: "tokens/s", digits: 1, scale: 1, direction: "higher" },
+  decode_tps: { label: "Decode throughput", unit: "tokens/s", digits: 1, scale: 1, direction: "higher" },
+  draft_contribution_pct: { label: "Draft contribution", unit: "%", digits: 1, scale: 1, direction: "higher" },
+  decode_speedup: { label: "Decode speedup", unit: "×", digits: 2, scale: 1, direction: "higher" },
   latency_avg_ms: { label: "Average latency", unit: "ms", digits: 2, scale: 1, direction: "lower" },
   latency_p50_ms: { label: "Latency p50", unit: "ms", digits: 2, scale: 1, direction: "lower" },
   latency_p95_ms: { label: "Latency p95", unit: "ms", digits: 2, scale: 1, direction: "lower" },

@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 import yaml
-from model_registry.fingerprints import ACCURACY_TOOLING, PERFORMANCE_TOOLING
+from model_registry.fingerprints import ACCURACY_TOOLING, LLIMA_PERFORMANCE_TOOLING, PERFORMANCE_TOOLING
 
 from tests.test_compile_workflow import evaluate
 from tests.test_stage_plan import repository_without_w16a16_accuracy
@@ -39,9 +39,8 @@ def test_manual_benchmarks_keep_their_actions_identity() -> None:
     workflow = load_workflow()
 
     assert workflow["name"] == "Vulcan Model Benchmarking"
-    assert workflow["run-name"] == (
-        "Benchmarking (${{ inputs.model_id }}/${{ inputs.compile_invocation_id }}, ${{ inputs.build_profile_id }})"
-    )
+    assert "inputs.promoted_missing" in workflow["run-name"]
+    assert "format('Benchmarking ({0}/{1}, {2})'" in workflow["run-name"]
     assert list(workflow["on"]) == ["workflow_dispatch", "workflow_call"]
     inputs = workflow["on"]["workflow_dispatch"]["inputs"]
     assert set(inputs) == {
@@ -49,25 +48,29 @@ def test_manual_benchmarks_keep_their_actions_identity() -> None:
         "source_run_id",
         "source_sha",
         "source_branch",
+        "deployment_branch",
         "model_id",
         "build_profile_id",
         "compile_invocation_id",
         "stages",
+        "promoted_missing",
     }
-    optional = {"source_run_id", "stages"}
+    optional = set(inputs) - {"environment"}
     assert all(inputs[name]["required"] == "false" for name in optional)
     assert all(value["required"] == "true" for name, value in inputs.items() if name not in optional)
     assert inputs["stages"]["default"] == "performance,accuracy"
     assert inputs["environment"]["type"] == "choice"
     assert inputs["environment"]["options"] == ["default", "staging", "production"]
     assert inputs["environment"]["default"] == "default"
+    assert inputs["promoted_missing"]["type"] == "boolean"
+    assert inputs["promoted_missing"]["default"] == "false"
     assert "operation" not in inputs
     assert workflow["concurrency"]["group"].startswith(
         "model-benchmark-${{ inputs.environment != 'default' && inputs.environment || vars.VULCAN_ENV || 'staging' }}-"
     )
     assert workflow["concurrency"]["cancel-in-progress"] == "false"
     assert list(workflow["jobs"]) == [
-        "resolve-vulcan-config", "resolve-benchmark-runner", "stage", "benchmark", "publish", "check",
+        "resolve-vulcan-config", "resolve-benchmark-runner", "promoted", "stage", "benchmark", "publish", "check",
     ]
 
 
@@ -76,12 +79,25 @@ def test_manual_dispatch_takes_the_called_inputs() -> None:
     inputs, call = triggers["workflow_dispatch"]["inputs"], triggers["workflow_call"]["inputs"]
 
     # The resolvers' outputs are the only inputs a person does not type.
-    assert set(inputs) == set(call) - {"vulcan_config", "devkit_runner"}
+    assert set(inputs) - {"promoted_missing"} == set(call) - {"vulcan_config", "devkit_runner"}
     assert all(value["type"] == "string" for value in call.values())
-    optional = {"source_run_id", "vulcan_config", "devkit_runner"}
+    optional = {"source_run_id", "deployment_branch", "vulcan_config", "devkit_runner"}
     assert {name for name, value in call.items() if value["required"] == "false"} == optional
     assert all(call[name]["default"] == "" for name in optional)
     assert all("default" not in value for name, value in call.items() if name not in optional)
+
+
+def test_benchmark_inputs_outlive_long_speculative_runs():
+    jobs = load_workflow()["jobs"]
+    stage = jobs["stage"]
+    retained = step(stage["steps"], "Retain benchmark input independently of compile-run cleanup")
+    assert int(retained["with"]["retention-days"]) * 24 * 60 > 4320
+    assert jobs["benchmark"]["timeout-minutes"] == "${{ fromJSON(needs.stage.outputs.timeout_minutes) }}"
+    assert stage["outputs"]["timeout_minutes"] == "${{ steps.settings.outputs.timeout_minutes }}"
+    assert jobs["benchmark"]["env"]["BENCHMARK_BACKEND"] == "${{ needs.stage.outputs.benchmark_backend }}"
+    settings = step(stage["steps"], "Resolve benchmark job settings")
+    reader = step(stage["steps"], "Configure authenticated production registry reads")
+    assert stage["steps"].index(settings) < stage["steps"].index(reader)
 
 
 def test_only_a_manual_dispatch_resolves_the_config_and_runner() -> None:
@@ -90,16 +106,74 @@ def test_only_a_manual_dispatch_resolves_the_config_and_runner() -> None:
 
     # The orchestrator passes the config and the DevKit runner it resolved once for the run.
     assert jobs["resolve-vulcan-config"]["if"] == "inputs.vulcan_config == ''"
-    assert jobs["resolve-benchmark-runner"]["if"] == "inputs.devkit_runner == ''"
+    assert jobs["resolve-benchmark-runner"]["if"] == "inputs.devkit_runner == '' && !inputs.promoted_missing"
     assert stage["needs"] == ["resolve-vulcan-config", "resolve-benchmark-runner"]
     # Without a status function a skipped resolver would skip the stage too.
     assert stage["if"].startswith("!cancelled() && !contains(needs.*.result, 'failure') &&")
+    assert "!inputs.promoted_missing" in stage["if"]
     assert stage["outputs"]["vulcan_config"] == (
         "${{ inputs.vulcan_config || toJSON(needs.resolve-vulcan-config.outputs) }}"
     )
     assert stage["outputs"]["devkit_runner"] == (
         "${{ inputs.devkit_runner || toJSON(needs.resolve-benchmark-runner.outputs) }}"
     )
+
+
+def test_promoted_batch_is_manual_and_does_not_claim_a_devkit():
+    job = load_workflow()["jobs"]["promoted"]
+    assert job["if"] == "github.event_name == 'workflow_dispatch' && inputs.promoted_missing"
+    assert job["runs-on"] == "ubuntu-latest"
+    assert job["permissions"] == {"contents": "read", "actions": "write", "id-token": "write"}
+    dispatch = step(job["steps"], "Queue missing measurements through this workflow")
+    assert dispatch["run"] == "scripts/benchmark_promoted_models.py"
+    assert dispatch["env"]["GH_TOKEN"] == "${{ github.token }}"
+
+
+@pytest.mark.parametrize("case", ["valid", "missing_model", "wrong_branch"])
+def test_single_model_dispatch_validates_fields_before_accessing_artifacts(tmp_path, case):
+    source = step(load_workflow()["jobs"]["stage"]["steps"], "Verify the source run and compiled artifact")
+    environment = {**os.environ, "SOURCE_RUN_ID": "", "SOURCE_SHA": "a" * 40,
+                   "SOURCE_BRANCH": "main" if case == "wrong_branch" else "develop", "GITHUB_REF_NAME": "develop",
+                   "MODEL_ID": "" if case == "missing_model" else "resnet_50", "BUILD_PROFILE_ID": "w8a8",
+                   "COMPILE_INVOCATION_ID": "w8a8", "STAGES": "performance", "GITHUB_OUTPUT": str(tmp_path / "output")}
+    result = subprocess.run(["bash", "-c", source["run"]], env=environment, capture_output=True, text=True)
+    assert (result.returncode == 0) == (case == "valid")
+
+
+@pytest.mark.parametrize("missing", [False, True])
+def test_promoted_batch_dispatches_single_profile_runs_and_reports_skips(monkeypatch, tmp_path, missing):
+    import runpy
+
+    queued = []
+    build = {"model_id": "hrnet_w32", "build_profile_id": "w8a8", "compile_invocation_id": "w8a8",
+             "stages": ["accuracy"]}
+    plan = {"source_branch": "main", "source_sha": "a" * 40, "include": [build] if missing else [],
+            "skipped": [{"model_id": "measured", "build_profile_id": "w8a8", "reason": "already measured"}]}
+
+    def read(command, **kwargs):
+        assert command[:2] == ["model-registry", "plan-promoted-benchmarks"]
+        return json.dumps(plan)
+
+    def dispatch(command, **kwargs):
+        assert command[:4] == ["gh", "api", "--method", "POST"]
+        queued.append(json.loads(kwargs["input"]))
+
+    environment = {"REGISTRY_API_URL": "https://registry.example.invalid", "GITHUB_REF_NAME": "main",
+                   "STAGES": "performance,accuracy", "VULCAN_ENV": "production",
+                   "GITHUB_REPOSITORY": "sima-neat/models", "GITHUB_STEP_SUMMARY": str(tmp_path / "summary")}
+    for key, value in environment.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setattr(subprocess, "check_output", read)
+    monkeypatch.setattr(subprocess, "run", dispatch)
+    runpy.run_path(str(ROOT / "scripts/benchmark_promoted_models.py"), run_name="__main__")
+    assert len(queued) == int(missing)
+    if missing:
+        assert queued[0] == {"ref": "main", "inputs": {"environment": "production", "source_sha": "a" * 40,
+            "source_branch": "main", "model_id": "hrnet_w32", "build_profile_id": "w8a8",
+            "compile_invocation_id": "w8a8", "stages": "accuracy"}}
+        assert "promoted_missing" not in queued[0]["inputs"]  # Child dispatches use the single-model default.
+    summary = (tmp_path / "summary").read_text()
+    assert "already measured" in summary and f"Queued {int(missing)}" in summary
 
 
 def test_benchmark_stages_only_its_compiled_artifact() -> None:
@@ -109,10 +183,10 @@ def test_benchmark_stages_only_its_compiled_artifact() -> None:
     assert stage["environment"] == ENVIRONMENT
     assert stage["permissions"]["id-token"] == "write"
     assert stage["outputs"]["source_branch"] == "${{ steps.source.outputs.branch }}"
-    assert "inputs.source_branch == github.ref_name" in stage["if"]
-    assert "inputs.stages != ''" in stage["if"]
     assert "inputs.operation" not in stage["if"]
     verify = step(stage["steps"], "Verify the source run and compiled artifact")
+    assert '[[ "$SOURCE_BRANCH" == "$GITHUB_REF_NAME" ]]' in verify["run"]
+    assert '[[ -n "$STAGES" ]]' in verify["run"]
     assert verify["env"]["STAGES"] == "${{ inputs.stages }}"
     assert '[[ "$stage" == performance || "$stage" == accuracy ]]' in verify["run"]
     assert "COMPONENT_IDS" not in BENCHMARK_WORKFLOW.read_text(encoding="utf-8")
@@ -144,12 +218,15 @@ def test_benchmark_stages_only_its_compiled_artifact() -> None:
     install = step(stage["steps"], "Install registry publication tooling")
     assert install["run"] == "python -m pip install ."
     restore = step(stage["steps"], "Restore the current immutable compilation from the registry")
-    assert restore["if"] == "inputs.source_run_id == ''"
-    assert "model-registry stage-registry-build" in restore["run"]
+    assert "if" not in restore
+    assert restore["run"] == "scripts/stage_benchmark_inputs.sh _source _compiled"
+    script = (ROOT / "scripts/stage_benchmark_inputs.sh").read_text()
+    assert 'if [[ -z "$SOURCE_RUN_ID" ]]' in script
+    assert 'model-registry stage-registry-build "${args[@]}" --benchmark-baseline' in script
     # A benchmark runs under the profile's published package; the stage never registers a build itself.
     registered = step(stage["steps"], "Verify the registered build and its package")
     assert "if" not in registered
-    assert "model-registry model-component-mpks _compiled --repository _source" in registered["run"]
+    assert "model-registry model-component-artifacts _compiled --repository _source" in registered["run"]
     assert '--model "$MODEL_ID" --build-profile "$BUILD_PROFILE_ID"' in registered["run"]
     assert (
         'test -f "_compiled/$MODEL_ID/$BUILD_PROFILE_ID/packages/default/registry-publication.json"'
@@ -271,8 +348,126 @@ def test_performance_runs_the_model_owned_script() -> None:
     assert "model_registry resolve-devkit-accuracy" in script
     assert 'dataset=(--dataset "$name=$directory")' in script
     assert script.index("resolve-devkit-accuracy") < script.index('scripts/performance.py"')
-    assert "model_registry model-component-mpks" in script
+    assert "model_registry model-component-artifacts" in script
     assert script.index('scripts/performance.py"') < script.index("model_registry check-report")
+
+
+@pytest.mark.parametrize("extra_wheels", [True, False])
+def test_performance_dependencies_are_isolated_and_cleaned(tmp_path: Path, extra_wheels: bool) -> None:
+    scripts = tmp_path / "repository/models/fixture/scripts"
+    scripts.mkdir(parents=True)
+    if extra_wheels:
+        (scripts / "requirements-performance.txt").write_text("benchmark_wheel==1.0\n")
+    (scripts / "performance.py").write_text(
+        "import argparse, json, os\nfrom pathlib import Path\n"
+        "p=argparse.ArgumentParser(); p.add_argument('--mpk'); p.add_argument('--output'); a=p.parse_args()\n"
+        "if os.environ['EXTRA_WHEELS']=='true':\n"
+        "    from benchmark_wheel import value\n"
+        "else: value=0\n"
+        "Path(a.output, 'model-report.json').write_text(json.dumps({'value':value}))\n"
+    )
+    binaries = tmp_path / "bin"
+    binaries.mkdir()
+    python = binaries / "python"
+    python.write_text(
+        f"#!{sys.executable}\nimport json, os, sys\nfrom pathlib import Path\n"
+        "if sys.argv[1:3]==['-m','model_registry']:\n"
+        "    if sys.argv[3]=='model-component-artifacts': print('model=fixture_mpk.tar.gz')\n"
+        "elif sys.argv[1:2]==['-c'] and 'from model_registry.model import load_model' in sys.argv[2]:\n"
+        "    print('core')\n"
+        "elif sys.argv[1:3]==['-m','pip']:\n"
+        "    Path(os.environ['PIP_CALL']).write_text(json.dumps(sys.argv[1:]))\n"
+        "    site=Path(sys.argv[sys.argv.index('--target')+1]); site.mkdir(parents=True)\n"
+        "    (site/'benchmark_wheel.py').write_text('value=42\\n')\n"
+        "else: os.execv(sys.executable, [sys.executable, *sys.argv[1:]])\n"
+    )
+    python.chmod(0o755)
+    cat = binaries / "cat"
+    cat.write_text(
+        '#!/bin/sh\ncase "$1" in */5000000.mla/cur_freq) echo 1000000000;; '
+        '*/policy0/scaling_cur_freq) echo 1400000;; *) exec /bin/cat "$@";; esac\n'
+    )
+    cat.chmod(0o755)
+    work, output, pip_call = (tmp_path / name for name in ("scratch", "report", "pip.json"))
+    env = {**os.environ, "PATH": f"{binaries}{os.pathsep}{os.environ['PATH']}",
+           "REGISTRY_PYTHON": str(python), "PYNEAT_PYTHON": str(python),
+           "WORK_DIR": str(work), "DATASET_CACHE": str(tmp_path / "cache"),
+           "DATASET_LOCK": str(tmp_path / "prepare.lock"), "PIP_CALL": str(pip_call),
+           "EXTRA_WHEELS": str(extra_wheels).lower()}
+    subprocess.run(
+        [ROOT / "scripts/run_model_performance.sh", scripts.parent, "profile", tmp_path / "compiled", output],
+        env=env, check=True, capture_output=True, text=True,
+    )
+    assert json.loads((output / "model-report.json").read_text())["value"] == (42 if extra_wheels else 0)
+    assert not work.exists()
+    assert pip_call.exists() == extra_wheels
+    if extra_wheels:
+        arguments = json.loads(pip_call.read_text())
+        assert "--no-deps" in arguments and "--only-binary=:all:" in arguments
+        assert arguments[arguments.index("--target") + 1] == str(work / "site-packages")
+        assert arguments[arguments.index("-r") + 1] == str(scripts / "requirements-performance.txt")
+
+
+@pytest.mark.parametrize("installed", [None, "0.6.0+develop.abcfe372a575", "0.6.0+develop.111111111111", "broken"])
+def test_native_setup_reuses_matching_mole_on_nvme(tmp_path, installed):
+    binaries = tmp_path / "bin"
+    binaries.mkdir()
+    calls = tmp_path / "install.json"
+    expected = "0.6.0+develop.abcfe372a575"
+    metadata = tmp_path / "metadata.json"
+    metadata.write_text(json.dumps({"version": expected}))
+    state = tmp_path / "installed-version"
+    if installed is not None:
+        state.write_text(installed)
+    venv = tmp_path / "nvme/mole-venv"
+    (venv / "bin").mkdir(parents=True)
+    python = venv / "bin/python"
+    python.write_text(
+        '#!/bin/sh\n[ -f "$MOLE_STATE" ] && [ "$(cat "$MOLE_STATE")" != broken ] || exit 1\n'
+        'cat "$MOLE_STATE"\n'
+    )
+    python.chmod(0o755)
+    for name, body in {
+        "sima-cli": '''import json, os, sys
+from pathlib import Path
+if "--json" in sys.argv:
+    print("sima-cli is up-to-date")
+    print("Environment: elxr")
+    print(json.dumps({"metadata_url": os.environ["METADATA_URL"]}))
+else:
+    Path(os.environ["INSTALL_CALLS"]).write_text(json.dumps({
+        "args": sys.argv[1:], "venv": os.environ["SIMA_MOLE_VENV_PATH"],
+        "cache": os.environ["PIP_CACHE_DIR"], "tmp": os.environ["TMPDIR"],
+    }))
+    Path(os.environ["MOLE_STATE"]).write_text(os.environ["EXPECTED_VERSION"])
+''',
+        "dpkg-query": "pass",
+    }.items():
+        command = binaries / name
+        command.write_text(f"#!{sys.executable}\n{body}\n")
+        command.chmod(0o755)
+    runtime = {"llima": {"install_target": "llima@develop:abcfe372a575"}}
+    env = {**os.environ, "PATH": f"{binaries}{os.pathsep}{os.environ['PATH']}",
+           "REGISTRY_PYTHON": sys.executable, "SIMA_MOLE_VENV_PATH": str(venv),
+           "PIP_CACHE_DIR": str(tmp_path / "nvme/pip-cache"), "TMPDIR": str(tmp_path / "nvme/tmp"),
+           "WORK_DIR": str(tmp_path / "nvme/work"), "MOLE_STATE": str(state),
+           "METADATA_URL": metadata.as_uri(), "INSTALL_CALLS": str(calls), "EXPECTED_VERSION": expected}
+    env.pop("LLIMA_MOLE_PYTHON", None)
+    result = subprocess.run(
+        [ROOT / "scripts/install_mole_benchmark_runtime.sh", json.dumps(runtime)],
+        env=env, check=True, capture_output=True, text=True,
+    )
+    assert calls.exists() == (installed != expected)
+    if installed == expected:
+        assert "Skipping install" in result.stdout
+    else:
+        assert json.loads(calls.read_text()) == {
+            "args": ["neat", "install", "--env", "production", "llima/mole@develop:abcfe372a575",
+                     "--install-dir", str(tmp_path / "nvme/work/mole")],
+            "venv": str(venv), "cache": env["PIP_CACHE_DIR"], "tmp": env["TMPDIR"],
+        }
+    assert state.read_text() == expected
+
 
 def test_benchmarks_run_only_when_requested() -> None:
     benchmark = load_workflow()["jobs"]["benchmark"]
@@ -282,8 +477,8 @@ def test_benchmarks_run_only_when_requested() -> None:
     assert not {"BENCHMARK_PERFORMANCE", "BENCHMARK_ACCURACY"} & set(benchmark["env"])
     performance = step(steps, "Measure performance on DevKit")
     assert performance["if"] == (
-        "${{ !cancelled() && steps.core.outcome == 'success' && steps.dataset-cache.outcome == 'success' "
-        "&& steps.stages.outputs.performance == 'true' }}"
+        "${{ !cancelled() && steps.core.outcome == 'success' && (steps.dataset-cache.outcome == 'success' || "
+        "steps.mole.outcome == 'success') && steps.stages.outputs.performance == 'true' }}"
     )
     assert performance["run"] == (
         'scripts/run_model_performance.sh "_source/models/$MODEL_ID" "$BUILD_PROFILE_ID" _compiled _performance'
@@ -308,7 +503,8 @@ def test_benchmarks_run_only_when_requested() -> None:
     for name in ("Install trusted dataset tooling", "Configure dataset reader credentials",
                  "Cache the accuracy dataset on NVMe"):
         assert step(steps, name)["if"] == (
-            "steps.stages.outputs.accuracy == 'true' || steps.stages.outputs.performance == 'true'"
+            "env.BENCHMARK_BACKEND == 'core' && (steps.stages.outputs.accuracy == 'true' || "
+            "steps.stages.outputs.performance == 'true')"
         ), name
 
 
@@ -347,6 +543,16 @@ def test_each_benchmark_runs_and_publishes_on_its_own_outcome() -> None:
     assert step(benchmark["steps"], "Install selected Neat Core")["if"] == (
         "${{ !cancelled() && steps.runtime.outcome == 'success' }}"
     )
+    mole = step(benchmark["steps"], "Install selected MoLE")
+    assert mole["if"] == (
+        "${{ !cancelled() && steps.core.outcome == 'success' && env.BENCHMARK_BACKEND == 'llima' }}"
+    )
+    assert mole["run"] == 'scripts/install_mole_benchmark_runtime.sh "$BENCHMARK_RUNTIME"'
+    assert mole["env"] == {
+        "SIMA_MOLE_VENV_PATH": "/media/nvme/llima/mole-venv",
+        "PIP_CACHE_DIR": "/media/nvme/llima/pip-cache",
+        "TMPDIR": "/media/nvme/llima/tmp",
+    }
     assert "needs.benchmark.result" not in publish["if"]
     assert "needs.benchmark.outputs.performance == 'success' ||" in publish["if"]
     assert "needs.benchmark.outputs.accuracy == 'success'" in publish["if"]
@@ -466,10 +672,12 @@ def test_accuracy_dataset_is_cached_on_nvme_under_a_shared_lock() -> None:
 def test_benchmark_runs_only_on_its_source_branch() -> None:
     workflow = load_workflow()
 
-    for name in ("stage", "benchmark", "publish"):
+    for name in ("benchmark", "publish"):
         condition = workflow["jobs"][name]["if"]
         assert "inputs.source_branch == github.ref_name" in condition, name
         assert "refs/heads/develop" not in condition, name
+    verify = step(workflow["jobs"]["stage"]["steps"], "Verify the source run and compiled artifact")
+    assert '[[ "$SOURCE_BRANCH" == "$GITHUB_REF_NAME" ]]' in verify["run"]
 
 
 def test_completed_stages_are_published_from_a_hosted_runner() -> None:
@@ -637,16 +845,20 @@ def test_cleanup_removes_input_and_both_evidence_artifacts(tmp_path: Path) -> No
     ])
 
 
-@pytest.mark.parametrize("relative", [
-    "tools/model_registry/report_publication.py",
-    "tools/model_registry/benchmark_declarations.py", "tools/model_registry/model.py",
+@pytest.mark.parametrize("relative,backend,rejected", [
+    ("tools/model_registry/report_publication.py", "core", True),
+    ("tools/model_registry/benchmark_declarations.py", "core", True),
+    ("tools/model_registry/model.py", "core", True),
+    ("tools/model_report/generation_benchmark.py", "core", False),
+    ("tools/model_report/generation_benchmark.py", "llima", True),
 ])
-def test_board_runs_require_the_measured_revisions_tooling(tmp_path, relative) -> None:
+def test_board_runs_require_the_measured_revisions_tooling(tmp_path, relative, backend, rejected) -> None:
     stage = load_workflow()["jobs"]["stage"]
     guard = step(stage["steps"], "Require the measured revision's board-stage tooling")
-    assert guard["run"] == "scripts/require_source_board_tooling.sh _source"
+    assert guard["run"] == 'scripts/require_source_board_tooling.sh _source "${{ steps.settings.outputs.backend }}"'
+    assert stage["steps"].index(step(stage["steps"], "Resolve benchmark job settings")) < stage["steps"].index(guard)
     source = tmp_path / "_source"
-    for item in {*PERFORMANCE_TOOLING, *ACCURACY_TOOLING,
+    for item in {*PERFORMANCE_TOOLING, *ACCURACY_TOOLING, *LLIMA_PERFORMANCE_TOOLING,
                  "tools/model_registry/benchmark_declarations.py", "tools/model_registry/model.py"}:
         (source / item).parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / item, source / item)
@@ -659,7 +871,7 @@ def test_board_runs_require_the_measured_revisions_tooling(tmp_path, relative) -
 
     def check() -> subprocess.CompletedProcess:
         return subprocess.run(
-            [ROOT / "scripts" / "require_source_board_tooling.sh", source],
+            [ROOT / "scripts" / "require_source_board_tooling.sh", source, backend],
             cwd=ROOT, env=env, capture_output=True, text=True,
         )
 
@@ -667,8 +879,9 @@ def test_board_runs_require_the_measured_revisions_tooling(tmp_path, relative) -
     changed = source / relative
     changed.write_text(changed.read_text(encoding="utf-8") + "# newer\n", encoding="utf-8")
     result = check()
-    assert result.returncode != 0
-    assert relative in result.stderr
+    assert (result.returncode != 0) == rejected
+    if rejected:
+        assert relative in result.stderr
 
 
 @pytest.mark.parametrize(
@@ -693,9 +906,10 @@ def test_registry_selection_is_independent_of_devkit_placement(override, default
     assert dataset == ENVIRONMENT
     reader = step(jobs['stage']['steps'], 'Configure authenticated production registry reads')
     for source_run in ('', '123'):
-        assert evaluate(reader['if'], {**resolved, 'inputs.source_run_id': source_run}) == (
-            expected == 'production' and not source_run
-        )
+        for baseline in ('true', 'false'):
+            assert evaluate(reader['if'], {
+                **resolved, 'inputs.source_run_id': source_run, 'steps.settings.outputs.needs_baseline': baseline,
+            }) == (expected == 'production' and (source_run == '' or baseline == 'true'))
     restore = step(jobs['stage']['steps'],
                    'Restore the current immutable compilation from the registry')
     urls = {**resolved, 'vars.VULCAN_ARTIFACT_REGISTRY_API_URL': 'https://iam.example',

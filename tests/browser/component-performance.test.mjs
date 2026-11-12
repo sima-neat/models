@@ -45,3 +45,17 @@ test('a composed two-component model keeps one combined performance summary', ()
   assert.deepEqual(result.panels, []);
   assert.deepEqual(result.summaries, [{rate: 160, componentId: '', componentCount: 2, workload: 'composed pipeline'}]);
 });
+
+test('comparison does not turn independent component rates into whole-model throughput', () => {
+  const compare = readFileSync(new URL('../../artifact-browser/compare-view.js', import.meta.url), 'utf8');
+  const begin = compare.indexOf('function variantMeasurements(');
+  const finish = compare.indexOf('\nfunction bestValue(', begin);
+  const measurements = new Function('readPerformance', `return (${compare.slice(begin, finish)});`)(readPerformance);
+  const independent = {...base, scope: 'components', components: {
+    text_encoder: {...stats, metrics: {throughput_fps: 440}, workload: 'one prompt', telemetry: {}},
+    detector: {...stats, metrics: {throughput_fps: 100}, workload: 'one image', telemetry: {}},
+  }};
+  assert.deepEqual(measurements({performance: {report: independent}}), {});
+  const whole = {...base, metrics: {throughput_fps: 100}, workload: 'one image', telemetry: {}, components: {model: stats}};
+  assert.equal(measurements({performance: {report: whole}}).throughput_fps.value, 100);
+});

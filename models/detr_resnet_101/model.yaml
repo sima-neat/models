@@ -1,0 +1,79 @@
+display_name: DETR ResNet-101
+description: The original DETR transformer detector with a ResNet-101 backbone, for COCO objects.
+model_type: vision
+tasks: [object_detection]
+
+modalities:
+  inputs: [image]
+  outputs: [bounding_boxes, class_scores]
+
+architecture: detr
+
+license:
+  spdx: Apache-2.0
+  redistribution: allowed
+  attribution: DETR is developed by Facebook AI Research and distributed under Apache-2.0.
+
+upstream:
+  repository: https://huggingface.co/facebook/detr-resnet-101
+  revision: 7d14702e444d98d0b1764824567fc2b45e1eb218
+  derived_from: https://github.com/facebookresearch/detr/tree/29901c51d7fe8712168b8d0d64351170bc0f83e0
+
+conversion:
+  source:
+    repository: facebook/detr-resnet-101
+    revision: 7d14702e444d98d0b1764824567fc2b45e1eb218
+    main_file: model.safetensors
+    files:
+      model.safetensors: {sha256: 86cec5ddf787238c249f1eee18c67d403ae04bf74b062766adfcc075ae467809, size_bytes: 242797616}
+      config.json: {sha256: 8cd7afcea0ad7d03e554174aa2aab0b7e0e7ad99a328ceaa04a5865032975ab5, size_bytes: 4382}
+      preprocessor_config.json: {sha256: d30b9e61ba68cf7ac5b2b11285f8ae3952c9823b3b978852cc43f5253db53b19, size_bytes: 255}
+
+compilation:
+  format: onnx
+  source: conversion
+
+calibrations:
+- id: coco-2017-cal
+  dataset: {id: coco-2017, variant: cal, sha256: 54c64d84122eba371ac014d7b43849a461551c2e6c5c430b5ead90ec1dec12b1, size_bytes: 187510866}
+
+build_profiles:
+  w16a16:
+    components:
+      model:
+        parameters: {precision: w16a16}
+
+  # INT8 everywhere except the class and box heads, which run BF16. It loses 3 to 4 COCO mAP points to w16a16,
+  # and the compiler lowers the precision of saturating INT8 backbone convolutions. compile.py keeps its recipe;
+  # uncomment the profile once its accuracy is improved.
+  # w8a8_mixed:
+  #   calibration_dataset: coco-2017-cal
+  #   components:
+  #     model:
+  #       parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 50, bf16_regions: [heads]}
+
+accuracy:
+  # The reference resizes the shortest side to 800, caps the longest at 1333 and masks the padding. accuracy.py
+  # stretches each image to the fixed 640x640 input, which distorts every image that is not square.
+  datasets:
+  - {id: coco-2017, variant: val, sha256: a40de1caf42b47c5a8976eb97efe3c83f3a41337c4d16d318eb15d65c293f2da, size_bytes: 898368520}
+
+performance: {}
+
+# No published score is comparable to this package. The paper scores each image with its shortest side at 800, its
+# longest at most 1333 and the padding masked, while this package stretches every image to 640x640.
+# scripts/fp32_baseline_accuracy.py measures the FP32 baseline on this package's own inputs instead, on the ONNX
+# Vulcan Model Convert produced.
+reference_metrics:
+- origin: fp32_baseline
+  script: scripts/fp32_baseline_accuracy.py
+  dataset: {id: coco-2017, split: val}
+  conditions: FP32 ONNX on ONNX Runtime CPU; each image stretched to 640x640, ImageNet-normalized; all 100 queries scored; 5000 images
+  metrics: {coco_map: 0.3801, coco_ap50: 0.5732, coco_ap75: 0.4012, coco_ap_small: 0.1446, coco_ap_medium: 0.416, coco_ap_large: 0.5976, coco_ar1: 0.313, coco_ar10: 0.4867, coco_ar100: 0.5246, coco_ar_small: 0.2381, coco_ar_medium: 0.5801, coco_ar_large: 0.7879}
+
+# The published table, kept for reference and not shown:
+# reference_metrics:
+# - source: https://github.com/facebookresearch/detr/blob/29901c51d7fe8712168b8d0d64351170bc0f83e0/README.md
+#   dataset: {id: coco-2017, split: val}
+#   conditions: shortest side 800, longest side 1333, padding masked
+#   metrics: {coco_map: 0.435}
