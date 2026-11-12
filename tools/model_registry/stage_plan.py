@@ -242,7 +242,7 @@ def stage_run_exists(read: ReadRequest, read_api_url: str, run_type: str, finger
 def plan_promoted_benchmarks(
     *, branch: str, stages: list[str], read: ReadRequest, read_api_url: str,
 ) -> dict[str, Any]:
-    """Plan missing measurements of approved non-LLM/VLM profiles, without compiling or changing the catalog."""
+    """Plan missing approved benchmarks, excluding text generation, without compiling or changing the catalog."""
     if branch not in {"develop", "main"}:
         raise ValidationError("Promoted benchmark batches require the develop or main branch")
     if not stages or set(stages) - set(BENCHMARK_RUN_TYPES):
@@ -252,7 +252,9 @@ def plan_promoted_benchmarks(
         raise ValidationError(f"No current catalog for {branch}")
     include, skipped = [], []
     for model in document["models"]:
-        if not model.get("build_on_demand") or model["categories"]["model_type"] in {"llm", "vlm"}:
+        if not model.get("build_on_demand") or {"text_generation", "visual_question_answering"}.intersection(
+            model["categories"]["tasks"]
+        ):
             continue
         for profile in sorted(model.get("approved_deployments", {})):
             fingerprints = model.get("benchmark_fingerprints", {}).get(profile, {})

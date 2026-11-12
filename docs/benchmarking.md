@@ -17,8 +17,9 @@ writes the one report the registry publishes.
 
 In **Actions → Vulcan Model Benchmarking → Run workflow**, select Develop/Main,
 the registry environment and stages, then check **Benchmark promoted models
-missing results (excludes LLM/VLM)** to queue missing measurements for all promoted
-non-LLM/VLM profiles. Leave the per-model fields empty. Each profile runs separately;
+missing results (excludes text generation)** to queue missing measurements for promoted
+profiles without `text_generation` or `visual_question_answering` tasks.
+Leave the per-model fields empty. Each profile runs separately;
 the summary lists queued and skipped profiles. Leave the checkbox unchecked to
 benchmark one model, including an LLM/VLM.
 

@@ -1,5 +1,5 @@
 name: Vulcan Model Benchmarking
-run-name: ${{ inputs.promoted_missing && 'Promoted models missing benchmarks (excluding LLM/VLM)' || format('Benchmarking ({0}/{1}, {2})', inputs.model_id, inputs.compile_invocation_id, inputs.build_profile_id) }}
+run-name: ${{ inputs.promoted_missing && 'Promoted models missing benchmarks (excluding text generation)' || format('Benchmarking ({0}/{1}, {2})', inputs.model_id, inputs.compile_invocation_id, inputs.build_profile_id) }}
 
 # Benchmarks one build on a DevKit and publishes each stage's report. The orchestrator calls it per build and
 # passes the Vulcan config and DevKit runner it resolved once; a manual dispatch resolves its own.
@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       promoted_missing:
-        description: Benchmark promoted models missing results (excludes LLM/VLM); ignores per-model fields
+        description: Benchmark promoted models missing results (excludes text generation); ignores per-model fields
         type: boolean
         required: false
         default: false
@@ -136,7 +136,7 @@ jobs:
       runner-labels: '["self-hosted", "Linux", "ARM64", "modalix", "modalix-som-16gig", "model-registry", "vulcan-staging"]'
 
   promoted:
-    name: Queue promoted non-LLM/VLM profiles missing results
+    name: Queue promoted profiles missing results (excluding text generation)
     needs: resolve-vulcan-config
     if: github.event_name == 'workflow_dispatch' && inputs.promoted_missing
     runs-on: ubuntu-latest

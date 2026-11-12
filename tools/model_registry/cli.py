@@ -159,7 +159,7 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     stages.add_argument("--include-on-demand", action="store_true", help="build explicitly selected on-demand models")
 
     promoted = subcommands.add_parser(
-        "plan-promoted-benchmarks", help="list missing benchmark stages of promoted non-LLM/VLM profiles (CI only)"
+        "plan-promoted-benchmarks", help="list missing promoted benchmarks, excluding text generation (CI only)"
     )
     promoted.add_argument("--api-url", required=True)
     promoted.add_argument("--branch", required=True, choices=("develop", "main"))

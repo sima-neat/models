@@ -40,15 +40,21 @@ COMPILER_VERSION = resolve_model_compiler(ROOT)["identity"]
 
 
 @pytest.mark.parametrize("branch", ["develop", "main"])
-def test_promoted_batch_queues_only_missing_stages_and_excludes_llms_vlms(branch):
-    def model(name, kind="vision", approved=True, fingerprints=None):
-        return {"id": name, "categories": {"model_type": kind}, "build_on_demand": True,
+def test_promoted_batch_queues_only_missing_stages_and_excludes_generative_tasks(branch):
+    def model(name, kind="vision", approved=True, fingerprints=None, tasks=None):
+        return {"id": name, "categories": {"model_type": kind, "tasks": tasks or ["image_classification"]},
+                "build_on_demand": True,
                 "approved_deployments": {"w8a8": {"deployment_id": name}} if approved else {},
                 "benchmark_fingerprints": {"w8a8": fingerprints or {"performance": "a" * 64, "accuracy": "b" * 64}}}
 
     document = {"catalog_revision": "c" * 40, "models": [
         model("missing_accuracy"), model("measured", fingerprints={"performance": "a" * 64}),
-        model("unapproved", approved=False), model("language", "llm"), model("vision_language", "vlm"),
+        model("unapproved", approved=False), model("language", "llm", tasks=["text_generation"]),
+        model("vision_language", "vlm", tasks=["visual_question_answering"]),
+        model("clip_vit_b_16", "vlm", tasks=["image_text_embedding"]),
+        model("siglip2_vit_b_16", "vlm", tasks=["image_text_embedding"]),
+        model("yolo_world_l", "vlm", tasks=["object_detection"]),
+        model("yolo_world_m", "vlm", tasks=["object_detection"]),
         model("no_reference", fingerprints={"other": "d" * 64}),
     ]}
     queried = []
@@ -64,12 +70,14 @@ def test_promoted_batch_queues_only_missing_stages_and_excludes_llms_vlms(branch
     result = plan_promoted_benchmarks(branch=branch, stages=["performance", "accuracy"], read=read,
                                       read_api_url="https://registry.example.invalid")
     assert result["source_branch"] == branch and result["source_sha"] == "c" * 40
-    assert result["include"] == [{"model_id": "missing_accuracy", "build_profile_id": "w8a8",
-                                  "compile_invocation_id": "w8a8", "stages": ["accuracy"]}]
+    assert result["include"] == [
+        {"model_id": name, "build_profile_id": "w8a8", "compile_invocation_id": "w8a8", "stages": ["accuracy"]}
+        for name in ("missing_accuracy", "clip_vit_b_16", "siglip2_vit_b_16", "yolo_world_l", "yolo_world_m")
+    ]
     assert {row["model_id"]: row["reason"] for row in result["skipped"]} == {
         "measured": "already measured", "no_reference": "no requested benchmark references",
     }
-    assert len(queried) == 3
+    assert len(queried) == 11
     result = plan_promoted_benchmarks(branch=branch, stages=["performance"], read=read,
                                       read_api_url="https://registry.example.invalid")
     assert result["include"] == []

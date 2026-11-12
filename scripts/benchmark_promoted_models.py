@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Usage: benchmark_promoted_models.py
 
-Manually dispatch missing approved non-LLM/VLM measurements through Vulcan Model Benchmarking.
+Manually dispatch missing approved measurements, excluding text generation, through Vulcan Model Benchmarking.
 Requires REGISTRY_API_URL, STAGES, VULCAN_ENV and the standard GitHub Actions environment/token.
 """
 from __future__ import annotations
@@ -33,7 +33,7 @@ def main():
     finally:
         lines = [f"## Promoted benchmark batch ({plan['source_branch']}, {os.environ['VULCAN_ENV']})", "",
                  f"Queued {len(queued)} of {len(plan['include'])} missing profiles; skipped {len(plan['skipped'])}.",
-                 "LLMs and VLMs are excluded. Each queued profile runs separately in Vulcan Model Benchmarking.", "",
+                 "Text generation and visual question answering are excluded. Each queued profile runs separately.", "",
                  "| Model/profile | Stages or skip reason |", "| --- | --- |"]
         for build in [*queued, *plan["skipped"]]:
             detail = ", ".join(build["stages"]) if "stages" in build else build["reason"]
