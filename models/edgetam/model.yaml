@@ -58,6 +58,9 @@ build_profiles:
       memory_encoder:
         parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 32}
 
+# performance.py tracks one clicked object through a fixed frame: every component and the CPU steps between them.
+performance: {}
+
 pipeline:
 - {cpu: "Stretch each frame to 1024x1024 and normalize it"}
 - {component: image_encoder}

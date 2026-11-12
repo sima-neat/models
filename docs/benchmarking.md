@@ -259,6 +259,14 @@ Throughput cannot exceed `1 / (1 / backbone_fps + 1 / decoder_fps)` for
 component rates measured on the same board, because the MLA runs one MPK at a
 time. A result well below that rate points at the pipeline, not the model.
 
+A model that carries state from one input to the next cannot give every stage
+a different input. EdgeTAM tracks an object through a video, and a frame's
+memory attention reads the memory the previous frame wrote. Its script clicks
+the object on a fixed frame it builds, then measures tracked frames. In the
+throughput pass only the image encoder works ahead, on the next frames, while
+one thread runs the memory attention, the mask decoder, the CPU steps and the
+memory encoder in order.
+
 ### Independent components
 
 Components that can run independently, such as CLIP's image and text encoders,
