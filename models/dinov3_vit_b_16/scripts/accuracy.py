@@ -1,9 +1,10 @@
 """Measure DINOv3 ViT-B/16 k-NN top-1 accuracy on ImageNet with its MPK on a Modalix board.
 
-The model returns embeddings, not classes. Each validation image takes the class its most similar other validation
+The model returns embeddings, not classes. Each evaluated image takes the class its most similar other evaluated
 images vote for: leave-one-out k-NN on the class embeddings, with the 20 neighbours and the 0.07 temperature of
-DINO's k-NN evaluation (eval_knn.py in facebookresearch/dino). Published k-NN scores take their neighbours from
-the ImageNet train set, so this score is not comparable with them.
+DINO's k-NN evaluation (eval_knn.py in facebookresearch/dino). The evaluated images are all 50 validation images
+of 100 classes, 5,000 in total, which keeps a DevKit run short. Published k-NN scores cover all 1,000 classes and
+take their neighbours from the ImageNet train set, so this score is not comparable with them.
 """
 
 from __future__ import annotations
@@ -11,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import random
 import sys
 import time
 from collections import deque
@@ -25,9 +27,12 @@ from calibration import preprocess_image
 
 VALIDATION_SPLIT = "val2012"
 CLASSES = 1000
+# The classes whose images are evaluated: this many, drawn with this seed.
+EVALUATED_CLASSES = 100
+CLASS_SEED = 0
 NEIGHBOURS = 20
 TEMPERATURE = 0.07
-# Images scored at once on one thread; their similarities with all 50,000 images take 50 MB as float32.
+# Images scored at once on one thread.
 BLOCK = 250
 # The board's numpy has no optimized BLAS: one large matrix product there runs about four times slower than
 # einsum on tiles of this many images, which fit the CPU cache.
@@ -117,7 +122,9 @@ def main(argv: list[str] | None = None) -> int:
 
     labels = validation_labels(dataset)
     available = sorted(labels)
-    names = available[: args.limit] if args.limit else available
+    evaluated_classes = set(random.Random(CLASS_SEED).sample(range(CLASSES), EVALUATED_CLASSES))
+    names = [name for name in available if labels[name] in evaluated_classes]
+    names = names[: args.limit] if args.limit else names
 
     model = pyneat.Model(str(parse_mpks(args.mpk)))
     runner = None
@@ -150,6 +157,7 @@ def main(argv: list[str] | None = None) -> int:
             "details": {
                 "protocol": "leave-one-out k-NN on the class embeddings of the evaluated images",
                 "neighbours": NEIGHBOURS, "temperature": TEMPERATURE,
+                "evaluated_classes": EVALUATED_CLASSES, "class_seed": CLASS_SEED,
                 "inference_seconds": round(inference_seconds, 1),
                 "scoring_seconds": round(time.monotonic() - started - inference_seconds, 1),
             },
