@@ -60,7 +60,7 @@ export const elements = Object.fromEntries(
   [
     "theme-toggle", "environment-name", "search", "filter-toggle",
     "filter-count", "filter-drawer", "branch-filter", "compiler-filter", "history-filter", "task-filter",
-    "architecture-filter", "clear-filters", "result-title",
+    "architecture-filter", "clear-filters", "clear-family", "result-title",
     "result-count", "result-list", "catalog-layout-toggle", "load-more", "detail-pane", "compare-pane", "toast-region", "workspace",
     "nav-models", "nav-compare",
     "download-dialog", "download-title", "download-description", "download-package-info",

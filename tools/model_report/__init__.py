@@ -31,17 +31,20 @@ ENERGY_PER_INFERENCE = "energy_per_inference_joules"
 
 
 def accuracy_value_error(metric: str, value: float) -> str | None:
-    """Why an accuracy score is out of its unit's range, or None.
+    """Why an accuracy score is outside its bounds, or None.
 
-    A ratio lies from 0 to 1 and a percentage from 0 to 100; any other unit, such as the pixels of a disparity
-    error, takes a finite value of at least 0.
+    Bounds default to 0..1 for ratio scores, 0..100 for percentages, and nonnegative
+    for other units. A metric can override these with bounds; null means no upper limit.
     """
-    unit = METRICS[metric]["unit"]
-    if unit == "ratio":
-        return None if 0 <= value <= 1 else f"{metric} must be a ratio from 0 to 1; found {value}"
-    if unit == "%":
-        return None if 0 <= value <= 100 else f"{metric} must be a percentage from 0 to 100; found {value}"
-    return None if math.isfinite(value) and value >= 0 else f"{metric} must be at least 0 {unit}; found {value}"
+    definition = METRICS[metric]
+    unit = definition["unit"]
+    minimum, maximum = definition.get("bounds", (0, {"ratio": 1, "%": 100}.get(unit)))
+    if math.isfinite(value) and value >= minimum and (maximum is None or value <= maximum):
+        return None
+    if maximum is None:
+        return f"{metric} must be at least {minimum} {unit}; found {value}"
+    label = {"ratio": "a ratio", "%": "a percentage"}.get(unit, unit)
+    return f"{metric} must be {label} from {minimum} to {maximum}; found {value}"
 
 
 class Report:

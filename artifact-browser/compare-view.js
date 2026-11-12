@@ -55,10 +55,10 @@ function measuredText(metric, key) {
   return { number: Number(display.value.toFixed(display.digits)), text: `${display.value.toFixed(display.digits)} ${display.unit.replace("/inference", "")}`, direction: definition.direction };
 }
 
-// Each build's performance measures the whole model, however many components it runs.
+// Independent components have no whole-model performance to plot or compare.
 function variantMeasurements(variant) {
   const result = readPerformance(variant.performance);
-  return result.kind === "supported" ? result.value.measurements : {};
+  return result.kind === "supported" ? result.value.measurements || {} : {};
 }
 
 function bestValue(columns, key) {
@@ -312,7 +312,7 @@ export async function renderComparison() {
   const options = taskOptions;
   state.comparePicks = state.comparePicks.map(key => options.some(option => option.key === key) ? key : "");
   generative = ["text_generation", "visual_question_answering"].includes(state.compareTask);
-  const pending = !generative && options.some(option => option.model.model_type !== "vision");
+  const pending = !generative && options.length > 0 && options.every(option => option.model.model_type !== "vision");
   elements["compare-pane"].innerHTML = `${intro}<div class="compare-filters">${selectControl("Task", "task", tasks.map(id => [id, taxonomyLabel("tasks", id)]), state.compareTask)}</div>
     <div class="compare-results" aria-live="polite">${pending ? '<div class="compare-empty"><span class="compare-tbd">TBD</span><h3>Model comparisons</h3></div>' : options.length ? '<p class="muted-message compare-loading" role="status"><span class="spinner"></span> Loading measurements…</p>' : '<p class="compare-empty">No models available for this task.</p>'}</div>`;
   if (pending || !options.length) return;

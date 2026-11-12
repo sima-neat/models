@@ -151,6 +151,17 @@ Compiler and Build history directly. Category filters list the values the loaded
 builds use and hide when fewer than two remain; developer controls stay visible.
 On narrow screens the filters move into a drawer whose button shows the
 active-filter count.
+
+Cards defaults to one card per available model family, grouped and ordered by
+architecture ID. Family titles and descriptions come from the catalog taxonomy;
+heroes and tasks come from its available models, after branch/compiler/task
+filtering. Selecting a family uses the existing sidebar filter and URL, then
+shows individual models. A single-model family opens its model directly.
+**All model families** clears only the family selection. Search shows individual
+models and includes family descriptions; Table and build history keep individual
+entries. Older catalogs without descriptions omit that text. See
+[catalog behavior](../docs/model-browser.md#the-catalog).
+
 The branch filter defaults to `develop`. A branch selected by the user is saved per
 registry and repository in browser storage. Shared links include `branch` and
 `model` and `variant` (the build profile), which open the latest build of that
@@ -230,7 +241,7 @@ shows the model name, variant, throughput and accuracy.
 Select up to three points or use **Add model** to inspect exact measurements
 in a table. It includes throughput, latency, power, energy, peak MLA and EV74 memory and
 accuracy. Bold marks the best value.
-Models without measurements remain available in **Add model**. LLM/VLM comparisons show **TBD**.
+Models without measurements remain available in **Add model**. LLM/VLM comparisons plot parameters in billions against decode speed; other non-vision comparisons show **TBD**.
 Links preserve the task and selected builds with `compare_task` and repeated
 `build` parameters. Build history is not compared.
 

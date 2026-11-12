@@ -27,13 +27,14 @@ import {
 
 installHeroImageRecovery(document);
 
-function writeCategoryFilterUrl() {
+function writeCategoryFilterUrl({ push = false } = {}) {
   const url = new URL(location.href);
   Object.entries(categoryFilters()).forEach(([queryName, value]) => {
     if (value) url.searchParams.set(queryName, value);
     else url.searchParams.delete(queryName);
   });
-  history.replaceState({}, "", url);
+  if (push) history.pushState({}, "", url);
+  else history.replaceState({}, "", url);
 }
 
 function writeSearchUrl() {
@@ -656,9 +657,10 @@ elements["history-filter"].addEventListener("change", async () => {
     showToast(error.message, true);
   }
 });
-Object.keys(CATEGORY_QUERY_FIELDS).forEach((elementId) => elements[elementId].addEventListener("change", async () => {
-  state.categorySelection[elementId] = elements[elementId].value;
-  writeCategoryFilterUrl();
+async function selectCategoryFilter(elementId, value) {
+  elements[elementId].value = value;
+  state.categorySelection[elementId] = value;
+  writeCategoryFilterUrl({ push: true });
   updateFilterIndicators();
   if (branchSnapshotMode()) {
     renderRuns();
@@ -669,7 +671,14 @@ Object.keys(CATEGORY_QUERY_FIELDS).forEach((elementId) => elements[elementId].ad
   } catch (error) {
     showToast(error.message, true);
   }
+}
+Object.keys(CATEGORY_QUERY_FIELDS).forEach((elementId) => elements[elementId].addEventListener("change", () => {
+  selectCategoryFilter(elementId, elements[elementId].value);
 }));
+elements["clear-family"].addEventListener("click", async () => {
+  await selectCategoryFilter("architecture-filter", "");
+  elements["result-title"].focus({ preventScroll: true });
+});
 elements["clear-filters"].addEventListener("click", async () => {
   elements.search.value = "";
   const resetBranch = !branchSelectionEnabled || state.availableBranches.includes(DEFAULT_BRANCH) ? DEFAULT_BRANCH : state.availableBranches[0] || "";
@@ -701,6 +710,13 @@ elements["clear-filters"].addEventListener("click", async () => {
   }
 });
 elements["result-list"].addEventListener("click", (event) => {
+  const family = event.target.closest("[data-family-id]");
+  if (family) {
+    selectCategoryFilter("architecture-filter", family.dataset.familyId);
+    elements["result-title"].focus({ preventScroll: true });
+    window.scrollTo({ top: 0 });
+    return;
+  }
   const run = event.target.closest("[data-run-id]");
   if (run) selectRun(run.dataset.runId);
   if (event.target.closest('[data-action="clear"]')) elements["clear-filters"].click();

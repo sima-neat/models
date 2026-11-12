@@ -94,7 +94,7 @@ validation and the `onnx` artifact.
 Run **Vulcan Model Convert** again after changing anything that can change the ONNX:
 
 - the upstream pins under `conversion.source`, or `conversion.outputs`
-- `scripts/convert.py`, `scripts/requirements-convert.txt`, or a module in `scripts/`
+- `scripts/convert.py`, `scripts/requirements-convert*.txt`, or a module in `scripts/`
   that `convert.py` imports
 - any other file under `scripts/` that is not a Python module beside `convert.py`,
   except `requirements-compile.txt` and `requirements-accuracy.txt`

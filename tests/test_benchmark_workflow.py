@@ -290,6 +290,63 @@ def test_performance_runs_the_model_owned_script() -> None:
     assert "model_registry model-component-artifacts" in script
     assert script.index('scripts/performance.py"') < script.index("model_registry check-report")
 
+
+@pytest.mark.parametrize("extra_wheels", [True, False])
+def test_performance_dependencies_are_isolated_and_cleaned(tmp_path: Path, extra_wheels: bool) -> None:
+    scripts = tmp_path / "repository/models/fixture/scripts"
+    scripts.mkdir(parents=True)
+    if extra_wheels:
+        (scripts / "requirements-performance.txt").write_text("benchmark_wheel==1.0\n")
+    (scripts / "performance.py").write_text(
+        "import argparse, json, os\nfrom pathlib import Path\n"
+        "p=argparse.ArgumentParser(); p.add_argument('--mpk'); p.add_argument('--output'); a=p.parse_args()\n"
+        "if os.environ['EXTRA_WHEELS']=='true':\n"
+        "    from benchmark_wheel import value\n"
+        "else: value=0\n"
+        "Path(a.output, 'model-report.json').write_text(json.dumps({'value':value}))\n"
+    )
+    binaries = tmp_path / "bin"
+    binaries.mkdir()
+    python = binaries / "python"
+    python.write_text(
+        f"#!{sys.executable}\nimport json, os, sys\nfrom pathlib import Path\n"
+        "if sys.argv[1:3]==['-m','model_registry']:\n"
+        "    if sys.argv[3]=='model-component-artifacts': print('model=fixture_mpk.tar.gz')\n"
+        "elif sys.argv[1:2]==['-c'] and 'from model_registry.model import load_model' in sys.argv[2]:\n"
+        "    print('core')\n"
+        "elif sys.argv[1:3]==['-m','pip']:\n"
+        "    Path(os.environ['PIP_CALL']).write_text(json.dumps(sys.argv[1:]))\n"
+        "    site=Path(sys.argv[sys.argv.index('--target')+1]); site.mkdir(parents=True)\n"
+        "    (site/'benchmark_wheel.py').write_text('value=42\\n')\n"
+        "else: os.execv(sys.executable, [sys.executable, *sys.argv[1:]])\n"
+    )
+    python.chmod(0o755)
+    cat = binaries / "cat"
+    cat.write_text(
+        '#!/bin/sh\ncase "$1" in */5000000.mla/cur_freq) echo 1000000000;; '
+        '*/policy0/scaling_cur_freq) echo 1400000;; *) exec /bin/cat "$@";; esac\n'
+    )
+    cat.chmod(0o755)
+    work, output, pip_call = (tmp_path / name for name in ("scratch", "report", "pip.json"))
+    env = {**os.environ, "PATH": f"{binaries}{os.pathsep}{os.environ['PATH']}",
+           "REGISTRY_PYTHON": str(python), "PYNEAT_PYTHON": str(python),
+           "WORK_DIR": str(work), "DATASET_CACHE": str(tmp_path / "cache"),
+           "DATASET_LOCK": str(tmp_path / "prepare.lock"), "PIP_CALL": str(pip_call),
+           "EXTRA_WHEELS": str(extra_wheels).lower()}
+    subprocess.run(
+        [ROOT / "scripts/run_model_performance.sh", scripts.parent, "profile", tmp_path / "compiled", output],
+        env=env, check=True, capture_output=True, text=True,
+    )
+    assert json.loads((output / "model-report.json").read_text())["value"] == (42 if extra_wheels else 0)
+    assert not work.exists()
+    assert pip_call.exists() == extra_wheels
+    if extra_wheels:
+        arguments = json.loads(pip_call.read_text())
+        assert "--no-deps" in arguments and "--only-binary=:all:" in arguments
+        assert arguments[arguments.index("--target") + 1] == str(work / "site-packages")
+        assert arguments[arguments.index("-r") + 1] == str(scripts / "requirements-performance.txt")
+
+
 def test_benchmarks_run_only_when_requested() -> None:
     benchmark = load_workflow()["jobs"]["benchmark"]
     steps = benchmark["steps"]

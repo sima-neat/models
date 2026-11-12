@@ -1,4 +1,9 @@
 {
+  "GPL-3.0-only": {
+    "name": "GNU General Public License v3.0",
+    "summary": "Copyleft license. Redistribution requires compliance with GPL-3.0, including corresponding-source obligations.",
+    "downloadable": true
+  },
   "AGPL-3.0-only": {
     "name": "GNU Affero General Public License v3.0",
     "summary": "Copyleft license. Anyone who redistributes the model must provide its source under the same license.",
