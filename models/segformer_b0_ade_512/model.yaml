@@ -31,10 +31,7 @@ conversion:
 
 compilation:
   format: onnx
-  source:
-    uri: https://artifacts.stg.neat.sima.ai/models-onnx/segformer_b0_ade_512/0f68469e1285ed9d6344be125e39305d9afa333a8a8a90d9bf130d2e5351953e/40815014474-1/model.onnx
-    sha256: 0f68469e1285ed9d6344be125e39305d9afa333a8a8a90d9bf130d2e5351953e
-    size_bytes: 15176720
+  source: conversion
 
 calibrations:
 - id: coco-2017-cal
@@ -60,3 +57,4 @@ numerical_fidelity:
   outputs: [logits]
 
 performance: {}
+
