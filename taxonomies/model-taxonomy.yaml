@@ -72,10 +72,12 @@ architectures:
     allowed_model_types: [vision]
   dinov3:
     display_name: DINOv3
+    description: Encodes images into a global embedding and patch embeddings with a vision transformer.
     paradigm: transformer
     allowed_model_types: [vision]
   dinov3_convnext:
     display_name: DINOv3 ConvNeXt
+    description: Encodes images into a global embedding and patch embeddings with a convolutional network.
     paradigm: cnn
     allowed_model_types: [vision]
   dla:
