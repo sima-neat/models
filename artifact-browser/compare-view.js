@@ -94,6 +94,8 @@ function comparisonTable(columns) {
     <tbody>
       ${group("Model")}
       ${generative ? row("Parameters", columns.map(({option}) => text(parameterText(option.model)))) : ""}
+      ${generative && columns.some(column => comparisonWorkload(column.performance)?.kind === "image_text")
+        ? row("Image resolution", columns.map(column => text(comparisonWorkload(column.performance)?.image_size?.join(" × ")))) : ""}
       ${row("Task", columns.map(({ option }) => text((option.model.tasks || []).map((id) => taxonomyLabel("tasks", id)).join(", "))))}
       ${row("Components", columns.map(({ variant }) => text(variant ? String(variant.details.length) : "")))}
       ${group("Performance on Modalix")}
@@ -140,6 +142,10 @@ function comparisonWorkload(component) {
   return component?.workloads?.find(workload => workload.key === state.compareWorkload);
 }
 
+function comparisonLabel(workload) {
+  return workload?.kind === "image_text" ? "Image + text at encoder resolution" : workload?.label || "";
+}
+
 function generativePlot(columns) {
   const image = state.compareTask === "visual_question_answering";
   const workloads = [...new Map(columns.flatMap(column => (column.performance?.workloads || []))
@@ -157,8 +163,8 @@ function generativePlot(columns) {
   });
   return measurementChart(columns, plotted, {
     title: "Parameters & decode speed", xLabel: "Parameters (billions)", yLabel: "Decode (tokens/s)",
-    subtitle: workloads.find(workload => workload.key === state.compareWorkload)?.label,
-    controls: workloads.length > 1 ? selectControl("Workload", "workload", workloads.map(workload => [workload.key, workload.label]), state.compareWorkload) : "",
+    subtitle: comparisonLabel(workloads.find(workload => workload.key === state.compareWorkload)),
+    controls: workloads.length > 1 ? selectControl("Workload", "workload", workloads.map(workload => [workload.key, comparisonLabel(workload)]), state.compareWorkload) : "",
     note: "Variants without matching measurements remain available in Add model.",
     empty: "No matching measurements yet. Use Add model to inspect a variant.",
   });

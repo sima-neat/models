@@ -545,6 +545,9 @@ async function checkTaskComparison(browser, base) {
         if (await page.locator('[data-compare-control="workload"], [data-compare-control="graph"]').count()) throw new Error('VLM comparison must not have workload or graph selectors');
         if (await add.locator('option[value^="gemma_4_e2b_it_textonly"]').count()) throw new Error('text-only model appears in the VLM group');
         if (await table.locator('thead th').count() !== 1 || await ttftRow.locator('td').first().innerText() !== '132.3 ms') throw new Error('VLM table did not use its image-inclusive TTFT');
+        if (await page.locator('.compare-chart-dataset').innerText() !== 'Image + text at encoder resolution') throw new Error('VLM chart labels all models with one encoder resolution');
+        const resolutionRow = table.locator('tr').filter({has: page.getByRole('rowheader', {name: 'Image resolution', exact: true})});
+        if (await resolutionRow.locator('td').first().innerText() !== '448 × 448') throw new Error('VLM table did not identify its encoder resolution');
         if (await table.getByRole('rowheader', {name: 'Prefill', exact: true}).count()) throw new Error('VLM comparison fabricated prefill TPS');
         if (new URL(page.url()).searchParams.has('compare_workload')) throw new Error('VLM link retains a text input length');
         await hoverNativePoint(page.locator('.compare-point'));
