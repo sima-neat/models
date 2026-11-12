@@ -44,7 +44,7 @@ scripts/                   Stage runner scripts and CI helpers
 taxonomies/                Sanctioned model categories and display labels
 tests/                     Repository-wide unit and contract tests and their fixtures
 tools/model_registry/      Shared CLI and lifecycle implementation
-tools/model_report/        Board-side model report writer and metric vocabulary
+tools/model_report/        Board-side benchmarks, telemetry, model reports and metric vocabulary
 website/                   Developer documentation site
 ```
 
@@ -86,7 +86,7 @@ this table. Modules marked CI only are removed from the author package by
 | `promotions.py` | pinned environment/target-specific Develop and production Main requests, inspection, decisions, receipts and review summaries (CI only) |
 | `candidates.py` | complete model/profile candidate contracts, run publication and binding, finalization, feature selection and retry receipts (CI only) |
 | `benchmark_declarations.py` | the `performance` and `accuracy` declarations: the profiles each benchmarks, their scripts and required metrics, and validating `reference_metrics`, which the portal ships |
-| `report_publication.py` | the MPKs a benchmark runs, checking a `model-report.json` against `model.yaml`, and publishing one benchmark run under the profile's package run, with whole-model measurements by default or separate component measurements identified by `component_id` (CI only) |
+| `report_publication.py` | the artifacts a benchmark runs, checking a `model-report.json` against `model.yaml`, and publishing one benchmark run under the profile's package run, with whole-model measurements by default or separate component measurements identified by `component_id` (CI only) |
 | `artifact.py` | compile outputs, MPK/deployed LLiMa verification, reproduction recipes, and deployment file indexes |
 | `runtime_files.py` | supporting-file path/checksum validation, reading compile declarations, and restoration from package ZIPs |
 | `mla_stage_simulation.py` | after an MPK compile, the Model Compiler simulator's operation counts and latency for each MLA stage (`simulate-mla-stages`) |
@@ -477,9 +477,9 @@ through public resolved URLs. See the [metadata contract](../docs/metadata-schem
 for manifest fields, publication metadata, and the temporary 5 GiB per-file
 upload limit. Aggregate deployment size has no limit.
 
-Empty benchmark declarations schedule no benchmarks. Qwen's defaults
-and the separate performance and accuracy follow-ups are in the
-[author guide](../docs/adding-a-model.md#llima-language-and-vision-language-models).
+Only declared stages run. LLM/VLM performance uses
+[MoLE workloads](../docs/benchmarking.md#llima-text-and-image-performance),
+dispatched manually after compilation.
 
 ### Forced rebuilds of published packages
 
@@ -509,5 +509,3 @@ verification, so a long compile cannot exhaust the verification session's lifeti
 Both steps receive isolated reader credentials, preserving the runner credentials used
 for calibration datasets; publication remains in the separate hosted publish job. Public reads do not
 require signing. See [conversion artifacts](../docs/conversion-artifacts.md#private-production-reads).
-
-Native performance uses `model_report/generation_benchmark.py` for MoLE text/image profiling and full speculative dataset comparisons, and `model_report/board_telemetry.py` for measured-request Sentinel traces. CI uses `model-registry benchmark-job` to resolve the backend, baseline requirement and timeout before staging. `stage_benchmark_inputs.sh` restores the declared ordinary baseline; both compilation identities and per-dataset speedup are retained. `model_report.from_generation()` writes the unified report; `report_publication.py` validates and publishes its per-workload measurements under the model package.

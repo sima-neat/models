@@ -44,6 +44,10 @@ directory supplies `id`, and `architecture` is a plain ID such as `qwen`.
 Ownership lives in `CODEOWNERS`.
 See [Model taxonomy](model-taxonomy.md) for sanctioned taxonomy values.
 
+Optional `parameter_count_billion` gives the unquantized total parameter count,
+including embeddings and all experts, in billions (for example `0.8` or `5.1`).
+Speculative models use the target's count.
+
 `upstream` records human-reviewable provenance. It defaults to the checkpoint's
 Hugging Face repository and revision; `model_card` defaults to its repository
 URL. Keep an explicit `upstream` when it identifies a different original model.
@@ -391,9 +395,12 @@ performance:
 
 Each component then has separate metrics, workload, telemetry and execution
 statistics in the report's `components` map, with no combined metrics. Both
-scopes publish one performance run per profile. Every measured result must hold the metrics
+scopes publish one performance run per profile. Core reports must hold the metrics
 [`metrics.json`](../tools/model_report/metrics.json) marks `required`. Decoder selection and measurement settings stay in the script, which
 customers can copy and run with PyNeat; YAML does not duplicate them.
+
+LLMs and VLMs use [MoLE workloads](benchmarking.md#llima-text-and-image-performance)
+with TTFT and token rates.
 
 See [Accuracy and fidelity](local-accuracy-development.md) and [DevKit
 performance](benchmarking.md) for the scripts and reports, and [what a change
@@ -504,7 +511,3 @@ publication. Each file must be at most 5 GiB until multipart uploads
 size has no limit. Retrieval uses public resolved artifact URLs to preserve
 the directory and verify each file's size and SHA-256. Existing ONNX/MPK
 metadata and packages retain their format.
-
-### Parameter counts
-
-Optional `parameter_count_billion` records the published parameter count before quantization, including embeddings and all experts, in billions (for example `0.8` or `5.1`). Speculative deployments use the target's count. It is catalog metadata used by the generative-model comparison graph and does not change compilation. Native generation benchmarks use `performance: {}`.

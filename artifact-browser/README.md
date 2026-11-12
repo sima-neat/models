@@ -84,6 +84,10 @@ keeps its benchmark fingerprint without a run, so its page shows **Not measured 
 this revision.** Edit the fixtures to exercise other metric values or
 availability states.
 
+GenAI previews use `fixtures/genai-model-report.json`;
+`preview.py --synthetic-genai` enables examples for unmeasured models.
+Synthetic readings are labeled.
+
 The browser reads version 1 of the model report (`schemas/model-report.schema.json`)
 in `model-report.js`. Known metrics receive curated labels, formatting, and a
 place in a benchmark card; unknown additive metrics appear automatically under
@@ -233,17 +237,12 @@ revision.**
 ## Compare page
 
 **Compare** explores the selected branch's model variants by task. All
-precisions appear together; measured variants appear in a scatter
-plot of accuracy against throughput in inferences/s. Accuracy plots keep dataset
-and metric identities separate. A multi-component model shows its whole-model result, with all its components running as one pipeline. Hovering or focusing a point
-shows the model name, variant, throughput and accuracy.
-
-Select up to three points or use **Add model** to inspect exact measurements
-in a table. It includes throughput, latency, power, energy, peak MLA and EV74 memory and
-accuracy. Bold marks the best value.
-Models without measurements remain available in **Add model**. LLM/VLM comparisons plot parameters in billions against decode speed; other non-vision comparisons show **TBD**.
-Links preserve the task and selected builds with `compare_task` and repeated
-`build` parameters. Build history is not compared.
+precisions appear together. Vision tasks plot accuracy against throughput;
+GenAI tasks plot parameters in billions against decode speed for matching
+workloads. Other tasks show **TBD**. Select up to three points or use **Add model**
+to inspect measurements in a table, including unmeasured variants.
+Links preserve the task, workload and selected builds. Build history is not compared.
+See the [model browser guide](../docs/model-browser.md#the-catalog) for the controls.
 
 ## How the page is built
 
@@ -439,5 +438,3 @@ production Main. That catalog must be published before it can display models.
 Developer Center origin and environment label. Audience remains independent.
 See [production frontend deployment](../docs/model-browser.md#production-frontend)
 for the tested, prefix-scoped operator deployment and rollback procedure.
-
-Native generation previews use `fixtures/genai-model-report.json`: recorded Qwen3.5-0.8B timings, one shared illustrative telemetry sample, and small fixed speculative examples. All are labeled as preview data. `preview.py --synthetic-genai` also exposes examples for unmeasured models without changing their definitions.

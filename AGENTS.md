@@ -176,12 +176,8 @@ Speculative pairs stay one component: pin both checkpoints in named file-set
 subfolders, use the target's `config.json` as `compilation.source.main_file`, and declare the draft
 subfolder in `parameters.draft_model_path`. Deploy and publish the complete pair.
 An optional profile-level `benchmark_baseline` links to a normal-decoding model
-and build profile; it affects performance fingerprints, never compilation. Native
-performance uses MoLE for ordinary token buckets and encoder-sized images, or full
-dataset comparisons for speculative deployments. Stage the declared ordinary
-baseline with `stage_benchmark_inputs.sh`; its compile fingerprint enters performance
-fingerprints, and both deployment identities enter the report. See the native
-performance section in `docs/benchmarking.md`.
+and build profile; it affects performance fingerprints, never compilation.
+See [LLiMa performance](docs/benchmarking.md#llima-text-and-image-performance).
 
 Start with one 4K profile per LLM/VLM. Declare `max_num_tokens: 4096` and
 `language_group_size` in its component parameters. Image dimensions are optional

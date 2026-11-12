@@ -74,10 +74,8 @@ are available. A point popup identifies its model, variant and measurements. Mut
 compact table below aligns up to three selections. A compact Add model selector supports keyboard and mobile selection, including
 variants with missing measurements. The graph legend includes plotted selections only;
 variants without matching measurements remain in the table. Selection colors use the shared SiMa blue,
-green and orange palette. GenAI comparisons plot all variants by parameters
-(in billions) versus decode speed. Text Generation uses one selected text input
-length, including text-only measurements from VLMs. Visual Question Answering uses
-each model's image-plus-text benchmark at its encoder resolution, with no workload selector.
+green and orange palette. GenAI tasks compare parameters in billions against
+decode speed for matching text or image workloads.
 
 The model page reads at a glance first and expands on request.
 The header pairs its title, description and Download action with a compact model
