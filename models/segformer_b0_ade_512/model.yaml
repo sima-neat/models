@@ -50,8 +50,8 @@ build_profiles:
         parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 50}
 
   # Every Linear layer and convolution stays INT8; the operations INT8 handles worst run BF16: the attention scores,
-  # softmax over 256 keys and weighted values, all LayerNorms (with FP32 intermediates) and the residual sums
-  # (residual channels reach 15-18 times the median channel's peak in stages 3 and 4), and the GELU.
+  # softmax over 256 keys and weighted values, the residual stream's LayerNorms and sums (single channels reach up to
+  # 21 times the median channel's peak in stages 3 and 4), and the GELU.
   # surgery.BF16_REGIONS lists each region's operations.
   w8a8_mixed:
     calibration_dataset: coco-2017-cal

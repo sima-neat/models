@@ -5,7 +5,7 @@ is found by walking the graph from anchor operations, and the walk fails when a 
 number of operations, so a changed export cannot silently mark the wrong operations.
 
 The regions hold the operations INT8 handles worst, while every Linear layer and convolution stays INT8: the
-attention softmax over 256 keys, the LayerNorms and residual sums (residual-stream channels reach 15-18 times the
+attention softmax over 256 keys, the residual stream's LayerNorms and sums (single channels reach up to 21 times the
 median channel's peak in stages 3 and 4), and the GELU.
 """
 
@@ -24,9 +24,10 @@ ENCODER_BLOCKS = 8
 BF16_REGIONS = {
     # Per block: the attention scores (MatMul), their constant scale (Div), the softmax and the weighted values.
     "attention_core": 4 * ENCODER_BLOCKS,
-    # All thirty LayerNorms (two per block, one closing each stage, one after each patch embedding and one after each
-    # of the six key/value spatial reductions) and every block's two residual sums.
-    "norms": 30 + 2 * ENCODER_BLOCKS,
+    # The 24 LayerNorms on the residual stream (two per block, one closing each stage and one after each patch
+    # embedding, whose scale and shift start the stage's residual stream) and every block's two residual sums. The six
+    # LayerNorms of the key/value spatial reductions stay INT8: only the INT8 key and value layers read them.
+    "norms": 24 + 2 * ENCODER_BLOCKS,
     # Per block: the final multiply of the exported GELU, which carries the fused GELU's precision.
     "gelu": ENCODER_BLOCKS,
 }
@@ -92,12 +93,40 @@ def _attention_core_operations(graph: GraphIndex) -> list[onnx.NodeProto]:
     return operations
 
 
+def _source_operation(graph: GraphIndex, value: str) -> onnx.NodeProto | None:
+    """The operation that computes value, looking back through layout operations."""
+    node = graph.producers.get(value)
+    while node is not None and node.op_type in LAYOUT_OPS:
+        node = graph.producers.get(node.input[0])
+    return node
+
+
+def _reduces_keys_and_values(graph: GraphIndex, norm: onnx.NodeProto) -> bool:
+    """Whether a LayerNorm belongs to a key/value spatial reduction: it reads a convolution and only Linear layers
+    read it. A patch embedding's LayerNorm also reads a convolution, but the next LayerNorm and residual sum read it."""
+    source = _source_operation(graph, norm.input[0])
+    readers = _first_operations(graph, norm.output[0])
+    return (
+        source is not None
+        and source.op_type == "Conv"
+        and bool(readers)
+        and all(reader.op_type == "MatMul" for reader in readers)
+    )
+
+
 def _norm_operations(graph: GraphIndex) -> list[onnx.NodeProto]:
-    """Every LayerNorm, and every residual sum: the Adds of two activations (a bias or GELU Add reads a constant)."""
+    """The residual stream's LayerNorms, and every residual sum: the Adds of two activations (a bias or GELU Add reads
+    a constant).
+
+    AFE splits a LayerNorm into the normalization, which takes its input's precision, and the scale and shift, which
+    takes the mark. The patch embeddings' LayerNorms therefore normalize their INT8 convolution's output in INT8 and
+    only their scale and shift run BF16, which gives the next LayerNorm a BF16 input.
+    """
     return [
         node
         for node in graph.producers.values()
-        if node.op_type == "LayerNormalization" or (node.op_type == "Add" and len(_variable_inputs(graph, node)) == 2)
+        if (node.op_type == "LayerNormalization" and not _reduces_keys_and_values(graph, node))
+        or (node.op_type == "Add" and len(_variable_inputs(graph, node)) == 2)
     ]
 
 
@@ -140,9 +169,27 @@ def _first_operations(graph: GraphIndex, value: str) -> list[onnx.NodeProto]:
     return operations
 
 
+def _int8_mark_target(graph: GraphIndex, reader: onnx.NodeProto) -> onnx.NodeProto:
+    """The operation whose result an INT8 mark follows, for an operation that reads a region.
+
+    A Linear layer is exported as a MatMul and a bias Add, and AFE fuses the two only when no mark separates them (its
+    clean-up of marks inside a Linear layer skips 3D inputs), so the mark follows the bias.
+    """
+    if reader.op_type == "MatMul" and len(_variable_inputs(graph, reader)) == 1:
+        following = graph.users[reader.output[0]]
+        if (
+            len(following) == 1
+            and following[0] is not None
+            and following[0].op_type == "Add"
+            and len(_variable_inputs(graph, following[0])) == 1
+        ):
+            return following[0]
+    return reader
+
+
 def precision_marks(model: onnx.ModelProto, regions: list[str]) -> dict[str, str]:
     """Return the precision to annotate after each operation, by name: bfloat16 for the regions' operations and int8
-    for the operations that first read their results.
+    for the operations that first read their results (after a Linear layer's bias).
 
     AFE gives an annotation's precision to the operation producing its input, and each later operation takes the
     precision its inputs share, so an int8 mark on each first reader ends a region.
@@ -161,7 +208,7 @@ def precision_marks(model: onnx.ModelProto, regions: list[str]) -> dict[str, str
     marks = dict.fromkeys(promoted, "bfloat16")
     for node in promoted.values():
         for reader in _first_operations(graph, node.output[0]):
-            marks.setdefault(reader.name, "int8")
+            marks.setdefault(_int8_mark_target(graph, reader).name, "int8")
     return marks
 
 

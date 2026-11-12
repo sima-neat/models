@@ -125,15 +125,15 @@ def test_bf16_check_requires_each_marked_region_to_quantize_bf16(load_script: Ca
     recipe = load_script("compile")
 
     regions = ["attention_core", "norms", "gelu"]
-    recipe._require_bf16_regions(Counter({"SoftmaxOp": 8, "LayerNormOp": 30, "GeluOp": 8, "AddOp": 16}), regions)
+    recipe._require_bf16_regions(Counter({"SoftmaxOp": 8, "LayerNormOp": 20, "GeluOp": 8, "AddOp": 16}), regions)
     # A GELU that AFE does not fuse is identified by its Erf.
-    recipe._require_bf16_regions(Counter({"SoftmaxOp": 8, "LayerNormOp": 30, "ErfOp": 8, "DivideOp": 8}), regions)
-    recipe._require_bf16_regions(Counter({"LayerNormOp": 30}), ["norms"])
-    # AFE ignored the softmax marks, left some LayerNorms INT8, or ran an unmarked region BF16.
+    recipe._require_bf16_regions(Counter({"SoftmaxOp": 8, "LayerNormOp": 20, "ErfOp": 8, "DivideOp": 8}), regions)
+    recipe._require_bf16_regions(Counter({"LayerNormOp": 20}), ["norms"])
+    # AFE ignored the softmax marks, left some residual-stream LayerNorms INT8, or ran an unmarked region BF16.
     for bf16, marked in [
-        (Counter({"LayerNormOp": 30, "GeluOp": 8}), regions),
-        (Counter({"SoftmaxOp": 8, "LayerNormOp": 20, "GeluOp": 8}), regions),
-        (Counter({"LayerNormOp": 30, "SoftmaxOp": 8}), ["norms"]),
+        (Counter({"LayerNormOp": 20, "GeluOp": 8}), regions),
+        (Counter({"SoftmaxOp": 8, "LayerNormOp": 16, "GeluOp": 8}), regions),
+        (Counter({"LayerNormOp": 20, "SoftmaxOp": 8}), ["norms"]),
         (Counter(), regions),
     ]:
         with pytest.raises(RuntimeError, match="expected BF16 operations"):
@@ -162,32 +162,36 @@ def test_marked_precision_check_names_each_operation_off_its_mark(
     recipe = load_script("compile")
     monkeypatch.setattr(recipe, "QuantizationPrecision", _Precision)
     int8, bf16 = _Precision.INT_8, _Precision.BFLOAT_16
-    # AFE left a marked LayerNorm INT8 and ran the Linear layer reading it BF16, despite its INT8 mark; the LayerNorm's
-    # input has no precision of its own (AFE's EmptyValue).
+    # A marked LayerNorm lowered as its normalization, which takes its INT8 input's precision, and its BF16 scale and
+    # shift; AFE then ran the Linear layer reading it BF16 despite its INT8 mark, and the softmax INT8 despite its BF16
+    # mark. The softmax's reader has no precision of its own (AFE's EmptyValue).
     nodes = [
-        _quantized_node("conv", "ConvAddActivationOp", SimpleNamespace(empty=""), ["/model/embed/Conv"]),
+        _quantized_node("conv", "ConvAddActivationOp", int8, ["/model/embed/Conv"]),
         _quantized_node("norm", "LayerNormOp", int8, ["/model/embed/LayerNormalization"], ("conv",)),
-        _quantized_node("query", "ConvAddActivationOp", bf16, ["/model/query/MatMul", "/model/query/Add"], ("norm",)),
-        _quantized_node("softmax", "SoftmaxOp", bf16, ["/model/Softmax"], ("query",)),
+        _quantized_node("affine", "ConvAddActivationOp", bf16, ["/model/embed/LayerNormalization"], ("norm",)),
+        _quantized_node("query", "ConvAddActivationOp", bf16, ["/model/query/MatMul", "/model/query/Add"], ("affine",)),
+        _quantized_node("softmax", "SoftmaxOp", int8, ["/model/Softmax"], ("query",)),
+        _quantized_node("context", "BatchMatmulOp", SimpleNamespace(empty=""), ["/model/MatMul_1"], ("softmax",)),
         _quantized_node("scale", "ConstantOp", bf16, []),
     ]
     segment = SimpleNamespace(
         name="MLA_0", input_node_names=[], source_node_names=None, ir=SimpleNamespace(nodes={n.name: n for n in nodes})
     )
     quantized = SimpleNamespace(_net=SimpleNamespace(nodes={"MLA_0": segment}))
-    marks = {"/model/embed/LayerNormalization": "bfloat16", "/model/query/MatMul": "int8", "/model/Softmax": "bfloat16"}
+    marks = {"/model/embed/LayerNormalization": "bfloat16", "/model/query/Add": "int8", "/model/Softmax": "bfloat16"}
 
     with caplog.at_level(logging.INFO):
         mismatches = recipe._marked_precision_mismatches(quantized, marks)
 
     query = "ConvAddActivationOp:bfloat16(query/MatMul,query/Add)"
-    norm = "LayerNormOp:int8(embed/LayerNormalization)"
+    softmax = "SoftmaxOp:int8(Softmax)"
     assert mismatches == [
-        f"{norm} marked ['bfloat16']; inputs ['ConvAddActivationOp:-(embed/Conv)']; readers ['{query}']",
-        f"{query} marked ['int8']; inputs ['{norm}']; readers ['SoftmaxOp:bfloat16(Softmax)']",
+        f"{query} marked ['int8']; inputs ['ConvAddActivationOp:bfloat16(embed/LayerNormalization)']; "
+        f"readers ['{softmax}']",
+        f"{softmax} marked ['bfloat16']; inputs ['{query}']; readers ['BatchMatmulOp:-(MatMul_1)']",
     ]
     assert "Unmarked BF16 operations: ['ConstantOp:bfloat16(scale)']" in caplog.text
-    assert recipe._operation_counts(quantized)[1] == {"ConvAddActivationOp": 1, "SoftmaxOp": 1, "ConstantOp": 1}
+    assert recipe._operation_counts(quantized)[1] == {"ConvAddActivationOp": 2, "ConstantOp": 1}
 
 
 def test_compile_rejects_an_undeclared_build_profile(load_script: Callable[[str], ModuleType]) -> None:
@@ -249,7 +253,7 @@ def test_compile_main_rejects_an_unknown_invocation_or_missing_fidelity_dataset(
 # One SegFormer stage with one block, built with the converted graph's operations in the same structure: an
 # overlapping patch embedding, efficient self-attention with a spatially reduced key/value path, a Mix-FFN with a
 # depthwise convolution and the exported GELU (Div, Erf, Add, Mul, Mul), and the stage's closing LayerNorm.
-BLOCK_REGIONS = {"attention_core": 4, "norms": 7, "gelu": 1}
+BLOCK_REGIONS = {"attention_core": 4, "norms": 6, "gelu": 1}
 
 
 def _segformer_block_graph() -> onnx.ModelProto:
@@ -378,12 +382,12 @@ def test_each_region_finds_its_operations_in_a_block(block_surgery: ModuleType) 
     assert found["attention_core"] == sorted(
         f"/block.0.0/attention/self/{name}" for name in ("MatMul", "Div", "Softmax", "MatMul_1")
     )
-    # Every LayerNorm, including those after the patch embedding and the spatial reduction, and both residual sums.
+    # The residual stream's LayerNorms, including the patch embedding's but not the spatial reduction's, and both
+    # residual sums.
     assert found["norms"] == sorted(
         [
             "/patch_embeddings.0/layer_norm/LayerNormalization",
             "/block.0.0/layer_norm_1/LayerNormalization",
-            "/block.0.0/attention/self/layer_norm/LayerNormalization",
             "/block.0.0/layer_norm_2/LayerNormalization",
             "/layer_norm.0/LayerNormalization",
             "/block.0.0/Add",
@@ -397,15 +401,14 @@ def test_each_region_finds_its_operations_in_a_block(block_surgery: ModuleType) 
 def test_attention_and_norm_marks_end_at_their_first_int8_readers(block_surgery: ModuleType) -> None:
     marks = block_surgery.precision_marks(_segformer_block_graph(), ["attention_core", "norms"])
 
-    assert sum(precision == "bfloat16" for precision in marks.values()) == 11
-    # Readers looked up through layout operations: every Linear layer and convolution after a region stays INT8.
+    assert sum(precision == "bfloat16" for precision in marks.values()) == 10
+    # Readers looked up through layout operations: every Linear layer and convolution after a region stays INT8, a
+    # Linear layer marked after its bias. The key and value layers read the INT8 spatial reduction and need no mark.
     assert {name for name, precision in marks.items() if precision == "int8"} == {
-        "/block.0.0/attention/self/query/MatMul",
+        "/block.0.0/attention/self/query/Add",
         "/block.0.0/attention/self/sr/Conv",
-        "/block.0.0/attention/self/key/MatMul",
-        "/block.0.0/attention/self/value/MatMul",
-        "/block.0.0/attention/output/dense/MatMul",
-        "/block.0.0/mlp/dense1/MatMul",
+        "/block.0.0/attention/output/dense/Add",
+        "/block.0.0/mlp/dense1/Add",
         "/decode_head/classifier/Conv",
     }
 
@@ -417,7 +420,7 @@ def test_gelu_marks_end_at_the_second_linear_layer(block_surgery: ModuleType) ->
     assert [name for name, precision in marks.items() if precision == "bfloat16"] == [
         "/block.0.0/mlp/intermediate_act_fn/Mul_1"
     ]
-    assert {name for name, precision in marks.items() if precision == "int8"} == {"/block.0.0/mlp/dense2/MatMul"}
+    assert {name for name, precision in marks.items() if precision == "int8"} == {"/block.0.0/mlp/dense2/Add"}
 
 
 def test_precision_marks_reject_an_unknown_region_or_count(block_surgery: ModuleType, monkeypatch) -> None:
@@ -438,8 +441,8 @@ def test_annotation_writes_the_marks_and_keeps_the_interface(tmp_path: Path, blo
     model = onnx.load(path)
     annotations = [node for node in model.graph.node if node.op_type == "AnnotatePrecision"]
     assert written == block_surgery.precision_marks(_segformer_block_graph(), ["attention_core", "norms"])
-    assert Counter(written.values()) == {"bfloat16": 11, "int8": 7}
-    assert len(annotations) == 18 and all(node.domain == "ai.sima" for node in annotations)
+    assert Counter(written.values()) == {"bfloat16": 10, "int8": 5}
+    assert len(annotations) == 15 and all(node.domain == "ai.sima" for node in annotations)
     assert [value.name for value in model.graph.output] == ["logits"]
     assert any(item.domain == "ai.sima" for item in model.opset_import)
 
@@ -447,4 +450,4 @@ def test_annotation_writes_the_marks_and_keeps_the_interface(tmp_path: Path, blo
 def test_the_full_graph_regions_have_the_declared_operation_counts(load_script: Callable[[str], ModuleType]) -> None:
     surgery = load_script("surgery")
 
-    assert surgery.BF16_REGIONS == {"attention_core": 32, "norms": 46, "gelu": 8}
+    assert surgery.BF16_REGIONS == {"attention_core": 32, "norms": 40, "gelu": 8}

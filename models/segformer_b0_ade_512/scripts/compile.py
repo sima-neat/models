@@ -49,11 +49,13 @@ LOGITS_SHAPE = (1, CLASS_COUNT, IMAGE_SIZE // 4, IMAGE_SIZE // 4)
 INPUT_BYTES = {INPUT: math.prod(INPUT_SHAPE) * 4}
 OUTPUT_BYTES = [math.prod(LOGITS_SHAPE) * 4]
 # The quantized operation types that identify each region, and how many of them must run BF16 when the region is
-# marked (and none when it is not): the eight attention softmaxes; all thirty LayerNorms; the eight GELUs, which AFE
-# lowers as one GELU operation, or around an Erf when it does not fuse the exported division by sqrt(2).
+# marked (and none when it is not): the eight attention softmaxes; the normalizations of the twenty LayerNorms that
+# read a BF16 input (two per block and one closing each stage; a LayerNorm normalizes at its input's precision, so
+# those after the INT8 patch embeddings and spatial reductions stay INT8); the eight GELUs, which AFE lowers as one
+# GELU operation, or around an Erf when it does not fuse the exported division by sqrt(2).
 REGION_BF16_OPERATIONS = {
     "attention_core": (("SoftmaxOp",), 8),
-    "norms": (("LayerNormOp",), 30),
+    "norms": (("LayerNormOp",), 20),
     "gelu": (("GeluOp", "ErfOp"), 8),
 }
 
@@ -119,10 +121,18 @@ def _describe(node: Any) -> str:
 
 def _marked_precision_mismatches(quantized: Any, marks: dict[str, str]) -> list[str]:
     """Describe each quantized operation whose precision differs from the marks on its source ONNX operations, and log
-    the BF16 operations that no mark covers."""
+    the BF16 operations that no mark covers.
+
+    A mark sets the operation that computes the marked ONNX operation's result. AFE can lower one ONNX operation to
+    several, such as a LayerNorm's normalization and its scale and shift, and those before the last one take their
+    inputs' precision, so they are not checked against the mark.
+    """
     mismatches, unmarked_bf16 = [], []
     for node, inputs, readers in _quantized_nodes(quantized._net):
-        marked = {QuantizationPrecision(marks[name]) for name in node.source_node_names or () if name in marks}
+        sources = {name for name in node.source_node_names or () if name in marks}
+        if any(sources.intersection(reader.source_node_names or ()) for reader in readers):
+            continue
+        marked = {QuantizationPrecision(marks[name]) for name in sources}
         precision = _precision(node)
         if marked and marked != {precision}:
             mismatches.append(
@@ -246,9 +256,6 @@ def compile_model(source: Path, output_dir: Path, profile_id: str, dataset: Path
             _require_bf16_regions(bf16, regions)
             if mismatches:
                 raise RuntimeError(f"{len(mismatches)} operations did not quantize at their marked precision")
-        # The option applies to every LayerNorm and INT8 ones reject it, so only a build whose LayerNorms all run
-        # BF16 keeps FP32 intermediates.
-        bf16_norms = bf16["LayerNormOp"] == operations["LayerNormOp"] > 0 and bool(regions)
         quantized.compile(
             output_path=str(build_dir),
             batch_size=1,
@@ -257,7 +264,6 @@ def compile_model(source: Path, output_dir: Path, profile_id: str, dataset: Path
             tessellate_parameters=None,
             l2_caching_mode=L2CachingMode.NONE,
             deployable=True,
-            **({"layer_norm_use_fp32_intermediates": True} if bf16_norms else {}),
         )
         archives = sorted(build_dir.glob("*_mpk.tar.gz"))
         if len(archives) != 1:
