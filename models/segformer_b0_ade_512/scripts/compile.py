@@ -49,14 +49,16 @@ LOGITS_SHAPE = (1, CLASS_COUNT, IMAGE_SIZE // 4, IMAGE_SIZE // 4)
 INPUT_BYTES = {INPUT: math.prod(INPUT_SHAPE) * 4}
 OUTPUT_BYTES = [math.prod(LOGITS_SHAPE) * 4]
 # The quantized operation types that identify each region, and how many of them must run BF16 when the region is
-# marked (and none when it is not): the eight attention softmaxes; the normalizations of the twenty LayerNorms that
-# read a BF16 input (two per block and one closing each stage; a LayerNorm normalizes at its input's precision, so
-# those after the INT8 patch embeddings and spatial reductions stay INT8); the eight GELUs, which AFE lowers as one
-# GELU operation, or around an Erf when it does not fuse the exported division by sqrt(2).
+# marked (and none when it is not). attention_core: the eight softmaxes. norms: the normalizations of the twenty
+# LayerNorms that read a BF16 input (two per block and one closing each stage; a LayerNorm normalizes at its input's
+# precision, so the four after the INT8 patch embeddings stay INT8), and the scale and shift of all 24 marked
+# LayerNorms, which AFE lowers as convolutions, so any other BF16 convolution is a Linear layer or convolution that
+# left INT8. gelu: the eight GELUs, which AFE lowers as one GELU operation, or around an Erf when it does not fuse the
+# exported division by sqrt(2).
 REGION_BF16_OPERATIONS = {
-    "attention_core": (("SoftmaxOp",), 8),
-    "norms": (("LayerNormOp",), 20),
-    "gelu": (("GeluOp", "ErfOp"), 8),
+    "attention_core": {("SoftmaxOp",): 8},
+    "norms": {("LayerNormOp",): 20, ("ConvAddActivationOp",): 24},
+    "gelu": {("GeluOp", "ErfOp"): 8},
 }
 
 
@@ -123,16 +125,15 @@ def _marked_precision_mismatches(quantized: Any, marks: dict[str, str]) -> list[
     """Describe each quantized operation whose precision differs from the marks on its source ONNX operations, and log
     the BF16 operations that no mark covers.
 
-    A mark sets the operation that computes the marked ONNX operation's result. AFE can lower one ONNX operation to
-    several, such as a LayerNorm's normalization and its scale and shift, and those before the last one take their
-    inputs' precision, so they are not checked against the mark.
+    AFE gives a LayerNorm's mark to its scale and shift, a separate convolution, and normalizes at its input's
+    precision, so LayerNorm normalizations are left to the BF16 counts. AFE names no source for some operations, such
+    as those scale and shift convolutions, so the counts also cover the operations logged as unmarked.
     """
     mismatches, unmarked_bf16 = [], []
     for node, inputs, readers in _quantized_nodes(quantized._net):
-        sources = {name for name in node.source_node_names or () if name in marks}
-        if any(sources.intersection(reader.source_node_names or ()) for reader in readers):
+        if type(node.ir.operation).__name__ == "LayerNormOp":
             continue
-        marked = {QuantizationPrecision(marks[name]) for name in sources}
+        marked = {QuantizationPrecision(marks[name]) for name in node.source_node_names or () if name in marks}
         precision = _precision(node)
         if marked and marked != {precision}:
             mismatches.append(
@@ -150,8 +151,12 @@ def _marked_precision_mismatches(quantized: Any, marks: dict[str, str]) -> list[
 def _require_bf16_regions(bf16: Counter[str], regions: list[str]) -> None:
     """Fail when AFE ignored a BF16 mark, which would silently requantize the region to INT8."""
     logging.info("BF16 operations: %s", dict(sorted(bf16.items())))
-    expected = {region: count if region in regions else 0 for region, (_, count) in REGION_BF16_OPERATIONS.items()}
-    found = {region: sum(bf16[kind] for kind in kinds) for region, (kinds, _) in REGION_BF16_OPERATIONS.items()}
+    expected, found = {}, {}
+    for region, counts in REGION_BF16_OPERATIONS.items():
+        for kinds, count in counts.items():
+            key = f"{region}:{'|'.join(kinds)}"
+            expected[key] = count if region in regions else 0
+            found[key] = sum(bf16[kind] for kind in kinds)
     if found != expected:
         raise RuntimeError(f"expected BF16 operations by region {expected}, found {found}")
 

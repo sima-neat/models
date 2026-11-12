@@ -125,15 +125,19 @@ def test_bf16_check_requires_each_marked_region_to_quantize_bf16(load_script: Ca
     recipe = load_script("compile")
 
     regions = ["attention_core", "norms", "gelu"]
-    recipe._require_bf16_regions(Counter({"SoftmaxOp": 8, "LayerNormOp": 20, "GeluOp": 8, "AddOp": 16}), regions)
+    # Twenty LayerNorm normalizations and the 24 marked LayerNorms' scale and shift convolutions.
+    norms = {"LayerNormOp": 20, "ConvAddActivationOp": 24}
+    recipe._require_bf16_regions(Counter({"SoftmaxOp": 8, **norms, "GeluOp": 8, "AddOp": 16}), regions)
     # A GELU that AFE does not fuse is identified by its Erf.
-    recipe._require_bf16_regions(Counter({"SoftmaxOp": 8, "LayerNormOp": 20, "ErfOp": 8, "DivideOp": 8}), regions)
-    recipe._require_bf16_regions(Counter({"LayerNormOp": 20}), ["norms"])
-    # AFE ignored the softmax marks, left some residual-stream LayerNorms INT8, or ran an unmarked region BF16.
+    recipe._require_bf16_regions(Counter({"SoftmaxOp": 8, **norms, "ErfOp": 8, "DivideOp": 8}), regions)
+    recipe._require_bf16_regions(Counter(norms), ["norms"])
+    # AFE ignored the softmax marks, left some residual-stream LayerNorms INT8, ran a Linear layer BF16, or ran an
+    # unmarked region BF16.
     for bf16, marked in [
-        (Counter({"LayerNormOp": 20, "GeluOp": 8}), regions),
-        (Counter({"SoftmaxOp": 8, "LayerNormOp": 16, "GeluOp": 8}), regions),
-        (Counter({"LayerNormOp": 20, "SoftmaxOp": 8}), ["norms"]),
+        (Counter({**norms, "GeluOp": 8}), regions),
+        (Counter({"SoftmaxOp": 8, "LayerNormOp": 16, "ConvAddActivationOp": 24, "GeluOp": 8}), regions),
+        (Counter({"SoftmaxOp": 8, "LayerNormOp": 20, "ConvAddActivationOp": 25, "GeluOp": 8}), regions),
+        (Counter({**norms, "SoftmaxOp": 8}), ["norms"]),
         (Counter(), regions),
     ]:
         with pytest.raises(RuntimeError, match="expected BF16 operations"):
@@ -163,12 +167,12 @@ def test_marked_precision_check_names_each_operation_off_its_mark(
     monkeypatch.setattr(recipe, "QuantizationPrecision", _Precision)
     int8, bf16 = _Precision.INT_8, _Precision.BFLOAT_16
     # A marked LayerNorm lowered as its normalization, which takes its INT8 input's precision, and its BF16 scale and
-    # shift; AFE then ran the Linear layer reading it BF16 despite its INT8 mark, and the softmax INT8 despite its BF16
-    # mark. The softmax's reader has no precision of its own (AFE's EmptyValue).
+    # shift, which AFE names no source for; AFE then ran the Linear layer reading it BF16 despite its INT8 mark, and the
+    # softmax INT8 despite its BF16 mark. The softmax's reader has no precision of its own (AFE's EmptyValue).
     nodes = [
         _quantized_node("conv", "ConvAddActivationOp", int8, ["/model/embed/Conv"]),
         _quantized_node("norm", "LayerNormOp", int8, ["/model/embed/LayerNormalization"], ("conv",)),
-        _quantized_node("affine", "ConvAddActivationOp", bf16, ["/model/embed/LayerNormalization"], ("norm",)),
+        _quantized_node("affine", "ConvAddActivationOp", bf16, ["Not available"], ("norm",)),
         _quantized_node("query", "ConvAddActivationOp", bf16, ["/model/query/MatMul", "/model/query/Add"], ("affine",)),
         _quantized_node("softmax", "SoftmaxOp", int8, ["/model/Softmax"], ("query",)),
         _quantized_node("context", "BatchMatmulOp", SimpleNamespace(empty=""), ["/model/MatMul_1"], ("softmax",)),
@@ -186,11 +190,11 @@ def test_marked_precision_check_names_each_operation_off_its_mark(
     query = "ConvAddActivationOp:bfloat16(query/MatMul,query/Add)"
     softmax = "SoftmaxOp:int8(Softmax)"
     assert mismatches == [
-        f"{query} marked ['int8']; inputs ['ConvAddActivationOp:bfloat16(embed/LayerNormalization)']; "
-        f"readers ['{softmax}']",
+        f"{query} marked ['int8']; inputs ['ConvAddActivationOp:bfloat16(Not available)']; readers ['{softmax}']",
         f"{softmax} marked ['bfloat16']; inputs ['{query}']; readers ['BatchMatmulOp:-(MatMul_1)']",
     ]
-    assert "Unmarked BF16 operations: ['ConstantOp:bfloat16(scale)']" in caplog.text
+    unmarked = "['ConvAddActivationOp:bfloat16(Not available)', 'ConstantOp:bfloat16(scale)']"
+    assert f"Unmarked BF16 operations: {unmarked}" in caplog.text
     assert recipe._operation_counts(quantized)[1] == {"ConvAddActivationOp": 2, "ConstantOp": 1}
 
 
