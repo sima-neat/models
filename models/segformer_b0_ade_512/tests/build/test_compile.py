@@ -9,7 +9,9 @@ from pathlib import Path
 from types import ModuleType
 
 import numpy as np
+import onnx
 import pytest
+from onnx import TensorProto, helper, numpy_helper
 from PIL import Image
 
 
@@ -198,10 +200,7 @@ def test_compile_main_rejects_an_unknown_invocation_or_missing_fidelity_dataset(
 BLOCK_REGIONS = {"attention_core": 4, "norms": 7, "gelu": 1}
 
 
-def _segformer_block_graph() -> "onnx.ModelProto":
-    import onnx
-    from onnx import TensorProto, helper, numpy_helper
-
+def _segformer_block_graph() -> onnx.ModelProto:
     rng = np.random.default_rng(0)
     nodes, inits = [], []
 
@@ -344,8 +343,6 @@ def test_precision_marks_reject_an_unknown_region_or_count(block_surgery: Module
 
 
 def test_annotation_writes_the_marks_and_keeps_the_interface(tmp_path: Path, block_surgery: ModuleType) -> None:
-    import onnx
-
     path = tmp_path / "model.onnx"
     onnx.save(_segformer_block_graph(), path)
 
