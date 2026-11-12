@@ -261,6 +261,10 @@ def test_native_deployment_publish_package_and_retrieve_without_archiving(
 
     def read(url):
         if "/catalogs/current?" in url:
+            if "git_ref=refs%2Fheads%2Ffeature%2Ftest-benchmark" in url:
+                return {"catalog": {"catalog_revision": "a" * 40, "document": {
+                    "models": [{"id": MODEL, "builds": [], "packages": []}],
+                }}}
             assert any(f"git_ref=refs%2Fheads%2F{branch}" in url for branch in ("develop", "main"))
             return {"catalog": {"document": catalog}}
         path = url.removeprefix("https://registry.example.invalid")
@@ -270,19 +274,23 @@ def test_native_deployment_publish_package_and_retrieve_without_archiving(
         return {"run": {"toolchain_version": resolve_model_compiler(ROOT)["version"]}}
 
     if selection_field == "approved_deployments":
-        for branch in ("develop", "main"):
+        for branch in ("develop", "main", "feature/test-benchmark"):
             publication = publish_catalog(
                 repository=ROOT, branch=branch, git_sha="b" * 40,
                 api_url="https://registry.example.invalid", read_api_url="https://registry.example.invalid",
                 aws_region="us-west-2", request=registry.request, read_request=read,
+                base_branches=["develop"],
             )
             entry = publication["catalog"]["models"][0]
             # Publishing metadata must not rewrite approval-owned outputs.
             assert entry["builds"] == entry["packages"] == []
             assert "approved_deployments" not in entry and "branch_deployments" not in entry
-            assert entry["benchmark_fingerprints"][PROFILE]["performance"] == benchmark_fingerprint(
-                ROOT, model, PROFILE, {"model": published["runs"][0]}, "performance",
-            )
+            if branch == "feature/test-benchmark":
+                assert "benchmark_fingerprints" not in entry
+            else:
+                assert entry["benchmark_fingerprints"][PROFILE]["performance"] == benchmark_fingerprint(
+                    ROOT, model, PROFILE, {"model": published["runs"][0]}, "performance",
+                )
             assert registry.calls[-1][2]["catalog"] == publication["catalog"]
 
     restore_args = dict(

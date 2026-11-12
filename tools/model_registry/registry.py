@@ -501,6 +501,8 @@ def build_catalog_snapshot(
             # carry forward here, retaining the inputs and provenance they used.
             carry_forward(keys)
             native = models[invocation["model_id"]]["components"][0]["interface"]["format"] == "huggingface"
+            if native and branch not in {"develop", "main"}:
+                continue
             available = selected_builds if native else previous_builds
             prior = {key[2]: available[key] for key in keys if key in available}
             if len(prior) == len(keys) and all(
