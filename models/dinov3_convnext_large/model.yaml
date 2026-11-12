@@ -82,7 +82,15 @@ accuracy:
 performance: {}
 
 # timm's ConvNeXt model cards print no scores; the DINOv3 paper's Table 15 does, at 256x256 and 512x512.
+# The published scores below come from a linear classifier that is not part of these weights, on larger inputs.
+# scripts/fp32_baseline_accuracy.py measures the FP32 baseline on this package's own inputs instead, on the
+# reference.onnx convert.py exports.
 reference_metrics:
+- origin: fp32_baseline
+  script: scripts/fp32_baseline_accuracy.py
+  dataset: {id: imagenet-2012, split: val}
+  conditions: FP32 ONNX on ONNX Runtime CPU; 224x224 antialiased bilinear stretch; leave-one-out k-NN on the class embedding with cosine similarity, 20 neighbours and temperature 0.07; 5,000 images, all 50 of 100 classes drawn with seed 0
+  metrics: {knn_top1_accuracy: 0.9214}
 - source: https://arxiv.org/html/2508.10104v1
   dataset: {id: imagenet-real, split: val}
   conditions: 256x256 center crop, linear classifier on the frozen pooled embedding, trained on ImageNet-1k train

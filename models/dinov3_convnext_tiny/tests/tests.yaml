@@ -3,8 +3,14 @@ conversion:
 compile:
   run_tests: true
 accuracy:
-  run_tests: false
-  skip_reason: The first k-NN accuracy results are not published yet.
+  run_tests: true
+  expected:
+    w16a16:
+      imagenet-2012-val:
+        knn_top1_accuracy: 0.8978
+    w8a16:
+      imagenet-2012-val:
+        knn_top1_accuracy: 0.8962
 performance:
   run_tests: true
   expected:
