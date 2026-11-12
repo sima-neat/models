@@ -1,5 +1,3 @@
-# Each build compiles for 30 to 45 minutes on the Model Compiler, so the builds run only on request.
-build-on-demand: true
 display_name: DETR ResNet-101
 description: The original DETR transformer detector with a ResNet-101 backbone, for COCO objects.
 model_type: vision
