@@ -77,6 +77,7 @@ architectures:
     allowed_model_types: [vision]
   detr:
     display_name: DETR
+    description: Detects objects in images by predicting a set of boxes with a transformer.
     paradigm: transformer
     allowed_model_types: [vision]
   dla:
