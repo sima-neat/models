@@ -30,7 +30,9 @@ def test_knn_scores_each_image_by_its_nearest_other_images(
 ) -> None:
     script = load_script("accuracy")
     monkeypatch.setattr(script, "NEIGHBOURS", 2)
+    # Blocks and tiles smaller than the set, so the scoring crosses their edges.
     monkeypatch.setattr(script, "BLOCK", 3)
+    monkeypatch.setattr(script, "TILE", 2)
     # Three images near each of two directions, and one image of class 1 whose nearest images are of class 0.
     embeddings = np.asarray(
         [[1, 0], [1, 0.02], [1, -0.02], [0, 1], [0.02, 1], [-0.02, 1], [1, 0.3]], dtype=np.float32

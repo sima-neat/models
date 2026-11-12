@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from collections import deque
@@ -26,8 +27,11 @@ VALIDATION_SPLIT = "val2012"
 CLASSES = 1000
 NEIGHBOURS = 20
 TEMPERATURE = 0.07
-# Images scored at once; their similarities with all 50,000 images take 100 MB as float32.
-BLOCK = 500
+# Images scored at once on one thread; their similarities with all 50,000 images take 50 MB as float32.
+BLOCK = 250
+# The board's numpy has no optimized BLAS: one large matrix product there runs about four times slower than
+# einsum on tiles of this many images, which fit the CPU cache.
+TILE = 500
 # Images decode on worker threads while the MPK runs; Pillow releases the GIL while it decodes and resizes.
 WORKERS = 4
 PREFETCH = 8
@@ -64,6 +68,27 @@ def validation_labels(dataset: Path) -> dict[str, int]:
     return {names[annotation["image_id"]]: annotation["category_id"] for annotation in labels["annotations"]}
 
 
+def similarities(queries: np.ndarray, unit: np.ndarray) -> np.ndarray:
+    """The cosine similarity of each query with every image, computed one TILE of images at a time."""
+    result = np.empty((len(queries), len(unit)), dtype=np.float32)
+    for start in range(0, len(unit), TILE):
+        result[:, start : start + TILE] = np.einsum("ij,kj->ik", queries, unit[start : start + TILE])
+    return result
+
+
+def correct_in_block(unit: np.ndarray, classes: np.ndarray, start: int) -> int:
+    """How many of the BLOCK images from start take their own class from their neighbours' vote."""
+    similarity = similarities(unit[start : start + BLOCK], unit)
+    rows = np.arange(len(similarity))
+    # An image is never its own neighbour.
+    similarity[rows, start + rows] = -np.inf
+    nearest = np.argpartition(similarity, -NEIGHBOURS, axis=1)[:, -NEIGHBOURS:]
+    weights = np.exp(np.take_along_axis(similarity, nearest, axis=1) / TEMPERATURE)
+    votes = np.zeros((len(similarity), CLASSES), dtype=np.float64)
+    np.add.at(votes, (rows[:, None], classes[nearest]), weights)
+    return int(np.count_nonzero(votes.argmax(axis=1) == classes[start : start + BLOCK]))
+
+
 def knn_top1(embeddings: np.ndarray, classes: np.ndarray) -> float:
     """The share of images whose class wins the vote of their NEIGHBOURS most similar other images.
 
@@ -72,18 +97,10 @@ def knn_top1(embeddings: np.ndarray, classes: np.ndarray) -> float:
     if len(embeddings) <= NEIGHBOURS:
         raise ValueError(f"k-NN needs more than {NEIGHBOURS} images, got {len(embeddings)}")
     unit = embeddings / np.linalg.norm(embeddings, axis=1, keepdims=True)
-    correct = 0
-    for start in range(0, len(unit), BLOCK):
-        similarity = unit[start : start + BLOCK] @ unit.T
-        rows = np.arange(len(similarity))
-        # An image is never its own neighbour.
-        similarity[rows, start + rows] = -np.inf
-        nearest = np.argpartition(similarity, -NEIGHBOURS, axis=1)[:, -NEIGHBOURS:]
-        weights = np.exp(np.take_along_axis(similarity, nearest, axis=1) / TEMPERATURE)
-        votes = np.zeros((len(similarity), CLASSES), dtype=np.float64)
-        np.add.at(votes, (rows[:, None], classes[nearest]), weights)
-        correct += int(np.count_nonzero(votes.argmax(axis=1) == classes[start : start + BLOCK]))
-    return correct / len(unit)
+    # numpy releases the GIL inside einsum and argpartition, so blocks score on every core.
+    with ThreadPoolExecutor(os.cpu_count()) as pool:
+        correct = pool.map(lambda start: correct_in_block(unit, classes, start), range(0, len(unit), BLOCK))
+        return sum(correct) / len(unit)
 
 
 def main(argv: list[str] | None = None) -> int:
