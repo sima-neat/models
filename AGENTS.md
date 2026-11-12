@@ -238,6 +238,13 @@ format. A model test imports a script with the root `conftest.py` fixture
 `load_script("<name>")`, which stubs the Model Compiler and DevKit modules a
 host lacks.
 
+The benchmark tests under `tests/benchmark/` also run on the DevKit, in
+PyNeat, which has no `onnx`, `onnxruntime` or `torch`. A test that needs one
+imports it inside the test with `pytest.importorskip("onnx")`. A module-level
+import stops pytest at collection on the DevKit, and the benchmark then
+publishes no result for that stage. Pull request CI has these packages, so it
+cannot catch the mistake.
+
 A test's fixtures decide where it runs:
 
 | A test that takes | Runs | A failure |
