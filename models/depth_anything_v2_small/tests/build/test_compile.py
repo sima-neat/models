@@ -9,7 +9,9 @@ from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
 import numpy as np
+import onnx
 import pytest
+from onnx import helper, numpy_helper
 
 
 def _image(width: int, height: int, colour: tuple[int, int, int] = (255, 0, 0)) -> bytes:
@@ -99,15 +101,16 @@ def test_the_benchmarks_read_the_directory_the_runners_pass(
         load_script("performance")
 
 
-@pytest.mark.parametrize("profile_id", ["w16a16", "w8a8", "w8a16"])
+@pytest.mark.parametrize("profile_id", ["w16a16", "w8a8_mixed", "w8a16"])
 def test_compile_reads_each_declared_build_profile(load_script: Callable[[str], ModuleType], profile_id: str) -> None:
     recipe = load_script("compile")
     parameters = recipe._parameters(profile_id)
 
-    assert parameters["precision"] == profile_id
+    assert parameters["precision"] == profile_id.removesuffix("_mixed")
     assert parameters["input_shape"] == [1, 3, 518, 686]
-    if profile_id == "w8a8":
-        assert parameters["calibration_samples"] == 50
+    if profile_id == "w8a8_mixed":
+        assert parameters["calibration_samples"] == 10
+        assert parameters["bf16_regions"] == ["normalization_residual", "attention"]
 
 
 def test_compile_rejects_an_undeclared_build_profile(load_script: Callable[[str], ModuleType]) -> None:
@@ -130,7 +133,7 @@ def test_compile_rejects_another_input_shape_before_compiling(
     assert not (tmp_path / "model").exists()
 
 
-@pytest.mark.parametrize("profile_id", ["w16a16", "w8a8", "w8a16"])
+@pytest.mark.parametrize("profile_id", ["w16a16", "w8a8_mixed", "w8a16"])
 def test_only_int8_activations_need_calibration(load_script, monkeypatch, profile_id):
     recipe = load_script("compile")
     monkeypatch.setattr(recipe, "QuantizationParams", SimpleNamespace)
@@ -139,16 +142,131 @@ def test_only_int8_activations_need_calibration(load_script, monkeypatch, profil
     monkeypatch.setattr(recipe, "SkipCalibration", lambda: "skip")
     monkeypatch.setattr(recipe, "CalibrationMethod", SimpleNamespace(from_str=lambda name: name))
 
-    config = recipe.quantization(profile_id)
+    config = recipe.quantization(recipe._parameters(profile_id)["precision"])
 
-    assert config.calibration_method == ("mse" if profile_id == "w8a8" else "skip")
+    assert config.calibration_method == ("mse" if profile_id == "w8a8_mixed" else "skip")
     assert config.per_token_quant == (profile_id == "w8a16")
     assert config.activation_quantization_scheme == (
-        {"asymmetric": True, "per_channel": False, "bits": 8} if profile_id == "w8a8" else "bf16"
+        {"asymmetric": True, "per_channel": False, "bits": 8} if profile_id == "w8a8_mixed" else "bf16"
     )
     assert config.weight_quantization_scheme == (
         "bf16" if profile_id == "w16a16" else {"asymmetric": False, "per_channel": True, "bits": 8}
     )
+
+
+@pytest.mark.parametrize(
+    ("profile", "parameters", "message"),
+    [
+        ("w8a8_mixed", {"precision": "w8a8"}, "mixed token"),
+        ("w8a8", {"precision": "w8a8", "bf16_regions": ["attention"]}, "mixed token"),
+        ("w16a16_mixed", {"precision": "w16a16", "bf16_regions": ["attention"]}, "W8A8 base precision"),
+    ],
+)
+def test_mixed_precision_requires_a_matching_profile(
+    load_script, monkeypatch, tmp_path, profile, parameters, message
+):
+    recipe = load_script("compile")
+    monkeypatch.setattr(recipe, "_parameters", lambda _: parameters)
+    with pytest.raises(ValueError, match=message):
+        recipe.compile_model(tmp_path / "source.onnx", tmp_path / "model", profile, None)
+
+
+def test_precision_hints_end_at_the_first_compute_reader(load_script, monkeypatch):
+    precision = load_script("precision")
+    model = helper.make_model(
+        helper.make_graph(
+            [
+                helper.make_node("Add", ["input", "input"], ["residual"], name="residual"),
+                helper.make_node("Identity", ["residual"], ["layout"], name="layout"),
+                helper.make_node("Relu", ["layout"], ["output"], name="head"),
+            ],
+            "boundary",
+            [helper.make_tensor_value_info("input", onnx.TensorProto.FLOAT, [1, 4])],
+            [helper.make_tensor_value_info("output", onnx.TensorProto.FLOAT, [1, 4])],
+        )
+    )
+    original = [node.SerializeToString() for node in model.graph.node]
+    monkeypatch.setattr(precision, "regions", lambda _: {"normalization_residual": {"residual"}})
+
+    precision.annotate_bf16_regions(model, ["normalization_residual"])
+
+    onnx.checker.check_model(model)
+    hints = {node.output[0]: node for node in model.graph.node if node.domain == "ai.sima"}
+    assert {name: helper.get_attribute_value(node.attribute[0]) for name, node in hints.items()} == {
+        "residual": b"bfloat16",
+        "output": b"int8",
+    }
+    restored = []
+    for node in model.graph.node:
+        if node.domain != "ai.sima":
+            node.output[:] = [value.removesuffix("/unannotated") for value in node.output]
+            restored.append(node.SerializeToString())
+    assert restored == original
+
+
+@pytest.mark.parametrize("regions", [["unknown"], ["attention", "attention"]])
+def test_precision_hints_reject_unknown_or_duplicate_regions(load_script, regions):
+    precision = load_script("precision")
+    with pytest.raises(ValueError, match="distinct BF16 regions"):
+        precision.annotate_bf16_regions(onnx.ModelProto(), regions)
+
+
+def test_batched_attention_projections_preserve_outputs(load_script):
+    import onnxruntime as ort
+
+    surgery = load_script("surgery")
+    nodes, initializers, outputs = [], [], []
+    rng = np.random.default_rng(42)
+    initializers.append(numpy_helper.from_array(rng.normal(0, 0.02, (384, 384)).astype(np.float32), "weight"))
+    initializers.extend(
+        [
+            numpy_helper.from_array(np.array([1814, 384], np.int64), "flat_shape"),
+            numpy_helper.from_array(np.array([1, 1814, 384], np.int64), "shape"),
+        ]
+    )
+    for index in range(12):
+        name = f"block{index}"
+        bias = name + ".attn.proj.bias"
+        initializers.append(numpy_helper.from_array(rng.normal(0, 0.02, 384).astype(np.float32), bias))
+        nodes.extend(
+            [
+                helper.make_node("Reshape", ["input", "flat_shape"], [name + "/flat"], name=name + "/flatten"),
+                helper.make_node(
+                    "Gemm",
+                    [name + "/flat", "weight", bias],
+                    [name + "/projected"],
+                    name=name + "/Gemm",
+                    alpha=1.0,
+                    beta=1.0,
+                    transA=0,
+                    transB=0,
+                ),
+                helper.make_node("Reshape", [name + "/projected", "shape"], [name], name=name + "/restore"),
+            ]
+        )
+        outputs.append(helper.make_tensor_value_info(name, onnx.TensorProto.FLOAT, [1, 1814, 384]))
+    model = helper.make_model(
+        helper.make_graph(
+            nodes,
+            "attention",
+            [helper.make_tensor_value_info("input", onnx.TensorProto.FLOAT, [1, 1814, 384])],
+            outputs,
+            initializers,
+        ),
+        opset_imports=[helper.make_opsetid("", 14)],
+        ir_version=8,
+    )
+    model = onnx.shape_inference.infer_shapes(model)
+    original = model.SerializeToString()
+    rewritten = surgery.batched_attention_projections(model)
+    onnx.checker.check_model(rewritten)
+    options = ort.SessionOptions()
+    options.intra_op_num_threads = 2
+    image = rng.normal(size=(1, 1814, 384)).astype(np.float32)
+    expected = ort.InferenceSession(original, options).run(None, {"input": image})
+    actual = ort.InferenceSession(rewritten.SerializeToString(), options).run(None, {"input": image})
+    for before, after in zip(expected, actual, strict=True):
+        np.testing.assert_allclose(after, before, rtol=1e-5, atol=1e-6)
 
 
 def test_compiled_package_keeps_the_full_resolution_depth_map(compiled, model_dir, build_profile, load_script):
@@ -186,4 +304,3 @@ def test_compile_main_rejects_an_unknown_invocation_or_missing_fidelity_dataset(
 
     assert stopped.value.code == 2
     assert message in capsys.readouterr().err
-

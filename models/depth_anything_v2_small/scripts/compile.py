@@ -90,6 +90,11 @@ def audit_mpk(archive: Path) -> None:
 def compile_model(source: Path, component_dir: Path, variant_id: str, dataset: Path | None) -> AfeModel:
     parameters = _parameters(variant_id)
     precision = parameters["precision"]
+    bf16_regions = parameters.get("bf16_regions", [])
+    if bf16_regions and precision != "w8a8":
+        raise ValueError("BF16 regions require W8A8 base precision")
+    if bool(bf16_regions) != ("mixed" in variant_id.split("_")):
+        raise ValueError("a build profile must have the mixed token exactly when it has BF16 regions")
     config = quantization(precision)
 
     input_name = str(parameters["input_name"])
@@ -107,7 +112,7 @@ def compile_model(source: Path, component_dir: Path, variant_id: str, dataset: P
         data = convert_data_generator_to_iterable(DataGenerator({input_name: samples}))
 
     component_dir.mkdir(parents=True, exist_ok=False)
-    prepared = prepare_model(source, component_dir.parent / f"{MODEL_ID}_prepared.onnx")
+    prepared = prepare_model(source, component_dir.parent / f"{MODEL_ID}_prepared.onnx", bf16_regions)
     LOG.info("Prepared graph: %s", prepared)
     importer = onnx_source(str(prepared), {input_name: input_shape}, {input_name: ScalarType.float32})
     model_name = f"{MODEL_ID}_{variant_id}"
