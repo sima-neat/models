@@ -39,9 +39,8 @@ def test_manual_benchmarks_keep_their_actions_identity() -> None:
     workflow = load_workflow()
 
     assert workflow["name"] == "Vulcan Model Benchmarking"
-    assert workflow["run-name"] == (
-        "Benchmarking (${{ inputs.model_id }}/${{ inputs.compile_invocation_id }}, ${{ inputs.build_profile_id }})"
-    )
+    assert "inputs.promoted_missing" in workflow["run-name"]
+    assert "format('Benchmarking ({0}/{1}, {2})'" in workflow["run-name"]
     assert list(workflow["on"]) == ["workflow_dispatch", "workflow_call"]
     inputs = workflow["on"]["workflow_dispatch"]["inputs"]
     assert set(inputs) == {
@@ -54,21 +53,24 @@ def test_manual_benchmarks_keep_their_actions_identity() -> None:
         "build_profile_id",
         "compile_invocation_id",
         "stages",
+        "promoted_missing",
     }
-    optional = {"source_run_id", "deployment_branch", "stages"}
+    optional = set(inputs) - {"environment"}
     assert all(inputs[name]["required"] == "false" for name in optional)
     assert all(value["required"] == "true" for name, value in inputs.items() if name not in optional)
     assert inputs["stages"]["default"] == "performance,accuracy"
     assert inputs["environment"]["type"] == "choice"
     assert inputs["environment"]["options"] == ["default", "staging", "production"]
     assert inputs["environment"]["default"] == "default"
+    assert inputs["promoted_missing"]["type"] == "boolean"
+    assert inputs["promoted_missing"]["default"] == "false"
     assert "operation" not in inputs
     assert workflow["concurrency"]["group"].startswith(
         "model-benchmark-${{ inputs.environment != 'default' && inputs.environment || vars.VULCAN_ENV || 'staging' }}-"
     )
     assert workflow["concurrency"]["cancel-in-progress"] == "false"
     assert list(workflow["jobs"]) == [
-        "resolve-vulcan-config", "resolve-benchmark-runner", "stage", "benchmark", "publish", "check",
+        "resolve-vulcan-config", "resolve-benchmark-runner", "promoted", "stage", "benchmark", "publish", "check",
     ]
 
 
@@ -77,7 +79,7 @@ def test_manual_dispatch_takes_the_called_inputs() -> None:
     inputs, call = triggers["workflow_dispatch"]["inputs"], triggers["workflow_call"]["inputs"]
 
     # The resolvers' outputs are the only inputs a person does not type.
-    assert set(inputs) == set(call) - {"vulcan_config", "devkit_runner"}
+    assert set(inputs) - {"promoted_missing"} == set(call) - {"vulcan_config", "devkit_runner"}
     assert all(value["type"] == "string" for value in call.values())
     optional = {"source_run_id", "deployment_branch", "vulcan_config", "devkit_runner"}
     assert {name for name, value in call.items() if value["required"] == "false"} == optional
@@ -104,16 +106,74 @@ def test_only_a_manual_dispatch_resolves_the_config_and_runner() -> None:
 
     # The orchestrator passes the config and the DevKit runner it resolved once for the run.
     assert jobs["resolve-vulcan-config"]["if"] == "inputs.vulcan_config == ''"
-    assert jobs["resolve-benchmark-runner"]["if"] == "inputs.devkit_runner == ''"
+    assert jobs["resolve-benchmark-runner"]["if"] == "inputs.devkit_runner == '' && !inputs.promoted_missing"
     assert stage["needs"] == ["resolve-vulcan-config", "resolve-benchmark-runner"]
     # Without a status function a skipped resolver would skip the stage too.
     assert stage["if"].startswith("!cancelled() && !contains(needs.*.result, 'failure') &&")
+    assert "!inputs.promoted_missing" in stage["if"]
     assert stage["outputs"]["vulcan_config"] == (
         "${{ inputs.vulcan_config || toJSON(needs.resolve-vulcan-config.outputs) }}"
     )
     assert stage["outputs"]["devkit_runner"] == (
         "${{ inputs.devkit_runner || toJSON(needs.resolve-benchmark-runner.outputs) }}"
     )
+
+
+def test_promoted_batch_is_manual_and_does_not_claim_a_devkit():
+    job = load_workflow()["jobs"]["promoted"]
+    assert job["if"] == "github.event_name == 'workflow_dispatch' && inputs.promoted_missing"
+    assert job["runs-on"] == "ubuntu-latest"
+    assert job["permissions"] == {"contents": "read", "actions": "write", "id-token": "write"}
+    dispatch = step(job["steps"], "Queue missing measurements through this workflow")
+    assert dispatch["run"] == "scripts/benchmark_promoted_models.py"
+    assert dispatch["env"]["GH_TOKEN"] == "${{ github.token }}"
+
+
+@pytest.mark.parametrize("case", ["valid", "missing_model", "wrong_branch"])
+def test_single_model_dispatch_validates_fields_before_accessing_artifacts(tmp_path, case):
+    source = step(load_workflow()["jobs"]["stage"]["steps"], "Verify the source run and compiled artifact")
+    environment = {**os.environ, "SOURCE_RUN_ID": "", "SOURCE_SHA": "a" * 40,
+                   "SOURCE_BRANCH": "main" if case == "wrong_branch" else "develop", "GITHUB_REF_NAME": "develop",
+                   "MODEL_ID": "" if case == "missing_model" else "resnet_50", "BUILD_PROFILE_ID": "w8a8",
+                   "COMPILE_INVOCATION_ID": "w8a8", "STAGES": "performance", "GITHUB_OUTPUT": str(tmp_path / "output")}
+    result = subprocess.run(["bash", "-c", source["run"]], env=environment, capture_output=True, text=True)
+    assert (result.returncode == 0) == (case == "valid")
+
+
+@pytest.mark.parametrize("missing", [False, True])
+def test_promoted_batch_dispatches_single_profile_runs_and_reports_skips(monkeypatch, tmp_path, missing):
+    import runpy
+
+    queued = []
+    build = {"model_id": "hrnet_w32", "build_profile_id": "w8a8", "compile_invocation_id": "w8a8",
+             "stages": ["accuracy"]}
+    plan = {"source_branch": "main", "source_sha": "a" * 40, "include": [build] if missing else [],
+            "skipped": [{"model_id": "measured", "build_profile_id": "w8a8", "reason": "already measured"}]}
+
+    def read(command, **kwargs):
+        assert command[:2] == ["model-registry", "plan-promoted-benchmarks"]
+        return json.dumps(plan)
+
+    def dispatch(command, **kwargs):
+        assert command[:4] == ["gh", "api", "--method", "POST"]
+        queued.append(json.loads(kwargs["input"]))
+
+    environment = {"REGISTRY_API_URL": "https://registry.example.invalid", "GITHUB_REF_NAME": "main",
+                   "STAGES": "performance,accuracy", "VULCAN_ENV": "production",
+                   "GITHUB_REPOSITORY": "sima-neat/models", "GITHUB_STEP_SUMMARY": str(tmp_path / "summary")}
+    for key, value in environment.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setattr(subprocess, "check_output", read)
+    monkeypatch.setattr(subprocess, "run", dispatch)
+    runpy.run_path(str(ROOT / "scripts/benchmark_promoted_models.py"), run_name="__main__")
+    assert len(queued) == int(missing)
+    if missing:
+        assert queued[0] == {"ref": "main", "inputs": {"environment": "production", "source_sha": "a" * 40,
+            "source_branch": "main", "model_id": "hrnet_w32", "build_profile_id": "w8a8",
+            "compile_invocation_id": "w8a8", "stages": "accuracy"}}
+        assert "promoted_missing" not in queued[0]["inputs"]  # Child dispatches use the single-model default.
+    summary = (tmp_path / "summary").read_text()
+    assert "already measured" in summary and f"Queued {int(missing)}" in summary
 
 
 def test_benchmark_stages_only_its_compiled_artifact() -> None:
@@ -123,10 +183,10 @@ def test_benchmark_stages_only_its_compiled_artifact() -> None:
     assert stage["environment"] == ENVIRONMENT
     assert stage["permissions"]["id-token"] == "write"
     assert stage["outputs"]["source_branch"] == "${{ steps.source.outputs.branch }}"
-    assert "inputs.source_branch == github.ref_name" in stage["if"]
-    assert "inputs.stages != ''" in stage["if"]
     assert "inputs.operation" not in stage["if"]
     verify = step(stage["steps"], "Verify the source run and compiled artifact")
+    assert '[[ "$SOURCE_BRANCH" == "$GITHUB_REF_NAME" ]]' in verify["run"]
+    assert '[[ -n "$STAGES" ]]' in verify["run"]
     assert verify["env"]["STAGES"] == "${{ inputs.stages }}"
     assert '[[ "$stage" == performance || "$stage" == accuracy ]]' in verify["run"]
     assert "COMPONENT_IDS" not in BENCHMARK_WORKFLOW.read_text(encoding="utf-8")
@@ -612,10 +672,12 @@ def test_accuracy_dataset_is_cached_on_nvme_under_a_shared_lock() -> None:
 def test_benchmark_runs_only_on_its_source_branch() -> None:
     workflow = load_workflow()
 
-    for name in ("stage", "benchmark", "publish"):
+    for name in ("benchmark", "publish"):
         condition = workflow["jobs"][name]["if"]
         assert "inputs.source_branch == github.ref_name" in condition, name
         assert "refs/heads/develop" not in condition, name
+    verify = step(workflow["jobs"]["stage"]["steps"], "Verify the source run and compiled artifact")
+    assert '[[ "$SOURCE_BRANCH" == "$GITHUB_REF_NAME" ]]' in verify["run"]
 
 
 def test_completed_stages_are_published_from_a_hosted_runner() -> None:

@@ -15,6 +15,13 @@ warmup, latency and throughput measurement, board telemetry, and runner
 lifetime. The scripts hand Core's results to `tools/model_report`, which
 writes the one report the registry publishes.
 
+In **Actions → Vulcan Model Benchmarking → Run workflow**, select Develop/Main,
+the registry environment and stages, then check **Benchmark promoted models
+missing results (excludes LLM/VLM)** to queue missing measurements for all promoted
+non-LLM/VLM profiles. Leave the per-model fields empty. Each profile runs separately;
+the summary lists queued and skipped profiles. Leave the checkbox unchecked to
+benchmark one model, including an LLM/VLM.
+
 ## Set up a DevKit
 
 The DevKit must run the platform version that `deps/manifest.json` pins, and

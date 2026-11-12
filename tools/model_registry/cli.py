@@ -26,7 +26,7 @@ from .model import (
 )
 from .model_tests import TEST_OUTCOMES
 from .runner_approval import authorize_runner_matrix
-from .stage_plan import plan_stages, resolve_base_branches
+from .stage_plan import plan_promoted_benchmarks, plan_stages, resolve_base_branches
 
 AUTHOR_COMMANDS = frozenset(
     {
@@ -157,6 +157,13 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     stages.add_argument("--components", help="comma-separated component IDs within the selected models")
     stages.add_argument("--force-rebuild-all", action="store_true")
     stages.add_argument("--include-on-demand", action="store_true", help="build explicitly selected on-demand models")
+
+    promoted = subcommands.add_parser(
+        "plan-promoted-benchmarks", help="list missing benchmark stages of promoted non-LLM/VLM profiles (CI only)"
+    )
+    promoted.add_argument("--api-url", required=True)
+    promoted.add_argument("--branch", required=True, choices=("develop", "main"))
+    promoted.add_argument("--stages", default="performance,accuracy")
 
     authorize = subcommands.add_parser(
         "authorize-runner-matrix",
@@ -1037,6 +1044,14 @@ def _main(argv: Sequence[str] | None, *, author_safe: bool) -> int:
             return _reference_metrics(args)
         if args.command == "plan-stages":
             return _plan_stages(args)
+        if args.command == "plan-promoted-benchmarks":
+            from .registry import _public_registry_json
+
+            print(json.dumps(plan_promoted_benchmarks(
+                branch=args.branch, stages=args.stages.split(","),
+                read=_public_registry_json, read_api_url=args.api_url,
+            ), sort_keys=True))
+            return 0
         if args.command == "authorize-runner-matrix":
             return _authorize_runner_matrix(args)
         if args.command == "resolve-base":

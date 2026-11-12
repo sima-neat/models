@@ -319,7 +319,8 @@ in the same commit.
   and accuracy (`model_accuracy` runs) separately with `model-registry
   publish-report`, each under the profile's `model_package` run with its test
   outcome. A failed test fails its check job after publication; the completed
-  run is not benchmarked again. On-demand builds are not benchmarked.
+  run is not benchmarked again. Pushes do not benchmark on-demand builds.
+  The manual `promoted_missing` checkbox queues missing stages for approved non-LLM/VLM profiles.
   A manual dispatch of the same workflow resolves its own config and runner.
 - Benchmark setup uses `neat-core.install_target` from the measured source's
   `deps/manifest.json`. `ensure-neat-core` resolves floating targets once and

@@ -239,6 +239,36 @@ def stage_run_exists(read: ReadRequest, read_api_url: str, run_type: str, finger
     return True
 
 
+def plan_promoted_benchmarks(
+    *, branch: str, stages: list[str], read: ReadRequest, read_api_url: str,
+) -> dict[str, Any]:
+    """Plan missing measurements of approved non-LLM/VLM profiles, without compiling or changing the catalog."""
+    if branch not in {"develop", "main"}:
+        raise ValidationError("Promoted benchmark batches require the develop or main branch")
+    if not stages or set(stages) - set(BENCHMARK_RUN_TYPES):
+        raise ValidationError("Benchmark stages must be performance and/or accuracy")
+    _, document = read_current_catalog(read, read_api_url, branch)
+    if document is None:
+        raise ValidationError(f"No current catalog for {branch}")
+    include, skipped = [], []
+    for model in document["models"]:
+        if not model.get("build_on_demand") or model["categories"]["model_type"] in {"llm", "vlm"}:
+            continue
+        for profile in sorted(model.get("approved_deployments", {})):
+            fingerprints = model.get("benchmark_fingerprints", {}).get(profile, {})
+            requested = [stage for stage in dict.fromkeys(stages) if stage in fingerprints]
+            missing = [stage for stage in requested if not stage_run_exists(
+                read, read_api_url, BENCHMARK_RUN_TYPES[stage], fingerprints[stage],
+            )]
+            if missing:
+                include.append({"model_id": model["id"], "build_profile_id": profile,
+                                "compile_invocation_id": profile, "stages": missing})
+            else:
+                skipped.append({"model_id": model["id"], "build_profile_id": profile,
+                                "reason": "already measured" if requested else "no requested benchmark references"})
+    return {"source_branch": branch, "source_sha": document["catalog_revision"], "include": include, "skipped": skipped}
+
+
 def catalog_builds(document: dict[str, Any] | None) -> dict[tuple[str, str, str], dict[str, Any]]:
     """Index a models document's builds by (model, build profile, component)."""
     builds: dict[tuple[str, str, str], dict[str, Any]] = {}

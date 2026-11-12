@@ -26,6 +26,7 @@ from model_registry.registry import RegistryPublicationError, build_catalog_snap
 from model_registry.stage_plan import (
     is_long_lived,
     merge_catalog_sources,
+    plan_promoted_benchmarks,
     plan_stages,
     resolve_base_branches,
 )
@@ -36,6 +37,51 @@ SCHEMA = ROOT / "schemas" / "model.schema.json"
 TAXONOMY = ROOT / "taxonomies" / "model-taxonomy.yaml"
 COMPILER_VERSION = resolve_model_compiler(ROOT)["identity"]
 
+
+
+@pytest.mark.parametrize("branch", ["develop", "main"])
+def test_promoted_batch_queues_only_missing_stages_and_excludes_llms_vlms(branch):
+    def model(name, kind="vision", approved=True, fingerprints=None):
+        return {"id": name, "categories": {"model_type": kind}, "build_on_demand": True,
+                "approved_deployments": {"w8a8": {"deployment_id": name}} if approved else {},
+                "benchmark_fingerprints": {"w8a8": fingerprints or {"performance": "a" * 64, "accuracy": "b" * 64}}}
+
+    document = {"catalog_revision": "c" * 40, "models": [
+        model("missing_accuracy"), model("measured", fingerprints={"performance": "a" * 64}),
+        model("unapproved", approved=False), model("language", "llm"), model("vision_language", "vlm"),
+        model("no_reference", fingerprints={"other": "d" * 64}),
+    ]}
+    queried = []
+
+    def read(url):
+        if "/catalogs/current?" in url:
+            return {"catalog": {"document": document}}
+        queried.append(url)
+        if "fingerprint=" + "b" * 64 in url:
+            raise RegistryPublicationError("HTTP 404 fingerprint_not_found")
+        return {"run": {"id": "completed"}}
+
+    result = plan_promoted_benchmarks(branch=branch, stages=["performance", "accuracy"], read=read,
+                                      read_api_url="https://registry.example.invalid")
+    assert result["source_branch"] == branch and result["source_sha"] == "c" * 40
+    assert result["include"] == [{"model_id": "missing_accuracy", "build_profile_id": "w8a8",
+                                  "compile_invocation_id": "w8a8", "stages": ["accuracy"]}]
+    assert {row["model_id"]: row["reason"] for row in result["skipped"]} == {
+        "measured": "already measured", "no_reference": "no requested benchmark references",
+    }
+    assert len(queried) == 3
+    result = plan_promoted_benchmarks(branch=branch, stages=["performance"], read=read,
+                                      read_api_url="https://registry.example.invalid")
+    assert result["include"] == []
+
+
+def test_promoted_batch_rejects_wrong_scope_before_reading_registry():
+    def read(url):
+        pytest.fail("Invalid batch scope must fail before querying the registry")
+
+    for branch, stages in [("feature/test", ["performance"]), ("develop", ["compile"]), ("main", [])]:
+        with pytest.raises(ValidationError):
+            plan_promoted_benchmarks(branch=branch, stages=stages, read=read, read_api_url="https://registry.example.invalid")
 
 
 @pytest.fixture

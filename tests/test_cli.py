@@ -51,6 +51,7 @@ def test_benchmark_job_scopes_baseline_and_timeout(model, profile, stages, backe
         "resolve-benchmark-runtime",
         "benchmark-job",
         "stage-registry-build",
+        "plan-promoted-benchmarks",
     ],
 )
 def test_author_cli_rejects_ci_only_commands(command: str, capsys: pytest.CaptureFixture[str]) -> None:
@@ -69,6 +70,20 @@ def test_repository_cli_retains_ci_only_commands() -> None:
         subcommands.choices
     )
     assert {"package", "fetch-previous"}.isdisjoint(subcommands.choices)
+
+
+def test_promoted_benchmark_planning_command_reads_the_selected_catalog(monkeypatch, capsys):
+    from model_registry import registry
+
+    def read(url):
+        assert url.endswith("git_ref=refs%2Fheads%2Fmain")
+        return {"catalog": {"document": {"catalog_revision": "a" * 40, "models": []}}}
+
+    monkeypatch.setattr(registry, "_public_registry_json", read)
+    assert main(["plan-promoted-benchmarks", "--api-url", "https://registry.example.invalid", "--branch", "main"]) == 0
+    assert json.loads(capsys.readouterr().out) == {
+        "source_branch": "main", "source_sha": "a" * 40, "include": [], "skipped": [],
+    }
 
 
 @pytest.mark.parametrize("entrypoint", [main, cli.author_main])

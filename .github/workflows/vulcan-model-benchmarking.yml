@@ -1,5 +1,5 @@
 name: Vulcan Model Benchmarking
-run-name: Benchmarking (${{ inputs.model_id }}/${{ inputs.compile_invocation_id }}, ${{ inputs.build_profile_id }})
+run-name: ${{ inputs.promoted_missing && 'Promoted models missing benchmarks (excluding LLM/VLM)' || format('Benchmarking ({0}/{1}, {2})', inputs.model_id, inputs.compile_invocation_id, inputs.build_profile_id) }}
 
 # Benchmarks one build on a DevKit and publishes each stage's report. The orchestrator calls it per build and
 # passes the Vulcan config and DevKit runner it resolved once; a manual dispatch resolves its own.
@@ -7,6 +7,11 @@ run-name: Benchmarking (${{ inputs.model_id }}/${{ inputs.compile_invocation_id 
 on:
   workflow_dispatch:
     inputs:
+      promoted_missing:
+        description: Benchmark promoted models missing results (excludes LLM/VLM); ignores per-model fields
+        type: boolean
+        required: false
+        default: false
       environment:
         description: Registry and dataset environment; default uses repository VULCAN_ENV (DevKits remain on staging)
         required: true
@@ -19,12 +24,12 @@ on:
         default: ""
         type: string
       source_sha:
-        description: Source revision containing the benchmark and model definitions
-        required: true
+        description: Single model only; source revision containing the benchmark and model definitions
+        required: false
         type: string
       source_branch:
-        description: Branch containing the source revision and benchmark workflow
-        required: true
+        description: Single model only; branch containing the source revision and benchmark workflow
+        required: false
         type: string
       deployment_branch:
         description: Registry catalog supplying compiled deployments; empty uses source_branch
@@ -32,16 +37,16 @@ on:
         default: ""
         type: string
       model_id:
-        description: Model ID to benchmark
-        required: true
+        description: Single model only; model ID to benchmark
+        required: false
         type: string
       build_profile_id:
-        description: Build profile ID to benchmark
-        required: true
+        description: Single model only; build profile ID to benchmark
+        required: false
         type: string
       compile_invocation_id:
-        description: Compile invocation that produced the components
-        required: true
+        description: Single model only; compile invocation that produced the components
+        required: false
         type: string
       stages:
         description: Comma-separated benchmarks to run (performance, accuracy)
@@ -107,7 +112,7 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 concurrency:
-  group: model-benchmark-${{ inputs.environment != 'default' && inputs.environment || vars.VULCAN_ENV || 'staging' }}-${{ github.ref }}-${{ inputs.source_sha }}-${{ inputs.source_run_id }}-${{ inputs.stages }}-${{ inputs.model_id }}-${{ inputs.build_profile_id }}-${{ inputs.compile_invocation_id }}
+  group: model-benchmark-${{ inputs.environment != 'default' && inputs.environment || vars.VULCAN_ENV || 'staging' }}-${{ github.ref }}-${{ inputs.source_sha }}-${{ inputs.source_run_id }}-${{ inputs.stages }}-${{ inputs.model_id }}-${{ inputs.build_profile_id }}-${{ inputs.compile_invocation_id }}-${{ inputs.promoted_missing || false }}
   cancel-in-progress: false
 
 jobs:
@@ -124,21 +129,54 @@ jobs:
 
   resolve-benchmark-runner:
     name: Resolve the benchmark DevKit runner
-    if: inputs.devkit_runner == ''
+    if: inputs.devkit_runner == '' && !inputs.promoted_missing
     uses: sima-neat/.github/.github/workflows/vulcan-resolve-modalix-runner.yml@main
     with:
       # DevKit placement is independent of registry and dataset selection.
       runner-labels: '["self-hosted", "Linux", "ARM64", "modalix", "modalix-som-16gig", "model-registry", "vulcan-staging"]'
 
+  promoted:
+    name: Queue promoted non-LLM/VLM profiles missing results
+    needs: resolve-vulcan-config
+    if: github.event_name == 'workflow_dispatch' && inputs.promoted_missing
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: ${{ inputs.environment != 'default' && inputs.environment || vars.VULCAN_ENV || 'staging' }}
+    permissions:
+      contents: read
+      actions: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install registry tooling
+        run: python -m pip install .
+      - name: Configure authenticated production registry reads
+        if: (inputs.environment != 'default' && inputs.environment || vars.VULCAN_ENV || 'staging') == 'production'
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-region: ${{ needs.resolve-vulcan-config.outputs.aws_region }}
+          role-to-assume: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLISHER_ROLE_ARN }}
+          role-session-name: models-promoted-benchmarks-${{ github.run_id }}
+      - name: Queue missing measurements through this workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VULCAN_ENV: ${{ inputs.environment != 'default' && inputs.environment || vars.VULCAN_ENV || 'staging' }}
+          REGISTRY_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL || vars.VULCAN_ARTIFACT_REGISTRY_API_URL }}
+          MODEL_REGISTRY_IAM_READ_API_URL: ${{ (inputs.environment != 'default' && inputs.environment || vars.VULCAN_ENV || 'staging') == 'production' && vars.VULCAN_ARTIFACT_REGISTRY_API_URL || '' }}
+          STAGES: ${{ inputs.stages }}
+        run: scripts/benchmark_promoted_models.py
+
   stage:
     name: Stage benchmark input
     needs: [resolve-vulcan-config, resolve-benchmark-runner]
     if: >-
-      !cancelled() && !contains(needs.*.result, 'failure') &&
-      inputs.source_branch == github.ref_name &&
-      inputs.source_sha != '' && inputs.source_branch != '' &&
-      inputs.model_id != '' && inputs.build_profile_id != '' &&
-      inputs.compile_invocation_id != '' && inputs.stages != ''
+      !cancelled() && !contains(needs.*.result, 'failure') && !inputs.promoted_missing
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment != 'default' && inputs.environment || vars.VULCAN_ENV || 'staging' }}
     permissions:
@@ -165,6 +203,8 @@ jobs:
           STAGES: ${{ inputs.stages }}
         run: |
           set -euo pipefail
+          [[ -n "$STAGES" ]]
+          [[ "$SOURCE_BRANCH" == "$GITHUB_REF_NAME" ]]
           IFS=',' read -ra stages <<< "$STAGES"
           for stage in "${stages[@]}"; do
             [[ "$stage" == performance || "$stage" == accuracy ]]
