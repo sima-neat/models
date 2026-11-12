@@ -4,17 +4,12 @@
 
 ## Overview
 
-SegFormer-B0 is the smallest SegFormer, NVIDIA's semantic segmentation
-transformer, fine-tuned on ADE20K at 512×512. It labels every pixel of a scene
-with one of 150 classes, such as wall, sky, floor, tree, person and car. A
-hierarchical transformer encoder reads the image at four scales, and a light
-all-MLP head fuses them. The model runs as one component, in a BF16 (`w16a16`)
-or an INT8 (`w8a8`) build.
-
-No registry dataset holds ADE20K labels, so the compile stage compares each
-build's logits with the ONNX source on COCO 2017 validation images instead of
-scoring mIoU. The NVIDIA Source Code License allows research or evaluation use
-only, not commercial use.
+SegFormer-B0 is the smallest size of NVIDIA's SegFormer semantic segmentation
+transformer, fine-tuned on ADE20K. It labels every pixel of a scene with one of
+150 classes, such as wall, sky, floor, tree, person and car. It takes a 512×512
+RGB image and returns class scores on a 128×128 grid, a quarter of the input
+resolution. A hierarchical transformer encoder reads the image at four scales,
+and a light all-MLP head fuses them. The model runs as one component.
 
 ## Inputs and outputs
 
@@ -23,10 +18,15 @@ or padding. Scale the RGB values to 0–1, subtract the ImageNet mean (0.485,
 0.456, 0.406), and divide by the standard deviation (0.229, 0.224, 0.225). Neat
 can do this with its stretch resize and the ImageNet normalization preset.
 
-**Outputs.** `logits` holds 150 class scores on a 128×128 grid, a quarter of the
-input resolution. Resize the logits bilinearly to the image size and take the
-highest-scoring class at each pixel. Class index i is entry i of `id2label` in
-the upstream `config.json`, the ADE20K order without its "other" class.
+**Outputs.** `logits` holds 150 class scores for each cell of a 128×128 grid.
+
+1. Resize `logits` bilinearly to the image's height and width.
+2. At each pixel, take the class with the highest score.
+
+Class index i is class i of the standard 150-class ADE20K scene-parsing order,
+from 0 wall, 1 building, 2 sky and 3 floor to 149 flag, which is the `id2label`
+order of the upstream `config.json`. No Neat decoder handles this output; run
+the steps on the CPU.
 
 ## Building applications
 

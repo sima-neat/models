@@ -51,7 +51,7 @@
   },
   "LicenseRef-NVIDIA-Source-Code-License-SegFormer": {
     "name": "NVIDIA Source Code License for SegFormer",
-    "summary": "Noncommercial research and evaluation use only. SiMa.ai does not offer this model for download.",
+    "summary": "Noncommercial research and evaluation use only, including for derivative works. Redistribution must include the license and keep its notices. SiMa.ai does not offer this model for download.",
     "downloadable": false
   },
   "LicenseRef-OpenStereo-Academic": {
