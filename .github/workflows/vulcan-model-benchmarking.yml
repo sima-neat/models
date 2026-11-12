@@ -266,9 +266,6 @@ jobs:
       - name: Install registry publication tooling
         run: python -m pip install .
 
-      - name: Require the measured revision's board-stage tooling
-        run: scripts/require_source_board_tooling.sh _source
-
       - name: Resolve benchmark job settings
         id: settings
         env:
@@ -276,6 +273,9 @@ jobs:
           BUILD_PROFILE_ID: ${{ inputs.build_profile_id }}
           STAGES: ${{ inputs.stages }}
         run: model-registry benchmark-job "_source/models/$MODEL_ID" --build-profile "$BUILD_PROFILE_ID" --stages "$STAGES" >> "$GITHUB_OUTPUT"
+
+      - name: Require the measured revision's board-stage tooling
+        run: scripts/require_source_board_tooling.sh _source "${{ steps.settings.outputs.backend }}"
 
       - name: Configure authenticated production registry reads
         if: >-

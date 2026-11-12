@@ -257,6 +257,30 @@ def test_image_dataset_uses_native_decode_timings_without_a_text_prefill_rate():
     assert "draft_contribution_pct" in metrics
 
 
+@pytest.mark.parametrize("target_tools,baseline_tools", [(True, True), (False, True), (True, False), (False, False)])
+def test_bfcl_requires_native_tool_support_in_both_deployments(monkeypatch, tmp_path, target_tools, baseline_tools):
+    import sys
+    from types import SimpleNamespace
+
+    support = {"target": target_tools, "baseline": baseline_tools}
+
+    def tokenizer(path, *, local_files_only):
+        assert local_files_only
+        template = "{{ tools }}" if support[Path(path).parent.name] else "{{ messages }}"
+        return SimpleNamespace(chat_template=template)
+
+    monkeypatch.setitem(sys.modules, "transformers", SimpleNamespace(
+        AutoTokenizer=SimpleNamespace(from_pretrained=tokenizer)))
+    monkeypatch.setattr(bench, "_target", lambda path: path)
+    names, skipped = bench._speculative_datasets(tmp_path / "target", tmp_path / "baseline", vision=True)
+    unsupported = not (target_tools and baseline_tools)
+    assert ("bfcl-v3" not in names) == unsupported
+    assert set(names) == set((*bench.TEXT_DATASETS, *bench.IMAGE_DATASETS)) - set(skipped)
+    assert set(skipped) == ({"bfcl-v3"} if unsupported else set())
+    if skipped:
+        assert skipped["bfcl-v3"] == f"{'baseline' if target_tools else 'target'} tokenizer has no native tool template"
+
+
 def test_dataset_runner_reuses_mole_with_no_sample_limit_and_excludes_warmup(monkeypatch, tmp_path):
     import sys
     from contextlib import contextmanager
@@ -330,7 +354,8 @@ def test_declared_baseline_stages_its_deployment_and_records_the_compilation(mon
     assert receipt["deployment"] == "gemma_4_e2b_it_textonly/w4a16/model/deployment"
 
 
-def test_speculative_publication_registers_both_models_and_per_dataset_counts(tmp_path):
+@pytest.mark.parametrize("skip_bfcl", [False, True])
+def test_speculative_publication_registers_both_models_and_per_dataset_counts(tmp_path, skip_bfcl):
     import hashlib
 
     baseline_model = "gemma_4_e2b_it_textonly"
@@ -343,8 +368,11 @@ def test_speculative_publication_registers_both_models_and_per_dataset_counts(tm
         (profile / "compile-outputs.json").write_text(json.dumps({"outputs": [{
             "component_id": "model", "artifact_path": "model/deployment-manifest.json", "artifact_sha256": digest,
         }]}))
+    skipped = {"bfcl-v3": "baseline tokenizer has no native tool template"} if skip_bfcl else {}
     workloads = []
     for name in bench.TEXT_DATASETS:
+        if name in skipped:
+            continue
         workload = dataset_workload(name)
         workload["baseline"] = dataset_workload(name, ordinary=True)
         workload["metrics"] = bench.workload_metrics(workload)
@@ -353,17 +381,24 @@ def test_speculative_publication_registers_both_models_and_per_dataset_counts(tm
         "settings": {"max_context": 4096, "image_size": None, "decoding": "speculative", "repetitions": 1},
         "baseline": {"model_id": baseline_model, "build_profile_id": "w4a16",
                      "compile_run_id": "00000000-0000-4000-8000-000000000001", "artifact_sha256": digest}}
+    if skipped:
+        generation["skipped_workloads"] = skipped
     document = from_generation(generation, {"llima": "0.6.0", "mole": "0.6.0", "build": {}}).document
     calls, _ = publish(tmp_path, target_model, "w4a16", "performance", document)
     inputs = [path for _, path, _ in calls if "/inputs/" in path]
     assert any(path.endswith("/baseline-model-model") for path in inputs)
     measurements = next(body["measurements"] for _, path, body in calls if path.endswith("/measurements/batch"))
-    assert {row["dimensions"]["dataset"] for row in measurements} == set(bench.TEXT_DATASETS)
+    assert {row["dimensions"]["dataset"] for row in measurements} == set(bench.TEXT_DATASETS) - set(skipped)
     assert {row["dimensions"]["role"] for row in measurements} == {"target", "baseline"}
     assert all(row["sample_count"] == 3 for row in measurements)
     assert any(row["name"] == "model.generation.decode_speedup" for row in measurements)
     summary = next(body["summary"] for _, path, body in calls if "/test-results/" in path)
+    assert summary["generation"].get("skipped_workloads", {}) == skipped
     assert "requests" not in summary["generation"]["workloads"][0]
     assert "requests" not in summary["generation"]["workloads"][0]["baseline"]
     assert summary["generation"]["workloads"][0]["metrics"] == workloads[0]["metrics"]
     assert document["generation"]["workloads"][0]["requests"]  # The artifact remains complete.
+    if skipped:
+        generation.pop("skipped_workloads")
+        with pytest.raises(ValueError, match="do not cover"):
+            bench.validate_report(generation)

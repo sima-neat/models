@@ -115,7 +115,10 @@ def validate_report(result: dict[str, Any]) -> None:
         raise ValueError("generation benchmark did not complete")
     if speculative:
         names = (*TEXT_DATASETS, *(IMAGE_DATASETS if settings.get("image_size") else ()))
-        expected = [f"dataset_{name}" for name in names]
+        skipped = report.get("skipped_workloads", {})
+        if set(skipped) - {"bfcl-v3"} or any(not reason for reason in skipped.values()):
+            raise ValueError("only BFCL may be skipped, with an explicit reason")
+        expected = [f"dataset_{name}" for name in names if name not in skipped]
         if not report.get("baseline"):
             raise ValueError("speculative benchmarks require an ordinary baseline")
     else:
@@ -147,6 +150,19 @@ def _config(deployment: Path) -> dict:
 
 def _speculative(config: dict) -> bool:
     return bool(config["lm_cfg"].get("speculative_decoding_cfg"))
+
+
+def _speculative_datasets(deployment: Path, baseline: Path, vision: bool) -> tuple[tuple, dict]:
+    from transformers import AutoTokenizer
+
+    names = (*TEXT_DATASETS, *(IMAGE_DATASETS if vision else ()))
+    for role, path in (("target", deployment), ("baseline", baseline)):
+        tokenizer = AutoTokenizer.from_pretrained(str(_target(path) / "devkit"), local_files_only=True)
+        # Match MoLE's native-tool-template requirement before either deployment is measured.
+        if "tools" not in str(tokenizer.chat_template):
+            reason = f"{role} tokenizer has no native tool template"
+            return tuple(name for name in names if name != "bfcl-v3"), {"bfcl-v3": reason}
+    return names, {}
 
 
 @contextmanager
@@ -344,7 +360,9 @@ def run_benchmark(deployment: Path, output: Path, baseline: Path | None = None) 
     if baseline_config and (baseline_config["pipeline_cfg"]["max_num_tokens"] != context
                             or baseline_config.get("vm_cfg") != vision):
         raise ValueError("baseline must have the same context and vision encoder configuration")
-    names = (*TEXT_DATASETS, *(IMAGE_DATASETS if vision else ()))
+    names, skipped = _speculative_datasets(deployment, baseline_deployment, bool(vision)) if speculative else ((), {})
+    for name, reason in skipped.items():
+        print(f"Skipping {name} for both deployments: {reason}", flush=True)
     threads = torch.get_num_threads()
     try:
         torch.set_num_threads(1)
@@ -378,6 +396,8 @@ def run_benchmark(deployment: Path, output: Path, baseline: Path | None = None) 
                    "excluded": "model loading, network transport and dataset preparation"}}
     if speculative:
         report["baseline"] = baseline_identity
+        if skipped:
+            report["skipped_workloads"] = skipped
     validate_report(report)
     (output / "benchmark-report.json").write_text(json.dumps(report, indent=2, allow_nan=False) + "\n")
     installed = subprocess.check_output(["dpkg-query", "-W", "-f=${Version}", "sima-lmm-core"], text=True).strip()

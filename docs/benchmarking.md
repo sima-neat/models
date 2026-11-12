@@ -510,7 +510,9 @@ first token plus 256 decode steps.
 
 Speculative profiles declare an ordinary model/profile in `benchmark_baseline`.
 Both deployments use the same dataset sources, prompts, context and output
-budgets. Reports include TTFT, text prefill TPS, decode TPS excluding the first
+budgets. BFCL is skipped for both deployments if either lacks a native tool
+template; the reason is recorded in the log and JSON report.
+Reports include TTFT, text prefill TPS, decode TPS excluding the first
 token, draft contribution (accepted/generated tokens) and speedup (aggregate
 speculative/ordinary decode TPS). Power, temperature, CPU and memory are recorded
 per workload and deployment. Failed requests prevent publication.

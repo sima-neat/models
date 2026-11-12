@@ -845,14 +845,18 @@ def test_cleanup_removes_input_and_both_evidence_artifacts(tmp_path: Path) -> No
     ])
 
 
-@pytest.mark.parametrize("relative", [
-    "tools/model_registry/report_publication.py",
-    "tools/model_registry/benchmark_declarations.py", "tools/model_registry/model.py",
+@pytest.mark.parametrize("relative,backend,rejected", [
+    ("tools/model_registry/report_publication.py", "core", True),
+    ("tools/model_registry/benchmark_declarations.py", "core", True),
+    ("tools/model_registry/model.py", "core", True),
+    ("tools/model_report/generation_benchmark.py", "core", False),
+    ("tools/model_report/generation_benchmark.py", "llima", True),
 ])
-def test_board_runs_require_the_measured_revisions_tooling(tmp_path, relative) -> None:
+def test_board_runs_require_the_measured_revisions_tooling(tmp_path, relative, backend, rejected) -> None:
     stage = load_workflow()["jobs"]["stage"]
     guard = step(stage["steps"], "Require the measured revision's board-stage tooling")
-    assert guard["run"] == "scripts/require_source_board_tooling.sh _source"
+    assert guard["run"] == 'scripts/require_source_board_tooling.sh _source "${{ steps.settings.outputs.backend }}"'
+    assert stage["steps"].index(step(stage["steps"], "Resolve benchmark job settings")) < stage["steps"].index(guard)
     source = tmp_path / "_source"
     for item in {*PERFORMANCE_TOOLING, *ACCURACY_TOOLING, *LLIMA_PERFORMANCE_TOOLING,
                  "tools/model_registry/benchmark_declarations.py", "tools/model_registry/model.py"}:
@@ -867,7 +871,7 @@ def test_board_runs_require_the_measured_revisions_tooling(tmp_path, relative) -
 
     def check() -> subprocess.CompletedProcess:
         return subprocess.run(
-            [ROOT / "scripts" / "require_source_board_tooling.sh", source],
+            [ROOT / "scripts" / "require_source_board_tooling.sh", source, backend],
             cwd=ROOT, env=env, capture_output=True, text=True,
         )
 
@@ -875,8 +879,9 @@ def test_board_runs_require_the_measured_revisions_tooling(tmp_path, relative) -
     changed = source / relative
     changed.write_text(changed.read_text(encoding="utf-8") + "# newer\n", encoding="utf-8")
     result = check()
-    assert result.returncode != 0
-    assert relative in result.stderr
+    assert (result.returncode != 0) == rejected
+    if rejected:
+        assert relative in result.stderr
 
 
 @pytest.mark.parametrize(
