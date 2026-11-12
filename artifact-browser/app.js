@@ -71,7 +71,7 @@ function setTheme(theme) {
 // The page a link opens: a model page (`run`, or `model` and `variant`), the Compare page (`view` and
 // `build`), or the catalog when none is set.
 function deletePageParams(url) {
-  ["run", "model", "variant", "view", "build", "compare_task", "compare_precision"].forEach((name) => url.searchParams.delete(name));
+  ["run", "model", "variant", "view", "build", "compare_task", "compare_precision", "compare_graph", "compare_workload"].forEach((name) => url.searchParams.delete(name));
 }
 
 function writeVariantUrl(run) {
@@ -424,6 +424,7 @@ async function initialize() {
   if (compareLink) state.comparePicks = picksFromUrl(link);
   if (compareLink) {
     state.compareTask = link.get("compare_task") || "";
+    state.compareWorkload = link.get("compare_workload") || "";
   }
   const linkedVariant = link.get("model") && link.get("variant")
     ? { modelId: link.get("model"), profile: link.get("variant") } : null;
@@ -771,9 +772,12 @@ elements["compare-pane"].addEventListener("change", (event) => {
     if (!add.value) return;
     toggleComparison(add.value);
   } else {
-    const fields = {task: "compareTask", axis: "compareAxis"};
+    const fields = {task: "compareTask", axis: "compareAxis", workload: "compareWorkload"};
     state[fields[key]] = control.value;
-    if (key === "task") renderComparison();
+    if (key === "task") {
+      state.compareWorkload = "";
+      renderComparison();
+    }
     else updateComparisonChart();
   }
   const url = new URL(location.href);
@@ -850,6 +854,13 @@ window.addEventListener("scroll", (event) => {
 window.addEventListener("resize", hideExecutionTooltip);
 window.addEventListener("popstate", hideExecutionTooltip);
 elements["detail-pane"].addEventListener("input", updateLayerAnalysis);
+elements["detail-pane"].addEventListener("change", (event) => {
+  const picker = event.target.closest("[data-genai-workload]");
+  if (!picker) return;
+  picker.closest("[data-generative-benchmark]").querySelectorAll("[data-genai-details]").forEach((panel) => {
+    panel.hidden = panel.dataset.genaiDetails !== picker.value;
+  });
+});
 elements["detail-pane"].addEventListener("click", updateLayerAnalysis);
 elements["detail-pane"].addEventListener("click", selectComponentPanel);
 elements["detail-pane"].addEventListener("click", (event) => {

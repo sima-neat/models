@@ -24,6 +24,11 @@
     "summary": "Responsible AI license. Redistribution must include the license and pass its use restrictions on to every recipient.",
     "downloadable": true
   },
+  "LicenseRef-DINOv3": {
+    "name": "DINOv3 License",
+    "summary": "Use and redistribution of the model and its derivatives are subject to Meta’s DINOv3 License, which must accompany every copy and bars military, nuclear, espionage, weapons and other uses that trade controls prohibit. Include the license.",
+    "downloadable": true
+  },
   "LicenseRef-LFM-Open-1.0": {
     "name": "LFM Open License v1.0",
     "summary": "Use and redistribution are subject to Liquid AI's license. Commercial use by organizations meeting its revenue threshold requires a separate license. Include the license and notices.",

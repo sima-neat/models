@@ -38,7 +38,7 @@ for these terms.
 | Phase | What runs | What it proves |
 | --- | --- | --- |
 | Local development | Validation, verified downloads, each declared compile invocation, MPK checks, and the performance and accuracy stages on a DevKit. | The author has reproducible evidence for every submitted build. |
-| Pull request | `Target Branch Checks`: unit tests with catalog, taxonomy, and compiler-pin validation, the package build, and the model browser checks, on GitHub-hosted runners. | The committed contract is valid on the merge result. Pull requests do **not** run recipe or surgery code on self-hosted runners. |
+| Pull request | `Target Branch Checks`: ruff, unit tests with catalog, taxonomy, compiler-pin, and committed-file validation, the package build, and the model browser checks, on GitHub-hosted runners. | The committed contract is valid on the merge result. Pull requests do **not** run recipe or surgery code on self-hosted runners. |
 | Trusted automation | On a push, each stage whose fingerprint has no completed registry run: compilation, publication, then the benchmarks. | Staging artifacts, measurements, and provenance come from the reviewed revision. Production is an explicit protected maintainer action. |
 
 The pinned Model Compiler and a compatible Modalix DevKit are submission

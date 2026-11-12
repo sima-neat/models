@@ -1,5 +1,6 @@
 build-on-demand: true
 display_name: Llama 3.1 Swallow 8B Instruct v0.5 DFlash
+parameter_count_billion: 8.0
 description: Generates text using a draft assistant whose proposals are checked by the target model.
 model_type: llm
 tasks:
@@ -64,3 +65,5 @@ build_profiles:
           speculative_method: dflash
           draft_precision: a16w8
           speculative_block_size: 8
+
+performance: {}

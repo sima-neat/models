@@ -27,7 +27,9 @@ def test_manual_frontend_deployment_is_independent_and_gated():
     checkout, authorize = jobs['authorize']['steps']
     assert checkout['uses'] == 'actions/checkout@v6'
     assert checkout['with'] == {'ref': '${{ github.sha }}', 'persist-credentials': 'false'}
-    assert authorize['with']['script'].strip() == "await require('./scripts/authorize-model-browser-deployment.cjs')({github, context, core});"
+    assert authorize['with']['script'].strip() == (
+        "await require('./scripts/authorize-model-browser-deployment.cjs')({github, context, core});"
+    )
     assert jobs['build']['needs'] == jobs['resolve-vulcan-config']['needs'] == 'authorize'
     assert jobs['publish']['needs'] == ['authorize', 'resolve-vulcan-config', 'build']
     assert jobs['build']['with']['environment'] == '${{ inputs.environment }}'
@@ -40,14 +42,25 @@ def test_manual_frontend_deployment_is_independent_and_gated():
 
 
 @pytest.mark.parametrize('data, allowed', [
-    ({'can_admins_bypass': False, 'protection_rules': [{'type': 'required_reviewers', 'reviewers': [{'type': 'Team', 'reviewer': {'id': 20041032}}]}]}, True),
+    ({'can_admins_bypass': False, 'protection_rules': [
+        {'type': 'required_reviewers', 'reviewers': [{'type': 'Team', 'reviewer': {'id': 20041032}}]}]}, True),
     ({'protection_rules': []}, False),
-    ({'can_admins_bypass': True, 'protection_rules': [{'type': 'required_reviewers', 'reviewers': [{'type': 'Team', 'reviewer': {'id': 20041032}}]}]}, False),
-    ({'can_admins_bypass': False, 'protection_rules': [{'type': 'required_reviewers', 'reviewers': [{'type': 'Team', 'reviewer': {'id': 1}}]}]}, False),
+    ({'can_admins_bypass': True, 'protection_rules': [
+        {'type': 'required_reviewers', 'reviewers': [{'type': 'Team', 'reviewer': {'id': 20041032}}]}]}, False),
+    ({'can_admins_bypass': False, 'protection_rules': [
+        {'type': 'required_reviewers', 'reviewers': [{'type': 'Team', 'reviewer': {'id': 1}}]}]}, False),
 ])
 def test_approval_configuration_guard_fails_closed(data, allowed):
-    script = f'await (await import({json.dumps((ROOT / "scripts/authorize-model-browser-deployment.cjs").as_uri())})).default({{github, context, core}});'
-    harness = 'process.env.DEPLOY_ENV="staging"; process.env.DEPLOY_AUDIENCE="developer"; process.env.GITHUB_TRIGGERING_ACTOR="owner"; process.env.GITHUB_RUN_ATTEMPT="1"; const context={repo:{},sha:"fixture",runAttempt:1,actor:"owner"}; const core={notice:()=>{}}; const github={request:async()=>({data:[{state:"approved",user:{login:"owner"},environments:[{name:"model-browser-deploy"}]}]}),rest:{repos:{getEnvironment:async()=>({data:' + json.dumps(data) + '})}}};\n'
+    authorizer = json.dumps((ROOT / "scripts/authorize-model-browser-deployment.cjs").as_uri())
+    script = f'await (await import({authorizer})).default({{github, context, core}});'
+    harness = (
+        'process.env.DEPLOY_ENV="staging"; process.env.DEPLOY_AUDIENCE="developer"; '
+        'process.env.GITHUB_TRIGGERING_ACTOR="owner"; process.env.GITHUB_RUN_ATTEMPT="1"; '
+        'const context={repo:{},sha:"fixture",runAttempt:1,actor:"owner"}; const core={notice:()=>{}}; '
+        'const github={request:async()=>({data:[{state:"approved",user:{login:"owner"},'
+        'environments:[{name:"model-browser-deploy"}]}]}),'
+        'rest:{repos:{getEnvironment:async()=>({data:' + json.dumps(data) + '})}}};\n'
+    )
     result = subprocess.run(['node', '--input-type=module', '-e', harness + script], capture_output=True)
     assert (result.returncode == 0) == allowed
 
@@ -61,10 +74,19 @@ def test_reusable_frontend_build_applies_environment_for_build_and_smoke():
 
 @pytest.mark.parametrize('approver,attempt', [('someone-else',1), ('owner',2), ('',1)])
 def test_non_owner_approval_or_rerun_cannot_deploy(approver, attempt):
-    script = f'await (await import({json.dumps((ROOT / "scripts/authorize-model-browser-deployment.cjs").as_uri())})).default({{github, context, core}});'
-    data = {'can_admins_bypass': False, 'protection_rules': [{'type': 'required_reviewers', 'reviewers': [{'type': 'Team', 'reviewer': {'id': 20041032}}]}]}
+    authorizer = json.dumps((ROOT / "scripts/authorize-model-browser-deployment.cjs").as_uri())
+    script = f'await (await import({authorizer})).default({{github, context, core}});'
+    data = {'can_admins_bypass': False, 'protection_rules': [
+        {'type': 'required_reviewers', 'reviewers': [{'type': 'Team', 'reviewer': {'id': 20041032}}]}]}
     approvals = [{'state':'approved','user':{'login':approver},'environments':[{'name':'model-browser-deploy'}]}]
-    harness = 'process.env.DEPLOY_ENV="staging"; process.env.DEPLOY_AUDIENCE="developer"; process.env.GITHUB_TRIGGERING_ACTOR="owner"; process.env.GITHUB_RUN_ATTEMPT="1"; const context={repo:{},sha:"fixture",actor:"owner",runAttempt:' + str(attempt) + '}; process.env.GITHUB_RUN_ATTEMPT=String(context.runAttempt); const core={notice:()=>{}}; const github={request:async()=>({data:' + json.dumps(approvals) + '}),rest:{repos:{getEnvironment:async()=>({data:' + json.dumps(data) + '})}}};'
+    harness = (
+        'process.env.DEPLOY_ENV="staging"; process.env.DEPLOY_AUDIENCE="developer"; '
+        'process.env.GITHUB_TRIGGERING_ACTOR="owner"; process.env.GITHUB_RUN_ATTEMPT="1"; '
+        'const context={repo:{},sha:"fixture",actor:"owner",runAttempt:' + str(attempt) + '}; '
+        'process.env.GITHUB_RUN_ATTEMPT=String(context.runAttempt); const core={notice:()=>{}}; '
+        'const github={request:async()=>({data:' + json.dumps(approvals) + '}),'
+        'rest:{repos:{getEnvironment:async()=>({data:' + json.dumps(data) + '})}}};'
+    )
     result = subprocess.run(['node','--input-type=module','-e',harness+script],capture_output=True)
     assert result.returncode != 0
 

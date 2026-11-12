@@ -1,5 +1,7 @@
 build-on-demand: true
 display_name: Gemma 4 E2B Text
+# Includes embeddings, rather than the effective E2B size: https://ai.google.dev/gemma/docs/core/model_card_4
+parameter_count_billion: 5.1
 description: Generates text from instructions and conversation history.
 model_type: llm
 tasks: [text_generation]
@@ -42,3 +44,5 @@ build_profiles:
     components:
       model:
         parameters: {precision: a16w4, max_num_tokens: 4096, language_group_size: 128}
+
+performance: {}

@@ -2,3 +2,4 @@
 required_metrics:
   image_classification: [top1_accuracy]
   image_text_embedding: [top1_accuracy]
+  image_embedding: [knn_top1_accuracy]

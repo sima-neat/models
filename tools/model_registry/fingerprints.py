@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from .benchmark_declarations import ACCURACY_REQUIREMENTS, FP32_BASELINE_SCRIPT, PERFORMANCE_REQUIREMENTS, SCRIPTS
-from .dependencies import resolve_benchmark_runtime
+from .dependencies import resolve_benchmark_runtime, resolve_model_compiler
 from .errors import ValidationError
 from .model import CONVERSION_FILES, SCRIPTS_DIR, build_profile_for, compile_invocations_for, load_and_validate_model
 from .package import package_resources
@@ -43,6 +43,12 @@ BOARD_STAGE_TOOLING = (
     "tools/model_registry/report_publication.py",
 )
 PERFORMANCE_TOOLING = (*BOARD_STAGE_TOOLING, "scripts/run_model_performance.sh")
+LLIMA_PERFORMANCE_TOOLING = (
+    "tools/model_report/generation_benchmark.py",
+    "tools/model_report/board_telemetry.py",
+    "scripts/install_mole_benchmark_runtime.sh",
+    "scripts/stage_benchmark_inputs.sh",
+)
 ACCURACY_TOOLING = (
     *BOARD_STAGE_TOOLING,
     "tools/model_registry/runtime_files.py",
@@ -227,7 +233,7 @@ def benchmark_fingerprint(
 ) -> str:
     """Identity of a build profile's whole-model benchmark on a DevKit.
 
-    ``builds`` maps each component ID to its compile ``run_id`` and ``artifact_sha256``; the fingerprint covers
+    ``builds`` maps each component ID to its compile ``run_id`` and, for MPKs, ``artifact_sha256``; it covers
     the build of every component, the stage's declaration, the model's script, and the shared tooling. An
     accuracy declaration holds each dataset it evaluates with the metrics its datasets/<id>.yaml requires for
     the model's tasks, so changing another task's entry or another dataset's file keeps this fingerprint. The
@@ -243,8 +249,20 @@ def benchmark_fingerprint(
         raise ValidationError(f"{stage} of {model_id}/{build_profile_id} needs compiled component {missing[0]!r}")
     model_dir = f"models/{model_id}"
     required = [f"{model_dir}/{SCRIPTS[stage]}", *(PERFORMANCE_TOOLING if stage == "performance" else ACCURACY_TOOLING)]
+    native = model["components"][0]["interface"]["format"] == "huggingface"
+    if native and stage == "performance":
+        required.extend(LLIMA_PERFORMANCE_TOOLING)
+    runtime = resolve_benchmark_runtime(root)
+    if not native:
+        runtime.pop("llima", None)
     optional = [f"{model_dir}/{ACCURACY_REQUIREMENTS if stage == 'accuracy' else PERFORMANCE_REQUIREMENTS}"]
     baseline = build_profile_for(model, build_profile_id).get("benchmark_baseline") if stage == "performance" else None
+    if baseline:
+        reference = load_and_validate_model(root / "models" / baseline["model_id"])
+        invocation = compile_invocations_for(build_profile_for(reference, baseline["build_profile"]))[0]
+        baseline = {**baseline, "compile_fingerprint": compile_fingerprint(
+            root, reference["id"], baseline["build_profile"], invocation["id"],
+            resolve_model_compiler(root)["identity"])}
     return _fingerprint({
         "stage": stage,
         "model_id": model_id,
@@ -252,12 +270,13 @@ def benchmark_fingerprint(
         "builds": {
             component_id: {
                 "compile_run_id": builds[component_id]["run_id"],
-                "artifact_sha256": builds[component_id]["artifact_sha256"],
+                # Completed native runs are immutable; selection records identify them without file digests.
+                **({} if native else {"artifact_sha256": builds[component_id]["artifact_sha256"]}),
             }
             for component_id in components
         },
         stage: {key: value for key, value in model[stage].items() if key != "build_profiles"},
         **({"benchmark_baseline": baseline} if baseline else {}),
         "files": _file_digests(root, required, optional),
-        "runtime": resolve_benchmark_runtime(root),
+        "runtime": runtime,
     })

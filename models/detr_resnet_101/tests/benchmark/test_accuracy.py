@@ -8,7 +8,6 @@ from types import ModuleType, SimpleNamespace
 from typing import Any
 
 import numpy as np
-import onnx
 import pytest
 from model_registry.model_tests import measured_shortfalls
 
@@ -84,6 +83,8 @@ def test_mpk_argument_names_the_model_component(scorer: ModuleType) -> None:
 def test_fp32_baseline_feeds_the_onnx_the_nchw_image_and_reads_both_outputs(
     tmp_path: Path, load_script: Callable[[str], ModuleType]
 ) -> None:
+    # The DevKit runs these tests in PyNeat, which has neither package; the host checks run this one.
+    onnx = pytest.importorskip("onnx")
     pytest.importorskip("onnxruntime")
     baseline = load_script("fp32_baseline_accuracy")
     helper = onnx.helper

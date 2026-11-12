@@ -258,12 +258,23 @@ jobs:
           aws-region: us-west-2
           role-session-name: models-promotion-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
           role-to-assume: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLISHER_ROLE_ARN }}
-      - name: Report authoritative backend state
+      - name: Resolve the promoted catalog's source revision
+        id: benchmark_source
+        run: python scripts/model_promotion.py benchmark-source
+      - name: Check out the target's benchmark definitions
+        if: steps.benchmark_source.outputs.revision != ''
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ steps.benchmark_source.outputs.revision }}
+          path: _benchmark-source
+          persist-credentials: false
+      - name: Refresh benchmark references and report authoritative backend state
         id: report
         env:
           GH_TOKEN: ${{ github.token }}
           SLACK_VULCAN_EVENT_CHANNEL_ID: ${{ vars.SLACK_VULCAN_EVENT_CHANNEL_ID }}
           APPROVAL_RESULT: ${{ needs.approve.result }}
+          BENCHMARK_CATALOG_REVISION: ${{ steps.benchmark_source.outputs.revision }}
         run: python scripts/model_promotion.py report
       - name: Notify promotion outcome in Slack
         if: always() && steps.report.outputs.completion_ready == 'true'

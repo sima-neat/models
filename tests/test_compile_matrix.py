@@ -106,7 +106,7 @@ def test_matrix_entries_carry_the_stages_each_profile_benchmarks() -> None:
 
     assert [(entry["model_id"], entry["compile_invocation_id"], entry["component_ids"], entry["stages"])
             for entry in matrix["include"]] == [
-        ("qwen3_5_0_8b", "w4a16", ["model"], []),
+        ("qwen3_5_0_8b", "w4a16", ["model"], ["performance"]),
         ("resnet_50", "w16a16", ["model"], ["performance", "accuracy"]),
         ("resnet_50", "w8a16", ["model"], ["performance", "accuracy"]),
         ("resnet_50", "w8a8", ["model"], ["performance", "accuracy"]),
@@ -676,7 +676,7 @@ def test_compile_tooling_is_scoped_to_backend(tmp_path, relative, onnx_changed):
     native = load_and_validate_model(ROOT / "models" / native_id)
     entry = build_matrix({native_id: native}, [native_id])["include"][0]
     assert entry["runner_script"] == "scripts/run_llima_compilation.sh"
-    assert entry["stages"] == []
+    assert entry["stages"] == ["performance"]
     repository = tmp_path / "repository"
     for folder in ("schemas", "taxonomies", "datasets", "deps", "scripts", "tools"):
         shutil.copytree(ROOT / folder, repository / folder, ignore=shutil.ignore_patterns("__pycache__"))
@@ -798,6 +798,20 @@ def test_benchmark_baseline_changes_only_its_profiles_performance_fingerprint():
     assert benchmark_fingerprint(ROOT, model, "w8a8_w16a16", builds, "accuracy") == accuracy
     model["build_profiles"][0].pop("benchmark_baseline")
     assert benchmark_fingerprint(ROOT, model, "w8a8_w16a16", builds, "performance") == before
+
+
+@pytest.mark.parametrize("dependency", ["neat-core", "llima"])
+def test_native_performance_fingerprint_tracks_core_and_mole(tmp_path, dependency):
+    model_dir = _copy_repository(tmp_path, "qwen3_0_6b")
+    model = load_and_validate_model(model_dir)
+    builds = {"model": {"run_id": "compiled-target"}}
+    before = benchmark_fingerprint(tmp_path, model, "w4a16", builds, "performance")
+    path = tmp_path / "deps/manifest.json"
+    manifest = json.loads(path.read_text())
+    manifest[dependency]["install_target"] = f"{'core' if dependency == 'neat-core' else 'llima'}@develop:{'1' * 12}"
+    path.write_text(json.dumps(manifest))
+
+    assert benchmark_fingerprint(tmp_path, model, "w4a16", builds, "performance") != before
 
 
 def test_performance_scope_changes_performance_fingerprint_without_changing_accuracy():

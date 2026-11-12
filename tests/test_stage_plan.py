@@ -26,6 +26,7 @@ from model_registry.registry import RegistryPublicationError, build_catalog_snap
 from model_registry.stage_plan import (
     is_long_lived,
     merge_catalog_sources,
+    plan_promoted_benchmarks,
     plan_stages,
     resolve_base_branches,
 )
@@ -36,6 +37,59 @@ SCHEMA = ROOT / "schemas" / "model.schema.json"
 TAXONOMY = ROOT / "taxonomies" / "model-taxonomy.yaml"
 COMPILER_VERSION = resolve_model_compiler(ROOT)["identity"]
 
+
+
+@pytest.mark.parametrize("branch", ["develop", "main"])
+def test_promoted_batch_queues_only_missing_stages_and_excludes_generative_tasks(branch):
+    def model(name, kind="vision", approved=True, fingerprints=None, tasks=None):
+        return {"id": name, "categories": {"model_type": kind, "tasks": tasks or ["image_classification"]},
+                "build_on_demand": True,
+                "approved_deployments": {"w8a8": {"deployment_id": name}} if approved else {},
+                "benchmark_fingerprints": {"w8a8": fingerprints or {"performance": "a" * 64, "accuracy": "b" * 64}}}
+
+    document = {"catalog_revision": "c" * 40, "models": [
+        model("missing_accuracy"), model("measured", fingerprints={"performance": "a" * 64}),
+        model("unapproved", approved=False), model("language", "llm", tasks=["text_generation"]),
+        model("vision_language", "vlm", tasks=["visual_question_answering"]),
+        model("clip_vit_b_16", "vlm", tasks=["image_text_embedding"]),
+        model("siglip2_vit_b_16", "vlm", tasks=["image_text_embedding"]),
+        model("yolo_world_l", "vlm", tasks=["object_detection"]),
+        model("yolo_world_m", "vlm", tasks=["object_detection"]),
+        model("no_reference", fingerprints={"other": "d" * 64}),
+    ]}
+    queried = []
+
+    def read(url):
+        if "/catalogs/current?" in url:
+            return {"catalog": {"document": document}}
+        queried.append(url)
+        if "fingerprint=" + "b" * 64 in url:
+            raise RegistryPublicationError("HTTP 404 fingerprint_not_found")
+        return {"run": {"id": "completed"}}
+
+    result = plan_promoted_benchmarks(branch=branch, stages=["performance", "accuracy"], read=read,
+                                      read_api_url="https://registry.example.invalid")
+    assert result["source_branch"] == branch and result["source_sha"] == "c" * 40
+    assert result["include"] == [
+        {"model_id": name, "build_profile_id": "w8a8", "compile_invocation_id": "w8a8", "stages": ["accuracy"]}
+        for name in ("missing_accuracy", "clip_vit_b_16", "siglip2_vit_b_16", "yolo_world_l", "yolo_world_m")
+    ]
+    assert {row["model_id"]: row["reason"] for row in result["skipped"]} == {
+        "measured": "already measured", "no_reference": "no requested benchmark references",
+    }
+    assert len(queried) == 11
+    result = plan_promoted_benchmarks(branch=branch, stages=["performance"], read=read,
+                                      read_api_url="https://registry.example.invalid")
+    assert result["include"] == []
+
+
+def test_promoted_batch_rejects_wrong_scope_before_reading_registry():
+    def read(url):
+        pytest.fail("Invalid batch scope must fail before querying the registry")
+
+    for branch, stages in [("feature/test", ["performance"]), ("develop", ["compile"]), ("main", [])]:
+        with pytest.raises(ValidationError):
+            plan_promoted_benchmarks(branch=branch, stages=stages, read=read, read_api_url="https://registry.example.invalid")
 
 
 @pytest.fixture
@@ -203,6 +257,23 @@ def test_merge_keeps_the_first_unmatched_profile_and_drops_models_outside_head()
     assert [model["id"] for model in merged["models"]] == ["x"]
     assert _origins(merged) == {("builds", "p1"): "own", ("packages", "p1"): "own"}
     assert merge_catalog_sources([], MERGE_MATRIX) is None
+
+
+def test_merge_preserves_matching_approved_deployments():
+    selection = {"requirements": {"invocations": [{"component_ids": ["model"], "compile_fingerprint": "k1"}]}}
+    own = {"models": [{"id": "x", "builds": [], "packages": [], "approved_deployments": {"p1": selection},
+                       "benchmark_fingerprints": {"p1": {"performance": "selected-benchmark"}}}]}
+    base = _source(("p1", "k1", "base"))
+
+    merged = merge_catalog_sources([own, base], MERGE_MATRIX)["models"][0]
+
+    assert merged["approved_deployments"] == {"p1": selection}
+    assert merged["benchmark_fingerprints"] == {"p1": {"performance": "selected-benchmark"}}
+    assert merged["builds"] == merged["packages"] == []
+    selection["requirements"]["invocations"][0]["compile_fingerprint"] = "stale"
+    merged = merge_catalog_sources([own, base], MERGE_MATRIX)["models"][0]
+    assert "approved_deployments" not in merged
+    assert merged["builds"][0]["run_id"] == "base"
 
 
 def test_merge_requires_every_component_fingerprint_of_a_profile() -> None:

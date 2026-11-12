@@ -1,7 +1,6 @@
 from pathlib import Path
 
 import pytest
-
 from model_registry.model_tests import measured_shortfalls
 
 
@@ -60,7 +59,8 @@ def test_prompt_assets_load_from_files_beside_unchanged_components(
                tmp_path / "package/encoder_mpk.tar.gz" if layout == "installed" else tmp_path / "elsewhere/encoder.tgz")
     archive.parent.mkdir(parents=True, exist_ok=True)
     archive.write_bytes(b"not opened: compiler archive is independent of CPU resources")
-    actual_tokenizer, actual_table = script.prompt_assets(archive, tmp_path / "package" if layout == "explicit" else None)
+    resources = tmp_path / "package" if layout == "explicit" else None
+    actual_tokenizer, actual_table = script.prompt_assets(archive, resources)
     assert actual_tokenizer is tokenizer
     assert actual_table[49407, 0] == 3.5
     (assets / "tokenizer.json").unlink()

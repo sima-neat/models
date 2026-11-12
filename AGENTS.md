@@ -181,6 +181,7 @@ subfolders, use the target's `config.json` as `compilation.source.main_file`, an
 subfolder in `parameters.draft_model_path`. Deploy and publish the complete pair.
 An optional profile-level `benchmark_baseline` links to a normal-decoding model
 and build profile; it affects performance fingerprints, never compilation.
+See [LLiMa performance](docs/benchmarking.md#llima-text-and-image-performance).
 
 Start with one 4K profile per LLM/VLM. Declare `max_num_tokens: 4096` and
 `language_group_size` in its component parameters. Image dimensions are optional
@@ -242,6 +243,13 @@ format. A model test imports a script with the root `conftest.py` fixture
 `load_script("<name>")`, which stubs the Model Compiler and DevKit modules a
 host lacks.
 
+The benchmark tests under `tests/benchmark/` also run on the DevKit, in
+PyNeat, which has no `onnx`, `onnxruntime` or `torch`. A test that needs one
+imports it inside the test with `pytest.importorskip("onnx")`. A module-level
+import stops pytest at collection on the DevKit, and the benchmark then
+publishes no result for that stage. Pull request CI has these packages, so it
+cannot catch the mistake.
+
 A test's fixtures decide where it runs:
 
 | A test that takes | Runs | A failure |
@@ -295,9 +303,9 @@ in the same commit.
 
 - **Pull request.** `Target Branch Checks` is the only workflow that builds or
   tests a pull request, on the merge result and GitHub-hosted runners:
-  `model-registry-package.yml` runs `python -m pytest`, collects every
-  model's stage-output tests, and builds the `model-registry` package, and
-  `developer-docs.yml` checks the model browser.
+  `model-registry-package.yml` runs `ruff check .` and `python -m pytest`,
+  collects every model's stage-output tests, and builds the `model-registry`
+  package, and `developer-docs.yml` checks the model browser.
   `PR Sanitization` checks the pull request's description. Contributor code
   never runs on self-hosted runners for a pull request.
 - **Push.** Every push runs `Vulcan Model Orchestrator`. Its `portal` job builds and
@@ -322,7 +330,8 @@ in the same commit.
   and accuracy (`model_accuracy` runs) separately with `model-registry
   publish-report`, each under the profile's `model_package` run with its test
   outcome. A failed test fails its check job after publication; the completed
-  run is not benchmarked again. On-demand builds are not benchmarked.
+  run is not benchmarked again. Pushes do not benchmark on-demand builds.
+  The manual `promoted_missing` checkbox queues missing stages except `text_generation`/`visual_question_answering` models.
   A manual dispatch of the same workflow resolves its own config and runner.
 - Benchmark setup uses `neat-core.install_target` from the measured source's
   `deps/manifest.json`. `ensure-neat-core` resolves floating targets once and
@@ -349,7 +358,9 @@ in the same commit.
    `tests/`, following [adding a model](docs/adding-a-model.md) and the
    [metadata schema](docs/metadata-schema.md). Record the source model's
    published scores in `reference_metrics`.
-2. Run `python -m pytest` and `model-registry validate models/<model_id>`.
+2. Run `ruff check .`, `python -m pytest`, and `model-registry validate models/<model_id>`.
+   `tests/test_target_branch_checks.py` rejects committed files that
+   `.gitignore` excludes or that exceed 2 MiB, except its `ALLOWED_FILES`.
 3. Compile each changed build in the pinned Model Compiler with
    the backend's runner (`run_model_compilation.sh` or `run_llima_compilation.sh`)
    and check each compiled artifact with

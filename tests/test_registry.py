@@ -142,7 +142,9 @@ def test_documentation_reuse_preserves_publication_provenance_and_uploads_only_c
 
     model_id = "resnet_50"
     documentation = load_model_documentation(ROOT / "models" / model_id, "ResNet-50", repository=ROOT)
-    monkeypatch.setattr("model_registry.registry.load_models", lambda _: {model_id: {"display_name": "ResNet-50"}})
+    monkeypatch.setattr("model_registry.registry.load_models", lambda _: {
+        model_id: {"display_name": "ResNet-50", "components": [{"interface": {"format": "onnx"}}]},
+    })
     monkeypatch.setattr("model_registry.registry.load_model_documentation", lambda *args, **kwargs: documentation)
     calls = []
     sdk_clients = []
@@ -891,6 +893,10 @@ def test_catalog_snapshot_reuses_unchanged_compile_runs() -> None:
     assert first["taxonomy"]["architectures"]["resnet"]["description"]
     assert json.loads(json.dumps(first))["taxonomy"] == first["taxonomy"]
     assert all("taxonomy_version" not in model["categories"] for model in first["models"])
+    entries = {model["id"]: model for model in first["models"]}
+    assert entries["qwen3_5_0_8b"]["parameter_count_billion"] == 0.8
+    assert entries["gemma_4_e2b_it_textonly"]["parameter_count_billion"] == 5.1
+    assert "parameter_count_billion" not in entries["resnet_50"]
 
 
 def test_catalog_records_benchmark_fingerprints_bound_to_their_compile_runs() -> None:
@@ -1126,6 +1132,69 @@ def test_publish_catalog_reads_current_then_publishes_complete_snapshot(monkeypa
     assert calls[0][3] == (
         "models-catalog-develop-" + "a" * 40 + "-" + "c" * 16 + "-" + canonical_sha256(calls[0][2])[:16]
     )
+
+
+@pytest.mark.parametrize("branch", ["develop", "main"])
+@pytest.mark.parametrize("model_id,profile", [
+    ("resnet_50", "w8a8"), ("hrnet_w32", "w8a8"), ("rf_detr_nano", "w8a8_w16a16"),
+])
+def test_approved_onnx_catalog_and_manual_benchmark_use_the_same_fingerprint(
+    monkeypatch, tmp_path, branch, model_id, profile,
+):
+    """Also cover Main entries copied unchanged because their conversion was not selected."""
+    from tests.test_report_publication import performance_report, publish, registered_build
+
+    model = load_models(ROOT)[model_id]
+    model["build-on-demand"] = True
+    components = [item["id"] for item in model["components"]]
+    builds = registered_build(tmp_path / "_compiled", model_id, profile, components)
+    legacy = [{"build_profile_id": profile, "component_id": name, "compile_invocation_id": profile,
+               "run_id": "old-run", "artifact_sha256": "e" * 64, "compile_fingerprint": "f" * 64}
+              for name in components]
+    previous = {"id": model_id, "builds": legacy, "packages": [],
+                "benchmark_fingerprints": {profile: {"performance": "d" * 64}}, "approved_deployments": {profile: {
+                    "deployment_id": "selected", "requirements": {"invocations": [{
+                        "id": profile, "component_ids": components, "compile_fingerprint": "f" * 64,
+                    }], "packages": []},
+                    "artifacts": [{"component_id": name, "run_id": build["run_id"], "artifact_name": "mpk"}
+                                  for name, build in builds.items()],
+                }}}
+    catalog = {"catalog_revision": "a" * 40, "canonical_sha256": "c" * 64, "document": {"models": [previous]}}
+    reads = []
+
+    def read(url):
+        reads.append(url)
+        if "/catalogs/current?" in url:
+            return {"catalog": catalog}
+        build = next(build for build in builds.values() if f"/runs/{build['run_id']}/artifacts/mpk" in url)
+        return {"artifact": {"sha256": build["artifact_sha256"]}}
+
+    monkeypatch.setattr("model_registry.registry.load_models", lambda root: {model_id: model})
+    result = publish_catalog(repository=ROOT, branch=branch, git_sha="b" * 40,
+        api_url="https://writer.example.invalid", read_api_url="https://reader.example.invalid", aws_region="us-west-2",
+        read_request=read, request=lambda *args: {"stored": True})
+    entry = result["catalog"]["models"][0]
+    assert entry["builds"] == legacy  # Approved outputs remain server-owned.
+    assert previous["benchmark_fingerprints"][profile]["performance"] == "d" * 64
+    _, measurement = publish(tmp_path, model_id, profile, "performance", performance_report(components))
+    assert entry["benchmark_fingerprints"][profile]["performance"] == measurement["benchmark_fingerprint"]
+    assert entry["benchmark_fingerprints"][profile]["performance"] != "d" * 64
+    assert len([url for url in reads if "/artifacts/mpk" in url]) == len(components)
+
+
+def test_approved_profile_without_a_benchmark_declaration_drops_legacy_fingerprints(monkeypatch):
+    from model_registry.registry import _refresh_approved_benchmarks
+
+    # Old automatic measurements must not survive approval after a declaration is removed.
+    model_id = "gpt_oss_20b"
+    model = load_models(ROOT)[model_id]
+    model.pop("performance", None)
+    model.pop("accuracy", None)
+    monkeypatch.setattr("model_registry.registry.load_and_validate_model", lambda *args: model)
+    document = {"git_ref": "refs/heads/develop", "models": [{"id": model_id, "builds": [],
+        "approved_deployments": {"w4a16": {}}, "benchmark_fingerprints": {"w4a16": {"accuracy": "a" * 64}}}]}
+    _refresh_approved_benchmarks(ROOT, document, document, "https://reader.example.invalid", lambda url: {})
+    assert "benchmark_fingerprints" not in document["models"][0]
 
 
 def test_publish_catalog_keys_bind_dispatch_specific_documentation_receipts(monkeypatch) -> None:

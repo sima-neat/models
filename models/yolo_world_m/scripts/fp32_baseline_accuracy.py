@@ -6,11 +6,11 @@ TF32. The public compiler API remains the execution path for quantized GPU work.
 """
 import argparse
 import contextlib
+import hashlib
 import io
 import json
-import hashlib
-from pathlib import Path
 import time
+from pathlib import Path
 
 import accuracy
 import numpy as np
@@ -24,12 +24,13 @@ def main():
     parser.add_argument("--prompts", type=Path, required=True, help="BF16 CLIP embeddings, mask and category IDs")
     parser.add_argument("--dataset", required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--provider", choices=["CPUExecutionProvider", "CUDAExecutionProvider"], default="CPUExecutionProvider")
+    parser.add_argument("--provider", choices=["CPUExecutionProvider", "CUDAExecutionProvider"],
+                        default="CPUExecutionProvider")
     parser.add_argument("--limit", type=int)
     args = parser.parse_args()
     if args.provider == "CUDAExecutionProvider":
         # Reuse the CUDA/cuDNN libraries already installed with PyTorch.
-        import torch
+        import torch  # noqa: F401
         ort.preload_dlls()
     dataset_id, directory = args.dataset.split("=", 1)
     if dataset_id != "coco-2017-val":
@@ -52,7 +53,8 @@ def main():
     rows = []
     start = time.monotonic()
     records = truth.loadImgs(ids)
-    images = accuracy.prefetched(lambda row: accuracy.preprocess_image((dataset / accuracy.IMAGES / row["file_name"]).read_bytes()), records)
+    images = accuracy.prefetched(
+        lambda row: accuracy.preprocess_image((dataset / accuracy.IMAGES / row["file_name"]).read_bytes()), records)
     for count, (record, image) in enumerate(zip(records, images, strict=True), start=1):
         outputs = session.run(None, {"images": image.transpose(2, 0, 1)[None], "text_embeddings": embeddings,
                                     "prompt_mask": mask})
@@ -68,10 +70,11 @@ def main():
     scorer.accumulate()
     scorer.summarize()
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps({"evaluated_samples": len(ids), "available_samples": len(available),
-                                      "metrics": accuracy.coco_stats(scorer), "seconds": time.monotonic()-start,
-                                      "onnx_sha256": hashlib.file_digest(args.onnx.open("rb"), "sha256").hexdigest(),
-                                      "prompts_sha256": hashlib.file_digest(args.prompts.open("rb"), "sha256").hexdigest()}, indent=2) + "\n")
+    result = {"evaluated_samples": len(ids), "available_samples": len(available),
+              "metrics": accuracy.coco_stats(scorer), "seconds": time.monotonic()-start,
+              "onnx_sha256": hashlib.file_digest(args.onnx.open("rb"), "sha256").hexdigest(),
+              "prompts_sha256": hashlib.file_digest(args.prompts.open("rb"), "sha256").hexdigest()}
+    args.output.write_text(json.dumps(result, indent=2) + "\n")
 
 
 if __name__ == "__main__":

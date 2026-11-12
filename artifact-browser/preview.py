@@ -34,10 +34,18 @@ from model_registry.conversion import apply_selection, conversion_fingerprint  #
 from model_registry.dependencies import resolve_benchmark_runtime, resolve_model_compiler  # noqa: E402
 from model_registry.documentation import load_model_documentation  # noqa: E402
 from model_registry.fingerprints import BENCHMARK_RUN_TYPES, benchmark_fingerprint  # noqa: E402
-from model_registry.model import component_pipelines, load_models, mpk_filename, profile_component_for  # noqa: E402
+from model_registry.model import (  # noqa: E402
+    build_profile_for,
+    component_pipelines,
+    load_models,
+    mpk_filename,
+    profile_component_for,
+)
 from model_registry.model_tests import load_model_tests  # noqa: E402
 from model_registry.registry import build_catalog_snapshot  # noqa: E402
 from model_report import METRICS  # noqa: E402
+
+SYNTHETIC_GENAI = False
 
 UI_MODE = os.environ.get("MODEL_BROWSER_UI_MODE", "developer")
 BRANCH = "main" if UI_MODE == "customer" else "develop"
@@ -93,6 +101,13 @@ def _preview_conversions(models: dict):
 @cache
 def _repository() -> dict[str, Any]:
     models = load_models(ROOT)
+    recorded = json.loads((BROWSER / "fixtures/genai-model-report.json").read_text())["preview_model_id"]
+    for model in models.values():
+        if model["model_type"] in ("llm", "vlm"):
+            if SYNTHETIC_GENAI:
+                model.setdefault("performance", {})
+            elif model["id"] != recorded:
+                model.pop("performance", None)
     compiler = resolve_model_compiler(ROOT)
     with _preview_conversions(models):
         matrix = build_matrix(models, sorted(models), repository=ROOT, compiler_version=compiler["identity"])["include"]
@@ -213,7 +228,17 @@ def _revision(
         },
     )
     runs = []
+    from model_registry.fingerprints import benchmark_fingerprint
     for model in document["models"]:
+        source = models[model["id"]]
+        if source["model_type"] in ("llm", "vlm") and "performance" in source:
+            for profile in source["build_profiles"]:
+                builds = {build["component_id"]: build for build in model["builds"]
+                          if build["build_profile_id"] == profile["id"]}
+                if builds:
+                    model.setdefault("benchmark_fingerprints", {}).setdefault(profile["id"], {})["performance"] = (
+                        benchmark_fingerprint(ROOT, source, profile["id"], builds, "performance")
+                    )
         for build in model["builds"]:
             runs.append(_compile_run(models[model["id"]], model, build, compiler, day, sha, len(runs)))
         for package in model["packages"]:
@@ -301,6 +326,8 @@ def _models_list(document: dict, runs: dict[str, dict], compiler: str) -> list[d
             continue
         entries.append({
             "model_id": model["id"],
+            **({"parameter_count_billion": model["parameter_count_billion"]}
+               if "parameter_count_billion" in model else {}),
             **{key: model[key] for key in ("display_name", "description", "maturity", "license", "categories")},
             **_model_fields(model),
             "documentation": model["documentation"],
@@ -404,6 +431,28 @@ def _components_in_order(model: dict) -> list[str]:
 
 
 def _performance_report(model: dict, profile_id: str) -> dict[str, Any]:
+    if model["model_type"] in ("llm", "vlm"):
+        report = json.loads((BROWSER / "fixtures/genai-model-report.json").read_text())
+        recorded = report.pop("preview_model_id")
+        speculative = report.pop("preview_speculative_workloads")
+        generation = report["generation"]
+        baseline = build_profile_for(model, profile_id).get("benchmark_baseline")
+        if baseline:
+            generation.update(workloads=speculative, baseline={
+                "model_id": baseline["model_id"], "build_profile_id": baseline["build_profile"],
+                "display_name": _repository()["models"][baseline["model_id"]]["display_name"]})
+            generation["settings"].update(decoding="speculative", repetitions=1)
+        if model["model_type"] == "llm" or (not baseline and model["id"] != recorded):
+            generation["workloads"] = [w for w in generation["workloads"] if w["kind"] in ("text", "text_dataset")]
+            generation["settings"]["image_size"] = None
+        for workload in generation["workloads"]:
+            workload["telemetry"] = report["telemetry"]
+            if workload.get("baseline"):
+                workload["baseline"]["telemetry"] = report["telemetry"]
+            elif model["id"] != recorded:
+                for name, metric in workload["metrics"].items():
+                    metric["value"] *= 1.5 if name == "ttft_ms" else 0.6
+        return report
     """A whole-model performance report: the template's DevKit readings at a latency of this build's own.
 
     A multi-component model, such as RF-DETR, reports each component's layers and execution plan in the
@@ -886,10 +935,15 @@ def first_variant_run_id() -> str:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
+    global SYNTHETIC_GENAI
+    parser.add_argument(
+        "--synthetic-genai", action="store_true", help="add labeled illustrative language-model benchmarks"
+    )
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--root", type=Path, default=BROWSER, help="directory to serve, such as website/portal-build")
     args = parser.parse_args()
+    SYNTHETIC_GENAI = args.synthetic_genai
     run_id = first_variant_run_id()
     os.chdir(args.root)
     server = ThreadingHTTPServer((args.host, args.port), PreviewHandler)
