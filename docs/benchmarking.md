@@ -485,6 +485,8 @@ A native LLM/VLM declares `performance: {}` and keeps its `scripts/performance.p
 
 For standalone reproduction, make `tools/model_report` available on `PYTHONPATH` alongside MoLE. The native scripts use its `generation_benchmark` helper and need no `model_registry` package.
 
+CI retains MoLE in `/media/nvme/llima/mole-venv` and skips installation when its package version matches the pinned artifact and imports succeed. Pip's cache and temporary installation files also use NVMe.
+
 Ordinary models measure 128, 256, 512 and doubling text buckets through the compiled context minus 1024 tokens, including that boundary. Each bucket uses one excluded warmup and five measurements, with up to 256 decode steps after the first token. VLMs also measure one encoder-sized image with “Describe what you see in the image.” Image profiling uses MoLE's native timings and a 256-token output budget.
 
 Speculative deployments run full GSM8K, BFCL v3 (simple/multiple) and AlpacaEval workloads. Speculative VLMs also run full RealWorldQA, DocVQA validation and ChartQA workloads, preserving dataset image resolution. MoLE downloads/caches datasets on NVMe and uses native chat/tool templates. Each dataset has one excluded warmup and one measurement per prompt, with at most 256 generated tokens and native EOS stopping. Target and draft caches reset between requests.

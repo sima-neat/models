@@ -348,25 +348,63 @@ def test_performance_dependencies_are_isolated_and_cleaned(tmp_path: Path, extra
         assert arguments[arguments.index("-r") + 1] == str(scripts / "requirements-performance.txt")
 
 
-def test_native_setup_installs_only_mole(tmp_path):
+@pytest.mark.parametrize("installed", [None, "0.6.0+develop.abcfe372a575", "0.6.0+develop.111111111111", "broken"])
+def test_native_setup_reuses_matching_mole_on_nvme(tmp_path, installed):
     binaries = tmp_path / "bin"
     binaries.mkdir()
-    calls = tmp_path / "installs.txt"
+    calls = tmp_path / "install.json"
+    expected = "0.6.0+develop.abcfe372a575"
+    metadata = tmp_path / "metadata.json"
+    metadata.write_text(json.dumps({"version": expected}))
+    state = tmp_path / "installed-version"
+    if installed is not None:
+        state.write_text(installed)
+    venv = tmp_path / "nvme/mole-venv"
+    (venv / "bin").mkdir(parents=True)
+    python = venv / "bin/python"
+    python.write_text(
+        '#!/bin/sh\n[ -f "$MOLE_STATE" ] && [ "$(cat "$MOLE_STATE")" != broken ] || exit 1\n'
+        'cat "$MOLE_STATE"\n'
+    )
+    python.chmod(0o755)
     for name, body in {
-        "sima-cli": 'printf "%s\\n" "$*" >> "$INSTALL_CALLS"',
-        "dpkg-query": "exit 0",
+        "sima-cli": '''import json, os, sys
+from pathlib import Path
+if "--json" in sys.argv:
+    print(json.dumps({"metadata_url": os.environ["METADATA_URL"]}))
+else:
+    Path(os.environ["INSTALL_CALLS"]).write_text(json.dumps({
+        "args": sys.argv[1:], "venv": os.environ["SIMA_MOLE_VENV_PATH"],
+        "cache": os.environ["PIP_CACHE_DIR"], "tmp": os.environ["TMPDIR"],
+    }))
+    Path(os.environ["MOLE_STATE"]).write_text(os.environ["EXPECTED_VERSION"])
+''',
+        "dpkg-query": "pass",
     }.items():
         command = binaries / name
-        command.write_text(f"#!/bin/sh\n{body}\n")
+        command.write_text(f"#!{sys.executable}\n{body}\n")
         command.chmod(0o755)
     runtime = {"llima": {"install_target": "llima@develop:abcfe372a575"}}
-    subprocess.run(
+    env = {**os.environ, "PATH": f"{binaries}{os.pathsep}{os.environ['PATH']}",
+           "REGISTRY_PYTHON": sys.executable, "SIMA_MOLE_VENV_PATH": str(venv),
+           "PIP_CACHE_DIR": str(tmp_path / "nvme/pip-cache"), "TMPDIR": str(tmp_path / "nvme/tmp"),
+           "WORK_DIR": str(tmp_path / "nvme/work"), "MOLE_STATE": str(state),
+           "METADATA_URL": metadata.as_uri(), "INSTALL_CALLS": str(calls), "EXPECTED_VERSION": expected}
+    env.pop("LLIMA_MOLE_PYTHON", None)
+    result = subprocess.run(
         [ROOT / "scripts/install_mole_benchmark_runtime.sh", json.dumps(runtime)],
-        env={**os.environ, "PATH": f"{binaries}{os.pathsep}{os.environ['PATH']}",
-             "REGISTRY_PYTHON": sys.executable, "LLIMA_MOLE_PYTHON": "/bin/true", "INSTALL_CALLS": str(calls)},
-        check=True, capture_output=True, text=True,
+        env=env, check=True, capture_output=True, text=True,
     )
-    assert calls.read_text().splitlines() == ["neat install --env production llima/mole@develop:abcfe372a575"]
+    assert calls.exists() == (installed != expected)
+    if installed == expected:
+        assert "Skipping install" in result.stdout
+    else:
+        assert json.loads(calls.read_text()) == {
+            "args": ["neat", "install", "--env", "production", "llima/mole@develop:abcfe372a575",
+                     "--install-dir", str(tmp_path / "nvme/work/mole")],
+            "venv": str(venv), "cache": env["PIP_CACHE_DIR"], "tmp": env["TMPDIR"],
+        }
+    assert state.read_text() == expected
 
 
 def test_benchmarks_run_only_when_requested() -> None:
@@ -448,6 +486,11 @@ def test_each_benchmark_runs_and_publishes_on_its_own_outcome() -> None:
         "${{ !cancelled() && steps.core.outcome == 'success' && env.BENCHMARK_BACKEND == 'llima' }}"
     )
     assert mole["run"] == 'scripts/install_mole_benchmark_runtime.sh "$BENCHMARK_RUNTIME"'
+    assert mole["env"] == {
+        "SIMA_MOLE_VENV_PATH": "/media/nvme/llima/mole-venv",
+        "PIP_CACHE_DIR": "/media/nvme/llima/pip-cache",
+        "TMPDIR": "/media/nvme/llima/tmp",
+    }
     assert "needs.benchmark.result" not in publish["if"]
     assert "needs.benchmark.outputs.performance == 'success' ||" in publish["if"]
     assert "needs.benchmark.outputs.accuracy == 'success'" in publish["if"]

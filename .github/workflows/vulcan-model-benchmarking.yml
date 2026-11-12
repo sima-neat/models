@@ -431,6 +431,10 @@ jobs:
       - name: Install selected MoLE
         id: mole
         if: ${{ !cancelled() && steps.core.outcome == 'success' && env.BENCHMARK_BACKEND == 'llima' }}
+        env:
+          SIMA_MOLE_VENV_PATH: /media/nvme/llima/mole-venv
+          PIP_CACHE_DIR: /media/nvme/llima/pip-cache
+          TMPDIR: /media/nvme/llima/tmp
         run: scripts/install_mole_benchmark_runtime.sh "$BENCHMARK_RUNTIME"
 
       - name: Measure performance on DevKit
