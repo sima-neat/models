@@ -161,11 +161,19 @@ COMPILE_TIMING = json.dumps({
 
 
 @pytest.fixture
-def compiled(tmp_path, request):
+def native_file_count():
+    return None
+
+
+@pytest.fixture
+def compiled(tmp_path, request, native_file_count):
     dist = tmp_path / "compiled"
     profile = dist / MODEL / PROFILE
     component = profile / "model"
-    deployment(component / "deployment")
+    source = deployment(component / "deployment")
+    if native_file_count:
+        for index in range(native_file_count - len(verify_llima(source))):
+            (source / "elf_files" / f"layer-{index}.elf").write_bytes(b"\x7fELFsynthetic-layer")
     model = load_and_validate_model(ROOT / "models" / MODEL)
     compiler = resolve_model_compiler(ROOT)
     provenance = {
@@ -184,11 +192,13 @@ def compiled(tmp_path, request):
     return dist
 
 
-@pytest.mark.parametrize("compiled,environment", [("staging", "staging"), ("production", "production")],
-                         indirect=["compiled"])
+@pytest.mark.parametrize("compiled,environment,native_file_count", [
+    ("staging", "staging", None), ("production", "production", None),
+    ("staging", "staging", 1697), ("staging", "staging", 2046),
+], indirect=["compiled"])
 @pytest.mark.parametrize("selection_field", [None, "approved_deployments", "branch_deployments"])
 def test_native_deployment_publish_package_and_retrieve_without_archiving(
-    compiled, tmp_path, environment, selection_field, monkeypatch,
+    compiled, tmp_path, environment, native_file_count, selection_field, monkeypatch,
 ):
     component = compiled / MODEL / PROFILE / "model"
     source = component / "deployment"
@@ -204,6 +214,10 @@ def test_native_deployment_publish_package_and_retrieve_without_archiving(
         model_id=MODEL, build_profile_id=PROFILE, **arguments,
     )
     assert candidate["state"] == "finalized"
+    if native_file_count:
+        roles = candidate["contract"]["roles"]
+        assert len(verify_llima(source)) == native_file_count
+        assert sum(len(role["artifacts"]) + len(role["inputs"]) for role in roles.values()) == 2 * native_file_count + 4
     published = json.loads((component / "registry-publication.json").read_text())
     compile_run = published["runs"][0]["run_id"]
     source_input = next(body for _, path, body in registry.calls if path.endswith("/inputs/source-component"))
@@ -330,6 +344,15 @@ def test_native_deployment_publish_package_and_retrieve_without_archiving(
     assert not stale.exists()
     assert len(downloads) == 1  # Only the manifest is fetched; verified payload files are reused.
     assert verify_llima(restored) == verify_llima(source)
+
+
+@pytest.mark.parametrize("native_file_count", [2047])
+def test_candidate_rejects_inventory_above_required_name_limit(compiled, tmp_path, native_file_count):
+    registry = Registry()
+    with pytest.raises(ValidationError, match=r"32-role / 4096-required-name limits \(2 roles, 4098 required names\)"):
+        publish_candidate(repository=ROOT, dist_dir=compiled, output_dir=tmp_path / "candidate",
+                          model_id=MODEL, build_profile_id=PROFILE, **registry.args())
+    assert registry.calls == []
 
 
 def test_native_publication_rejects_changed_payload_before_creating_runs(compiled):
