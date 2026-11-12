@@ -60,6 +60,8 @@ def test_score_rejects_ground_truth_without_depth(load_script: Callable[[str], M
 
     with pytest.raises(ValueError, match="no valid depth"):
         accuracy.score(np.ones((4, 4)), np.zeros((4, 4), np.float32))
+    with pytest.raises(ValueError, match="finite"):
+        accuracy.score(np.full((4, 4), np.nan), np.ones((4, 4)))
 
 
 def test_mpk_argument_names_exactly_the_model_component(load_script: Callable[[str], ModuleType]) -> None:
@@ -68,7 +70,11 @@ def test_mpk_argument_names_exactly_the_model_component(load_script: Callable[[s
     assert accuracy.parse_mpks(["model=/data/depth_mpk.tar.gz"]) == Path("/data/depth_mpk.tar.gz")
     with pytest.raises(SystemExit, match="exactly model=<path>"):
         accuracy.parse_mpks(["backbone=/data/depth_mpk.tar.gz"])
+    with pytest.raises(SystemExit, match="exactly model=<path>"):
+        accuracy.parse_mpks(["model=first.tar.gz", "model=second.tar.gz"])
 
 
 def test_accuracy_meets_its_expected_values(accuracy: dict[str, Any], model_dir: Path, build_profile: str) -> None:
     assert measured_shortfalls(model_dir, "accuracy", build_profile, accuracy) == []
+    result = accuracy["datasets"]["nyu-depth-v2-val"]
+    assert result["evaluated_samples"] == result["available_samples"] == 654

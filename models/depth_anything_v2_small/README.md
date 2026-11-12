@@ -15,9 +15,9 @@ as one component.
 ## Inputs and outputs
 
 **Input.** Scale the RGB values to 0–1, then resize the image to 518×686
-(height × width) with bicubic resampling. That size keeps a 640×480 frame's
-aspect ratio with 518 pixels on the short side, both sides being multiples of
-14. Subtract the ImageNet mean (0.485, 0.456, 0.406) and divide by the standard
+(height × width) with bicubic resampling. That size approximates a 640×480
+frame's aspect ratio while keeping both dimensions divisible by 14.
+Subtract the ImageNet mean (0.485, 0.456, 0.406) and divide by the standard
 deviation (0.229, 0.224, 0.225). The reference scripts pass this image as a
 518×686×3 (height, width, channel) float tensor, with Neat's resize, color
 conversion, and normalization turned off.
@@ -31,7 +31,4 @@ conversion, and normalization turned off.
 
 ## Building applications
 
-Run the package with the [Neat Model
-API](https://developer.sima.ai/software/develop-apps/development-workflow/model).
-For complete applications, start from the [Neat example
-apps](https://developer.sima.ai/examples).
+Run the package with the [Neat Model API](https://developer.sima.ai/software/develop-apps/development-workflow/model). For complete applications, start from the [Neat example apps](https://developer.sima.ai/examples).

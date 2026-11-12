@@ -1,8 +1,18 @@
 compile:
   run_tests: true
+# Initial Modalix measurements recorded in PR #513; shared regression limits apply.
 accuracy:
-  run_tests: false
-  skip_reason: Depth Anything V2 Small has no published accuracy report to expect values from yet.
+  run_tests: true
+  expected:
+    w16a16:
+      nyu-depth-v2-val: {abs_rel: 0.0508, delta1: 0.9733}
+    w8a8:
+      nyu-depth-v2-val: {abs_rel: 0.0718, delta1: 0.9453}
+    w8a16:
+      nyu-depth-v2-val: {abs_rel: 0.0513, delta1: 0.9730}
 performance:
-  run_tests: false
-  skip_reason: Depth Anything V2 Small has no published performance report to expect values from yet.
+  run_tests: true
+  expected:
+    w16a16: {throughput_fps: 13.1}
+    w8a8: {throughput_fps: 24.0}
+    w8a16: {throughput_fps: 13.8}

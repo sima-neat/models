@@ -6,6 +6,8 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import math
+import tarfile
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +17,7 @@ from afe.apis.defines import (
     CalibrationMethod,
     InputName,
     QuantizationParams,
+    SkipCalibration,
     bfloat16_scheme,
     gen2_target,
     quantization_scheme,
@@ -35,85 +38,101 @@ MODEL_ID = "depth_anything_v2_small"
 COMPONENT_ID = "model"
 
 
-def _metadata() -> dict[str, Any]:
-    return load_metadata(MODEL_DIR)
-
-
-def _variant(metadata: dict[str, Any], variant_id: str) -> dict[str, Any]:
+def _parameters(variant_id: str) -> dict[str, Any]:
+    metadata = load_metadata(MODEL_DIR)
     matches = [item for item in metadata["build_profiles"] if item["id"] == variant_id]
     if len(matches) != 1:
         raise ValueError(f"expected exactly one build profile named {variant_id!r}")
-    profile = matches[0]
-    binding = next(item for item in profile["components"] if item["id"] == COMPONENT_ID)
-    return {**profile, "parameters": binding["parameters"]}
+    (component,) = matches[0]["components"]
+    return component["parameters"]
+
+
+def quantization(precision: str) -> QuantizationParams:
+    if precision not in {"w16a16", "w8a8", "w8a16"}:
+        raise ValueError(f"unsupported precision: {precision}")
+    return QuantizationParams(
+        calibration_method=CalibrationMethod.from_str("mse") if precision == "w8a8" else SkipCalibration(),
+        activation_quantization_scheme=(
+            quantization_scheme(asymmetric=True, per_channel=False, bits=8)
+            if precision == "w8a8"
+            else bfloat16_scheme()
+        ),
+        weight_quantization_scheme=(
+            bfloat16_scheme()
+            if precision == "w16a16"
+            else quantization_scheme(asymmetric=False, per_channel=True, bits=8)
+        ),
+        per_token_quant=precision == "w8a16",
+    )
+
+
+def audit_mpk(archive: Path) -> None:
+    """Require one MLA segment, I/O transforms, and the full-resolution float32 depth output."""
+    with tarfile.open(archive, "r:gz") as stream:
+        names = stream.getnames()
+        manifests = [name for name in names if name.endswith("_mpk.json")]
+        if len(manifests) != 1:
+            raise RuntimeError("expected one MPK manifest")
+        manifest = json.load(stream.extractfile(manifests[0]))
+    plugins = sorted(manifest["plugins"], key=lambda plugin: plugin["sequence"])
+    processors = [str(plugin.get("processor", "")).upper() for plugin in plugins]
+    if processors.count("MLA") != 1 or set(processors) - {"MLA", "EV74"}:
+        raise RuntimeError(f"expected one MLA segment and I/O transforms, found {processors}")
+    if len([name for name in names if name.endswith(".elf")]) != 1 or any(".so" in name for name in names):
+        raise RuntimeError("expected one ELF without host-compute libraries")
+    input_bytes = math.prod((1, 3, HEIGHT, WIDTH)) * 4
+    if [(value["name"], value["size"]) for value in manifest["input_nodes"]] != [("pixel_values", input_bytes)]:
+        raise RuntimeError("unexpected MPK image input")
+    if [value["size"] for value in plugins[-1]["output_nodes"]] != [HEIGHT * WIDTH * 4]:
+        raise RuntimeError("expected one float32 depth map")
 
 
 def compile_model(source: Path, component_dir: Path, variant_id: str, dataset: Path | None) -> AfeModel:
-    variant = _variant(_metadata(), variant_id)
-    parameters = variant["parameters"]
-    precision = str(parameters.get("precision"))
-    if variant["target"] != "modalix" or precision not in {"w16a16", "w8a8", "w8a16"}:
-        raise ValueError("this recipe supports only the declared Modalix BF16 and INT8 variants")
+    parameters = _parameters(variant_id)
+    precision = parameters["precision"]
+    config = quantization(precision)
 
     input_name = str(parameters["input_name"])
     input_shape = tuple(int(value) for value in parameters["input_shape"])
     if input_shape != (1, 3, HEIGHT, WIDTH):
         raise ValueError(f"unsupported Depth Anything V2 input shape: {input_shape}")
 
-    component_dir.mkdir(parents=True, exist_ok=False)
-    prepared = prepare_model(source, component_dir.parent / f"{MODEL_ID}_prepared.onnx")
-    LOG.info("Prepared graph: %s", prepared)
-    importer = onnx_source(str(prepared), {input_name: input_shape}, {input_name: ScalarType.float32})
-    loaded = load_model(importer, target=gen2_target)
-
+    data = None
     if precision == "w8a8":
         if dataset is None:
             raise ValueError("the INT8 variant requires --dataset from dataset-registry")
         sample_count = int(parameters["calibration_samples"])
         LOG.info("Loading %d representative calibration samples", sample_count)
         samples = calibration_samples(dataset, sample_count)
-        activation_scheme = quantization_scheme(asymmetric=True, per_channel=False, bits=8)
-        weight_scheme = quantization_scheme(asymmetric=False, per_channel=True, bits=8)
-    else:
-        # BF16 does not derive quantization ranges from representative data.
-        # The API still requires an iterable, so provide one deterministic sample.
-        samples = np.zeros((1, HEIGHT, WIDTH, 3), dtype=np.float32)
-        activation_scheme = bfloat16_scheme()
-        weight_scheme = (
-            quantization_scheme(asymmetric=False, per_channel=True, bits=8)
-            if precision == "w8a16"
-            else bfloat16_scheme()
-        )
+        data = convert_data_generator_to_iterable(DataGenerator({input_name: samples}))
 
-    data = convert_data_generator_to_iterable(DataGenerator({input_name: samples}))
+    component_dir.mkdir(parents=True, exist_ok=False)
+    prepared = prepare_model(source, component_dir.parent / f"{MODEL_ID}_prepared.onnx")
+    LOG.info("Prepared graph: %s", prepared)
+    importer = onnx_source(str(prepared), {input_name: input_shape}, {input_name: ScalarType.float32})
     model_name = f"{MODEL_ID}_{variant_id}"
-    quantized = loaded.quantize(
-        data,
-        QuantizationParams(
-            calibration_method=CalibrationMethod.from_str("mse"),
-            activation_quantization_scheme=activation_scheme,
-            weight_quantization_scheme=weight_scheme,
-            # W8A16 scales each token's activations on its own before an INT8-weight operation.
-            per_token_quant=precision == "w8a16",
-        ),
-        model_name=model_name,
-    )
-    quantized.save(model_name=model_name, output_directory=str(component_dir))
-    saved = AfeModel.load(model_name=f"{model_name}.sima", network_directory=str(component_dir))
-    saved.compile(output_path=str(component_dir))
+    try:
+        quantized = load_model(importer, target=gen2_target).quantize(
+            calibration_data=data, quantization_config=config, model_name=model_name
+        )
+        quantized.compile(output_path=str(component_dir), deployable=True)
+    except SystemExit as error:
+        # The compiler can report a fatal error through SystemExit(0).
+        raise RuntimeError(f"Model Compiler failed for {model_name}") from error
 
     archives = sorted(component_dir.glob("*_mpk.tar.gz"))
     if len(archives) != 1:
         raise RuntimeError(f"expected exactly one MPK archive, found {len(archives)} in {component_dir}")
+    audit_mpk(archives[0])
     LOG.info("Compiled MPK: %s", archives[0])
-    return saved
+    return quantized
 
 
 def measure_fidelity(
     source: Path, candidate: AfeModel, dataset: Path, config: dict[str, Any], variant_id: str
 ) -> dict[str, Any]:
     """Compare the quantized graph's relative depth with the ONNX source on the declared validation images."""
-    input_name = str(_variant(_metadata(), variant_id)["parameters"]["input_name"])
+    input_name = _parameters(variant_id)["input_name"]
     selection = config["selection"]
     names = fidelity_names(dataset, int(selection["seed"]), int(selection["offset"]), int(selection["samples"]))
     images = read_images(dataset, names)
@@ -175,7 +194,7 @@ def main() -> int:
     source = args.model.expanduser().resolve()
     if not source.is_file():
         parser.error(f"model does not exist: {source}")
-    fidelity = _metadata().get("numerical_fidelity")
+    fidelity = load_metadata(MODEL_DIR).get("numerical_fidelity")
     if fidelity is not None and args.fidelity_dataset is None:
         parser.error("model.yaml declares numerical_fidelity; pass --fidelity-dataset")
     output_dir = args.output_dir.expanduser().resolve()

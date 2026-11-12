@@ -51,6 +51,8 @@ options = pyneat.ModelOptions()
 # Neat resizes, normalizes, quantizes and tessellates the frame inside the measured pipeline.
 options.preprocess.kind = pyneat.InputKind.Image
 options.preprocess.enable = pyneat.AutoFlag.On
+options.preprocess.input_max_width = FRAME_WIDTH
+options.preprocess.input_max_height = FRAME_HEIGHT
 options.preprocess.resize.enable = pyneat.AutoFlag.On
 options.preprocess.resize.mode = pyneat.ResizeMode.Stretch
 options.preprocess.normalize.enable = pyneat.AutoFlag.On
@@ -69,7 +71,7 @@ report = model_report.from_performance(
     model.benchmark(benchmark_options),
     {"model": model},
     workload=(
-        f"{dataset_id} {image.name} in a {FRAME_WIDTH}x{FRAME_HEIGHT} RGB frame, "
+        f"{dataset_id} {image.relative_to(dataset_dir)} in a {FRAME_WIDTH}x{FRAME_HEIGHT} RGB frame, "
         "Neat preprocessing stretched to the 518x686 model input"
     ),
 )

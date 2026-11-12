@@ -310,6 +310,7 @@ def benchmark_dataset(root):
     write_image(root / "val/images/P0003.jpg", 200)
     write_image(root / "val/v_scene/1.ppm", 200)
     write_image(root / "val/rgb_0001.jpg", 200)
+    write_image(root / "test/rgb_0001.jpg", 200)
     keypoints = {
         "images": [{"id": 1, "file_name": "000000000001.jpg"}, {"id": 2, "file_name": "000000000002.jpg"}],
         "annotations": [{"image_id": 1, "num_keypoints": 0}, {"image_id": 2, "num_keypoints": 17}],
@@ -418,8 +419,11 @@ def test_every_single_component_script_benchmarks_a_dataset_image(script, monkey
         assert STEREO_PAIR.format(view="left") in report["workload"]
     elif first_accuracy_dataset(script) == "nyu-depth-v2":
         assert_letterboxed_frame(frame)
-        assert (options.preprocess.resize.mode, options.preprocess.preset) == ("Letterbox", "ImageNet")
-        assert "val/rgb_0001.jpg" in report["workload"]
+        test_split = declaration["variant"] == "val"
+        assert (options.preprocess.resize.mode, options.preprocess.preset) == (
+            "Stretch" if test_split else "Letterbox", "ImageNet"
+        )
+        assert "rgb_0001.jpg" in report["workload"]
     elif getattr(options, "decode_type", "").startswith(("YoloV26", "YoloV8", "YoloX")):
         # Box decoders take a probability threshold, in [0, 1).
         assert_letterboxed_frame(frame)

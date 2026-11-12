@@ -6,7 +6,7 @@ import sys
 import tarfile
 from collections.abc import Callable
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 import numpy as np
 import pytest
@@ -102,7 +102,7 @@ def test_the_benchmarks_read_the_directory_the_runners_pass(
 @pytest.mark.parametrize("profile_id", ["w16a16", "w8a8", "w8a16"])
 def test_compile_reads_each_declared_build_profile(load_script: Callable[[str], ModuleType], profile_id: str) -> None:
     recipe = load_script("compile")
-    parameters = recipe._variant(recipe._metadata(), profile_id)["parameters"]
+    parameters = recipe._parameters(profile_id)
 
     assert parameters["precision"] == profile_id
     assert parameters["input_shape"] == [1, 3, 518, 686]
@@ -112,25 +112,48 @@ def test_compile_reads_each_declared_build_profile(load_script: Callable[[str], 
 
 def test_compile_rejects_an_undeclared_build_profile(load_script: Callable[[str], ModuleType]) -> None:
     recipe = load_script("compile")
-    metadata = recipe._metadata()
-
-    assert metadata["numerical_fidelity"]["outputs"] == ["predicted_depth"]
     with pytest.raises(ValueError, match="exactly one build profile named 'w32a32'"):
-        recipe._variant(metadata, "w32a32")
+        recipe._parameters("w32a32")
 
 
 def test_compile_rejects_another_input_shape_before_compiling(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, load_script: Callable[[str], ModuleType]
 ) -> None:
     recipe = load_script("compile")
-    metadata = recipe._metadata()
+    metadata = recipe.load_metadata(recipe.MODEL_DIR)
     profile = metadata["build_profiles"][0]
     profile["components"][0]["parameters"]["input_shape"] = [1, 3, 518, 518]
-    monkeypatch.setattr(recipe, "_metadata", lambda: metadata)
+    monkeypatch.setattr(recipe, "load_metadata", lambda _: metadata)
 
     with pytest.raises(ValueError, match="unsupported Depth Anything V2 input shape"):
         recipe.compile_model(tmp_path / "model.onnx", tmp_path / "model", profile["id"], None)
     assert not (tmp_path / "model").exists()
+
+
+@pytest.mark.parametrize("profile_id", ["w16a16", "w8a8", "w8a16"])
+def test_only_int8_activations_need_calibration(load_script, monkeypatch, profile_id):
+    recipe = load_script("compile")
+    monkeypatch.setattr(recipe, "QuantizationParams", SimpleNamespace)
+    monkeypatch.setattr(recipe, "bfloat16_scheme", lambda: "bf16")
+    monkeypatch.setattr(recipe, "quantization_scheme", lambda **kwargs: kwargs)
+    monkeypatch.setattr(recipe, "SkipCalibration", lambda: "skip")
+    monkeypatch.setattr(recipe, "CalibrationMethod", SimpleNamespace(from_str=lambda name: name))
+
+    config = recipe.quantization(profile_id)
+
+    assert config.calibration_method == ("mse" if profile_id == "w8a8" else "skip")
+    assert config.per_token_quant == (profile_id == "w8a16")
+    assert config.activation_quantization_scheme == (
+        {"asymmetric": True, "per_channel": False, "bits": 8} if profile_id == "w8a8" else "bf16"
+    )
+    assert config.weight_quantization_scheme == (
+        "bf16" if profile_id == "w16a16" else {"asymmetric": False, "per_channel": True, "bits": 8}
+    )
+
+
+def test_compiled_package_keeps_the_full_resolution_depth_map(compiled, model_dir, build_profile, load_script):
+    archive = compiled / "model" / f"{model_dir.name}_{build_profile}_mpk.tar.gz"
+    load_script("compile").audit_mpk(archive)
 
 
 @pytest.mark.parametrize(

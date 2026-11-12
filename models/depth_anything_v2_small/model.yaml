@@ -51,8 +51,7 @@ build_profiles:
           input_shape: [1, 3, 518, 686]
           calibration_samples: 50
 
-  # W8A8 raises NYU AbsRel 40% above FP32 (0.0718 against 0.0513). BF16 activations keep FP32's 0.0513; the INT8
-  # weights make it 6% faster than W16A16, as BF16 attention and softmax take most of the MLA's time.
+  # BF16 activations preserve relative-depth accuracy; INT8 weights use per-token dynamic quantization.
   w8a16:
     components:
       model:
