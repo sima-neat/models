@@ -38,6 +38,24 @@ The facets are intentionally independent:
 To categorize a model, take every ID from the taxonomy. When none fits, add the
 entry to `taxonomies/model-taxonomy.yaml` in the same pull request.
 
+Each architecture entry requires a short `description` for the family card,
+alongside its existing `display_name`, `paradigm` and `allowed_model_types`:
+
+```yaml
+architectures:
+  yolov8_obb:
+    display_name: YOLOv8-obb
+    description: Detects objects with rotated bounding boxes in aerial imagery.
+    paradigm: cnn
+    allowed_model_types: [vision]
+```
+
+Describe the whole family, without size-specific claims. Keep this text in the
+taxonomy; individual `model.yaml` files do not repeat it. The browser derives
+family membership, tasks and the representative hero from available models.
+Cards group and sort by the existing architecture ID and use `display_name`
+as their title. Detection, segmentation, pose and OBB keep their separate IDs.
+
 ## Publication identity
 
 The taxonomy does not have an independently managed release version. Each
@@ -45,6 +63,11 @@ complete catalog publication records its full Git commit as
 `catalog_revision` and the canonical taxonomy SHA-256 as an integrity checksum.
 Historical catalog snapshots remain immutable and therefore retain the exact
 taxonomy used to interpret their model metadata.
+
+Family descriptions travel in the full catalog taxonomy and change its checksum,
+but do not enter conversion, compile or benchmark fingerprints. Existing builds
+and results remain reusable. Historical catalogs without descriptions still
+render; their family cards omit the description.
 
 All authoritative category facets are mandatory. Catalog
 validation rejects a missing field, an unknown sanctioned ID, or an incompatible

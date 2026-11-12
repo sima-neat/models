@@ -888,6 +888,8 @@ def test_catalog_snapshot_reuses_unchanged_compile_runs() -> None:
     assert first["catalog_revision"] == "a" * 40
     assert len(first["taxonomy_sha256"]) == 64
     assert "version" not in first["taxonomy"]
+    assert first["taxonomy"]["architectures"]["resnet"]["description"]
+    assert json.loads(json.dumps(first))["taxonomy"] == first["taxonomy"]
     assert all("taxonomy_version" not in model["categories"] for model in first["models"])
 
 
@@ -1536,6 +1538,62 @@ def test_deferred_conversion_inheritance_respects_catalog_revision(monkeypatch, 
     expected = [prior] if has_previous else ([] if continuing_revision else [base])
     assert result["models"] == expected
     assert result.get("pending_builds", []) == ([pending] if has_previous else [])
+
+
+@pytest.mark.parametrize("continuing_revision", [False, True])
+def test_progress_publication_keeps_the_prior_pending_order_and_clears_only_its_builds(
+    monkeypatch, caplog, continuing_revision
+):
+    """The registry compares a progress snapshot's pending list with its own, entry for entry and in order."""
+
+    def pending(model_id, fingerprint):
+        return {"model_id": model_id, "build_profile_id": "w16a16", "component_ids": ["model"],
+                "compile_fingerprint": fingerprint}
+
+    ours, theirs, later = pending("dfine_n", "d" * 64), pending("yolo26x_pose", "y" * 64), pending("densenet", "n" * 64)
+    target = {"catalog_revision": ("a" if continuing_revision else "b") * 40, "canonical_sha256": "c" * 64,
+              "document": {"models": [], "pending_builds": [ours, theirs, later]}}
+    # The snapshot builder publishes our build, but lists the inherited entries in another order and adds one
+    # a base branch started pending meanwhile.
+    built = {"models": [{"id": "dfine_n", "builds": [
+                 {"build_profile_id": "w16a16", "component_id": "model", "compile_fingerprint": "d" * 64}]}],
+             "pending_builds": [later, theirs, pending("new_model", "e" * 64)]}
+    monkeypatch.setattr("model_registry.registry.load_models", lambda root: {})
+    monkeypatch.setattr("model_registry.registry._catalog_models", lambda models: {})
+    monkeypatch.setattr("model_registry.registry._head_matrix", lambda *args: [])
+    monkeypatch.setattr("model_registry.registry.build_catalog_snapshot", lambda **kwargs: dict(built))
+    result = publish_catalog(
+        repository=ROOT, api_url="https://registry.example.invalid",
+        read_api_url="https://registry.example.invalid", aws_region="us-west-2",
+        branch="feature", git_sha="a" * 40, base_branches=["develop"],
+        request=lambda *args: {"stored": True},
+        read_request=lambda url: {"catalog": {"document": {"models": [], "pending_builds": []}}
+                                  if url.endswith("develop") else target},
+    )["catalog"]
+    if continuing_revision:
+        assert result["pending_builds"] == [theirs, later]
+        assert "new_model/w16a16 is not pending in this catalog revision" in caplog.text
+    else:
+        assert result["pending_builds"] == built["pending_builds"]
+
+
+def test_progress_publication_leaves_a_catalog_without_a_pending_list_alone(monkeypatch):
+    """A branch catalog from before the pending list keeps the list the snapshot builder computes."""
+    target = {"catalog_revision": "a" * 40, "canonical_sha256": "c" * 64, "document": {"models": []}}
+    built = {"models": [], "pending_builds": [{"model_id": "dfine_n", "build_profile_id": "w16a16",
+                                              "component_ids": ["model"], "compile_fingerprint": "d" * 64}]}
+    monkeypatch.setattr("model_registry.registry.load_models", lambda root: {})
+    monkeypatch.setattr("model_registry.registry._catalog_models", lambda models: {})
+    monkeypatch.setattr("model_registry.registry._head_matrix", lambda *args: [])
+    monkeypatch.setattr("model_registry.registry.build_catalog_snapshot", lambda **kwargs: dict(built))
+    result = publish_catalog(
+        repository=ROOT, api_url="https://registry.example.invalid",
+        read_api_url="https://registry.example.invalid", aws_region="us-west-2",
+        branch="feature", git_sha="a" * 40, base_branches=["develop"],
+        request=lambda *args: {"stored": True},
+        read_request=lambda url: {"catalog": {"document": {"models": []}} if url.endswith("develop") else target},
+    )["catalog"]
+    assert result["pending_builds"] == built["pending_builds"]
 
 
 @pytest.mark.parametrize("same_revision", [False, True])

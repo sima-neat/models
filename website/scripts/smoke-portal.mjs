@@ -204,11 +204,15 @@ async function checkCatalogLayouts(browser, url) {
         if (viewport.width === 390) await page.keyboard.press('Tab');
         if (!await taskFilter.evaluate(el => document.activeElement === el && getComputedStyle(el).outlineStyle === 'solid')) throw new Error('keyboard navigation lost its filter focus outline');
         if (viewport.width === 390) await page.locator('#filter-toggle').click();
+        // Search keeps individual cards; the target platform matches every usable build.
+        await page.locator('#search').fill('modalix');
+        await page.locator('[data-model-card]').first().waitFor();
         const ids = await page.locator('.model-card').evaluateAll(cards => cards.map(card => card.dataset.modelCard));
         const tasksByModel = await page.locator('.model-card').evaluateAll(cards => Object.fromEntries(cards.map(card => [
           card.dataset.modelCard,
           [...card.querySelectorAll('.model-card-tag')].map(tag => tag.textContent),
         ])));
+        await page.locator('#search').fill('');
         const tableButton = page.getByRole('button', {name: 'Table', exact: true});
         await tableButton.focus();
         await tableButton.press('Enter');
@@ -294,6 +298,75 @@ async function checkCatalogLayouts(browser, url) {
         await page.close();
       }
     }
+  }
+}
+
+async function checkFamilyCatalog(browser, base) {
+  for (const [width, theme] of [[1440, 'light'], [1440, 'dark'], [390, 'light'], [390, 'dark']]) {
+    const page = await browser.newPage({viewport: {width, height: 1000}});
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    try {
+      await page.goto(base.href);
+      await page.locator('[data-family-card]').first().waitFor();
+      await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
+      const ids = await page.locator('[data-family-card]').evaluateAll(cards => cards.map(card => card.dataset.familyCard));
+      if (JSON.stringify(ids) !== JSON.stringify([...new Set(ids)].sort((a, b) => a.localeCompare(b)))) throw new Error('family IDs are duplicated or incorrectly ordered');
+      if (!ids.includes('yolox')) throw new Error('family overview omitted the final catalog page');
+      if (await page.locator('[data-model-card]').count()) throw new Error('overview includes individual model cards');
+      if (await page.locator('#result-count').innerText() !== `${ids.length} model families`) throw new Error('overview counts models instead of families');
+      const family = page.locator('[data-family-id="yolov8_obb"]');
+      if (!await family.locator('.model-card-description').innerText()) throw new Error('family description is missing');
+      await family.focus();
+      await family.press('Enter');
+      await page.locator('[data-model-card="yolov8n_obb"]').waitFor();
+      if (await page.locator('[data-model-card]').count() !== 5) throw new Error('family selection omitted a size');
+      if (await page.locator('#architecture-filter').inputValue() !== 'yolov8_obb' || new URL(page.url()).searchParams.get('architecture_id') !== 'yolov8_obb') throw new Error('family selection bypassed sidebar or URL');
+      await page.locator('[data-model-card="yolov8n_obb"]').focus();
+      await page.keyboard.press('Enter');
+      await page.locator('.detail-title').waitFor();
+      await page.goBack();
+      await page.locator('[data-model-card="yolov8n_obb"]').waitFor();
+      if (await page.locator('#architecture-filter').inputValue() !== 'yolov8_obb') throw new Error('Back lost the family');
+      // initialize opens the filter drawer when filters are active.
+      if (width === 390 && await page.locator('#filter-toggle').getAttribute('aria-expanded') === 'true') await page.locator('#filter-toggle').click();
+      await page.locator('#clear-family').focus();
+      await page.keyboard.press('Enter');
+      await page.locator('[data-family-card]').first().waitFor();
+      await page.goBack();
+      await page.locator('[data-model-card="yolov8n_obb"]').waitFor();
+      await page.goBack();
+      await page.locator('[data-family-card]').first().waitFor();
+      if (await page.locator('#clear-family').isVisible()) throw new Error('overview keeps a family selected');
+      await page.screenshot({path: `/tmp/models-ui-families-${width}-${theme}.png`});
+
+      // A one-model family skips selection and opens its existing model page.
+      await page.locator('[data-family-card="clip"]').click();
+      await page.locator('.detail-title').waitFor();
+      await page.locator('#nav-models').click();
+      await page.locator('[data-family-card]').first().waitFor();
+      if (width === 390 && await page.locator('#filter-toggle').getAttribute('aria-expanded') !== 'true') await page.locator('#filter-toggle').click();
+      await page.locator('#task-filter').selectOption('oriented_object_detection');
+      let compiler = '';
+      if (!customer) {
+        compiler = await page.locator('#compiler-filter option').nth(1).getAttribute('value');
+        await page.locator('#compiler-filter').selectOption(compiler);
+      }
+      if (width === 390) await page.locator('#filter-toggle').click();
+      await page.locator('[data-family-id="yolov8_obb"]').click();
+      await page.locator('[data-model-card]').first().waitFor();
+      await page.locator('#clear-family').click();
+      await page.locator('[data-family-card]').first().waitFor();
+      if (await page.locator('#task-filter').inputValue() !== 'oriented_object_detection'
+        || await page.locator('#compiler-filter').inputValue() !== compiler) throw new Error('clearing family reset unrelated filters');
+      if (new URL(page.url()).searchParams.has('architecture_id') || new URL(page.url()).searchParams.get('task') !== 'oriented_object_detection') throw new Error('clearing family lost URL context');
+      await page.locator('#search').fill('yolov8n');
+      await page.locator('[data-model-card="yolov8n_obb"]').waitFor();
+      if (await page.locator('[data-family-card]').count()) throw new Error('search still requires a family step');
+      if (await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)) throw new Error('family catalog overflows the viewport');
+      if (errors.length) throw new Error(errors.join('; '));
+      console.log(`ok  Family catalog · ${width}px ${theme}`);
+    } finally { await page.close(); }
   }
 }
 
@@ -487,6 +560,7 @@ try {
     }
     await checkLayerAnalysis(browser, variantUrl);
     await checkExecutionTooltips(browser, variantUrl);
+    await checkFamilyCatalog(browser, new URL('/', variantUrl));
     await checkCatalogLayouts(browser, new URL('/', variantUrl));
     await checkTaskComparison(browser, variantUrl);
     await checkLicensedDownloads(browser, variantUrl);

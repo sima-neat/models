@@ -47,182 +47,227 @@ architecture_paradigms:
 architectures:
   yolo_world:
     display_name: YOLO-World
+    description: Detects objects described by text prompts in images.
     paradigm: cnn
     allowed_model_types: [vlm]
   clip:
     display_name: CLIP
+    description: Encodes images and text into shared embeddings for similarity search and classification.
     paradigm: transformer
     allowed_model_types: [vlm]
   densenet:
     display_name: DenseNet
+    description: Classifies images with densely connected convolutional networks.
     paradigm: cnn
     allowed_model_types: [vision]
   depthart:
     display_name: DepthART
+    description: Estimates scene depth from a single image.
     paradigm: transformer
     allowed_model_types: [vision]
   depth_anything_2:
     display_name: Depth Anything V2
+    description: Estimates relative scene depth from a single image.
     paradigm: transformer
     allowed_model_types: [vision]
   depth_anything_3:
     display_name: Depth Anything 3
+    description: Estimates scene depth from images.
     paradigm: transformer
     allowed_model_types: [vision]
   dla:
     display_name: DLA
+    description: Classifies images by combining features across layers and resolutions.
     paradigm: cnn
     allowed_model_types: [vision]
   gemma4:
     display_name: Gemma4
+    description: Generates text and supports conversational tasks with text and multimodal inputs.
     paradigm: transformer
     allowed_model_types: [llm, vlm]
   gpt_oss:
     display_name: GPT-OSS
+    description: Generates text for reasoning and conversational tasks.
     paradigm: transformer
     allowed_model_types: [llm]
   hrnet:
     display_name: HRNet
+    description: Classifies images while preserving features at multiple resolutions.
     paradigm: cnn
     allowed_model_types: [vision]
   inception:
     display_name: Inception
+    description: Classifies images using convolutional features at multiple scales.
     paradigm: cnn
     allowed_model_types: [vision]
   lfm:
     display_name: LFM
+    description: Generates text for conversational and instruction-following tasks.
     paradigm: transformer
     allowed_model_types: [llm]
   lfm2_5:
     display_name: LFM2.5
+    description: Generates text for conversational and instruction-following tasks.
     paradigm: transformer
     allowed_model_types: [llm]
   lfm2_5_vl:
     display_name: LFM2.5-VL
+    description: Answers questions and generates text from images and text prompts.
     paradigm: transformer
     allowed_model_types: [vlm]
   lightglue:
     display_name: LightGlue
+    description: Matches local features between images to find corresponding points.
     paradigm: transformer
     allowed_model_types: [vision]
   lightstereo:
     display_name: LightStereo
+    description: Estimates depth by finding disparities between stereo image pairs.
     paradigm: cnn
     allowed_model_types: [vision]
   llama:
     display_name: Llama
+    description: Generates text for conversational and instruction-following tasks.
     paradigm: transformer
     allowed_model_types: [llm]
   llava:
     display_name: LLaVA
+    description: Answers visual questions and generates descriptions from images and text.
     paradigm: transformer
     allowed_model_types: [vlm]
   mistral:
     display_name: Mistral
+    description: Generates text for conversational and instruction-following tasks.
     paradigm: transformer
     allowed_model_types: [llm]
   phi:
     display_name: Phi
+    description: Generates text for conversational and reasoning tasks.
     paradigm: transformer
     allowed_model_types: [llm]
   phi4:
     display_name: Phi4
+    description: Generates text for conversational and reasoning tasks.
     paradigm: transformer
     allowed_model_types: [llm]
   qwen3:
     display_name: Qwen3
+    description: Generates text for conversational, reasoning and instruction-following tasks.
     paradigm: transformer
     allowed_model_types: [llm]
   qwen3_5:
     display_name: Qwen3.5
+    description: Generates text and supports conversational tasks with text and multimodal inputs.
     paradigm: transformer
     allowed_model_types: [llm, vlm]
   qwen3_vl:
     display_name: Qwen3-VL
+    description: Answers questions and generates text from images and text prompts.
     paradigm: transformer
     allowed_model_types: [vlm]
   raft_stereo:
     display_name: RAFT-Stereo
+    description: Estimates depth by refining disparities between stereo image pairs.
     paradigm: cnn
     allowed_model_types: [vision]
   resnet:
     display_name: ResNet
+    description: Classifies images with residual convolutional networks.
     paradigm: cnn
     allowed_model_types: [vision]
   resnext:
     display_name: ResNeXt
+    description: Classifies images with grouped residual convolutional networks.
     paradigm: cnn
     allowed_model_types: [vision]
   rf_detr:
     display_name: RF-DETR
+    description: Detects objects and their bounding boxes in images with transformer-based detectors.
     paradigm: transformer
     allowed_model_types: [vision]
   siglip:
     display_name: SigLIP
+    description: Encodes images and text into shared embeddings for similarity search and classification.
     paradigm: transformer
     allowed_model_types: [vlm]
   superpoint:
     display_name: SuperPoint
+    description: Finds distinctive image points and computes descriptors for matching.
     paradigm: cnn
     allowed_model_types: [vision]
   superglue:
     display_name: SuperGlue
+    description: Matches image keypoints using their locations and descriptors.
     paradigm: transformer
     allowed_model_types: [vision]
   supertonic:
     display_name: Supertonic
+    description: Synthesizes speech from text with selectable voices.
     paradigm: transformer
     allowed_model_types: [audio]
   vgg:
     display_name: VGG
+    description: Classifies images with stacked convolutional layers.
     paradigm: cnn
     allowed_model_types: [vision]
   vit:
     display_name: ViT
+    description: Classifies images with vision transformers operating on image patches.
     paradigm: transformer
     allowed_model_types: [vision]
   whisper:
     display_name: Whisper
+    description: Transcribes speech recordings into text.
     paradigm: transformer
     allowed_model_types: [audio]
   wide_resnet:
     display_name: Wide ResNet
+    description: Classifies images with wider residual convolutional networks.
     paradigm: cnn
     allowed_model_types: [vision]
   yolo11_det:
     display_name: YOLO11-det
+    description: Detects objects and their bounding boxes in images.
     paradigm: cnn
     allowed_model_types: [vision]
   yolo11_obb:
     display_name: YOLO11-obb
+    description: Detects objects with rotated bounding boxes in aerial imagery.
     paradigm: cnn
     allowed_model_types: [vision]
   yolo26_det:
     display_name: YOLO26-det
+    description: Detects objects and their bounding boxes in images.
     paradigm: cnn
     allowed_model_types: [vision]
   yolo26_obb:
     display_name: YOLO26-obb
+    description: Detects objects with rotated bounding boxes in aerial imagery.
     paradigm: cnn
     allowed_model_types: [vision]
   yolo26_pose:
     display_name: YOLO26-pose
+    description: Detects people and estimates their body keypoints in images.
     paradigm: cnn
     allowed_model_types: [vision]
   yolo26_seg:
     display_name: YOLO26-seg
+    description: Detects objects and outlines each instance with a segmentation mask.
     paradigm: cnn
     allowed_model_types: [vision]
   yolov8_det:
     display_name: YOLOv8-det
+    description: Detects objects and their bounding boxes in images.
     paradigm: cnn
     allowed_model_types: [vision]
   yolov8_obb:
     display_name: YOLOv8-obb
+    description: Detects objects with rotated bounding boxes in aerial imagery.
     paradigm: cnn
     allowed_model_types: [vision]
   yolox:
     display_name: YOLOX
+    description: Detects objects and their bounding boxes in images.
     paradigm: cnn
     allowed_model_types: [vision]
 
