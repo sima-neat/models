@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import logging
 import math
 import random
 import re
@@ -915,7 +916,9 @@ def _remaining_pending_builds(prior: JsonObject, document: JsonObject) -> list[J
     A progress snapshot may only clear the pending entries whose builds it carries. The
     registry rejects every other change to the list: a different order, or entries a base
     branch started pending after this revision was initialized, which the inherited
-    carry above would otherwise add or reorder.
+    carry above would otherwise add or reorder. Entries the snapshot planned but the
+    revision never marked pending cannot be added either; they are logged and left out,
+    and their builds need a new Git revision.
     """
     builds = {
         (model["id"], build["build_profile_id"], build["component_id"]): build.get("compile_fingerprint")
@@ -930,6 +933,16 @@ def _remaining_pending_builds(prior: JsonObject, document: JsonObject) -> list[J
         ]
         if not all(published):
             remaining.append(pending)
+    def key(item):
+        return item["model_id"], item["build_profile_id"], item["compile_fingerprint"]
+
+    known = {key(item) for item in prior["pending_builds"]}
+    for item in document.get("pending_builds", []):
+        if key(item) not in known:
+            logging.warning(
+                "%s/%s is not pending in this catalog revision; publish its build from a new Git revision",
+                item["model_id"], item["build_profile_id"],
+            )
     return remaining
 
 
@@ -1048,7 +1061,7 @@ def publish_catalog(
         incremental=True,
         documentation_receipts=documentation_receipts,
     )
-    if continuing_revision and isinstance(target_catalog, dict):
+    if continuing_revision and isinstance(target_catalog, dict) and "pending_builds" in target_catalog["document"]:
         document["pending_builds"] = _remaining_pending_builds(target_catalog["document"], document)
     previous_snapshot = target_catalog.get("canonical_sha256") if isinstance(target_catalog, dict) else None
     snapshot = {

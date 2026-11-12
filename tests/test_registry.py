@@ -1540,7 +1540,7 @@ def test_deferred_conversion_inheritance_respects_catalog_revision(monkeypatch, 
 
 @pytest.mark.parametrize("continuing_revision", [False, True])
 def test_progress_publication_keeps_the_prior_pending_order_and_clears_only_its_builds(
-    monkeypatch, continuing_revision
+    monkeypatch, caplog, continuing_revision
 ):
     """The registry compares a progress snapshot's pending list with its own, entry for entry and in order."""
 
@@ -1570,8 +1570,28 @@ def test_progress_publication_keeps_the_prior_pending_order_and_clears_only_its_
     )["catalog"]
     if continuing_revision:
         assert result["pending_builds"] == [theirs, later]
+        assert "new_model/w16a16 is not pending in this catalog revision" in caplog.text
     else:
         assert result["pending_builds"] == built["pending_builds"]
+
+
+def test_progress_publication_leaves_a_catalog_without_a_pending_list_alone(monkeypatch):
+    """A branch catalog from before the pending list keeps the list the snapshot builder computes."""
+    target = {"catalog_revision": "a" * 40, "canonical_sha256": "c" * 64, "document": {"models": []}}
+    built = {"models": [], "pending_builds": [{"model_id": "dfine_n", "build_profile_id": "w16a16",
+                                              "component_ids": ["model"], "compile_fingerprint": "d" * 64}]}
+    monkeypatch.setattr("model_registry.registry.load_models", lambda root: {})
+    monkeypatch.setattr("model_registry.registry._catalog_models", lambda models: {})
+    monkeypatch.setattr("model_registry.registry._head_matrix", lambda *args: [])
+    monkeypatch.setattr("model_registry.registry.build_catalog_snapshot", lambda **kwargs: dict(built))
+    result = publish_catalog(
+        repository=ROOT, api_url="https://registry.example.invalid",
+        read_api_url="https://registry.example.invalid", aws_region="us-west-2",
+        branch="feature", git_sha="a" * 40, base_branches=["develop"],
+        request=lambda *args: {"stored": True},
+        read_request=lambda url: {"catalog": {"document": {"models": []}} if url.endswith("develop") else target},
+    )["catalog"]
+    assert result["pending_builds"] == built["pending_builds"]
 
 
 @pytest.mark.parametrize("same_revision", [False, True])
