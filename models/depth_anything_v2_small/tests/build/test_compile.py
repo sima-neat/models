@@ -162,9 +162,7 @@ def test_only_int8_activations_need_calibration(load_script, monkeypatch, profil
         ("w16a16_mixed", {"precision": "w16a16", "bf16_regions": ["attention"]}, "W8A8 base precision"),
     ],
 )
-def test_mixed_precision_requires_a_matching_profile(
-    load_script, monkeypatch, tmp_path, profile, parameters, message
-):
+def test_mixed_precision_requires_a_matching_profile(load_script, monkeypatch, tmp_path, profile, parameters, message):
     recipe = load_script("compile")
     monkeypatch.setattr(recipe, "_parameters", lambda _: parameters)
     with pytest.raises(ValueError, match=message):
@@ -211,7 +209,8 @@ def test_precision_hints_reject_unknown_or_duplicate_regions(load_script, region
         precision.annotate_bf16_regions(onnx.ModelProto(), regions)
 
 
-def test_batched_attention_projections_preserve_outputs(load_script):
+@pytest.mark.parametrize("form", ["gemm", "matmul_bias_first", "matmul_bias_last"])
+def test_batched_attention_projections_preserve_outputs(load_script, form):
     import onnxruntime as ort
 
     surgery = load_script("surgery")
@@ -228,22 +227,31 @@ def test_batched_attention_projections_preserve_outputs(load_script):
         name = f"block{index}"
         bias = name + ".attn.proj.bias"
         initializers.append(numpy_helper.from_array(rng.normal(0, 0.02, 384).astype(np.float32), bias))
-        nodes.extend(
-            [
-                helper.make_node("Reshape", ["input", "flat_shape"], [name + "/flat"], name=name + "/flatten"),
-                helper.make_node(
-                    "Gemm",
-                    [name + "/flat", "weight", bias],
-                    [name + "/projected"],
-                    name=name + "/Gemm",
-                    alpha=1.0,
-                    beta=1.0,
-                    transA=0,
-                    transB=0,
-                ),
-                helper.make_node("Reshape", [name + "/projected", "shape"], [name], name=name + "/restore"),
-            ]
-        )
+        if form == "gemm":
+            nodes.extend(
+                [
+                    helper.make_node("Reshape", ["input", "flat_shape"], [name + "/flat"], name=name + "/flatten"),
+                    helper.make_node(
+                        "Gemm",
+                        [name + "/flat", "weight", bias],
+                        [name + "/projected"],
+                        name=name + "/Gemm",
+                        alpha=1.0,
+                        beta=1.0,
+                        transA=0,
+                        transB=0,
+                    ),
+                    helper.make_node("Reshape", [name + "/projected", "shape"], [name], name=name + "/restore"),
+                ]
+            )
+        else:
+            inputs = [bias, name + "/projected"] if form == "matmul_bias_first" else [name + "/projected", bias]
+            nodes.extend(
+                [
+                    helper.make_node("MatMul", ["input", "weight"], [name + "/projected"], name=name + "/MatMul"),
+                    helper.make_node("Add", inputs, [name], name=name + "/Add"),
+                ]
+            )
         outputs.append(helper.make_tensor_value_info(name, onnx.TensorProto.FLOAT, [1, 1814, 384]))
     model = helper.make_model(
         helper.make_graph(
@@ -267,6 +275,40 @@ def test_batched_attention_projections_preserve_outputs(load_script):
     actual = ort.InferenceSession(rewritten.SerializeToString(), options).run(None, {"input": image})
     for before, after in zip(expected, actual, strict=True):
         np.testing.assert_allclose(after, before, rtol=1e-5, atol=1e-6)
+
+
+def test_unfused_learned_attention_projections_stay_int8(load_script):
+    precision = load_script("precision")
+    nodes = [
+        helper.make_node("Div", ["input", "input"], [f"norm{index}"], name=f"/norm/Div{index}") for index in range(106)
+    ]
+    for index in range(12):
+        prefix = f"/blocks.{index}/attn/"
+        for name, operation, inputs in [
+            ("Mul", "Mul", ["input", "scale"]),
+            ("MatMul", "MatMul", ["q", "k"]),
+            ("Softmax", "Softmax", ["scores"]),
+            ("MatMul_1", "MatMul", ["probabilities", "v"]),
+            ("qkv/MatMul", "MatMul", ["input", "weights"]),
+            ("proj/MatMul", "MatMul", ["input", "weights"]),
+        ]:
+            nodes.append(helper.make_node(operation, inputs, [prefix + name], name=prefix + name))
+    model = helper.make_model(
+        helper.make_graph(
+            nodes,
+            "regions",
+            [],
+            [],
+            [
+                numpy_helper.from_array(np.eye(384, dtype=np.float32), "weights"),
+            ],
+        )
+    )
+
+    selected = precision.regions(model)["attention"]
+
+    assert len(selected) == 48
+    assert not any("/qkv/" in name or "/proj/" in name for name in selected)
 
 
 def test_compiled_package_keeps_the_full_resolution_depth_map(compiled, model_dir, build_profile, load_script):

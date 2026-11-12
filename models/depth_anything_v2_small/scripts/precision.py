@@ -26,7 +26,12 @@ def regions(model: onnx.ModelProto) -> dict[str, set[str]]:
         )
         if normalization or residual or node.name == "/Add_2":
             selected["normalization_residual"].add(node.name)
-        if "/attn/" in node.name and node.op_type in {"MatMul", "Softmax", "Mul"}:
+        # Only QK/PV products belong to BF16 attention. Unfused learned QKV/projection
+        # MatMuls have constant weights and must keep the profile's INT8 precision.
+        attention = node.op_type in {"Softmax", "Mul"} or (
+            node.op_type == "MatMul" and not any(value in constants for value in node.input)
+        )
+        if "/attn/" in node.name and attention:
             selected["attention"].add(node.name)
     if {name: len(nodes) for name, nodes in selected.items()} != {"normalization_residual": 106, "attention": 48}:
         raise ValueError("unexpected Depth Anything V2 normalization, residual or attention graph")
