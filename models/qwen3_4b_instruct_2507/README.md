@@ -16,4 +16,4 @@ Qwen3-4B-Instruct-2507 is a conversational language model from Alibaba Cloud for
 
 ## Building applications
 
-Run the package with the [Neat Model API](https://developer.sima.ai/software/develop-apps/development-workflow/model). For complete applications, start from the [Neat example apps](https://developer.sima.ai/examples).
+Run the package with the [Neat GenAI Model API](https://developer.sima.ai/software/develop-apps/development-workflow/genai-model). For complete applications, start from the [Neat example apps](https://developer.sima.ai/examples).

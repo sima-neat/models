@@ -97,7 +97,8 @@ def _repository() -> dict[str, Any]:
     with _preview_conversions(models):
         matrix = build_matrix(models, sorted(models), repository=ROOT, compiler_version=compiler["identity"])["include"]
         documentation = {
-            model_id: load_model_documentation(ROOT / "models" / model_id, model["display_name"], repository=ROOT)
+            model_id: load_model_documentation(ROOT / "models" / model_id, model["display_name"], repository=ROOT,
+                is_genai=any(c["interface"]["format"] == "huggingface" for c in model["components"]))
             for model_id, model in models.items()
         }
         revisions = [_revision(models, matrix, documentation, compiler, day, sha) for day, sha in REVISIONS]

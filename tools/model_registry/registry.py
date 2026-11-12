@@ -765,7 +765,8 @@ def publish_model_documentation(
             # Incremental catalog updates must preserve the current revision's receipt verbatim.
             receipts[model_id] = prior
             continue
-        documentation = load_model_documentation(root / "models" / model_id, model["display_name"], repository=root)
+        documentation = load_model_documentation(root / "models" / model_id, model["display_name"], repository=root,
+            is_genai=any(c["interface"]["format"] == "huggingface" for c in model["components"]))
         hero = documentation["hero"]
         hero_content = {
             "artifact_name": hero["artifact_name"],

@@ -449,7 +449,8 @@ outputs. Start from the template in
    numbered list, give the class-index mapping, and name the Neat decoder that
    handles the outputs when one exists.
 5. `## Building applications`: the `BUILDING_APPLICATIONS` text from
-   `tools/model_registry/documentation.py`, unchanged.
+   `tools/model_registry/documentation.py`, unchanged. LLiMa deployments
+   (`interface.format: huggingface`) use `GENAI_BUILDING_APPLICATIONS` instead.
 
 Write the README for an application developer:
 
