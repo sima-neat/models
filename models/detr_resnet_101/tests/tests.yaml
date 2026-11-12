@@ -3,8 +3,24 @@ conversion:
 compile:
   run_tests: true
 accuracy:
-  run_tests: false
-  skip_reason: The 640x640 builds have no published accuracy report to expect values from yet.
+  run_tests: true
+  expected:
+    w16a16:
+      coco-2017-val:
+        coco_map: 0.3789
+        coco_ap50: 0.5720
+        coco_ap75: 0.4028
+        coco_ap_small: 0.1430
+        coco_ap_medium: 0.4138
+        coco_ap_large: 0.5968
+        coco_ar1: 0.3136
+        coco_ar10: 0.4864
+        coco_ar100: 0.5249
+        coco_ar_small: 0.2355
+        coco_ar_medium: 0.5789
+        coco_ar_large: 0.7908
 performance:
-  run_tests: false
-  skip_reason: The 640x640 builds have no published performance report to expect values from yet.
+  run_tests: true
+  expected:
+    w16a16:
+      throughput_fps: 55.3
