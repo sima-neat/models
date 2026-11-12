@@ -29,6 +29,9 @@ options = pyneat.ModelOptions()
 # Neat stretches the frame to 512x512, normalizes, quantizes and tessellates it inside the measured pipeline.
 options.preprocess.kind = pyneat.InputKind.Image
 options.preprocess.enable = pyneat.AutoFlag.On
+# Size Neat's input buffers for the benchmark frame; otherwise the execution plan shows its 1920x1080 default.
+options.preprocess.input_max_width = FRAME_WIDTH
+options.preprocess.input_max_height = FRAME_HEIGHT
 options.preprocess.resize.enable = pyneat.AutoFlag.On
 options.preprocess.resize.mode = pyneat.ResizeMode.Stretch
 options.preprocess.normalize.enable = pyneat.AutoFlag.On
