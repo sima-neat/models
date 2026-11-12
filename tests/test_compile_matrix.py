@@ -470,6 +470,30 @@ def test_fingerprints_ignore_the_models_tests(tmp_path: Path) -> None:
     assert fingerprints() == first
 
 
+def test_family_description_keeps_all_stage_fingerprints(tmp_path: Path) -> None:
+    model_dir = _copy_repository(tmp_path, "rf_detr_small")
+
+    def fingerprints() -> dict[str, str]:
+        model = load_and_validate_model(model_dir)
+        converted = conversion_fingerprint(tmp_path, model)
+        return {
+            "conversion": converted,
+            "compile": compile_fingerprint(
+                tmp_path, model["id"], "w8a8_w16a16", "w8a8_w16a16", COMPILER_VERSION,
+                conversion_sources={model["id"]: {"sha256": "a" * 64, "conversion_fingerprint": converted}},
+            ),
+            **{stage: benchmark_fingerprint(tmp_path, model, "w8a8_w16a16", RF_DETR_BUILDS, stage)
+               for stage in ("performance", "accuracy")},
+        }
+
+    before = fingerprints()
+    path = tmp_path / "taxonomies/model-taxonomy.yaml"
+    taxonomy = yaml.safe_load(path.read_text())
+    taxonomy["architectures"]["rf_detr"]["description"] = "A revised family description."
+    path.write_text(yaml.safe_dump(taxonomy))
+    assert fingerprints() == before
+
+
 @pytest.mark.parametrize("stage", ["performance", "accuracy"])
 def test_benchmark_requirements_rerun_only_their_stage(tmp_path: Path, stage: str) -> None:
     model_dir = _copy_repository(tmp_path, "rf_detr_small")

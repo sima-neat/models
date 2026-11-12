@@ -1,3 +1,5 @@
+# A build profile of this model compiles for over 20 minutes, so it builds only on request.
+build-on-demand: true
 display_name: YOLO-World v2 L
 description: Open-vocabulary detection with a BF16 CLIP text encoder and a mostly INT8 image detector, supporting 80 dynamic
   prompt slots.
