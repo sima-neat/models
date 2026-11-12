@@ -111,9 +111,10 @@ def _operation_counts(quantized: Any) -> tuple[Counter[str], Counter[str]]:
 
 def _describe(node: Any) -> str:
     """The node's operation type, precision and source ONNX operations."""
-    precision = _precision(node)
+    # A node without a precision of its own holds AFE's EmptyValue, which has no value.
+    precision = getattr(_precision(node), "value", "-")
     sources = ",".join(name.removeprefix("/model/") for name in node.source_node_names or ()) or node.name
-    return f"{type(getattr(node.ir, 'operation', node.ir)).__name__}:{precision.value if precision else '-'}({sources})"
+    return f"{type(getattr(node.ir, 'operation', node.ir)).__name__}:{precision}({sources})"
 
 
 def _marked_precision_mismatches(quantized: Any, marks: dict[str, str]) -> list[str]:

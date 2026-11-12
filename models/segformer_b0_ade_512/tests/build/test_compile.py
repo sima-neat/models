@@ -162,9 +162,10 @@ def test_marked_precision_check_names_each_operation_off_its_mark(
     recipe = load_script("compile")
     monkeypatch.setattr(recipe, "QuantizationPrecision", _Precision)
     int8, bf16 = _Precision.INT_8, _Precision.BFLOAT_16
-    # AFE left a marked LayerNorm INT8 and ran the Linear layer reading it BF16, despite its INT8 mark.
+    # AFE left a marked LayerNorm INT8 and ran the Linear layer reading it BF16, despite its INT8 mark; the LayerNorm's
+    # input has no precision of its own (AFE's EmptyValue).
     nodes = [
-        _quantized_node("conv", "ConvAddActivationOp", int8, ["/model/embed/Conv"]),
+        _quantized_node("conv", "ConvAddActivationOp", SimpleNamespace(empty=""), ["/model/embed/Conv"]),
         _quantized_node("norm", "LayerNormOp", int8, ["/model/embed/LayerNormalization"], ("conv",)),
         _quantized_node("query", "ConvAddActivationOp", bf16, ["/model/query/MatMul", "/model/query/Add"], ("norm",)),
         _quantized_node("softmax", "SoftmaxOp", bf16, ["/model/Softmax"], ("query",)),
@@ -182,7 +183,7 @@ def test_marked_precision_check_names_each_operation_off_its_mark(
     query = "ConvAddActivationOp:bfloat16(query/MatMul,query/Add)"
     norm = "LayerNormOp:int8(embed/LayerNormalization)"
     assert mismatches == [
-        f"{norm} marked ['bfloat16']; inputs ['ConvAddActivationOp:int8(embed/Conv)']; readers ['{query}']",
+        f"{norm} marked ['bfloat16']; inputs ['ConvAddActivationOp:-(embed/Conv)']; readers ['{query}']",
         f"{query} marked ['int8']; inputs ['{norm}']; readers ['SoftmaxOp:bfloat16(Softmax)']",
     ]
     assert "Unmarked BF16 operations: ['ConstantOp:bfloat16(scale)']" in caplog.text
