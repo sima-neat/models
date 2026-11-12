@@ -31,14 +31,14 @@ def step_index(job: dict, name: str) -> int:
     return next(index for index, item in enumerate(job["steps"]) if item.get("name") == name)
 
 
-def evaluate(condition: str, values: dict[str, object]) -> bool:
-    """Evaluate a GitHub Actions condition after substituting every context reference it uses."""
+def evaluate(condition: str, values: dict[str, object]) -> object:
+    """Evaluate a GitHub Actions expression after substituting every context reference it uses."""
     expression = " ".join(condition.splitlines())
     for name in sorted(values, key=len, reverse=True):
         expression = expression.replace(name, repr(values[name]))
     expression = expression.replace("&&", " and ").replace("||", " or ")
     expression = re.sub(r"!(?!=)", " not ", expression)
-    return eval(expression, {"__builtins__": {}}, {})
+    return eval(expression, {"__builtins__": {}, "fromJSON": json.loads, "format": str.format}, {})
 
 
 LOCAL_BENCHMARK_WORKFLOW = "./.github/workflows/vulcan-model-benchmarking.yml"
@@ -345,20 +345,34 @@ def test_branches_reuse_builds_from_the_resolved_base_branch_catalogs() -> None:
     assert jobs["compile"]["with"]["base_branches"] == "${{ needs.select.outputs.base_branches }}"
 
 
-def test_a_portal_that_fails_its_check_stops_the_run_before_planning() -> None:
+def test_portal_checks_gate_browser_publication_independently_of_model_processing() -> None:
     jobs = load(WORKFLOW)["jobs"]
 
+    def ancestors(job_id: str) -> set[str]:
+        dependencies = jobs[job_id].get("needs", [])
+        if isinstance(dependencies, str):
+            dependencies = [dependencies]
+        return set(dependencies).union(*(ancestors(dependency) for dependency in dependencies))
+
     assert jobs["portal"]["uses"] == "./.github/workflows/developer-docs.yml"
-    assert "portal" in jobs["plan"]["needs"]
-    # Without a status function, plan runs only when portal succeeded; every later job needs plan.
+    assert "portal" in ancestors("publish-model-browser")
+    for job_id in (
+        "plan", "authorize-runner-classes", "initialize-catalog", "compile", "publish-candidates",
+        "publish-catalog", "benchmark", "benchmark-without-compiles", "report-partial-publication",
+    ):
+        assert "portal" not in ancestors(job_id), job_id
+    # Model validation and registry configuration must still succeed before planning.
     assert "if" not in jobs["plan"]
+    assert load(WORKFLOWS / "target-branch-checks.yml")["jobs"]["portal"]["uses"] == (
+        "./.github/workflows/developer-docs.yml"
+    )
 
 
 def test_plan_compares_fingerprints_with_the_environment_registry() -> None:
     plan_job = load(WORKFLOW)["jobs"]["plan"]
     plan = step(plan_job, "Compare fingerprints with published runs")
 
-    assert plan_job["needs"] == ["select", "portal", "resolve-vulcan-config"]
+    assert plan_job["needs"] == ["select", "resolve-vulcan-config"]
     assert plan_job["environment"] == "${{ needs.select.outputs.vulcan_environment }}"
     assert plan_job["permissions"] == {"contents": "read", "id-token": "write"}
     credentials = step(plan_job, "Configure registry planning credentials")
@@ -927,10 +941,12 @@ def test_every_component_mpk_records_runner_and_input_provenance() -> None:
         assert option in verify
 
 
-# Reusable build workflow: publish from a hosted runner
+# Reusable build workflow: publication and retained outputs
 
 
-def test_build_is_published_from_a_hosted_runner() -> None:
+@pytest.mark.parametrize("runner_script", ["scripts/run_model_compilation.sh", "scripts/run_llima_compilation.sh"])
+@pytest.mark.parametrize("runner_environment", ["vulcan-stg", "vulcan-production"])
+def test_build_publication_runner_and_steps(runner_script: str, runner_environment: str) -> None:
     jobs = load(BUILD_WORKFLOW)["jobs"]
     compile_job, publish = jobs["compile"], jobs["publish"]
     upload = step(compile_job, "Retain the complete compiler output")
@@ -941,7 +957,14 @@ def test_build_is_published_from_a_hosted_runner() -> None:
         "${{ !fromJSON(inputs.entry).build_on_demand || "
         "fromJSON(inputs.entry).runner_script == 'scripts/run_llima_compilation.sh' }}"
     )
-    assert publish["runs-on"] == "ubuntu-latest"
+    runner = evaluate(publish["runs-on"].removeprefix("${{").removesuffix("}}"), {
+        "fromJSON(inputs.entry).runner_script": runner_script,
+        "inputs.runner_environment": runner_environment,
+    })
+    assert runner == (
+        ["self-hosted", "linux", "arm64", runner_environment, "ubuntu", "default"]
+        if runner_script == "scripts/run_llima_compilation.sh" else "ubuntu-latest"
+    )
     assert publish["permissions"] == {"actions": "write", "contents": "read", "id-token": "write"}
     assert publish["outputs"] == {"package_count": "${{ steps.packages.outputs.count }}"}
     assert upload["with"]["name"].startswith("compiler-output-")

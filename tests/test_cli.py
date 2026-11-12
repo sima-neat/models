@@ -285,6 +285,22 @@ def test_invalid_model_has_nonzero_exit(capsys) -> None:
     assert "compilation.source" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize("command", ("validate", "validate-models"))
+def test_validation_rejects_a_resource_outside_the_source_policy(command: str, monkeypatch, capsys) -> None:
+    source = {"uri": "https://unapproved.example/tables.json", "sha256": "b" * 64, "size_bytes": 1}
+    model = {"id": "resnet_50", "resources": {"runtime": {"source": source, "install_path": "runtime"}}}
+    monkeypatch.setattr(cli, "load_and_validate_model", lambda *_args: model)
+    monkeypatch.setattr(cli, "load_models", lambda _repository: {"resnet_50": model})
+    arguments = [str(ROOT / "models" / "resnet_50")] if command == "validate" else ["--repository", str(ROOT)]
+    assert main([command, *arguments]) == 2
+    assert "resource runtime: source policy" in capsys.readouterr().err
+
+
+def test_fetch_resources_prints_nothing_for_a_model_without_resources(capsys, tmp_path: Path) -> None:
+    assert main(["fetch-resources", str(ROOT / "models" / "resnet_50"), "--output-dir", str(tmp_path / "out")]) == 0
+    assert capsys.readouterr().out == ""
+
+
 def test_matrix_emits_workflow_json(capsys) -> None:
     result = main(["matrix", "--repository", str(ROOT), "--models", "resnet_50", "--compiler-version", "fixture"])
     assert result == 0
@@ -605,3 +621,23 @@ def test_publish_conversion_cli_rejects_unvalidated_output(validation):
         main(["publish-conversion", "yolo26n", "output", "--api-url", "https://registry.test",
               "--bucket", "artifacts", "--environment", "production", "--validation", validation])
     assert error.value.code == 2
+
+
+def test_model_runtime_directory_verifies_assets_and_omits_unneeded_arguments(tmp_path, capsys):
+    import hashlib
+
+    profile = tmp_path / "test/w16a16"
+    profile.mkdir(parents=True)
+    arguments = ["model-runtime-directory", str(tmp_path), "--model", "test", "--build-profile", "w16a16"]
+    assert main(arguments) == 0
+    assert capsys.readouterr().out == ""
+    asset = profile / "tokenizer.json"
+    asset.write_text("{}")
+    (profile / "compile-outputs.json").write_text(json.dumps({
+        "runtime_files": [{"path": asset.name, "sha256": hashlib.sha256(asset.read_bytes()).hexdigest()}],
+    }))
+    assert main(arguments) == 0
+    assert capsys.readouterr().out.strip() == str(profile)
+    asset.write_text("corrupted")
+    assert main(arguments) != 0
+    assert "SHA-256" in capsys.readouterr().err

@@ -52,7 +52,7 @@ export async function variantDownloads(run, api, catalogModel = null) {
   return downloads.flat().sort((a, b) => a.component.localeCompare(b.component));
 }
 
-// Directory manifests describe folders; archive packages contain an MPK or ZIP.
+// Directory manifests describe folders; archive packages are ZIPs, or an MPK for a build published before ZIPs.
 export function packageFormat(artifact, filename = "") {
   if (artifact && artifactDelivery(artifact) !== "archive") return "Folder";
   return artifact?.media_type === "application/gzip" || filename.endsWith("_mpk.tar.gz") ? "MPK" : "ZIP";

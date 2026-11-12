@@ -215,8 +215,11 @@ def test_benchmark_runs_on_the_devkit_its_caller_resolved() -> None:
     assert "^[[:space:]]*DISTRO_VERSION[[:space:]]*=" in runtime
     assert "Could not read DISTRO_VERSION from /etc/buildinfo" in runtime
     assert "DevKit platform mismatch: expected $platform_version, found $actual_platform" in runtime
-    assert 'sima-cli neat install --env production --type minimal "$target"' in install
-    assert '["neat_core"]["install_target"]' in install
+    assert install == (
+        '"$REGISTRY_PYTHON" -m model_registry ensure-neat-core --repository _source --environment production'
+    )
+    assert "tools/model_registry/neat_core.py" in ACCURACY_TOOLING
+    assert "tools/model_registry/neat_core.py" in PERFORMANCE_TOOLING
     assert "kerrigan" not in BENCHMARK_WORKFLOW.read_text(encoding="utf-8").lower()
 
 
@@ -256,13 +259,75 @@ def test_performance_runs_only_at_the_full_cpu_clock() -> None:
 def test_performance_runs_the_model_owned_script() -> None:
     script = (ROOT / "scripts/run_model_performance.sh").read_text(encoding="utf-8")
     assert '"$PYNEAT_PYTHON" "$MODEL_DIR/scripts/performance.py"' in script
-    assert '"${mpks[@]}" "${dataset[@]}" --output "$OUTPUT_DIR"' in script
+    assert '"${mpks[@]}" "${dataset[@]}" "${resources[@]}" --output "$OUTPUT_DIR"' in script
+    # A model's CPU work gets its pinned resources and its pinned wheels, beside PyNeat's environment.
+    assert "model_registry fetch-resources" in script
+    assert 'resources=(--resources "$resource_dir")' in script
+    assert script.index("fetch-resources") < script.index('scripts/performance.py"')
+    assert 'REQUIREMENTS="$MODEL_DIR/scripts/requirements-performance.txt"' in script
+    assert '--target "$site" -r "$REQUIREMENTS"' in script
+    assert 'PYTHONPATH="$REPOSITORY/tools:$site"' in script
     # The script picks its benchmark input from the model's first accuracy dataset, unpacked.
     assert "model_registry resolve-devkit-accuracy" in script
     assert 'dataset=(--dataset "$name=$directory")' in script
     assert script.index("resolve-devkit-accuracy") < script.index('scripts/performance.py"')
     assert "model_registry model-component-mpks" in script
     assert script.index('scripts/performance.py"') < script.index("model_registry check-report")
+
+
+@pytest.mark.parametrize("extra_wheels", [True, False])
+def test_performance_dependencies_are_isolated_and_cleaned(tmp_path: Path, extra_wheels: bool) -> None:
+    scripts = tmp_path / "repository/models/fixture/scripts"
+    scripts.mkdir(parents=True)
+    if extra_wheels:
+        (scripts / "requirements-performance.txt").write_text("benchmark_wheel==1.0\n")
+    (scripts / "performance.py").write_text(
+        "import argparse, json, os\nfrom pathlib import Path\n"
+        "p=argparse.ArgumentParser(); p.add_argument('--mpk'); p.add_argument('--output'); a=p.parse_args()\n"
+        "if os.environ['EXTRA_WHEELS']=='true':\n"
+        "    from benchmark_wheel import value\n"
+        "else: value=0\n"
+        "Path(a.output, 'model-report.json').write_text(json.dumps({'value':value}))\n"
+    )
+    binaries = tmp_path / "bin"
+    binaries.mkdir()
+    python = binaries / "python"
+    python.write_text(
+        f"#!{sys.executable}\nimport json, os, sys\nfrom pathlib import Path\n"
+        "if sys.argv[1:3]==['-m','model_registry']:\n"
+        "    if sys.argv[3]=='model-component-mpks': print('model=fixture_mpk.tar.gz')\n"
+        "elif sys.argv[1:3]==['-m','pip']:\n"
+        "    Path(os.environ['PIP_CALL']).write_text(json.dumps(sys.argv[1:]))\n"
+        "    site=Path(sys.argv[sys.argv.index('--target')+1]); site.mkdir(parents=True)\n"
+        "    (site/'benchmark_wheel.py').write_text('value=42\\n')\n"
+        "else: os.execv(sys.executable, [sys.executable, *sys.argv[1:]])\n"
+    )
+    python.chmod(0o755)
+    cat = binaries / "cat"
+    cat.write_text(
+        '#!/bin/sh\ncase "$1" in */5000000.mla/cur_freq) echo 1000000000;; '
+        '*/policy0/scaling_cur_freq) echo 1400000;; *) exec /bin/cat "$@";; esac\n'
+    )
+    cat.chmod(0o755)
+    work, output, pip_call = (tmp_path / name for name in ("scratch", "report", "pip.json"))
+    env = {**os.environ, "PATH": f"{binaries}{os.pathsep}{os.environ['PATH']}",
+           "REGISTRY_PYTHON": str(python), "PYNEAT_PYTHON": str(python),
+           "WORK_DIR": str(work), "DATASET_CACHE": str(tmp_path / "cache"),
+           "DATASET_LOCK": str(tmp_path / "prepare.lock"), "PIP_CALL": str(pip_call),
+           "EXTRA_WHEELS": str(extra_wheels).lower()}
+    subprocess.run(
+        [ROOT / "scripts/run_model_performance.sh", scripts.parent, "profile", tmp_path / "compiled", output],
+        env=env, check=True, capture_output=True, text=True,
+    )
+    assert json.loads((output / "model-report.json").read_text())["value"] == (42 if extra_wheels else 0)
+    assert not work.exists()
+    assert pip_call.exists() == extra_wheels
+    if extra_wheels:
+        arguments = json.loads(pip_call.read_text())
+        assert "--no-deps" in arguments and "--only-binary=:all:" in arguments
+        assert arguments[arguments.index("--target") + 1] == str(work / "site-packages")
+        assert arguments[arguments.index("-r") + 1] == str(scripts / "requirements-performance.txt")
+
 
 def test_benchmarks_run_only_when_requested() -> None:
     benchmark = load_workflow()["jobs"]["benchmark"]
@@ -719,3 +784,63 @@ def test_report_command_publishes_both_stages_to_selected_registry(tmp_path, env
     assert len(calls) == 2
     assert all(f'--environment {environment} ' in call for call in calls)
     assert all('--compiled-dir _compiled ' in call for call in calls)
+
+
+@pytest.mark.parametrize("supporting_files", [False, True])
+def test_accuracy_runner_passes_only_verified_local_resources(tmp_path, supporting_files):
+    import hashlib
+    import io
+    import tarfile
+
+    compiled = tmp_path / "compiled with spaces"
+    profile = compiled / "clip_vit_b_16/w8a16"
+    profile.mkdir(parents=True)
+    manifest = {}
+    if supporting_files:
+        asset = profile / "tokenizer.json"
+        asset.write_text("{}")
+        manifest["runtime_files"] = [{"path": asset.name, "sha256": hashlib.sha256(asset.read_bytes()).hexdigest()}]
+    (profile / "compile-outputs.json").write_text(json.dumps(manifest))
+    dataset = tmp_path / "dataset.tgz"
+    with tarfile.open(dataset, "w:gz") as archive:
+        info = tarfile.TarInfo("val2012/image.JPEG")
+        info.size = 3
+        archive.addfile(info, io.BytesIO(b"img"))
+    registry = tmp_path / "registry-python"
+    registry.write_text(f'''#!{sys.executable}
+import json, os, sys
+if sys.argv[1] == '-c' or sys.argv[3] == 'model-runtime-directory':
+    os.execv(sys.executable, [sys.executable, *sys.argv[1:]])
+command = sys.argv[3]
+if command == 'resolve-devkit-accuracy':
+    print(json.dumps({{"name": "imagenet-2012-val", "path": {str(dataset)!r}}}))
+elif command == 'model-component-mpks':
+    print('image_encoder=image.tar.gz\\ntext_encoder=text.tar.gz')
+elif command != 'check-report':
+    raise AssertionError(command)
+''')
+    board = tmp_path / "board-python"
+    captured = tmp_path / "arguments.json"
+    board.write_text(f'''#!{sys.executable}
+import json, sys
+from pathlib import Path
+if sys.argv[1:3] != ['-m', 'pip']:
+    Path({str(captured)!r}).write_text(json.dumps(sys.argv[2:]))
+''')
+    registry.chmod(0o755)
+    board.chmod(0o755)
+    environment = {
+        **os.environ, "PYTHONPATH": str(ROOT / "tools"), "REGISTRY_PYTHON": str(registry),
+        "PYNEAT_PYTHON": str(board), "WORK_DIR": str(tmp_path / "scratch"),
+        "DATASET_CACHE": str(tmp_path / "cache"), "DATASET_LOCK": str(tmp_path / "prepare.lock"),
+    }
+    run = subprocess.run(
+        [ROOT / "scripts/run_model_accuracy.sh", ROOT / "models/clip_vit_b_16", "w8a16", compiled, tmp_path / "report"],
+        cwd=ROOT, env=environment, capture_output=True, text=True,
+    )
+    assert run.returncode == 0, run.stderr
+    arguments = json.loads(captured.read_text())
+    assert ("--resources" in arguments) == supporting_files
+    if supporting_files:
+        assert arguments[arguments.index("--resources") + 1] == str(profile)
+    assert arguments.count("--mpk") == 2

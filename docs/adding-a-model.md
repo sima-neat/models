@@ -43,6 +43,7 @@ models/<model-id>/
   scripts/
     compile.py                    # compile stage: writes one MPK per component
     performance.py                # performance stage, when model.yaml declares performance
+    requirements-performance.txt  # optional wheels for performance.py
     accuracy.py                   # accuracy stage, when model.yaml declares accuracy
     requirements-accuracy.txt     # optional wheels for accuracy.py
     convert.py                    # only when model.yaml declares a conversion
@@ -124,6 +125,11 @@ files [`conversion.outputs`](conversion-artifacts.md#publish-other-files) names.
 ```bash
 scripts/run_model_conversion.sh models/<model-id> default /tmp/<model-id>-export
 ```
+
+To omit an upstream package's unused dependencies, pin it in the optional
+`requirements-convert-nodeps.txt`. The runner installs
+that file with `pip --no-deps` after the normal requirements. Pin the dependencies
+the exporter uses in `requirements-convert.txt`.
 
 The **Vulcan Model Convert** workflow runs the same script and publishes
 a validated ONNX bundle. Declare `compilation.source: conversion` after matching
@@ -232,6 +238,27 @@ runners](runner-class-requests.md) for manifest examples, evidence, approval,
 validation and dispatch. Update the owning README when changing the request.
 Do not confuse the market with `build-on-demand`, which controls scheduling.
 
+### Ship supporting files
+
+When surgery extracts or derives CPU files needed by the application, write
+those files under the profile's `<output-dir>`. Declare each relative `path`
+and its actual `sha256` in `compile-outputs.json` alongside `outputs`:
+
+```json
+"runtime_files": [
+  {"path": "text_encoder/tokenizer.json", "sha256": "<SHA-256 of tokenizer.json>"},
+  {"path": "text_encoder/token_embeddings.npy", "sha256": "<SHA-256 of token_embeddings.npy>"}
+]
+```
+
+The shared packager verifies these files and ships them beside the MPKs;
+retained-build restoration restores the same files. `accuracy.py` receives
+the verified profile root through `--resources` and reads the declared paths
+relative to it. Keep file loading in the model script independent of registry
+imports and credentials. CLIP and SigLIP use this for their tokenizer and CPU
+lookup weights. Pinned upstream files that a recipe does not derive use the
+model's `resources` declaration instead.
+
 ## 7. Know what the package holds
 
 Every build profile publishes one package, `default`, holding all its
@@ -285,17 +312,18 @@ builds](#on-demand-builds).
 | Stage | Fingerprint inputs |
 | --- | --- |
 | conversion | the model's own conversion inputs: the upstream checkpoint, `conversion.outputs`, and `convert.py` with its requirements and the files it uses. No shared file is an input. See [when to run Convert again](conversion-artifacts.md#when-to-run-convert-again) |
-| compile (ONNX) | the model and profile IDs, the target, each component's ID and the source identity and layout, each component's `parameters`, the profile's calibration pin, the `numerical_fidelity` section, compile/surgery code, the Model Compiler version, `scripts/run_model_compilation.sh`, the shared model loader, and the MLA stage simulation (`tools/model_registry/mla_stage_simulation.py`) |
+| compile (ONNX) | the model and profile IDs, the target, each component's ID and the source identity and layout, each component's `parameters`, the model's pinned `resources`, the profile's calibration pin, the `numerical_fidelity` section, compile/surgery code, the Model Compiler version, `scripts/run_model_compilation.sh`, the shared model loader, and the MLA stage simulation (`tools/model_registry/mla_stage_simulation.py`) |
 | compile (LLiMa) | checkpoint content hashes, the target, component graph `parameters`, and the pinned Model Compiler identity including its build revision |
-| performance | the compile run and MPK digest of every component, the `performance` declaration, the profile's optional `benchmark_baseline`, the model's `performance.py`, the shared benchmark tooling and `scripts/run_model_performance.sh`, and the DevKit runtime pin |
-| accuracy | the compile run and MPK digest of every component, each `accuracy` dataset's name, pin, and the metrics its `datasets/<id>.yaml` requires for the model's tasks, `accuracy.py` and `requirements-accuracy.txt`, the shared benchmark tooling, `scripts/run_model_accuracy.sh`, `scripts/cache_accuracy_dataset.sh` and `scripts/install_dataset_registry.sh`, and the DevKit runtime pin |
+| performance | the compile run and MPK digest of every component, the `performance` declaration, the profile's optional `benchmark_baseline`, the model's `performance.py` and `requirements-performance.txt`, the shared benchmark tooling and `scripts/run_model_performance.sh`, and the DevKit runtime pin |
+| accuracy | the compile run and MPK digest of every component, each `accuracy` dataset's name, pin, and the metrics its `datasets/<id>.yaml` requires for the model's tasks, `accuracy.py` and `requirements-accuracy.txt`, the shared benchmark tooling, `scripts/run_model_accuracy.sh`, `scripts/cache_accuracy_dataset.sh`, `scripts/install_dataset_registry.sh`, `tools/model_registry/runtime_files.py` (verified supporting-file inputs), and the DevKit runtime pin |
 
 ONNX compile code includes every `.py` and `.sh` under `scripts/` except
 `performance.py`, `accuracy.py`, `fp32_baseline_accuracy.py`, `convert.py` and
 `requirements-convert.txt`.
 The shared model loader is an input to every ONNX compile fingerprint;
 descriptive preprocessing and surgery declarations are not. The shared
-benchmark tooling is `BOARD_STAGE_TOOLING`: the benchmarking workflow,
+benchmark tooling is `BOARD_STAGE_TOOLING`: the benchmarking workflow, Core
+installation/reuse checks in `tools/model_registry/neat_core.py`,
 `tools/model_report/__init__.py`, `schemas/model-report.schema.json`, and
 `tools/model_registry/report_publication.py`.
 
@@ -308,16 +336,17 @@ is always benchmarked again.
 | `build-on-demand` | nothing; changes scheduling and catalog metadata only |
 | the upstream checkpoint, `conversion.outputs`, or `convert.py`, its requirements and the files it uses | with `source: conversion`, planning fails until you run Vulcan Model Convert again. The model recompiles only if the ONNX changes. |
 | the Convert workflow, `scripts/run_model_conversion.sh`, or the registry's conversion, fetch or source code | nothing. When the change alters converted output, raise `FINGERPRINT_VERSION` in `conversion.py`, and every conversion-backed model then needs Convert again. |
+| a model's `resources`: a source pin or an `install_path` | that model's compilation, and the stages after it |
 | a model's tests, or `scripts/run_model_tests.sh` | nothing. The changed test runs the next time its stage runs. |
 | a model's `fp32_baseline_accuracy.py` | nothing; no stage runs it |
-| a model's `performance.py` or `performance` declaration, including `scope` | that model's performance stages |
+| a model's `performance.py`, its requirements, or `performance` declaration, including `scope` | that model's performance stages |
 | a profile's `benchmark_baseline` | that profile's performance; no compilation |
 | `accuracy.py`, its requirements, the `accuracy` datasets, or one of their pins | that model's accuracy stages |
 | a task's entry in `datasets/<id>.yaml` | the accuracy stages of models with that task that evaluate the dataset |
 | `accuracy.build_profiles`, a new `datasets/` file, or an entry for a task no such model has | nothing; a newly benchmarked profile runs because it has no run yet |
 | `scripts/run_model_performance.sh` | every performance stage |
-| `scripts/run_model_accuracy.sh`, `scripts/cache_accuracy_dataset.sh`, or `scripts/install_dataset_registry.sh` | every accuracy stage |
-| the DevKit runtime pin, the benchmarking workflow, `tools/model_report/__init__.py`, `schemas/model-report.schema.json`, or `report_publication.py` | every performance and accuracy stage |
+| `scripts/run_model_accuracy.sh`, `scripts/cache_accuracy_dataset.sh`, `scripts/install_dataset_registry.sh`, or `tools/model_registry/runtime_files.py` (verified supporting-file inputs) | every accuracy stage |
+| the DevKit runtime pin, the benchmarking workflow, `tools/model_registry/neat_core.py`, `tools/model_report/__init__.py`, `schemas/model-report.schema.json`, or `report_publication.py` | every performance and accuracy stage |
 | a source, a component's `parameters`, the profile's calibration, or `numerical_fidelity` | that model's affected builds, then their benchmarks |
 | an ONNX compile script or other ONNX compile input | that model's affected builds, then their benchmarks |
 | the Model Compiler pin | every build, then every benchmark |

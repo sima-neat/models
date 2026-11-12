@@ -1,3 +1,5 @@
+# Historical gates from before the embedding-only graph and compiled-text
+# evaluation. Replace both stages with this revision's published CI results.
 conversion:
   run_tests: true
 compile:

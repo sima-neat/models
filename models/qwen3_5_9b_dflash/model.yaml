@@ -1,0 +1,61 @@
+build-on-demand: true
+display_name: Qwen3.5-9B DFlash
+description: Generates text using a draft assistant whose proposals are checked by the target model.
+model_type: vlm
+tasks:
+- text_generation
+- visual_question_answering
+modalities:
+  inputs:
+  - text
+  - image
+  outputs:
+  - text
+architecture: qwen3_5
+license:
+  spdx: Apache-2.0
+  redistribution: allowed
+  attribution: Derived from Qwen/Qwen3.5-9B; AutoRound checkpoint provided by SiMa.ai under Apache-2.0. Includes the Apache-2.0-licensed
+    DFlash draft from Z Lab, prepared by SiMa.ai with INT8 per-channel RTN quantization.
+upstream:
+  repository: https://huggingface.co/simaai/Qwen3.5-9B-Autoround-Safetensors
+  revision: 92213e6a75db81ef76d4b67a77f783876ca8838a
+  derived_from: https://huggingface.co/Qwen/Qwen3.5-9B
+compilation:
+  format: huggingface
+  source:
+    main_file: Qwen3.5-9B-Autoround-Safetensors/config.json
+    files:
+      Qwen3.5-9B-Autoround-Safetensors/chat_template.jinja: {uri: hf://models/simaai/Qwen3.5-9B-Autoround-Safetensors@92213e6a75db81ef76d4b67a77f783876ca8838a/chat_template.jinja, sha256: a4aee8afcf2e0711942cf848899be66016f8d14a889ff9ede07bca099c28f715, size_bytes: 7756}
+      Qwen3.5-9B-Autoround-Safetensors/config.json: {uri: hf://models/simaai/Qwen3.5-9B-Autoround-Safetensors@92213e6a75db81ef76d4b67a77f783876ca8838a/config.json, sha256: 01329b0b2653bdd207a240d493db04c6ecf9babf3f37ea0a5c8f22a003394201, size_bytes: 13126}
+      Qwen3.5-9B-Autoround-Safetensors/generation_config.json: {uri: hf://models/simaai/Qwen3.5-9B-Autoround-Safetensors@92213e6a75db81ef76d4b67a77f783876ca8838a/generation_config.json, sha256: fc730df2f1e20386761af522a6fdb5306abf12177662b24d45fd5fc31942695b, size_bytes: 116}
+      Qwen3.5-9B-Autoround-Safetensors/merges.txt: {uri: hf://models/simaai/Qwen3.5-9B-Autoround-Safetensors@92213e6a75db81ef76d4b67a77f783876ca8838a/merges.txt, sha256: a9d356d7bdf1ef4949e3e748e95b8e10ad9d4e2e838eddc38a0a7b6b94d1db8d, size_bytes: 3353259}
+      Qwen3.5-9B-Autoround-Safetensors/model.safetensors: {uri: hf://models/simaai/Qwen3.5-9B-Autoround-Safetensors@92213e6a75db81ef76d4b67a77f783876ca8838a/model.safetensors, sha256: 1cdccf13e3220724d0bec5ffdbe0d55347f2af28470dc2a4e626db7834523601, size_bytes: 6537136528}
+      Qwen3.5-9B-Autoround-Safetensors/preprocessor_config.json: {uri: hf://models/simaai/Qwen3.5-9B-Autoround-Safetensors@92213e6a75db81ef76d4b67a77f783876ca8838a/preprocessor_config.json, sha256: 27225450ac9c6529872ee1924fcb0962ff5634834f817040f444118116f4e516, size_bytes: 390}
+      Qwen3.5-9B-Autoround-Safetensors/processor_config.json: {uri: hf://models/simaai/Qwen3.5-9B-Autoround-Safetensors@92213e6a75db81ef76d4b67a77f783876ca8838a/processor_config.json, sha256: d89ef49ce9cd37fbf510158e13c1ef063d9286411c1ec9049932dbe0487143b1, size_bytes: 1191}
+      Qwen3.5-9B-Autoround-Safetensors/tokenizer.json: {uri: hf://models/simaai/Qwen3.5-9B-Autoround-Safetensors@92213e6a75db81ef76d4b67a77f783876ca8838a/tokenizer.json, sha256: 5f9e4d4901a92b997e463c1f46055088b6cca5ca61a6522d1b9f64c4bb81cb42, size_bytes: 12807982}
+      Qwen3.5-9B-Autoround-Safetensors/tokenizer_config.json: {uri: hf://models/simaai/Qwen3.5-9B-Autoround-Safetensors@92213e6a75db81ef76d4b67a77f783876ca8838a/tokenizer_config.json, sha256: 792fa3f0cb88b111e54ef3134c873531008c4df471d108da17903426e308aa7b, size_bytes: 1165}
+      Qwen3.5-9B-Autoround-Safetensors/video_preprocessor_config.json: {uri: hf://models/simaai/Qwen3.5-9B-Autoround-Safetensors@92213e6a75db81ef76d4b67a77f783876ca8838a/video_preprocessor_config.json, sha256: 7768af27c1fafa9cc9011c1dc20067e03f8915e03b63504550e11d5066986d13, size_bytes: 385}
+      Qwen3.5-9B-Autoround-Safetensors/vocab.json: {uri: hf://models/simaai/Qwen3.5-9B-Autoround-Safetensors@92213e6a75db81ef76d4b67a77f783876ca8838a/vocab.json, sha256: ce99b4cb2983d118806ce0a8b777a35b093e2000a503ebde25853284c9dfa003, size_bytes: 6722759}
+      Qwen3.5-9B-DFlash-RTN-INT8-Safetensors/MODEL_CARD.txt: {uri: hf://models/simaai/Qwen3.5-9B-DFlash-RTN-INT8-Safetensors@a5991ef851b03ea136df038e04c959a8af0fb16b/README.md, sha256: 37e8dc76a036cb115efc1861525a397dc68a3206ca02154a58ebdc52fe7166c1, size_bytes: 3263}
+      Qwen3.5-9B-DFlash-RTN-INT8-Safetensors/config.json: {uri: hf://models/simaai/Qwen3.5-9B-DFlash-RTN-INT8-Safetensors@a5991ef851b03ea136df038e04c959a8af0fb16b/config.json, sha256: e4ea5db90d6e6bc94f5b006fb5d6c613d7d1a90d89066b9e569ca57dd1d76675, size_bytes: 3727}
+      Qwen3.5-9B-DFlash-RTN-INT8-Safetensors/model.safetensors: {uri: hf://models/simaai/Qwen3.5-9B-DFlash-RTN-INT8-Safetensors@a5991ef851b03ea136df038e04c959a8af0fb16b/model.safetensors, sha256: a3281b16eaa338e87b1cdd895c2c6f557cf62c3bcff7c121ccbaceb0df5c6f9f, size_bytes: 1292455664}
+  entrypoint: generate
+build_profiles:
+  w4a16:
+    runner_class: expensive
+    benchmark_baseline:
+      model_id: qwen3_5_9b
+      build_profile: w4a16
+    components:
+      model:
+        parameters:
+          precision: a16w4
+          max_num_tokens: 4096
+          language_group_size: 128
+          input_height: 448
+          input_width: 448
+          draft_model_path: Qwen3.5-9B-DFlash-RTN-INT8-Safetensors
+          speculative_method: dflash
+          draft_precision: a16w8
+          speculative_block_size: 16

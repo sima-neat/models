@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import copy
+import json
+import os
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -482,6 +485,61 @@ def test_conversion_fingerprint_tracks_recipe_and_dependency_pins(repository):
 
 
 @pytest.mark.parametrize(
+    ("nodeps", "fail_install"),
+    [(False, False), (True, False), (True, True)],
+    ids=["normal-requirements", "optional-nodeps", "failed-nodeps-install"],
+)
+def test_conversion_runner_installs_dependencies_before_export(tmp_path, nodeps, fail_install):
+    model = tmp_path / "repo with spaces/models/example"
+    scripts = model / "scripts"
+    scripts.mkdir(parents=True)
+    (scripts / "convert.py").write_text("pass\n")
+    (scripts / "requirements-convert.txt").write_text("core==1.0\n")
+    if nodeps:
+        (scripts / "requirements-convert-nodeps.txt").write_text("upstream==1.0\n")
+    calls_file = tmp_path / "calls.jsonl"
+    python = tmp_path / "record-python"
+    python.write_text('''#!/usr/bin/env python3
+import json
+import os
+import sys
+with open(os.environ["MODEL_CONVERSION_TEST_CALLS"], "a") as output:
+    output.write(json.dumps(sys.argv[1:]) + "\\n")
+if "--no-deps" in sys.argv and os.environ["MODEL_CONVERSION_TEST_FAIL"] == "1":
+    sys.exit(7)
+''')
+    python.chmod(0o755)
+    environment = tmp_path / "runner with spaces"
+    (environment / "bin").mkdir(parents=True)
+    (environment / "bin/python").symlink_to(python)
+    cache = tmp_path / "cache with spaces"
+    result = subprocess.run(
+        ["bash", str(ROOT / "scripts/run_model_conversion.sh"), str(model), "default", str(tmp_path / "output")],
+        env={**os.environ, "CONVERSION_PYTHON": str(python), "CONVERSION_VENV": str(environment),
+             "PIP_CACHE_DIR": str(cache), "MODEL_CONVERSION_TEST_CALLS": str(calls_file),
+             "MODEL_CONVERSION_TEST_FAIL": "1" if fail_install else "0"},
+        capture_output=True, text=True,
+    )
+    calls = [json.loads(line) for line in calls_file.read_text().splitlines()]
+    installs = [call for call in calls if "-r" in call]
+    assert [Path(call[-1]).name for call in installs] == ["requirements-convert.txt"] + (
+        ["requirements-convert-nodeps.txt"] if nodeps else []
+    )
+    assert "--no-deps" not in installs[0]
+    for call in installs:
+        assert "--isolated" in call and "--only-binary=:all:" in call
+        assert call[call.index("--cache-dir") + 1] == str(cache)
+    if nodeps:
+        assert "--no-deps" in installs[1]
+    exported = [call for call in calls if str(scripts / "convert.py") in call]
+    if fail_install:
+        assert result.returncode == 7 and not exported
+    else:
+        assert result.returncode == 0, result.stderr
+        assert len(exported) == 1 and calls.index(installs[-1]) < calls.index(exported[0])
+
+
+@pytest.mark.parametrize(
     "relative",
     [
         "taxonomies/model-taxonomy.yaml",
@@ -529,7 +587,7 @@ def test_modules_convert_imports_invalidate_saved_selection(repository):
     assert conversion.conversion_fingerprint(repository, model) != imported
 
 
-@pytest.mark.parametrize("relative", ["exporter.patch", "exporter/graph.py"])
+@pytest.mark.parametrize("relative", ["exporter.patch", "exporter/graph.py", "requirements-convert-nodeps.txt"])
 def test_other_files_under_scripts_invalidate_saved_selection(repository, relative):
     model = load_and_validate_model(repository / "models/yolo26x")
     baseline = conversion.conversion_fingerprint(repository, model)
@@ -679,10 +737,12 @@ def test_targeted_plan_publishes_catalog_with_unselected_conversion(
     matrix.write_text(json.dumps(result["compile"]))
     prior = {"id": "yolo26x", "builds": [], "packages": [],
              "build_on_demand": not deferred_pending, "build_requirements": {"unchanged": "requirements"},
-             "documentation": {"source_commit": "b" * 40}}
+             "documentation": {"source_commit": "b" * 40},
+             # Published under an older taxonomy whose architecture ID was since renamed.
+             "categories": {"architecture": {"id": "yolo", "paradigm": "cnn"}}}
     documentation = {model_id: {"source_commit": "a" * 40, "run_id": model_id + "-docs"}
                      for model_id in ("yolo26x", "yolo26l")}
-    monkeypatch.setattr(publication, "_revision_documentation_receipts", lambda *args: None)
+    monkeypatch.setattr(publication, "read_current_catalog", lambda *args: (None, None))
     monkeypatch.setattr(publication, "publish_model_documentation", lambda **kwargs: documentation)
     pending = [{"model_id": "yolo26x", "build_profile_id": "w16a16", "compile_invocation_id": "w16a16",
                 "component_ids": ["model"], "compile_fingerprint": "c" * 64}] if deferred_pending else []
@@ -698,7 +758,18 @@ def test_targeted_plan_publishes_catalog_with_unselected_conversion(
         entries = {model["id"]: model for model in published["models"]}
         assert "yolo26l" in entries
         if has_previous:
-            assert entries["yolo26x"] == {**prior, "documentation": documentation["yolo26x"]}
+            from model_registry.model import load_and_validate_model
+            from model_registry.taxonomy import (
+                canonical_taxonomy_document,
+                load_taxonomy,
+                validate_model_categorization,
+            )
+            taxonomy = canonical_taxonomy_document(load_taxonomy(repository / "taxonomies/model-taxonomy.yaml"))
+            categories = validate_model_categorization(
+                load_and_validate_model(repository / "models/yolo26x"), taxonomy
+            )
+            assert categories["architecture"]["id"] != "yolo"
+            assert entries["yolo26x"] == {**prior, "documentation": documentation["yolo26x"], "categories": categories}
         else:
             assert "yolo26x" not in entries
         expected_pending_models = {"yolo26l", "yolo26x"} if has_previous and deferred_pending else {"yolo26l"}

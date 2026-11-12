@@ -17,12 +17,29 @@ writes the one report the registry publishes.
 
 The DevKit must run the platform version that `deps/manifest.json` pins, and
 the stage uses the Core package named by `neat-core.install_target` in that
-file. CI checks the platform version, then installs Core with:
+file. CI checks the platform version, then prepares Core with:
 
 ```bash
-sima-cli neat install --env production --type minimal '<neat-core.install_target>'
-~/pyneat/bin/python -c 'import pyneat; print(pyneat.__version__, pyneat.__file__)'
+model-registry ensure-neat-core --repository . --environment production
 ```
+
+The command reads `neat-core.install_target` from that repository's manifest.
+It resolves a floating target such as `core@develop` to the published artifact
+tag once, then compares `neat --json` with that artifact's metadata. The Core
+channel, exact tag and artifact environment must match, as must Runner and
+Scheduler. It compares their installed versions with the Debian
+versions in `resolved-deps-manifest.json`, verified against the checksum in
+`metadata-minimal.json`, the same metadata the minimal installer uses.
+A Core tag republished with newer dependencies therefore installs again.
+An exact match skips installation; missing, invalid or ambiguous status or
+metadata takes the normal `sima-cli neat install --env production --type minimal`
+path with the resolved target. An unresolved floating target fails the job.
+Both paths run the PyNeat import/version check and Debian package reporting.
+
+Core artifacts come from production independently of the Model Registry and
+dataset environment. For a non-production Core setup, supply that environment's
+index with `--artifacts-base-url` or `NEAT_ARTIFACTS_BASE_URL`; production metadata
+cannot justify skipping an install from another environment.
 
 Core's board installer also installs Sentinel, the DevKit telemetry daemon.
 Core's benchmark reads power, temperature, CPU usage, and memory from Sentinel
@@ -152,9 +169,9 @@ not the MPK alone:
    YOLO26 resizes with `ResizeMode.Letterbox` and keeps Neat's default
    scaling of pixels to [0, 1]. ResNet-50 and RF-DETR's backbone resize with
    `ResizeMode.Stretch` and set `preprocess.preset =
-   NormalizePreset.ImageNet`. CLIP ViT-B/16 and SigLIP 2 ViT-B/16 also stretch,
-   and set their own mean and standard deviation in
-   `preprocess.normalize.mean` and `stddev` with
+   NormalizePreset.ImageNet`. ViT-B/16, CLIP ViT-B/16 and SigLIP 2 ViT-B/16
+   also stretch, and set their own mean and standard deviation (0.5 for
+   ViT-B/16) in `preprocess.normalize.mean` and `stddev` with
    `normalize.has_explicit_stats = True`. Without a preset or explicit
    statistics, Neat applies no mean or standard deviation.
 
@@ -187,6 +204,23 @@ the tensors and the CPU steps.
 
 A model without an accuracy dataset builds a fixed, realistic input in its
 own script and takes no `--dataset`.
+
+A model whose application also reads files beyond its MPKs, such as Supertonic's
+text models and voices, declares them as `resources` in `model.yaml`, and its
+script takes `--resources <directory>`. For a standalone run, fetch them in the
+layout the package installs, or extract the package ZIP to the same effect, and
+install the model's `scripts/requirements-performance.txt` beside PyNeat's
+environment, as the stage does:
+
+```bash
+resources="$(model-registry fetch-resources models/supertonic_3 --output-dir /workspace/resources)"
+~/pyneat/bin/python -m pip install --no-deps --only-binary=:all: \
+  --target /workspace/site -r models/supertonic_3/scripts/requirements-performance.txt
+PYTHONPATH=tools:/workspace/site ~/pyneat/bin/python models/supertonic_3/scripts/performance.py \
+  --mpk vector_estimator=/workspace/vector_estimator_mpk.tar.gz \
+  --mpk vocoder=/workspace/vocoder_mpk.tar.gz \
+  --resources "$resources" --output /workspace/performance
+```
 
 ## Multi-component models
 
@@ -400,10 +434,14 @@ the performance stage does not run when that step fails.
    `model-registry resolve-devkit-accuracy` and extracts it under
    `/media/nvme/neat-tests/`, which it removes when it exits; a build profile
    that accuracy does not measure gets no `--dataset`;
-3. sets the MLA and CPU clocks;
-4. runs the model's `performance.py`, which writes `model-report.json` and
+3. fetches the model's pinned `resources` with `model-registry fetch-resources`
+   and passes them as `--resources`, laid out as the package installs them, and
+   installs `scripts/requirements-performance.txt`, when the model has it, in a
+   folder beside PyNeat's environment;
+4. sets the MLA and CPU clocks;
+5. runs the model's `performance.py`, which writes `model-report.json` and
    `benchmark-report.json`, and copies its output to `performance.log`;
-5. runs `model-registry check-report`, which validates the report against
+6. runs `model-registry check-report`, which validates the report against
    [`model-report.schema.json`](../schemas/model-report.schema.json) and the
    `model.yaml` declaration and writes the board's installed packages and
    clocks to `environment.json`.

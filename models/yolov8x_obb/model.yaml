@@ -1,3 +1,5 @@
+# A build profile of this model compiles for over 20 minutes, so it builds only on request.
+build-on-demand: true
 display_name: YOLOv8x-obb
 description: The largest YOLOv8 oriented-box detector here, for the 15 DOTA aerial object classes.
 model_type: vision
