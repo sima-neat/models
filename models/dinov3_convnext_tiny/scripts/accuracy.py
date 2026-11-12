@@ -19,10 +19,10 @@ from collections import deque
 from collections.abc import Callable, Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import Any
 
 import model_report
 import numpy as np
-import pyneat
 from calibration import preprocess_image
 
 VALIDATION_SPLIT = "val2012"
@@ -40,6 +40,8 @@ TILE = 500
 # Images decode on worker threads while the MPK runs; Pillow releases the GIL while it decodes and resizes.
 WORKERS = 4
 PREFETCH = 8
+# One preprocessed HWC image in, its class embedding out.
+Embed = Callable[[np.ndarray], np.ndarray]
 
 
 def prefetched(load: Callable, items: Sequence) -> Iterator:
@@ -108,38 +110,41 @@ def knn_top1(embeddings: np.ndarray, classes: np.ndarray) -> float:
         return sum(correct) / len(unit)
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--mpk", action="append", required=True, help="model=<path>")
-    parser.add_argument("--dataset", required=True, help="imagenet-2012-val=<extracted directory>")
-    parser.add_argument("--output", type=Path, required=True, help="directory for model-report.json")
-    parser.add_argument("--limit", type=int, help="measure the first images only (local runs only)")
-    # The accuracy runner passes the package's resources, here only the license. The measurement reads none of them.
-    parser.add_argument("--resources", help="directory holding the package's licenses folder (unused)")
-    args = parser.parse_args(argv)
-    dataset_id, dataset_dir = args.dataset.split("=", 1)
-    dataset = Path(dataset_dir)
+def mpk_embedding(mpk: Path) -> Embed:
+    """Run the MPK on the board and return each image's class embedding."""
+    # Imported here: a host that scores the FP32 baseline has no PyNeat.
+    import pyneat
 
-    labels = validation_labels(dataset)
-    available = sorted(labels)
-    evaluated_classes = set(random.Random(CLASS_SEED).sample(range(CLASSES), EVALUATED_CLASSES))
-    names = [name for name in available if labels[name] in evaluated_classes]
-    names = names[: args.limit] if args.limit else names
-
-    model = pyneat.Model(str(parse_mpks(args.mpk)))
+    model = pyneat.Model(str(mpk))
     runner = None
-    embeddings = None
-    started = time.monotonic()
-    images = prefetched(lambda name: preprocess_image((dataset / name).read_bytes()), names)
-    for count, (name, image) in enumerate(zip(names, images), start=1):
+
+    def embed(image: np.ndarray) -> np.ndarray:
+        nonlocal runner
         tensor = pyneat.Tensor.from_numpy(image, copy=False)
         if runner is None:
             runner = model.build([tensor])
         outputs = [output.to_numpy(copy=False) for output in runner.run([tensor], timeout_ms=120000)]
         if len(outputs) != 2:
-            raise ValueError(f"expected the class and patch embeddings for {name}, got {len(outputs)} outputs")
+            raise ValueError(f"expected the class and patch embeddings, got {len(outputs)} outputs")
         # One vector for the image and one per patch: the class embedding is the smaller output.
-        embedding = min(outputs, key=lambda output: output.size).reshape(-1)
+        return min(outputs, key=lambda output: output.size).reshape(-1)
+
+    return embed
+
+
+def evaluate(dataset: Path, embed: Embed, limit: int | None = None) -> dict[str, Any]:
+    """Score embed on the evaluated classes of ImageNet val, as model_report expects a dataset's result."""
+    labels = validation_labels(dataset)
+    available = sorted(labels)
+    evaluated_classes = set(random.Random(CLASS_SEED).sample(range(CLASSES), EVALUATED_CLASSES))
+    names = [name for name in available if labels[name] in evaluated_classes]
+    names = names[:limit] if limit else names
+
+    embeddings = None
+    started = time.monotonic()
+    images = prefetched(lambda name: preprocess_image((dataset / name).read_bytes()), names)
+    for count, (name, image) in enumerate(zip(names, images), start=1):
+        embedding = embed(image)
         if not np.isfinite(embedding).all() or not embedding.any():
             raise ValueError(f"unexpected class embedding for {name}")
         if embeddings is None:
@@ -150,22 +155,34 @@ def main(argv: list[str] | None = None) -> int:
     inference_seconds = time.monotonic() - started
 
     accuracy = knn_top1(embeddings, np.asarray([labels[name] for name in names]))
-    report = model_report.from_accuracy({
-        dataset_id: {
-            "metrics": {"knn_top1_accuracy": accuracy},
-            "split": VALIDATION_SPLIT, "evaluated_samples": len(names), "available_samples": len(available),
-            "details": {
-                "protocol": "leave-one-out k-NN on the class embeddings of the evaluated images",
-                "neighbours": NEIGHBOURS, "temperature": TEMPERATURE,
-                "evaluated_classes": EVALUATED_CLASSES, "class_seed": CLASS_SEED,
-                "inference_seconds": round(inference_seconds, 1),
-                "scoring_seconds": round(time.monotonic() - started - inference_seconds, 1),
-            },
+    return {
+        "metrics": {"knn_top1_accuracy": accuracy},
+        "split": VALIDATION_SPLIT, "evaluated_samples": len(names), "available_samples": len(available),
+        "details": {
+            "protocol": "leave-one-out k-NN on the class embeddings of the evaluated images",
+            "neighbours": NEIGHBOURS, "temperature": TEMPERATURE,
+            "evaluated_classes": EVALUATED_CLASSES, "class_seed": CLASS_SEED,
+            "inference_seconds": round(inference_seconds, 1),
+            "scoring_seconds": round(time.monotonic() - started - inference_seconds, 1),
         },
-    })
+    }
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--mpk", action="append", required=True, help="model=<path>")
+    parser.add_argument("--dataset", required=True, help="imagenet-2012-val=<extracted directory>")
+    parser.add_argument("--output", type=Path, required=True, help="directory for model-report.json")
+    parser.add_argument("--limit", type=int, help="measure the first images only (local runs only)")
+    # The accuracy runner passes the package's resources, here only the license. The measurement reads none of them.
+    parser.add_argument("--resources", help="directory holding the package's licenses folder (unused)")
+    args = parser.parse_args(argv)
+    dataset_id, dataset_dir = args.dataset.split("=", 1)
+
+    result = evaluate(Path(dataset_dir), mpk_embedding(parse_mpks(args.mpk)), args.limit)
+    report = model_report.from_accuracy({dataset_id: result})
     report.save(args.output)
-    measured = report.document["datasets"][dataset_id]["metrics"]
-    print(json.dumps({name: round(value, 4) for name, value in measured.items()}))
+    print(json.dumps({name: round(value, 4) for name, value in result["metrics"].items()}))
     return 0
 
 
