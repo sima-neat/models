@@ -65,9 +65,19 @@ architectures:
     description: Estimates scene depth from a single image.
     paradigm: transformer
     allowed_model_types: [vision]
+  depth_anything_2:
+    display_name: Depth Anything V2
+    description: Estimates relative scene depth from a single image.
+    paradigm: transformer
+    allowed_model_types: [vision]
   depth_anything_3:
     display_name: Depth Anything 3
     description: Estimates scene depth from images.
+    paradigm: transformer
+    allowed_model_types: [vision]
+  detr:
+    display_name: DETR
+    description: Detects objects with a transformer that predicts a fixed set of boxes.
     paradigm: transformer
     allowed_model_types: [vision]
   dinov3:
