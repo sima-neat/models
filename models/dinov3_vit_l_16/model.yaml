@@ -1,3 +1,4 @@
+build-on-demand: true
 display_name: DINOv3 ViT-L/16
 description: Embeds an image as one vector and a 14×14 grid of patch vectors for image search and dense tasks.
 model_type: vision

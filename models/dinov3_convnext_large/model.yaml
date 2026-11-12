@@ -1,3 +1,4 @@
+build-on-demand: true
 display_name: DINOv3 ConvNeXt Large
 description: Embeds an image as one vector and a 7×7 grid of patch vectors for image search and dense tasks.
 model_type: vision
