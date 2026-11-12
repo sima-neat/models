@@ -346,7 +346,8 @@ is always benchmarked again.
 | `accuracy.build_profiles`, a new `datasets/` file, or an entry for a task no such model has | nothing; a newly benchmarked profile runs because it has no run yet |
 | `scripts/run_model_performance.sh` | every performance stage |
 | `scripts/run_model_accuracy.sh`, `scripts/cache_accuracy_dataset.sh`, `scripts/install_dataset_registry.sh`, or `tools/model_registry/runtime_files.py` (verified supporting-file inputs) | every accuracy stage |
-| the DevKit runtime pin, the benchmarking workflow, `tools/model_registry/neat_core.py`, `tools/model_report/__init__.py`, `schemas/model-report.schema.json`, or `report_publication.py` | every performance and accuracy stage |
+| the Core runtime target, the benchmarking workflow, `tools/model_registry/neat_core.py`, `tools/model_report/__init__.py`, `schemas/model-report.schema.json`, or `report_publication.py` | every performance and accuracy stage |
+| the MoLE revision (`llima.install_target`) or the native performance helpers | native LLM/VLM performance stages |
 | a source, a component's `parameters`, the profile's calibration, or `numerical_fidelity` | that model's affected builds, then their benchmarks |
 | an ONNX compile script or other ONNX compile input | that model's affected builds, then their benchmarks |
 | the Model Compiler pin | every build, then every benchmark |
@@ -662,4 +663,4 @@ and [#295](https://github.com/sima-neat/models/issues/295). The default Qwen pro
 requests the expensive runner with twenty compile jobs, 4096 tokens, 448×448 input,
 and language group size 128.
 
-Native LLiMa performance fingerprints identify immutable compile runs without duplicating file digests; staging still verifies every downloaded file. They also cover `llima_benchmark.py`, `board_telemetry.py`, `install_llima_benchmark_runtime.sh`, `stage_benchmark_inputs.sh`, and the pinned LLiMa runtime. Speculative profiles require a `benchmark_baseline` pointing to a compiled ordinary deployment; its graph fingerprint also enters the performance fingerprint. They exclude the unused Core runtime pin. See [LLiMa text and image performance](benchmarking.md#llima-text-and-image-performance).
+Native LLiMa performance fingerprints identify immutable compile runs without duplicating file digests; staging still verifies every downloaded file. They also cover `model_report/generation_benchmark.py`, `model_report/board_telemetry.py`, `install_mole_benchmark_runtime.sh`, `stage_benchmark_inputs.sh`, the Core runtime target and the MoLE build revision. Speculative profiles require a `benchmark_baseline` pointing to a compiled ordinary deployment; its graph fingerprint also enters the performance fingerprint. See [LLiMa text and image performance](benchmarking.md#llima-text-and-image-performance).

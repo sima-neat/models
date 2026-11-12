@@ -3,8 +3,8 @@
 from unittest.mock import patch
 
 import pytest
-from model_registry import board_telemetry as board
 from model_report import METRICS, telemetry_metrics
+from model_report import board_telemetry as board
 
 
 def sentinel_run():

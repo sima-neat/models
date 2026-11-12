@@ -1,4 +1,4 @@
-"""MoLE timings, dataset comparisons and Sentinel telemetry for deployed LLiMa models."""
+"""Standalone MoLE timings, dataset comparisons and telemetry for deployed LLiMa models."""
 
 from __future__ import annotations
 
@@ -16,8 +16,6 @@ from types import SimpleNamespace
 from typing import Any
 
 from .board_telemetry import BoardTelemetry
-from .errors import ValidationError
-from .fetch import sha256_file
 
 NEW_TOKENS = 256
 REPETITIONS = 5
@@ -41,7 +39,7 @@ GENAI_METRICS = {
 def input_buckets(context: int) -> list[int]:
     end = context - 1024
     if end < 128:
-        raise ValidationError("text buckets require at least 1152 compiled context tokens")
+        raise ValueError("text buckets require at least 1152 compiled context tokens")
     buckets = []
     length = 128
     while length <= end:
@@ -52,7 +50,7 @@ def input_buckets(context: int) -> list[int]:
 
 def _positive(value: Any, label: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
-        raise ValidationError(f"{label} must be a positive finite measurement")
+        raise ValueError(f"{label} must be a positive finite measurement")
     return value
 
 
@@ -61,20 +59,20 @@ def workload_metrics(workload: dict[str, Any]) -> dict[str, dict[str, Any]]:
     measured = [row for row in requests if row["phase"] == "measure"]
     expected = workload["dataset"]["available_samples"] if "dataset" in workload else REPETITIONS
     if [row["phase"] for row in requests] != ["warmup", *(["measure"] * expected)]:
-        raise ValidationError("expected one warmup followed by all measured requests")
+        raise ValueError("expected one warmup followed by all measured requests")
     for row in requests:
         durations = row["token_durations_s"]
         if (row.get("status", "ok") != "ok" or not durations
             or len(durations) != row["generated_tokens"] or row["decode_tokens"] != len(durations) - 1
             or row["ttft_s"] != durations[0] or row["decode_time_s"] != sum(durations[1:])):
-            raise ValidationError("generation counts and timings disagree")
+            raise ValueError("generation counts and timings disagree")
         if workload["kind"] == "text" and row["input_tokens"] != workload["input_tokens"]:
-            raise ValidationError("text input does not match its bucket")
+            raise ValueError("text input does not match its bucket")
         for duration in durations:
             _positive(duration, "token duration")
         accepted = row.get("accepted_draft_tokens")
         if accepted is not None and (type(accepted) is not int or not 0 <= accepted <= row["generated_tokens"]):
-            raise ValidationError("invalid accepted draft token count")
+            raise ValueError("invalid accepted draft token count")
     ttft = [row["ttft_s"] for row in measured]
     values = {"ttft_ms": statistics.mean(ttft) * 1000}
     if workload["kind"] in ("text", "text_dataset"):
@@ -89,16 +87,16 @@ def workload_metrics(workload: dict[str, Any]) -> dict[str, dict[str, Any]]:
     if baseline:
         baseline_metrics = workload_metrics(baseline)
         if baseline["metrics"] != baseline_metrics:
-            raise ValidationError("baseline metrics disagree with recorded timings")
+            raise ValueError("baseline metrics disagree with recorded timings")
         def identity(row):
             return (row.get("sample_id"), row["input_tokens"], row.get("prompt_sha256"),
                     row.get("output_budget"), row.get("images"))
         if (workload.get("dataset") != baseline.get("dataset")
             or [identity(row) for row in measured] != [identity(row) for row in baseline["requests"]
                                                      if row["phase"] == "measure"]):
-            raise ValidationError("baseline must use the same dataset, prompts and output budgets")
+            raise ValueError("baseline must use the same dataset, prompts and output budgets")
         if any(row.get("accepted_draft_tokens") is not None for row in baseline["requests"]):
-            raise ValidationError("benchmark baseline must use ordinary decoding")
+            raise ValueError("benchmark baseline must use ordinary decoding")
         values["decode_speedup"] = values["decode_tps"] / _positive(
             baseline_metrics["decode_tps"]["value"], "baseline decode TPS"
         )
@@ -114,27 +112,27 @@ def validate_report(result: dict[str, Any]) -> None:
     settings = report["settings"]
     speculative = settings.get("decoding") == "speculative"
     if report["status"] != "passed":
-        raise ValidationError("generation benchmark did not complete")
+        raise ValueError("generation benchmark did not complete")
     if speculative:
         names = (*TEXT_DATASETS, *(IMAGE_DATASETS if settings.get("image_size") else ()))
         expected = [f"dataset_{name}" for name in names]
         if not report.get("baseline"):
-            raise ValidationError("speculative benchmarks require an ordinary baseline")
+            raise ValueError("speculative benchmarks require an ordinary baseline")
     else:
         expected = [f"text_n{length}" for length in input_buckets(settings["max_context"])]
         if settings.get("image_size"):
             expected.append("image")
     if [row["id"] for row in report["workloads"]] != expected:
-        raise ValidationError("GenAI workloads do not cover the declared text/image inputs")
+        raise ValueError("GenAI workloads do not cover the declared text/image inputs")
     for workload in report["workloads"]:
         if speculative and (not workload.get("baseline") or any(
             row.get("accepted_draft_tokens") is None for row in workload["requests"]
         )):
-            raise ValidationError("speculative workloads require draft counters and an ordinary baseline")
+            raise ValueError("speculative workloads require draft counters and an ordinary baseline")
         if workload["metrics"] != workload_metrics(workload):
-            raise ValidationError("GenAI metrics disagree with recorded request timings")
+            raise ValueError("GenAI metrics disagree with recorded request timings")
         if workload["kind"] == "image_text" and workload["image_size"] != settings["image_size"]:
-            raise ValidationError("image does not match the compiled vision encoder size")
+            raise ValueError("image does not match the compiled vision encoder size")
 
 
 def _target(deployment: Path) -> Path:
@@ -216,7 +214,7 @@ def _prompt(tokenizer, length: int) -> list[int]:
     while suffix < min(len(a), len(b)) - prefix and a[-suffix - 1] == b[-suffix - 1]:
         suffix += 1
     if prefix + suffix >= length:
-        raise ValidationError("native chat template does not fit the requested input bucket")
+        raise ValueError("native chat template does not fit the requested input bucket")
     return tokens[: length - suffix] + tokens[-suffix:] if suffix else tokens[:length]
 
 
@@ -245,7 +243,7 @@ def _text(lm, context: int) -> list[dict]:
 
 def _record(durations: list, metadata: dict, inputs: int, index: int) -> dict:
     if not durations or len(durations) != metadata.get("generated_tokens"):
-        raise ValidationError("MoLE did not return one timing per generated token")
+        raise ValueError("MoLE did not return one timing per generated token")
     return {"phase": "warmup" if index == 0 else "measure", "input_tokens": inputs,
             "token_durations_s": durations, "generated_tokens": len(durations),
             "decode_tokens": len(durations) - 1, "ttft_s": durations[0], "decode_time_s": sum(durations[1:]),
@@ -262,7 +260,8 @@ def _image(lm, size: list[int]) -> dict:
         resized = image.convert("RGB").resize((width, height), Image.Resampling.BICUBIC)
         content, images = ordered_content(IMAGE_PROMPT, [resized])
     workload = {"id": "image", "kind": "image_text", "image_size": size, "prompt": IMAGE_PROMPT,
-                "source_image_sha256": sha256_file(source)[0], "images": images, "requests": []}
+                "source_image_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+                "images": images, "requests": []}
     telemetry = BoardTelemetry("image")
     lm.info()
     for index in range(REPETITIONS + 1):
@@ -326,6 +325,7 @@ def _datasets(board, deployment: Path, output: Path, context: int, names: tuple)
 def run_benchmark(deployment: Path, output: Path, baseline: Path | None = None) -> dict[str, Any]:
     """Measure ordinary buckets/images, or full speculative datasets against an ordinary deployment."""
     import torch
+
     from model_report import from_generation
 
     deployment = deployment.resolve()
@@ -340,10 +340,10 @@ def run_benchmark(deployment: Path, output: Path, baseline: Path | None = None) 
     baseline_deployment = (baseline.parent / baseline_identity["deployment"]).resolve() if baseline else None
     baseline_config = _config(baseline_deployment) if baseline else None
     if speculative and (baseline_config is None or _speculative(baseline_config)):
-        raise ValidationError("speculative benchmarks need a compiled ordinary baseline")
+        raise ValueError("speculative benchmarks need a compiled ordinary baseline")
     if baseline_config and (baseline_config["pipeline_cfg"]["max_num_tokens"] != context
                             or baseline_config.get("vm_cfg") != vision):
-        raise ValidationError("baseline must have the same context and vision encoder configuration")
+        raise ValueError("baseline must have the same context and vision encoder configuration")
     names = (*TEXT_DATASETS, *(IMAGE_DATASETS if vision else ()))
     threads = torch.get_num_threads()
     try:

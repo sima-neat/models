@@ -800,6 +800,20 @@ def test_benchmark_baseline_changes_only_its_profiles_performance_fingerprint():
     assert benchmark_fingerprint(ROOT, model, "w8a8_w16a16", builds, "performance") == before
 
 
+@pytest.mark.parametrize("dependency", ["neat-core", "llima"])
+def test_native_performance_fingerprint_tracks_core_and_mole(tmp_path, dependency):
+    model_dir = _copy_repository(tmp_path, "qwen3_0_6b")
+    model = load_and_validate_model(model_dir)
+    builds = {"model": {"run_id": "compiled-target"}}
+    before = benchmark_fingerprint(tmp_path, model, "w4a16", builds, "performance")
+    path = tmp_path / "deps/manifest.json"
+    manifest = json.loads(path.read_text())
+    manifest[dependency]["install_target"] = f"{'core' if dependency == 'neat-core' else 'llima'}@develop:{'1' * 12}"
+    path.write_text(json.dumps(manifest))
+
+    assert benchmark_fingerprint(tmp_path, model, "w4a16", builds, "performance") != before
+
+
 def test_performance_scope_changes_performance_fingerprint_without_changing_accuracy():
     model = load_and_validate_model(ROOT / "models/rf_detr_small")
     builds = {name: {"run_id": name, "artifact_sha256": "a" * 64} for name in ("backbone", "decoder")}

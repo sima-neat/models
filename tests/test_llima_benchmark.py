@@ -4,11 +4,11 @@ import json
 from pathlib import Path
 
 import pytest
-from model_registry import llima_benchmark as bench
-from model_registry.board_telemetry import summarize
 from model_registry.errors import ValidationError
 from model_registry.report_publication import check_report
 from model_report import from_generation
+from model_report import generation_benchmark as bench
+from model_report.board_telemetry import summarize
 
 from tests.test_report_publication import publish, registered_build
 
@@ -101,7 +101,7 @@ def test_failed_or_inconsistent_measurements_are_not_publishable(damage):
         data["workloads"][0]["metrics"]["decode_tps"]["value"] = 999
     if damage == "size":
         data["workloads"][-1]["image_size"] = [1024, 1024]
-    with pytest.raises(ValidationError):
+    with pytest.raises(ValueError):
         bench.validate_report(data)
 
 
@@ -245,7 +245,7 @@ def test_comparison_rejects_unmatched_or_speculative_baselines(damage):
     if damage == "missing_sample":
         baseline["requests"].pop()
     baseline["metrics"] = bench.workload_metrics(baseline) if damage != "missing_sample" else baseline["metrics"]
-    with pytest.raises(ValidationError):
+    with pytest.raises(ValueError):
         bench.workload_metrics(workload)
 
 

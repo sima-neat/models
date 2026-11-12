@@ -194,12 +194,14 @@ def check_report(
     native = model["components"][0]["interface"]["format"] == "huggingface"
     if native:
         from model_report import telemetry_metrics
-
-        from .llima_benchmark import validate_report
+        from model_report.generation_benchmark import validate_report
 
         if "generation" not in report:
             raise ValidationError(f"{report_path}: a native LLiMa performance report needs generation workloads")
-        validate_report(report["generation"])
+        try:
+            validate_report(report["generation"])
+        except ValueError as exc:
+            raise ValidationError(str(exc)) from exc
         for workload in report["generation"]["workloads"]:
             _check_metrics(str(report_path), stage,
                            {name: metric["value"] for name, metric in workload["metrics"].items()},

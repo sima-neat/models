@@ -1,4 +1,4 @@
-"""Sentinel traces around measured inference, summarized like Core's board telemetry."""
+"""Standalone Sentinel traces around measured inference, summarized like Core's telemetry."""
 
 from __future__ import annotations
 

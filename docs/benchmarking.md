@@ -481,7 +481,9 @@ reruns](adding-a-model.md#9-know-what-a-change-reruns).
 
 ## LLiMa text and image performance
 
-A native LLM/VLM declares `performance: {}` and keeps its `scripts/performance.py` entry point. The workflow installs the pinned LLiMa runtime and matching MoLE package instead of Core. The script takes `--deployment`, optional `--baseline`, and `--output`, and writes the version-1 `model-report.json` with request timings and telemetry per workload. Sentinel must be available; telemetry API failures stop measurement.
+A native LLM/VLM declares `performance: {}` and keeps its `scripts/performance.py` entry point. The workflow uses the same Core installation and version check as other models; Core supplies LLiMa and Sentinel. It installs MoLE separately using the LLiMa revision in `deps/manifest.json`. The script takes `--deployment`, optional `--baseline`, and `--output`, and writes the version-1 `model-report.json` with request timings and telemetry per workload. Telemetry API failures stop measurement.
+
+For standalone reproduction, make `tools/model_report` available on `PYTHONPATH` alongside MoLE. The native scripts use its `generation_benchmark` helper and need no `model_registry` package.
 
 Ordinary models measure 128, 256, 512 and doubling text buckets through the compiled context minus 1024 tokens, including that boundary. Each bucket uses one excluded warmup and five measurements, with up to 256 decode steps after the first token. VLMs also measure one encoder-sized image with “Describe what you see in the image.” Image profiling uses MoLE's native timings and a 256-token output budget.
 

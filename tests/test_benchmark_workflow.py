@@ -348,6 +348,27 @@ def test_performance_dependencies_are_isolated_and_cleaned(tmp_path: Path, extra
         assert arguments[arguments.index("-r") + 1] == str(scripts / "requirements-performance.txt")
 
 
+def test_native_setup_installs_only_mole(tmp_path):
+    binaries = tmp_path / "bin"
+    binaries.mkdir()
+    calls = tmp_path / "installs.txt"
+    for name, body in {
+        "sima-cli": 'printf "%s\\n" "$*" >> "$INSTALL_CALLS"',
+        "dpkg-query": "exit 0",
+    }.items():
+        command = binaries / name
+        command.write_text(f"#!/bin/sh\n{body}\n")
+        command.chmod(0o755)
+    runtime = {"llima": {"install_target": "llima@develop:abcfe372a575"}}
+    subprocess.run(
+        [ROOT / "scripts/install_mole_benchmark_runtime.sh", json.dumps(runtime)],
+        env={**os.environ, "PATH": f"{binaries}{os.pathsep}{os.environ['PATH']}",
+             "REGISTRY_PYTHON": sys.executable, "LLIMA_MOLE_PYTHON": "/bin/true", "INSTALL_CALLS": str(calls)},
+        check=True, capture_output=True, text=True,
+    )
+    assert calls.read_text().splitlines() == ["neat install --env production llima/mole@develop:abcfe372a575"]
+
+
 def test_benchmarks_run_only_when_requested() -> None:
     benchmark = load_workflow()["jobs"]["benchmark"]
     steps = benchmark["steps"]
@@ -356,8 +377,8 @@ def test_benchmarks_run_only_when_requested() -> None:
     assert not {"BENCHMARK_PERFORMANCE", "BENCHMARK_ACCURACY"} & set(benchmark["env"])
     performance = step(steps, "Measure performance on DevKit")
     assert performance["if"] == (
-        "${{ !cancelled() && ((steps.core.outcome == 'success' && steps.dataset-cache.outcome == 'success') || "
-        "steps.llima.outcome == 'success') && steps.stages.outputs.performance == 'true' }}"
+        "${{ !cancelled() && steps.core.outcome == 'success' && (steps.dataset-cache.outcome == 'success' || "
+        "steps.mole.outcome == 'success') && steps.stages.outputs.performance == 'true' }}"
     )
     assert performance["run"] == (
         'scripts/run_model_performance.sh "_source/models/$MODEL_ID" "$BUILD_PROFILE_ID" _compiled _performance'
@@ -420,8 +441,13 @@ def test_each_benchmark_runs_and_publishes_on_its_own_outcome() -> None:
     }
     # Shared setup gates both stages; each stage checks the dataset step itself.
     assert step(benchmark["steps"], "Install selected Neat Core")["if"] == (
-        "${{ !cancelled() && steps.runtime.outcome == 'success' && env.BENCHMARK_BACKEND == 'core' }}"
+        "${{ !cancelled() && steps.runtime.outcome == 'success' }}"
     )
+    mole = step(benchmark["steps"], "Install selected MoLE")
+    assert mole["if"] == (
+        "${{ !cancelled() && steps.core.outcome == 'success' && env.BENCHMARK_BACKEND == 'llima' }}"
+    )
+    assert mole["run"] == 'scripts/install_mole_benchmark_runtime.sh "$BENCHMARK_RUNTIME"'
     assert "needs.benchmark.result" not in publish["if"]
     assert "needs.benchmark.outputs.performance == 'success' ||" in publish["if"]
     assert "needs.benchmark.outputs.accuracy == 'success'" in publish["if"]

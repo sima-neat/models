@@ -439,7 +439,7 @@ def _performance_report(model: dict, profile_id: str) -> dict[str, Any]:
                                                   if w["kind"] == "image_text"), None)})
         baseline = build_profile_for(model, profile_id).get("benchmark_baseline")
         if baseline:
-            from model_registry.llima_benchmark import IMAGE_DATASETS, TEXT_DATASETS, workload_metrics
+            from model_report.generation_benchmark import IMAGE_DATASETS, TEXT_DATASETS, workload_metrics
 
             template = report["generation"]["workloads"][0]
             names = (*TEXT_DATASETS, *(IMAGE_DATASETS if model["model_type"] == "vlm" else ()))

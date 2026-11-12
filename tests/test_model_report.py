@@ -1,5 +1,6 @@
 import json
 import runpy
+import shutil
 import subprocess
 import sys
 import types
@@ -215,7 +216,7 @@ def test_every_metric_names_its_stage_unit_direction_and_measurement():
 
 def test_the_package_needs_only_the_standard_library():
     probe = (
-        "import sys, model_report; "
+        "import sys, model_report, model_report.generation_benchmark, model_report.board_telemetry; "
         "third_party = {name.partition('.')[0] for name in sys.modules} - set(sys.stdlib_module_names); "
         "print(sorted(third_party - {'model_report', '__main__'}))"
     )
@@ -225,6 +226,17 @@ def test_the_package_needs_only_the_standard_library():
         capture_output=True, text=True, check=True,
     )
     assert result.stdout.strip() == "[]"
+
+
+def test_native_performance_script_runs_without_registry_package(tmp_path):
+    shutil.copytree(REPOSITORY / "tools/model_report", tmp_path / "model_report")
+    script = REPOSITORY / "models/qwen3_0_6b/scripts/performance.py"
+    probe = (
+        f"import sys, runpy; sys.path.insert(0, {str(tmp_path)!r}); "
+        f"sys.argv = [{str(script)!r}, '--help']; runpy.run_path({str(script)!r}, run_name='__main__')"
+    )
+    result = subprocess.run([sys.executable, "-I", "-S", "-c", probe], capture_output=True, text=True, check=True)
+    assert "--deployment" in result.stdout and "--output" in result.stdout
 
 
 class BenchmarkOptions:

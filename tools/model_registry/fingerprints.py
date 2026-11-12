@@ -44,9 +44,9 @@ BOARD_STAGE_TOOLING = (
 )
 PERFORMANCE_TOOLING = (*BOARD_STAGE_TOOLING, "scripts/run_model_performance.sh")
 LLIMA_PERFORMANCE_TOOLING = (
-    "tools/model_registry/llima_benchmark.py",
-    "tools/model_registry/board_telemetry.py",
-    "scripts/install_llima_benchmark_runtime.sh",
+    "tools/model_report/generation_benchmark.py",
+    "tools/model_report/board_telemetry.py",
+    "scripts/install_mole_benchmark_runtime.sh",
     "scripts/stage_benchmark_inputs.sh",
 )
 ACCURACY_TOOLING = (
@@ -253,7 +253,8 @@ def benchmark_fingerprint(
     if native and stage == "performance":
         required.extend(LLIMA_PERFORMANCE_TOOLING)
     runtime = resolve_benchmark_runtime(root)
-    runtime.pop("neat_core" if native else "llima", None)
+    if not native:
+        runtime.pop("llima", None)
     optional = [f"{model_dir}/{ACCURACY_REQUIREMENTS if stage == 'accuracy' else PERFORMANCE_REQUIREMENTS}"]
     baseline = build_profile_for(model, build_profile_id).get("benchmark_baseline") if stage == "performance" else None
     if baseline:
