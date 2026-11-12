@@ -261,7 +261,12 @@ def test_mpk_audit_requires_one_mla_segment_and_the_declared_interface(
         ("w16a16", {"precision": "w16a16"}),
         (
             "w8a8_mixed",
-            {"precision": "w8a8", "calibration_bins": 2048, "calibration_samples": 50, "bf16_regions": ["attention", "residual", "ffn", "heads"]},
+            {
+                "precision": "w8a8",
+                "calibration_bins": 2048,
+                "calibration_samples": 50,
+                "bf16_regions": ["attention", "residual", "ffn", "heads"],
+            },
         ),
     ],
 )
@@ -417,7 +422,8 @@ def _layer_graph() -> onnx.ModelProto:
         "fc2_b": rng.standard_normal(channels, dtype=np.float32),
     }
     nodes = [helper.make_node("Add", ["x", "position"], ["embedded"], name="self_attn/Add")]
-    for name, source, perm in (("q", "embedded", [0, 2, 1, 3]), ("k", "embedded", [0, 2, 3, 1]), ("v", "x", [0, 2, 1, 3])):
+    projections = (("q", "embedded", [0, 2, 1, 3]), ("k", "embedded", [0, 2, 3, 1]), ("v", "x", [0, 2, 1, 3]))
+    for name, source, perm in projections:
         initializers[f"w{name}"] = rng.standard_normal((channels, channels), dtype=np.float32)
         initializers[f"b{name}"] = rng.standard_normal(channels, dtype=np.float32)
         nodes += [
@@ -450,7 +456,10 @@ def _layer_graph() -> onnx.ModelProto:
     heads = _heads_graph()
     initializers.update({value.name: onnx.numpy_helper.to_array(value) for value in heads.graph.initializer})
     nodes += list(heads.graph.node)
-    outputs = {value.name: [dimension.dim_value for dimension in value.type.tensor_type.shape.dim] for value in heads.graph.output}
+    outputs = {
+        value.name: [dimension.dim_value for dimension in value.type.tensor_type.shape.dim]
+        for value in heads.graph.output
+    }
     return _model(nodes, {"x": [1, tokens, channels]}, outputs, initializers)
 
 
