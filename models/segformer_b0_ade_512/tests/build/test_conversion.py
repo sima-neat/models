@@ -79,3 +79,11 @@ def test_source_must_be_the_pinned_checkpoint(converter: ModuleType):
     source["files"] = [item for item in source["files"] if item["path"] != "model.safetensors"]
     with pytest.raises(ValueError, match="config.json, model.safetensors"):
         converter.validate_source(source)
+
+
+def test_bf16_regions_match_the_converted_graph(converted: Path, load_script: Callable[[str], ModuleType]):
+    # The mixed build's region walks must find exactly their declared operations in the exported graph.
+    surgery = load_script("surgery")
+    marks = surgery.precision_marks(onnx.load(converted), list(surgery.BF16_REGIONS))
+
+    assert sum(precision == "bfloat16" for precision in marks.values()) == sum(surgery.BF16_REGIONS.values())

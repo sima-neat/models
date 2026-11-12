@@ -11,6 +11,7 @@ import os
 import shutil
 import tarfile
 import tempfile
+from collections import Counter
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -28,11 +29,13 @@ from afe.apis.defines import (
 )
 from afe.apis.loaded_net import load_model
 from afe.apis.model import L2CachingMode
+from afe.core.configs import QuantizationPrecision
 from afe.core.utils import convert_data_generator_to_iterable
 from afe.load.importers.general_importer import onnx_source
 from calibration import IMAGE_SIZE, calibration_samples, fidelity_names, preprocess_image, read_images
 from model_registry.model import load_model as load_metadata
 from sima_utils.data.data_generator import DataGenerator
+from surgery import BF16_REGIONS, annotate_bf16_regions
 
 MODEL_DIR = Path(__file__).resolve().parents[1]
 MODEL_ID = "segformer_b0_ade_512"
@@ -44,6 +47,14 @@ LOGITS_SHAPE = (1, CLASS_COUNT, IMAGE_SIZE // 4, IMAGE_SIZE // 4)
 # MPK manifests record each public tensor's size in bytes; the MPK keeps the ONNX float32 interface.
 INPUT_BYTES = {INPUT: math.prod(INPUT_SHAPE) * 4}
 OUTPUT_BYTES = [math.prod(LOGITS_SHAPE) * 4]
+# The quantized operation types that identify each region, and how many of them must run BF16 when the region is
+# marked (and none when it is not): the eight attention softmaxes; all thirty LayerNorms; the eight GELUs, which AFE
+# lowers as one GELU operation, or around an Erf when it does not fuse the exported division by sqrt(2).
+REGION_BF16_OPERATIONS = {
+    "attention_core": (("SoftmaxOp",), 8),
+    "norms": (("LayerNormOp",), 30),
+    "gelu": (("GeluOp", "ErfOp"), 8),
+}
 
 
 def _parameters(profile_id: str) -> dict[str, Any]:
@@ -52,6 +63,43 @@ def _parameters(profile_id: str) -> dict[str, Any]:
     if len(profiles) != 1:
         raise ValueError(f"model.yaml declares no build profile {profile_id!r}")
     return next(item["parameters"] for item in profiles[0]["components"] if item["id"] == COMPONENT_ID)
+
+
+def _bf16_regions(profile_id: str, parameters: dict[str, Any]) -> list[str]:
+    """Return the regions the build profile runs BF16, checking that its ID marks it mixed."""
+    regions = list(parameters.get("bf16_regions", []))
+    if regions and (parameters["precision"] != "w8a8" or len(set(regions)) != len(regions)):
+        raise ValueError(f"bf16_regions must name distinct regions of a W8A8 build: {regions}")
+    unknown = sorted(set(regions) - set(BF16_REGIONS))
+    if unknown:
+        raise ValueError(f"unknown BF16 regions {unknown}; choose from {list(BF16_REGIONS)}")
+    if bool(regions) != ("mixed" in profile_id.split("_")):
+        raise ValueError(f"build profile {profile_id!r} must have the mixed token exactly when it has bf16_regions")
+    return regions
+
+
+def _operation_counts(quantized: Any) -> tuple[Counter[str], Counter[str]]:
+    """Count the quantized operations by type: all of them, and those that run BF16."""
+    # The quantized model keeps its network private, and AFE renames every node, so count by operation.
+    operations, bf16 = Counter(), Counter()
+    for node in quantized._net.iter_nodes_recursive():
+        config = getattr(node.ir, "quant_config", None)
+        if config is None:
+            continue
+        kind = type(node.ir.operation).__name__
+        operations[kind] += 1
+        if config.quantization_precision.value == QuantizationPrecision.BFLOAT_16:
+            bf16[kind] += 1
+    return operations, bf16
+
+
+def _require_bf16_regions(bf16: Counter[str], regions: list[str]) -> None:
+    """Fail when AFE ignored a BF16 mark, which would silently requantize the region to INT8."""
+    logging.info("BF16 operations: %s", dict(sorted(bf16.items())))
+    expected = {region: count if region in regions else 0 for region, (_, count) in REGION_BF16_OPERATIONS.items()}
+    found = {region: sum(bf16[kind] for kind in kinds) for region, (kinds, _) in REGION_BF16_OPERATIONS.items()}
+    if found != expected:
+        raise RuntimeError(f"expected BF16 operations by region {expected}, found {found}")
 
 
 def _quantization(precision: str, calibration_bins: int | None) -> Any:
@@ -115,6 +163,7 @@ def audit_mpk(archive: Path) -> None:
 def compile_model(source: Path, output_dir: Path, profile_id: str, dataset: Path | None) -> tuple[Path, Any]:
     parameters = _parameters(profile_id)
     precision = str(parameters["precision"])
+    regions = _bf16_regions(profile_id, parameters)
     calibration_bins = int(parameters["calibration_bins"]) if precision == "w8a8" else None
     quantization = _quantization(precision, calibration_bins)
     if precision == "w8a8":
@@ -127,17 +176,31 @@ def compile_model(source: Path, output_dir: Path, profile_id: str, dataset: Path
     component_dir = output_dir / COMPONENT_ID
     component_dir.mkdir(parents=True, exist_ok=False)
 
-    importer = onnx_source(str(source), shape_dict={INPUT: INPUT_SHAPE}, layout="NCHW")
-    loaded = load_model(importer, target=gen2_target)
-    logging.info("Quantizing %s with %d sample(s)", precision, len(samples))
-    quantized = loaded.quantize(
-        calibration_data=convert_data_generator_to_iterable(DataGenerator({InputName(INPUT): samples})),
-        quantization_config=quantization,
-        model_name=f"{MODEL_ID}_{profile_id}",
-        log_level=logging.INFO,
-    )
     with tempfile.TemporaryDirectory(prefix=f"{MODEL_ID}-", dir=os.environ.get("RUNNER_TEMP")) as temporary:
         build_dir = Path(temporary)
+        graph = source
+        if regions:
+            # The marks go on a copy, so the fidelity check still compares with the unmarked source.
+            graph = build_dir / "graphs" / "model.onnx"
+            graph.parent.mkdir()
+            shutil.copyfile(source, graph)
+            logging.info("Precision marks for %s: %s", regions, annotate_bf16_regions(graph, regions))
+        importer = onnx_source(str(graph), shape_dict={INPUT: INPUT_SHAPE}, layout="NCHW")
+        loaded = load_model(importer, target=gen2_target)
+        logging.info("Quantizing %s with %d sample(s)", precision, len(samples))
+        quantized = loaded.quantize(
+            calibration_data=convert_data_generator_to_iterable(DataGenerator({InputName(INPUT): samples})),
+            quantization_config=quantization,
+            model_name=f"{MODEL_ID}_{profile_id}",
+            log_level=logging.INFO,
+        )
+        operations, bf16 = _operation_counts(quantized)
+        logging.info("Quantized operations: %s", dict(sorted(operations.items())))
+        if regions:
+            _require_bf16_regions(bf16, regions)
+        # The option applies to every LayerNorm and INT8 ones reject it, so only a build whose LayerNorms all run
+        # BF16 keeps FP32 intermediates.
+        bf16_norms = bf16["LayerNormOp"] == operations["LayerNormOp"] > 0 and bool(regions)
         quantized.compile(
             output_path=str(build_dir),
             batch_size=1,
@@ -146,6 +209,7 @@ def compile_model(source: Path, output_dir: Path, profile_id: str, dataset: Path
             tessellate_parameters=None,
             l2_caching_mode=L2CachingMode.NONE,
             deployable=True,
+            **({"layer_norm_use_fp32_intermediates": True} if bf16_norms else {}),
         )
         archives = sorted(build_dir.glob("*_mpk.tar.gz"))
         if len(archives) != 1:
@@ -239,7 +303,8 @@ def main() -> int:
     dataset = args.dataset.expanduser().resolve() if args.dataset else None
     if dataset is not None and not dataset.exists():
         parser.error(f"dataset does not exist: {dataset}")
-    logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
+    # force replaces any handler an import installed first, which would otherwise drop these lines from the job log.
+    logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s", force=True)
     output_dir = args.output_dir.expanduser().resolve()
     archive, quantized = compile_model(source, output_dir, args.build_profile, dataset)
     logging.info("Compiled MPK: %s", archive)

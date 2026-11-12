@@ -9,3 +9,6 @@ performance:
       throughput_fps: 116.8
     w8a8:
       throughput_fps: 292.5
+    # Provisional until the first DevKit run publishes: a mixed build must at least match the BF16 build's speed.
+    w8a8_mixed:
+      throughput_fps: 116.8
