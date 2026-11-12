@@ -20,7 +20,7 @@ def sentinel_run():
         "cpu_core_2_usage_pct": "%",
         "cpu_core_0_usage_pct": "%",
         "mla_mem_allocated_mb": "MB",
-        "ev74_cma_used_mb": "MB",
+        "ev74_mem_allocated_mb": "MB",
         "linux_mem_used_mb": "MB",
     }
     values = {
@@ -35,7 +35,7 @@ def sentinel_run():
         "cpu_core_2_usage_pct": 80.0,
         "cpu_core_10_usage_pct": 5.0,
         "mla_mem_allocated_mb": 1024.0,
-        "ev74_cma_used_mb": 2048.0,
+        "ev74_mem_allocated_mb": 2048.0,
         "linux_mem_used_mb": 500.0,
     }
     return {
@@ -43,7 +43,8 @@ def sentinel_run():
         "metrics": [{"key": key, "unit": unit, "label": key} for key, unit in units.items()],
         "samples": [
             {"values": values},
-            {"values": {**values, "rtsn_0": 44.0, "cpu_core_2_usage_pct": None, "linux_mem_used_mb": 600.0}},
+            {"values": {**values, "rtsn_0": 44.0, "cpu_core_2_usage_pct": None,
+                        "ev74_mem_allocated_mb": 4096.0, "linux_mem_used_mb": 600.0}},
         ],
     }
 
@@ -61,10 +62,17 @@ def test_sentinel_summary_matches_vision_sensor_and_memory_semantics():
     assert metrics["avg_cpu_usage_pct"] == 10.0
     assert metrics["peak_cpu_core_usage_pct"] == 80.0
     assert metrics["avg_linux_memory_mib"] == 550.0
+    assert metrics["ev74_memory_avg_mib"] == 3072.0
+    assert metrics["ev74_memory_peak_mib"] == 4096.0
     assert METRICS["mla_memory_peak_mib"]["unit"] == "MiB"
     assert telemetry["power_rails_watts"][0]["key"] == "power_rail_mla_watts"
     assert METRICS["avg_cpu_usage_pct"]["registry_name"] == "board.cpu_usage.avg"
     assert METRICS["ttft_ms"]["registry_name"] == "model.generation.ttft"
+
+    missing = sentinel_run()
+    for sample in missing["samples"]:
+        sample["values"].pop("ev74_mem_allocated_mb")
+    assert not any("ev74" in key for key in telemetry_metrics(board.summarize(missing)))
 
 
 def test_trace_excludes_warmup_and_stops_only_its_id_even_if_generation_raises():

@@ -91,7 +91,7 @@ def summarize(run: dict) -> dict:
         "cpu_usage_pct": metric("cpu_usage_pct"),
         "cpu_cores_usage_pct": [metric(key) for key in cpu_keys],
         "mla_memory_mib": memory("mla_mem_allocated_mb"),
-        "cma_memory_mib": memory("ev74_cma_used_mb"),
+        "ev74_memory_mib": memory("ev74_mem_allocated_mb"),
         "linux_memory_used_mib": memory("linux_mem_used_mb"),
     }
 
