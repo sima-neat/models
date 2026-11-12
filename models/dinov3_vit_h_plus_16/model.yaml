@@ -1,0 +1,101 @@
+build-on-demand: true
+display_name: DINOv3 ViT-H+/16
+description: Embeds an image as one vector and a 14×14 grid of patch vectors for image search and dense tasks.
+model_type: vision
+tasks: [image_embedding]
+
+modalities:
+  inputs: [image]
+  outputs: [embeddings]
+
+architecture: dinov3
+
+license:
+  spdx: LicenseRef-DINOv3
+  redistribution: restricted
+  attribution: Derived from Meta's facebook/dinov3-vith16plus-pretrain-lvd1689m and distributed under the DINOv3 License, which governs every build derived from it.
+
+upstream:
+  repository: https://huggingface.co/timm/vit_huge_plus_patch16_dinov3.lvd1689m
+  revision: dd0addc09788111fa893d24799a44744ba022eee
+  derived_from: https://huggingface.co/facebook/dinov3-vith16plus-pretrain-lvd1689m/tree/c807c9eeea853df70aec4069e6f56b28ddc82acc
+
+# The pinned timm config.json defaults to a 256x256 bicubic resize with crop_pct 1.0. This package takes 224x224,
+# resized straight to that size with the transform of Meta's DINOv3 README, an antialiased bilinear stretch.
+conversion:
+  source:
+    repository: timm/vit_huge_plus_patch16_dinov3.lvd1689m
+    revision: dd0addc09788111fa893d24799a44744ba022eee
+    main_file: model.safetensors
+    files:
+      model.safetensors: {sha256: 0d54131c846c91a78ec7641482f32e45b27cb4895f83653c038f305f18c7e61c, size_bytes: 3362084520}
+      config.json: {sha256: c22d89c036033b9f22445c136e6e050a27dd7f3bff26566b9dad0c66c9c84a83, size_bytes: 675}
+      LICENSE.md: {sha256: 25d122eb8f5b880fd23c736fb6ea8018ee45c12237e00b8a86d14c653904999e, size_bytes: 7503}
+  outputs: [weight-index.pth, reference.onnx]
+
+resources:
+  license:
+    # The DINOv3 License requires a copy of the license with every copy of the model.
+    source:
+      repository: timm/vit_huge_plus_patch16_dinov3.lvd1689m
+      revision: dd0addc09788111fa893d24799a44744ba022eee
+      files:
+        LICENSE.md: {sha256: 25d122eb8f5b880fd23c736fb6ea8018ee45c12237e00b8a86d14c653904999e, size_bytes: 7503}
+    install_path: licenses
+
+compilation:
+  format: onnx
+  source: conversion
+
+# BF16 activations take no ranges from calibration images, so w16a16 and w8a16 skip calibration.
+# No INT8-activation build. Measured on ViT-S/16 with an earlier graph that folded the rotary encoding into the
+# weights: w8a8 kept class embedding cosine 0.006 with reference.onnx, and 0.58 with attention, residuals, norms,
+# MLP activation and rotary encoding left in BF16. INT8 activations into the convolutions lose the per-token scales
+# w8a16 relies on; without those scales w8a16 itself fell to 0.46 on that graph.
+# Both builds request an expensive on-demand runner, which needs a Vulcan grant for this folder. With 6 x86 CPUs per
+# build, Model Compiler 3.0.0.dev0+develop.2291 took 153 minutes at a 57.0 GiB memory peak for w16a16 and 90 minutes
+# at 39.0 GiB for w8a16. w16a16 would leave 7 GiB on a 64 GiB moderate runner, and Spot reclamation would lose hours
+# of compilation. This folder has not compiled in CI, so no Spot interruption has been observed.
+build_profiles:
+  w16a16:
+    runner_class: expensive
+    runner_market: on-demand
+    components:
+      model:
+        parameters: {precision: w16a16}
+
+  w8a16:
+    runner_class: expensive
+    runner_market: on-demand
+    components:
+      model:
+        parameters: {precision: w8a16}
+
+numerical_fidelity:
+  status: diagnostic
+  dataset: {id: imagenet-2012, variant: cal, sha256: e6c18b281f5ac5fc7cf6d36ef9a5f486ce95eb43ead99ee8523bd8162bc49a6f, size_bytes: 112710756}
+  # The cal images at positions 51 to 100 of the seed-42 shuffled order; the fidelity floors in
+  # tests/build/test_compile.py apply to them.
+  selection: {method: seeded_random_without_replacement, seed: 42, offset: 50, samples: 50}
+  outputs: [class_embedding, patch_embeddings]
+
+performance: {}
+
+reference_metrics:
+- source: https://huggingface.co/timm/vit_huge_plus_patch16_dinov3.lvd1689m/blob/dd0addc09788111fa893d24799a44744ba022eee/README.md
+  dataset: {id: imagenet-real, split: val}
+  conditions: 512x512 center crop, linear classifier on the frozen CLS token, trained on ImageNet-1k train
+  note: >-
+    Top-1 against the ReaL labels of the ImageNet validation images, not the original labels of the registry's
+    imagenet-2012 val. The card refers to the DINOv3 paper (arXiv 2508.10104v1, Table 14 and appendix D.7) for the
+    protocol; Meta's linear classifier is not part of these weights.
+  metrics: {top1_accuracy: 0.903}
+- source: https://huggingface.co/timm/vit_huge_plus_patch16_dinov3.lvd1689m/blob/dd0addc09788111fa893d24799a44744ba022eee/README.md
+  dataset: {id: imagenet-r, split: test}
+  conditions: 512x512 center crop, linear classifier on the frozen CLS token, trained on ImageNet-1k train
+  note: ImageNet-Rendition.
+  metrics: {top1_accuracy: 0.9}
+- source: https://huggingface.co/timm/vit_huge_plus_patch16_dinov3.lvd1689m/blob/dd0addc09788111fa893d24799a44744ba022eee/README.md
+  dataset: {id: objectnet, split: test}
+  conditions: 512x512 center crop, linear classifier on the frozen CLS token, trained on ImageNet-1k train
+  metrics: {top1_accuracy: 0.786}

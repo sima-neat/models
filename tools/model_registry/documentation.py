@@ -27,6 +27,11 @@ BUILDING_APPLICATIONS = (
     "(https://developer.sima.ai/software/develop-apps/development-workflow/model). "
     "For complete applications, start from the [Neat example apps](https://developer.sima.ai/examples)."
 )
+GENAI_BUILDING_APPLICATIONS = (
+    "Run the package with the [Neat GenAI Model API]"
+    "(https://developer.sima.ai/software/develop-apps/development-workflow/genai-model). "
+    "For complete applications, start from the [Neat example apps](https://developer.sima.ai/examples)."
+)
 _H2_RE = re.compile(r"^## ([^#].*?)\s*$")
 _ATX_HEADING_RE = re.compile(r"^ {0,3}(#{1,6})(?:[ \t]+(.*?))?[ \t]*$")
 _FENCE_OPEN_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
@@ -503,7 +508,9 @@ def _load_hero(model_dir: Path, display_name: str, repository: Path) -> dict[str
     }
 
 
-def load_model_documentation(model_dir: Path, display_name: str, *, repository: Path) -> dict[str, Any]:
+def load_model_documentation(
+    model_dir: Path, display_name: str, *, repository: Path, is_genai: bool = False
+) -> dict[str, Any]:
     readme = model_dir / "README.md"
     source_path = _repository_regular_file(readme, repository, "model README")
     try:
@@ -571,9 +578,10 @@ def load_model_documentation(model_dir: Path, display_name: str, *, repository: 
 
     # Compare words, so the paragraph may wrap anywhere.
     building_applications = " ".join("\n".join(lines[sections[-1][0] + 1:]).split())
-    if building_applications != BUILDING_APPLICATIONS:
+    expected_applications = GENAI_BUILDING_APPLICATIONS if is_genai else BUILDING_APPLICATIONS
+    if building_applications != expected_applications:
         raise ValidationError(
-            f"model README Building applications must be exactly {BUILDING_APPLICATIONS!r}: {readme}"
+            f"model README Building applications must be exactly {expected_applications!r}: {readme}"
         )
     for number, line in enumerate(lines, start=1):
         if term := _BANNED_TERM_RE.search(line):

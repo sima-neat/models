@@ -723,8 +723,8 @@ def test_failed_builds_are_reported_after_the_snapshot() -> None:
     assert [job["name"] for job in load(BUILD_WORKFLOW)["jobs"].values()] == ["Compile", "Publish", "Benchmark"]
     benchmark_names = [job["name"] for job in load(BENCHMARK_WORKFLOW)["jobs"].values()]
     assert benchmark_names == [
-        "Resolve Vulcan config", "Resolve the benchmark DevKit runner", "Stage benchmark input", "Benchmark on DevKit", "Publish benchmarks to Vulcan",
-        "Check model tests and clean up",
+        "Resolve Vulcan config", "Resolve the benchmark DevKit runner", "Stage benchmark input", "Benchmark on DevKit",
+        "Publish benchmarks to Vulcan", "Check model tests and clean up",
     ]
 
     def job(name: str, conclusion: str) -> dict:

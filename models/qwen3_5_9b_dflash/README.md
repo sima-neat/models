@@ -17,4 +17,4 @@ Qwen3.5-9B DFlash combines an instruction-tuned vision-language model from Aliba
 
 ## Building applications
 
-Run the package with the [Neat Model API](https://developer.sima.ai/software/develop-apps/development-workflow/model). For complete applications, start from the [Neat example apps](https://developer.sima.ai/examples).
+Run the package with the [Neat GenAI Model API](https://developer.sima.ai/software/develop-apps/development-workflow/genai-model). For complete applications, start from the [Neat example apps](https://developer.sima.ai/examples).

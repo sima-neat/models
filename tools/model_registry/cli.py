@@ -464,6 +464,7 @@ def _validate_models(args: argparse.Namespace) -> int:
             repository / "models" / model_id,
             model["display_name"],
             repository=repository,
+            is_genai=any(c["interface"]["format"] == "huggingface" for c in model["components"]),
         )
     result = {"model_count": len(models), "model_ids": sorted(models), "valid": True}
     print(json.dumps(result, sort_keys=True) if args.json_output else f"Valid models: {len(models)}")
