@@ -1,3 +1,5 @@
+# A build profile of this model compiles for over 20 minutes, so it builds only on request.
+build-on-demand: true
 display_name: YOLO26l-obb
 description: A large YOLO26 oriented-box detector for the 15 DOTA aerial object classes.
 model_type: vision

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Convert a model to ONNX with its scripts/convert.py in a fresh environment built from requirements-convert.txt.
+# Convert a model to ONNX with its scripts/convert.py in a fresh environment built from its conversion requirements.
 #
 # Usage: run_model_conversion.sh <model_dir> <conversion> <output_dir>
 #
@@ -35,5 +35,8 @@ fi
 "$CONVERSION_PYTHON" -E -s -m venv "$CONVERSION_VENV"
 "${pip_install[@]}" "$REPOSITORY"
 "${pip_install[@]}" --only-binary=:all: -r "$MODEL_DIR/scripts/requirements-convert.txt"
+if [[ -f "$MODEL_DIR/scripts/requirements-convert-nodeps.txt" ]]; then
+  "${pip_install[@]}" --only-binary=:all: --no-deps -r "$MODEL_DIR/scripts/requirements-convert-nodeps.txt"
+fi
 "$CONVERSION_VENV/bin/python" -E -s "$MODEL_DIR/scripts/convert.py" \
   --conversion "$CONVERSION" --output-dir "$OUTPUT_DIR"

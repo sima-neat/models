@@ -1,0 +1,17 @@
+# Initial published baselines: https://github.com/sima-neat/models/actions/runs/43027147530
+conversion:
+  run_tests: true
+compile:
+  run_tests: true
+accuracy:
+  run_tests: true
+  expected:
+    w8a16:
+      nyu-depth-v2-default:
+        abs_rel: 0.079016
+        delta1: 0.930770
+performance:
+  run_tests: true
+  expected:
+    w8a16:
+      throughput_fps: 81.53

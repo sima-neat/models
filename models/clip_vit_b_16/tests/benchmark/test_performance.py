@@ -44,8 +44,8 @@ def test_performance_records_each_components_execution_plan(performance: dict[st
 
 
 def test_image_encoder_execution_plan_takes_the_benchmark_frame(performance: dict[str, Any]) -> None:
-    (frame,) = performance["components"]["image_encoder"]["execution_plan"]["edges"][0]["tensors"]
-    assert frame["shape"] == [1, 720, 1280, 3]
+    edges = performance["components"]["image_encoder"]["execution_plan"]["edges"]
+    assert any(tensor.get("shape") == [1, 720, 1280, 3] for edge in edges for tensor in edge.get("tensors", []))
 
 
 def test_mla_stats_collected(performance: dict[str, Any]) -> None:

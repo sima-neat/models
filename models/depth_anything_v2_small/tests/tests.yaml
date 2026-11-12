@@ -1,0 +1,18 @@
+compile:
+  run_tests: true
+# Modalix measurements from CI run 43211944386; shared regression limits apply.
+accuracy:
+  run_tests: true
+  expected:
+    w16a16:
+      nyu-depth-v2-val: {abs_rel: 0.0508, delta1: 0.9733}
+    w8a8_mixed:
+      nyu-depth-v2-val: {abs_rel: 0.0559, delta1: 0.9680}
+    w8a16:
+      nyu-depth-v2-val: {abs_rel: 0.0514, delta1: 0.9729}
+performance:
+  run_tests: true
+  expected:
+    w16a16: {throughput_fps: 13.06}
+    w8a8_mixed: {throughput_fps: 15.95}
+    w8a16: {throughput_fps: 13.8}

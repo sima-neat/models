@@ -151,6 +151,17 @@ Compiler and Build history directly. Category filters list the values the loaded
 builds use and hide when fewer than two remain; developer controls stay visible.
 On narrow screens the filters move into a drawer whose button shows the
 active-filter count.
+
+Cards defaults to one card per available model family, grouped and ordered by
+architecture ID. Family titles and descriptions come from the catalog taxonomy;
+heroes and tasks come from its available models, after branch/compiler/task
+filtering. Selecting a family uses the existing sidebar filter and URL, then
+shows individual models. A single-model family opens its model directly.
+**All model families** clears only the family selection. Search shows individual
+models and includes family descriptions; Table and build history keep individual
+entries. Older catalogs without descriptions omit that text. See
+[catalog behavior](../docs/model-browser.md#the-catalog).
+
 The branch filter defaults to `develop`. A branch selected by the user is saved per
 registry and repository in browser storage. Shared links include `branch` and
 `model` and `variant` (the build profile), which open the latest build of that
@@ -206,8 +217,8 @@ everything longer sits in one expandable row.
   source or script; a reference score sits beside a measured one only when both
   name the same dataset. A build without an accuracy result shows only the
   reference scores.
-- **Details**, in the developer UI only, shows the package card (size, SHA-256, **Download package**,
-  and **Download components** for a multi-component build) and the package's numerical
+- **Details**, in the developer UI only, shows the package card (size, SHA-256, and
+  **Download package**) and the package's numerical
   fidelity, then rows for build provenance, source models (one
   per distinct digest), and each component: checksum, run identity, and a nested
   **Compile parameters** row.
@@ -317,8 +328,9 @@ packages covering every shown component are offered as full-model downloads.
 The following confirmation flow applies to archive deployments, including
 previously published LLiMa ZIPs.
 
-The model download button includes every model-pack component from the selected
-variant's workflow build, commit, branch, target, and compiler. All
+A build with no package falls back to a download button that includes every
+model-pack component from the selected variant's workflow build, commit, branch,
+target, and compiler. All
 variants show a confirmation dialog listing component names, actual archive filenames, and file sizes.
 Choose **Download N files** to start the transfers in parallel, or **Cancel**
 (or Escape) to leave without starting any downloads. Cancel also works while
@@ -326,8 +338,9 @@ links are being prepared. Single-file variants require confirmation with **Downl
 Numerical-fidelity **Download JSON** remains a separate report download.
 
 **Download package** saves the published package under its registry filename:
-the MPK itself for a single-component model, or a ZIP of the component MPKs
-and declared resources otherwise. The dialog labels the file MPK or ZIP.
+a ZIP of the component MPKs and declared resources. A single-component build
+published before packages became ZIPs stays a bare MPK until its next compile.
+The dialog labels the file MPK or ZIP.
 
 All temporary URLs are prepared before any transfer starts. If preparation
 fails, the dialog reports the error and allows retrying. Files stream directly

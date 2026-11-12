@@ -17,6 +17,7 @@ from .fetch import Fetcher, sha256_file
 from .mla_stage_simulation import SIMULATION_FILE
 from .model import _expand_source, load_and_validate_model, mpk_filename, source_members
 from .runner_approval import runner_provenance
+from .runtime_files import read_runtime_files
 from .source import SourceSpec, source_identity
 
 # scripts/compile.py writes the profile's numerical fidelity here; the package run publishes it.
@@ -44,8 +45,10 @@ def _zip_info(name: str) -> zipfile.ZipInfo:
 
 
 def _add_file(archive: zipfile.ZipFile, name: str, path: Path) -> None:
-    with path.open("rb") as stream:
-        archive.writestr(_zip_info(name), stream.read())
+    info = _zip_info(name)
+    info.file_size = path.stat().st_size
+    with path.open("rb") as source, archive.open(info, "w") as target:
+        shutil.copyfileobj(source, target)
 
 
 def _link_or_copy(source: str, destination: str) -> str:
@@ -132,20 +135,6 @@ def fetch_package_resources(model: dict[str, Any], output_dir: Path, cache_dir: 
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(path, destination)
     return output_dir
-
-
-def _runtime_files(profile_dir: Path) -> list[tuple[str, Path]]:
-    """Files the compile recipe declared beside its MPKs in compile-outputs.json, such as runtime tables."""
-    manifest_file = profile_dir / "compile-outputs.json"
-    if not manifest_file.is_file():
-        return []
-    files = []
-    for item in _load_json(manifest_file, "compile outputs").get("runtime_files", []):
-        path = profile_dir / item["path"]
-        if not path.is_file() or sha256_file(path)[0] != item["sha256"]:
-            raise ValidationError(f"{manifest_file}: runtime file {item['path']} is missing or changed")
-        files.append((item["path"], path))
-    return files
 
 
 def _resource_files(fetcher: Fetcher, resource: dict[str, Any]) -> tuple[dict[str, Any], list[tuple[str, Path]]]:
@@ -275,7 +264,8 @@ def assemble_package(
     else:
         packaged_composition = {"id": composition["id"], "type": composition["type"]}
 
-    extra_files = _runtime_files(compiled / model_id / build_profile_id)
+    profile_dir = compiled / model_id / build_profile_id
+    extra_files = [(item["path"], profile_dir / item["path"]) for item in read_runtime_files(profile_dir)]
     resource_entries: list[dict[str, Any]] = []
     resources = package_resources(model)
     if resources:
@@ -343,20 +333,14 @@ def assemble_package(
             json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8"
         )
         return result
-    # A single-component model's MPK is the package itself; anything more ships as a flat ZIP of the installed files.
-    if len(packaged_files) == 1:
-        bundle_name = packaged_files[0][0]
-    else:
-        bundle_name = f"{model_id}_{build_profile_id}_{package_id}.zip"
+    # Every archive package is a flat ZIP of the installed files; Vulcan rejects any other archive at promotion.
+    bundle_name = f"{model_id}_{build_profile_id}_{package_id}.zip"
     bundle_path = package_dir / bundle_name
     temporary = package_dir / f".{bundle_name}.partial"
     try:
-        if len(packaged_files) == 1:
-            shutil.copyfile(packaged_files[0][1], temporary)
-        else:
-            with zipfile.ZipFile(temporary, "w", allowZip64=True, compression=zipfile.ZIP_STORED) as archive:
-                for name, path in packaged_files:
-                    _add_file(archive, name, path)
+        with zipfile.ZipFile(temporary, "w", allowZip64=True, compression=zipfile.ZIP_STORED) as archive:
+            for name, path in packaged_files:
+                _add_file(archive, name, path)
         temporary.replace(bundle_path)
     finally:
         temporary.unlink(missing_ok=True)

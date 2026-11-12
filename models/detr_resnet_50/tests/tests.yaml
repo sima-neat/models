@@ -1,0 +1,26 @@
+conversion:
+  run_tests: true
+compile:
+  run_tests: true
+accuracy:
+  run_tests: true
+  expected:
+    w16a16:
+      coco-2017-val:
+        coco_map: 0.3641
+        coco_ap50: 0.5593
+        coco_ap75: 0.3759
+        coco_ap_small: 0.1412
+        coco_ap_medium: 0.3905
+        coco_ap_large: 0.5897
+        coco_ar1: 0.3057
+        coco_ar10: 0.4739
+        coco_ar100: 0.5120
+        coco_ar_small: 0.2326
+        coco_ar_medium: 0.5556
+        coco_ar_large: 0.7845
+performance:
+  run_tests: true
+  expected:
+    w16a16:
+      throughput_fps: 80.5
