@@ -2,6 +2,9 @@ conversion:
   run_tests: true
 compile:
   run_tests: true
+accuracy:
+  run_tests: false
+  skip_reason: The first k-NN accuracy results are not published yet.
 performance:
   run_tests: true
   expected:

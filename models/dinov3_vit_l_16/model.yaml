@@ -73,6 +73,10 @@ numerical_fidelity:
   selection: {method: seeded_random_without_replacement, seed: 42, offset: 50, samples: 50}
   outputs: [class_embedding, patch_embeddings]
 
+accuracy:
+  datasets:
+  - {id: imagenet-2012, variant: val, sha256: 018bf95eb75b8b7f1d7766303cdecf3c45ecb02ccf4cf161122ae885c4d7a36f, size_bytes: 6666407650}
+
 performance: {}
 
 reference_metrics:
