@@ -58,6 +58,11 @@ summary. A different eligible maintainer reviews and approves the request.
 Wait for the final report to show **`promoted`**. Submitting a request or
 approving a GitHub job is not proof that promotion finished.
 
+The report job refreshes benchmark references for the selected build without
+starting measurements. Existing matching results appear on the model page;
+otherwise, run **Vulcan Model Benchmarking** manually for that model/profile
+on the target branch. A failed refresh can be retried without another approval.
+
 ## 4. Check the download
 
 Open the model page in the Develop catalog. Download

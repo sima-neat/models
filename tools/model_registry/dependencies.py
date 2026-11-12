@@ -79,7 +79,7 @@ def resolve_benchmark_runtime(repository: str | Path) -> dict[str, Any]:
     ) is None:
         raise ValidationError("neat-core.install_target must name a Core release or branch package")
 
-    return {
+    runtime = {
         "devkit": {
             "board": board,
             "os_type": os_type,
@@ -87,3 +87,11 @@ def resolve_benchmark_runtime(repository: str | Path) -> dict[str, Any]:
         },
         "neat_core": {"install_target": install_target},
     }
+    if "llima" in manifest:
+        llima = manifest["llima"]
+        if not isinstance(llima, dict) or not re.fullmatch(
+            r"llima@[A-Za-z0-9][A-Za-z0-9._/-]*:[a-f0-9]{12,40}", str(llima.get("install_target", ""))
+        ):
+            raise ValidationError("llima.install_target must pin a runtime build revision")
+        runtime["llima"] = llima
+    return runtime

@@ -36,6 +36,7 @@ function finite(value) {
 }
 
 function pyneatVersion(report) {
+  if (typeof report.runtime?.llima === "string") return `LLiMa ${report.runtime.llima} · MoLE ${report.runtime.mole || ""}`;
   return typeof report.runtime?.pyneat === "string" ? `PyNeat ${report.runtime.pyneat}` : "";
 }
 
@@ -95,6 +96,31 @@ function cpuCores(telemetry) {
 // Reports from before EV74 memory carry the whole CMA pool in use, which is not the model's memory.
 const RETIRED_METRICS = new Set(["avg_cma_memory_mib", "peak_cma_memory_mib"]);
 
+function generationWorkloads(generation) {
+  const adapt = workload => {
+    const telemetry = workload.telemetry || {};
+    const values = Object.fromEntries(Object.entries(workload.metrics || {}).map(([key, metric]) => [key, metric.value]));
+    for (const [key, [field, statistic]] of Object.entries(TELEMETRY_METRICS)) {
+      const entries = [telemetry[field]].flat().filter(entry => entry?.samples > 0 && Number.isFinite(entry[statistic]));
+      if (entries.length) values[key] = Math.max(...entries.map(entry => entry[statistic]));
+    }
+    return {
+      ...workload,
+      key: workload.kind === "text" ? `text_${workload.input_tokens}` : workload.id,
+      label: workload.dataset ? ({gsm8k: "GSM8K", "bfcl-v3": "BFCL v3", alpacaeval: "AlpacaEval",
+        realworldqa: "RealWorldQA", docvqa_val: "DocVQA", chartqa: "ChartQA"}[workload.dataset.name] || workload.dataset.name)
+        : workload.kind === "text" ? `${workload.input_tokens} input tokens` : `Image ${workload.image_size.join(" × ")} + text`,
+      baseline: workload.baseline ? adapt(workload.baseline) : null,
+      inputTokens: workload.input_tokens,
+      measurements: Object.fromEntries(Object.entries(values).filter(([, value]) => Number.isFinite(value))
+        .map(([key, value]) => [key, measurement(key, value, telemetry)])),
+      telemetry: telemetrySource(telemetry),
+      cpuCores: cpuCores(telemetry),
+    };
+  };
+  return (generation?.workloads || []).map(adapt);
+}
+
 function performanceReadings(report) {
   const telemetry = report.telemetry || {};
   return {
@@ -116,6 +142,8 @@ export function readPerformance(benchmarkRun, order = []) {
       ...performanceReadings(report),
       scope: report.scope || "model",
       tool: pyneatVersion(report),
+      generation: report.generation || null,
+      workloads: generationWorkloads(report.generation),
       timestamp: run?.finished_at || run?.created_at || null,
       modelId: run?.metadata?.model_id,
       buildProfileId: run?.metadata?.build_profile_id,

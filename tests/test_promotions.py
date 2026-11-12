@@ -4,6 +4,7 @@ from __future__ import annotations
 import copy
 import json
 from argparse import Namespace
+from pathlib import Path
 
 import pytest
 from model_registry import promotions as p
@@ -72,6 +73,59 @@ def test_prepare_does_not_mutate_and_pins_canonical_snapshot():
     assert saved['body']['expected_target_snapshot'] == 'a' * 64
     assert saved['body']['target_git_ref'] == p.TARGET
     assert all(call[0] == 'GET' for call in backend.calls)
+
+
+@pytest.mark.parametrize('branch', ['develop', 'main'])
+def test_post_promotion_refresh_uses_target_settings_and_retries_without_reapproval(branch):
+    from types import SimpleNamespace
+
+    from model_registry.fingerprints import benchmark_fingerprint
+    from model_registry.model import load_and_validate_model
+
+    root = Path(__file__).resolve().parents[1]
+    record = {'state': 'promoted', 'result_snapshot': 'a' * 64, 'promotion_id': PROMOTION,
+              'deployment_id': CANDIDATE, 'target_git_ref': 'refs/heads/' + branch,
+              'source': {'model_id': 'resnet_50', 'profile_id': 'w8a8'}}
+    document = {'git_ref': record['target_git_ref'], 'catalog_revision': 'b' * 40, 'models': [{
+        'id': 'resnet_50', 'builds': [], 'packages': [], 'approved_deployments': {'w8a8': {
+            'deployment_id': CANDIDATE,
+            'requirements': {'invocations': [{'id': 'w8a8', 'component_ids': ['model'],
+                                             'compile_fingerprint': 'c' * 64}], 'packages': []},
+            'artifacts': [{'component_id': 'model', 'run_id': CANDIDATE, 'artifact_name': 'mpk'}],
+        }},
+    }]}
+    catalog = {'catalog_revision': 'b' * 40, 'canonical_sha256': 'a' * 64, 'document': document}
+    writes = []
+
+    def read(url):
+        if '/catalogs/current?' in url:
+            assert url.endswith(branch)
+            return {'catalog': catalog}
+        assert url.endswith(f'/runs/{CANDIDATE}/artifacts/mpk')
+        return {'artifact': {'sha256': 'd' * 64}}
+
+    client = SimpleNamespace(request=lambda *args: writes.append(args) or {'stored': True})
+    args = dict(repository=root, revision='b' * 40, read_api_url='https://reader.example.com', read_request=read)
+    assert p.benchmark_catalog(record, read_api_url=args['read_api_url'], read_request=read) == catalog
+    assert p.refresh_benchmarks(client, record, **args)['updated']
+    method, path, body, key = writes[0]
+    assert method == 'POST' and path.endswith('/catalogs/' + 'b' * 40 + '/snapshots')
+    assert body['previous_snapshot'] == 'a' * 64 and body['initialize'] is False
+    model = load_and_validate_model(root / 'models/resnet_50')
+    expected = benchmark_fingerprint(root, model, 'w8a8',
+                                    {'model': {'run_id': CANDIDATE, 'artifact_sha256': 'd' * 64}}, 'performance')
+    assert body['catalog']['models'][0]['benchmark_fingerprints']['w8a8']['performance'] == expected
+    assert 'benchmark_fingerprints' not in document['models'][0]
+    catalog['document'] = body['catalog']
+    assert p.refresh_benchmarks(client, record, **args) == {'updated': False}
+    assert len(writes) == 1
+    catalog['catalog_revision'] = 'e' * 40
+    with pytest.raises(ValidationError, match='revision changed'):
+        p.refresh_benchmarks(client, record, **args)
+    catalog['document']['models'][0]['approved_deployments']['w8a8']['deployment_id'] = PROMOTION
+    assert p.refresh_benchmarks(client, record, **args) == {'updated': False}
+    assert p.benchmark_catalog(dict(record, state='pending'), read_api_url=args['read_api_url'],
+                              read_request=lambda url: pytest.fail('pending approval must not refresh')) is None
 
 
 def test_lost_request_response_replays_same_body_key_even_after_target_changes():

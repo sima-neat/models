@@ -145,7 +145,7 @@ def read_catalog_sources(
 
 
 def _profiles(document: dict[str, Any]) -> dict[tuple[str, str], dict[str, Any]]:
-    """Index a models document's builds, packages and benchmark fingerprints by (model, build profile)."""
+    """Index outputs, approved deployments and benchmark fingerprints by (model, build profile)."""
     profiles: dict[tuple[str, str], dict[str, Any]] = {}
     for model in document.get("models", []):
         if not isinstance(model, dict) or not isinstance(model.get("id"), str):
@@ -157,6 +157,9 @@ def _profiles(document: dict[str, Any]) -> dict[tuple[str, str], dict[str, Any]]
                         (model["id"], item["build_profile_id"]), {"builds": [], "packages": []}
                     )
                     profile[kind].append(item)
+        for profile_id, selection in model.get("approved_deployments", {}).items():
+            profile = profiles.setdefault((model["id"], profile_id), {"builds": [], "packages": []})
+            profile["approved_deployments"] = selection
         for profile_id, fingerprints in (model.get("benchmark_fingerprints") or {}).items():
             if (model["id"], profile_id) in profiles:
                 profiles[(model["id"], profile_id)]["benchmark_fingerprints"] = fingerprints
@@ -173,16 +176,21 @@ def _pending_fingerprints(document: dict[str, Any]) -> dict[tuple[str, str], dic
     }
 
 
-def _carries_fingerprints(builds: list[dict[str, Any]], fingerprints: dict[str, str]) -> bool:
-    """Whether the builds include every component at its head compile fingerprint."""
-    published = {build.get("component_id"): build.get("compile_fingerprint") for build in builds}
+def _carries_fingerprints(profile: dict[str, Any], fingerprints: dict[str, str]) -> bool:
+    """Whether the selected deployment or builds carry every component's head compile fingerprint."""
+    published = {build.get("component_id"): build.get("compile_fingerprint") for build in profile["builds"]}
+    selection = profile.get("approved_deployments")
+    if selection:
+        published = {component_id: invocation["compile_fingerprint"]
+                     for invocation in selection["requirements"]["invocations"]
+                     for component_id in invocation["component_ids"]}
     return all(published.get(component_id) == fingerprint for component_id, fingerprint in fingerprints.items())
 
 
 def merge_catalog_sources(documents: list[dict[str, Any]], matrix: list[dict[str, Any]]) -> dict[str, Any] | None:
     """Combine source catalogs into the one prior catalog a revision is planned and published against.
 
-    Each model build profile takes its builds, packages and benchmark fingerprints together from the first
+    Each model build profile takes its outputs, approved deployments and benchmark fingerprints from the first
     source whose builds carry every compile fingerprint the head declares for that profile, else from the first
     source that is compiling those fingerprints, else from the first source that has the profile at all, so its
     prior builds and their benchmarks stay visible while the replacement compiles.
@@ -203,13 +211,15 @@ def merge_catalog_sources(documents: list[dict[str, Any]], matrix: list[dict[str
             for profiles, pending in sources
             if (model_id, profile_id) in profiles
         ]
-        matching = [profile for profile, _ in present if _carries_fingerprints(profile["builds"], fingerprints)]
+        matching = [profile for profile, _ in present if _carries_fingerprints(profile, fingerprints)]
         compiling = [profile for profile, pending in present if pending.get((model_id, profile_id)) == fingerprints]
         chosen = matching or compiling or [profile for profile, _ in present]
         if chosen:
             model = models.setdefault(model_id, {"builds": [], "packages": []})
             model["builds"].extend(chosen[0]["builds"])
             model["packages"].extend(chosen[0]["packages"])
+            if "approved_deployments" in chosen[0]:
+                model.setdefault("approved_deployments", {})[profile_id] = chosen[0]["approved_deployments"]
             if "benchmark_fingerprints" in chosen[0]:
                 model.setdefault("benchmark_fingerprints", {})[profile_id] = chosen[0]["benchmark_fingerprints"]
     return {"models": [{"id": model_id, **entries} for model_id, entries in sorted(models.items())]}
@@ -227,6 +237,38 @@ def stage_run_exists(read: ReadRequest, read_api_url: str, run_type: str, finger
             return False
         raise
     return True
+
+
+def plan_promoted_benchmarks(
+    *, branch: str, stages: list[str], read: ReadRequest, read_api_url: str,
+) -> dict[str, Any]:
+    """Plan missing approved benchmarks, excluding text generation, without compiling or changing the catalog."""
+    if branch not in {"develop", "main"}:
+        raise ValidationError("Promoted benchmark batches require the develop or main branch")
+    if not stages or set(stages) - set(BENCHMARK_RUN_TYPES):
+        raise ValidationError("Benchmark stages must be performance and/or accuracy")
+    _, document = read_current_catalog(read, read_api_url, branch)
+    if document is None:
+        raise ValidationError(f"No current catalog for {branch}")
+    include, skipped = [], []
+    for model in document["models"]:
+        if not model.get("build_on_demand") or {"text_generation", "visual_question_answering"}.intersection(
+            model["categories"]["tasks"]
+        ):
+            continue
+        for profile in sorted(model.get("approved_deployments", {})):
+            fingerprints = model.get("benchmark_fingerprints", {}).get(profile, {})
+            requested = [stage for stage in dict.fromkeys(stages) if stage in fingerprints]
+            missing = [stage for stage in requested if not stage_run_exists(
+                read, read_api_url, BENCHMARK_RUN_TYPES[stage], fingerprints[stage],
+            )]
+            if missing:
+                include.append({"model_id": model["id"], "build_profile_id": profile,
+                                "compile_invocation_id": profile, "stages": missing})
+            else:
+                skipped.append({"model_id": model["id"], "build_profile_id": profile,
+                                "reason": "already measured" if requested else "no requested benchmark references"})
+    return {"source_branch": branch, "source_sha": document["catalog_revision"], "include": include, "skipped": skipped}
 
 
 def catalog_builds(document: dict[str, Any] | None) -> dict[tuple[str, str, str], dict[str, Any]]:

@@ -1,7 +1,8 @@
-"""Pinned, retry-safe promotion operations; no compilation or catalog writes."""
+"""Pinned promotion operations and benchmark reference publication; no compilation or benchmarking."""
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import os
 from pathlib import Path
@@ -9,7 +10,14 @@ from urllib.parse import urlsplit
 from uuid import UUID
 
 from .errors import ValidationError
-from .registry import ReadRequest, SigV4RegistryClient, _public_registry_json, canonical_sha256
+from .registry import (
+    ReadRequest,
+    SigV4RegistryClient,
+    _public_registry_json,
+    _refresh_approved_benchmarks,
+    canonical_sha256,
+    read_current_catalog,
+)
 
 ROOT = "/v1/repositories/sima-neat/models"
 TARGET = "refs/heads/develop"
@@ -156,6 +164,49 @@ def decide(client, record: dict, *, operation: str, reason: str, identity: str,
     if receipt.get("state") != expected or (operation == "approve" and not receipt.get("result_snapshot")):
         raise ValidationError("Vulcan did not confirm the requested decision")
     return receipt
+
+
+def benchmark_catalog(record: dict, *, read_api_url: str, read_request: ReadRequest | None = None) -> dict | None:
+    """Return the target source revision only while this deployment is still selected."""
+    if record.get("state") != "promoted" or not record.get("result_snapshot"):
+        return None
+    branch = record["target_git_ref"].removeprefix("refs/heads/")
+    catalog, document = read_current_catalog(read_request or _public_registry_json, read_api_url, branch)
+    if not catalog or not document:
+        raise ValidationError("Promotion target catalog is missing")
+    model = next((item for item in document["models"] if item["id"] == record["source"]["model_id"]), {})
+    selected = model.get("approved_deployments", {}).get(record["source"]["profile_id"], {})
+    if selected.get("deployment_id") != record["deployment_id"]:
+        return None  # A later promotion superseded this request; never restore its references.
+    return catalog
+
+
+def refresh_benchmarks(
+    client, record: dict, *, repository: Path, revision: str, read_api_url: str,
+    read_request: ReadRequest | None = None,
+) -> dict:
+    """Publish current benchmark identities after approval, using the target revision's source files."""
+    read = read_request or _public_registry_json
+    catalog = benchmark_catalog(record, read_api_url=read_api_url, read_request=read)
+    if catalog is None:
+        return {"updated": False}
+    if catalog["catalog_revision"] != revision:
+        raise ValidationError("Promotion target revision changed; rerun the report job to refresh benchmark references")
+    document = copy.deepcopy(catalog["document"])
+    document["schema_version"] = 2
+    document.setdefault("pending_builds", [])
+    _refresh_approved_benchmarks(
+        repository, document, catalog["document"], read_api_url, read,
+        model_id=record["source"]["model_id"], profile_id=record["source"]["profile_id"],
+    )
+    if document == catalog["document"]:
+        return {"updated": False}
+    body = {"initialize": False, "previous_snapshot": catalog["canonical_sha256"], "catalog": document}
+    result = client.request(
+        "POST", f"{ROOT}/catalogs/{revision}/snapshots", body,
+        "promotion-benchmarks-" + canonical_sha256([record["promotion_id"], body]),
+    )
+    return {"updated": True, "registry": result}
 
 
 def summary(record: dict) -> str:

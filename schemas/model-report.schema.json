@@ -11,9 +11,12 @@
     "stage": {"enum": ["performance", "accuracy"]},
     "runtime": {
       "type": "object",
-      "required": ["pyneat", "build"],
+      "required": ["build"],
+      "anyOf": [{"required": ["pyneat"]}, {"required": ["llima", "mole"]}],
       "properties": {
         "pyneat": {"type": "string", "minLength": 1},
+        "llima": {"type": "string", "minLength": 1},
+        "mole": {"type": "string", "minLength": 1},
         "build": {"type": "object"}
       },
       "additionalProperties": false
@@ -28,9 +31,10 @@
         "scope": {"const": "model"},
         "workload": {"type": "string", "minLength": 1},
         "telemetry": {"type": "object"},
+        "generation": {"type": "object", "required": ["settings", "workloads", "timing", "runtime", "status"]},
         "components": {
           "type": "object",
-          "minProperties": 1,
+          "minProperties": 0,
           "propertyNames": {"pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$"},
           "additionalProperties": {
             "type": "object",
@@ -45,6 +49,11 @@
         }
       },
       "required": ["metrics", "workload", "telemetry", "components"],
+      "allOf": [{
+        "if": {"required": ["generation"]},
+        "then": {"properties": {"components": {"maxProperties": 0}}},
+        "else": {"properties": {"components": {"minProperties": 1}}}
+      }],
       "additionalProperties": false
     },
     {

@@ -21,6 +21,7 @@ COMPILED_DIR="$3"
 OUTPUT_DIR="$4"
 REGISTRY_PYTHON="${REGISTRY_PYTHON:-python3}"
 PYNEAT_PYTHON="${PYNEAT_PYTHON:-$HOME/pyneat/bin/python}"
+LLIMA_MOLE_PYTHON="${LLIMA_MOLE_PYTHON:-${SIMA_MOLE_VENV_PATH:-/media/nvme/llima/mole-venv}/bin/python}"
 DATASET_CACHE="${DATASET_CACHE:-/media/nvme/datasets/artifacts}"
 DATASET_LOCK="${DATASET_LOCK:-/media/nvme/datasets/locks/prepare.lock}"
 DATASET_LOCK_SECONDS="${DATASET_LOCK_SECONDS:-1200}"
@@ -33,7 +34,7 @@ MODEL_ID="$(basename "$MODEL_DIR")"
 trap 'rm -rf "$WORK_DIR"' EXIT
 
 # A single-component model takes its MPK; a multi-component model takes each as <component>=<path>.
-listed="$("$REGISTRY_PYTHON" -m model_registry model-component-mpks "$COMPILED_DIR" \
+listed="$("$REGISTRY_PYTHON" -m model_registry model-component-artifacts "$COMPILED_DIR" \
   --repository "$REPOSITORY" --model "$MODEL_ID" --build-profile "$BUILD_PROFILE_ID")"
 mapfile -t inputs <<< "$listed"
 mpks=()
@@ -48,8 +49,16 @@ json_field() {
   "$REGISTRY_PYTHON" -c 'import json, sys; print(json.load(sys.stdin)[sys.argv[1]])' "$1"
 }
 
+backend="$("$REGISTRY_PYTHON" -c '
+import sys
+from model_registry.model import load_model
+print("llima" if load_model(sys.argv[1])["components"][0]["interface"]["format"] == "huggingface" else "core")
+' "$MODEL_DIR")"
+
 # The script takes the first accuracy dataset as <name>=<path>, unpacked and looking through a single top-level
 # directory, and picks its input from it. A model without an accuracy dataset gets none.
+dataset=()
+if [[ "$backend" == core ]]; then
 mkdir -p "$DATASET_CACHE" "$(dirname "$DATASET_LOCK")"
 resolutions="$(flock --wait "$DATASET_LOCK_SECONDS" --close "$DATASET_LOCK" \
   timeout --signal=TERM --kill-after=30s "$RESOLVE_TIMEOUT_SECONDS" "$REGISTRY_PYTHON" -m model_registry resolve-devkit-accuracy "$MODEL_DIR" \
@@ -83,6 +92,7 @@ if [[ -f "$REQUIREMENTS" ]]; then
   "$PYNEAT_PYTHON" -m pip install --quiet --disable-pip-version-check --no-deps --only-binary=:all: \
     --target "$site" -r "$REQUIREMENTS"
 fi
+fi
 
 # Throughput and power depend on the MLA clock, while outputs do not. Raise a lower clock to the 1 GHz
 # maximum, and stop before measuring if the board does not run at it.
@@ -113,7 +123,18 @@ if (( cpu_frequency_khz != CPU_FREQUENCY_KHZ )); then
 fi
 
 mkdir -p "$OUTPUT_DIR"
-PYTHONPATH="$REPOSITORY/tools:$site" PYTHONDONTWRITEBYTECODE=1 "$PYNEAT_PYTHON" "$MODEL_DIR/scripts/performance.py" \
-  "${mpks[@]}" "${dataset[@]}" "${resources[@]}" --output "$OUTPUT_DIR" 2>&1 | tee "$OUTPUT_DIR/performance.log"
+if [[ "$backend" == llima ]]; then
+  deployment="$(dirname "${inputs[0]#*=}")/deployment"
+  export HF_HOME="${HF_HOME:-/media/nvme/huggingface}"
+  baseline=()
+  if [[ -f "$COMPILED_DIR/benchmark-baseline.json" ]]; then
+    baseline=(--baseline "$COMPILED_DIR/benchmark-baseline.json")
+  fi
+  PYTHONPATH="$REPOSITORY/tools" PYTHONDONTWRITEBYTECODE=1 "$LLIMA_MOLE_PYTHON" "$MODEL_DIR/scripts/performance.py" \
+    --deployment "$deployment" "${baseline[@]}" --output "$OUTPUT_DIR" 2>&1 | tee "$OUTPUT_DIR/performance.log"
+else
+  PYTHONPATH="$REPOSITORY/tools:$site" PYTHONDONTWRITEBYTECODE=1 "$PYNEAT_PYTHON" "$MODEL_DIR/scripts/performance.py" \
+    "${mpks[@]}" "${dataset[@]}" "${resources[@]}" --output "$OUTPUT_DIR" 2>&1 | tee "$OUTPUT_DIR/performance.log"
+fi
 "$REGISTRY_PYTHON" -m model_registry check-report "$OUTPUT_DIR" --repository "$REPOSITORY" \
   --stage performance --model "$MODEL_ID" --build-profile "$BUILD_PROFILE_ID"
