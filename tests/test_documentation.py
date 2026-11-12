@@ -8,13 +8,11 @@ from pathlib import Path
 import pytest
 from model_registry.documentation import (
     BUILDING_APPLICATIONS,
-    GENAI_BUILDING_APPLICATIONS,
     MAX_README_WORDS,
     REQUIRED_SECTIONS,
     load_model_documentation,
 )
 from model_registry.errors import ValidationError
-from model_registry.model import load_model
 
 # The fixture's Inputs and outputs text, which tests replace to inject content.
 _CONTENT = "Content for inputs and outputs."
@@ -72,30 +70,15 @@ def test_repository_model_readmes_follow_the_documentation_contract() -> None:
     root = Path(__file__).resolve().parents[1]
     for manifest in sorted((root / "models").glob("*/model.yaml")):
         model_dir = manifest.parent
-        model = load_model(model_dir)
-        documentation = load_model_documentation(
-            model_dir, model["display_name"], repository=root,
-            is_genai=any(component["interface"]["format"] == "huggingface" for component in model["components"]),
+        display_name = next(
+            line.split(":", 1)[1].strip().strip('"\'')
+            for line in manifest.read_text(encoding="utf-8").splitlines()
+            if line.startswith("display_name:")
         )
+        documentation = load_model_documentation(model_dir, display_name, repository=root)
         assert documentation["source_path"] == f"models/{model_dir.name}/README.md"
         assert len(documentation["readme_sha256"]) == 64
         assert documentation["hero"]["source_path"] == f"models/{model_dir.name}/hero.png"
-
-
-@pytest.mark.parametrize("is_genai", [False, True])
-def test_building_applications_matches_deployment_backend(tmp_path: Path, is_genai: bool) -> None:
-    model_dir = tmp_path / "models" / "fixture"
-    model_dir.mkdir(parents=True)
-    (model_dir / "hero.png").write_bytes(_png())
-    expected, wrong = (GENAI_BUILDING_APPLICATIONS, BUILDING_APPLICATIONS) if is_genai else (
-        BUILDING_APPLICATIONS, GENAI_BUILDING_APPLICATIONS
-    )
-    readme = model_dir / "README.md"
-    readme.write_text(_readme(_overview()).replace(BUILDING_APPLICATIONS, expected), encoding="utf-8")
-    load_model_documentation(model_dir, "Fixture Model", repository=tmp_path, is_genai=is_genai)
-    readme.write_text(_readme(_overview()).replace(BUILDING_APPLICATIONS, wrong), encoding="utf-8")
-    with pytest.raises(ValidationError, match="Building applications must be exactly"):
-        load_model_documentation(model_dir, "Fixture Model", repository=tmp_path, is_genai=is_genai)
 
 
 def test_model_readme_contract_requires_a_hero_image(tmp_path: Path) -> None:

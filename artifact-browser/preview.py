@@ -112,8 +112,7 @@ def _repository() -> dict[str, Any]:
     with _preview_conversions(models):
         matrix = build_matrix(models, sorted(models), repository=ROOT, compiler_version=compiler["identity"])["include"]
         documentation = {
-            model_id: load_model_documentation(ROOT / "models" / model_id, model["display_name"], repository=ROOT,
-                is_genai=any(c["interface"]["format"] == "huggingface" for c in model["components"]))
+            model_id: load_model_documentation(ROOT / "models" / model_id, model["display_name"], repository=ROOT)
             for model_id, model in models.items()
         }
         revisions = [_revision(models, matrix, documentation, compiler, day, sha) for day, sha in REVISIONS]
@@ -434,54 +433,22 @@ def _performance_report(model: dict, profile_id: str) -> dict[str, Any]:
     if model["model_type"] in ("llm", "vlm"):
         report = json.loads((BROWSER / "fixtures/genai-model-report.json").read_text())
         recorded = report.pop("preview_model_id")
-        report["generation"].setdefault("settings", {"max_context": 4096, "max_new_tokens": 256,
-            "repetitions": 5, "image_size": next((w["image_size"] for w in report["generation"]["workloads"]
-                                                  if w["kind"] == "image_text"), None)})
+        speculative = report.pop("preview_speculative_workloads")
+        generation = report["generation"]
         baseline = build_profile_for(model, profile_id).get("benchmark_baseline")
         if baseline:
-            from model_report.generation_benchmark import IMAGE_DATASETS, TEXT_DATASETS, workload_metrics
-
-            template = report["generation"]["workloads"][0]
-            names = (*TEXT_DATASETS, *(IMAGE_DATASETS if model["model_type"] == "vlm" else ()))
-            workloads = []
-            for name in names:
-                workload = {"id": f"dataset_{name}",
-                    "kind": "image_dataset" if name in IMAGE_DATASETS else "text_dataset",
-                    "dataset": {"name": name, "available_samples": 5, "selection": "illustrative"},
-                    "telemetry": {}, "requests": [{
-                        "phase": "warmup" if index == 0 else "measure",
-                        "input_tokens": template["input_tokens"],
-                        "ttft_s": template["metrics"]["ttft_ms"]["value"] / 1000,
-                        "token_durations_s": [template["metrics"]["ttft_ms"]["value"] / 1000,
-                                              *([1 / template["metrics"]["decode_tps"]["value"]] * 255)],
-                    } for index in range(6)]}
-                for index, row in enumerate(workload["requests"]):
-                    durations = row["token_durations_s"][:256]
-                    row.update(token_durations_s=durations, generated_tokens=len(durations),
-                        decode_tokens=len(durations) - 1, decode_time_s=sum(durations[1:]),
-                        sample_id=f"example-{max(0, index - 1)}", output_budget=256, accepted_draft_tokens=None)
-                reference = copy.deepcopy(workload)
-                reference["metrics"] = workload_metrics(reference)
-                for row in workload["requests"]:
-                    durations = [row["ttft_s"], *[duration / 1.6 for duration in row["token_durations_s"][1:]]]
-                    row.update(token_durations_s=durations, decode_time_s=sum(durations[1:]),
-                               accepted_draft_tokens=row["generated_tokens"] // 2)
-                workload["baseline"] = reference
-                workload["metrics"] = workload_metrics(workload)
-                workloads.append(workload)
-            report["generation"].update(synthetic=True, workloads=workloads, baseline={
+            generation.update(workloads=speculative, baseline={
                 "model_id": baseline["model_id"], "build_profile_id": baseline["build_profile"],
                 "display_name": _repository()["models"][baseline["model_id"]]["display_name"]})
-            report["generation"]["settings"].update(decoding="speculative", repetitions=1,
-                image_size=report["generation"]["settings"].get("image_size") if model["model_type"] == "vlm" else None)
-            return report
-        if model["id"] != recorded:
-            report["generation"]["synthetic"] = True
-            report["generation"]["workloads"] = [w for w in report["generation"]["workloads"] if w["kind"] == "text"]
-            report["generation"]["settings"]["image_size"] = None
-            for workload in report["generation"]["workloads"]:
-                workload["telemetry"] = {}
-                workload.pop("avg_power_watts", None)
+            generation["settings"].update(decoding="speculative", repetitions=1)
+        if model["model_type"] == "llm" or (not baseline and model["id"] != recorded):
+            generation["workloads"] = [w for w in generation["workloads"] if w["kind"] in ("text", "text_dataset")]
+            generation["settings"]["image_size"] = None
+        for workload in generation["workloads"]:
+            workload["telemetry"] = report["telemetry"]
+            if workload.get("baseline"):
+                workload["baseline"]["telemetry"] = report["telemetry"]
+            elif model["id"] != recorded:
                 for name, metric in workload["metrics"].items():
                     metric["value"] *= 1.5 if name == "ttft_ms" else 0.6
         return report

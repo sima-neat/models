@@ -440,4 +440,4 @@ Developer Center origin and environment label. Audience remains independent.
 See [production frontend deployment](../docs/model-browser.md#production-frontend)
 for the tested, prefix-scoped operator deployment and rollback procedure.
 
-Native generation previews use `fixtures/genai-model-report.json`, a display projection of the recorded Qwen3.5-0.8B DevKit measurements. `preview.py --synthetic-genai` additionally shows labeled illustrative text results for unmeasured LLMs/VLMs. These omit telemetry and never alter the authored model definitions.
+Native generation previews use `fixtures/genai-model-report.json`: recorded Qwen3.5-0.8B timings, one shared illustrative telemetry sample, and small fixed speculative examples. All are labeled as preview data. `preview.py --synthetic-genai` also exposes examples for unmeasured models without changing their definitions.
