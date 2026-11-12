@@ -888,6 +888,8 @@ def test_catalog_snapshot_reuses_unchanged_compile_runs() -> None:
     assert first["catalog_revision"] == "a" * 40
     assert len(first["taxonomy_sha256"]) == 64
     assert "version" not in first["taxonomy"]
+    assert first["taxonomy"]["architectures"]["resnet"]["description"]
+    assert json.loads(json.dumps(first))["taxonomy"] == first["taxonomy"]
     assert all("taxonomy_version" not in model["categories"] for model in first["models"])
 
 

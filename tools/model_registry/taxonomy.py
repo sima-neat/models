@@ -93,10 +93,14 @@ def load_taxonomy(path: str | Path) -> dict[str, Any]:
     _validate_entries(model_types, "model_types", {"display_name"})
     _validate_entries(modalities, "modalities", {"display_name"})
     _validate_entries(paradigms, "architecture_paradigms", {"display_name"})
-    _validate_entries(architectures, "architectures", {"display_name", "paradigm", "allowed_model_types"})
+    _validate_entries(
+        architectures, "architectures", {"display_name", "description", "paradigm", "allowed_model_types"}
+    )
     _validate_entries(tasks, "tasks", {"display_name", "allowed_model_types"})
 
     for architecture_id, architecture in architectures.items():
+        if not isinstance(architecture.get("description"), str) or not architecture["description"].strip():
+            raise ValidationError(f"taxonomy architectures.{architecture_id}.description must be non-empty")
         paradigm = architecture.get("paradigm")
         if paradigm not in paradigms:
             raise ValidationError(
