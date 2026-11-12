@@ -371,6 +371,8 @@ def test_native_setup_reuses_matching_mole_on_nvme(tmp_path, installed):
         "sima-cli": '''import json, os, sys
 from pathlib import Path
 if "--json" in sys.argv:
+    print("sima-cli is up-to-date")
+    print("Environment: elxr")
     print(json.dumps({"metadata_url": os.environ["METADATA_URL"]}))
 else:
     Path(os.environ["INSTALL_CALLS"]).write_text(json.dumps({

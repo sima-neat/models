@@ -18,7 +18,9 @@ metadata="$(sima-cli neat install --env production "$mole_target" --json)"
 expected_version="$("$REGISTRY_PYTHON" -c '
 import json, sys
 from urllib.request import urlopen
-with urlopen(json.loads(sys.argv[1])["metadata_url"], timeout=30) as response:
+# sima-cli prints status messages before its JSON document.
+metadata = json.loads(sys.argv[1][sys.argv[1].index("{"):])
+with urlopen(metadata["metadata_url"], timeout=30) as response:
     print(json.load(response)["version"])
 ' "$metadata")"
 installed_version="$("$mole_python" -c 'from importlib.metadata import version; from sima_lmm.mole.modalixlm import ModalixLM; print(version("sima-lmm"))' 2>/dev/null)" || installed_version=""
