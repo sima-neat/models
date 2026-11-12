@@ -150,11 +150,15 @@ required metrics (performance: `throughput_fps`); optional expectations and
 the shared regression thresholds remain gates.
 
 When no published score matches a package's setup, the model may add a standalone
-`scripts/fp32_baseline_accuracy.py`, as `models/superglue_outdoor` does. It scores the
-FP32 ONNX the model compiles on a host with the model's own `accuracy.py` scoring, without
+`scripts/fp32_baseline_accuracy.py`, as `models/superglue_outdoor` does. It scores an
+FP32 ONNX on a host with the model's own `accuracy.py` scoring, without
 `model_registry` imports, credentials or YAML. Its output becomes the
-`reference_metrics` entry with `origin: fp32_baseline`. No stage runs it and no
-fingerprint includes it ([FP32 baseline](docs/local-accuracy-development.md#fp32-baseline)).
+`reference_metrics` entry with `origin: fp32_baseline`. The baseline is a manual host
+measurement: run the script on the ONNX its docstring names, produced by the model's own
+`convert.py` (and `surgery.py` when the script scores the rewritten graph). No stage runs
+it and no fingerprint includes it, so that ONNX need not match the sha256 of the file
+Vulcan Model Convert published. The pull request gives the command and its output
+([FP32 baseline](docs/local-accuracy-development.md#fp32-baseline)).
 
 ## LLiMa models
 
