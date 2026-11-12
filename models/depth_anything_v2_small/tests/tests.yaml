@@ -1,19 +1,18 @@
 compile:
   run_tests: true
-# Initial Modalix measurements recorded in PR #513; shared regression limits apply.
+# Modalix measurements from CI run 43211944386; shared regression limits apply.
 accuracy:
   run_tests: true
   expected:
     w16a16:
       nyu-depth-v2-val: {abs_rel: 0.0508, delta1: 0.9733}
-    # Keep the previous full-INT8 accuracy as the floor until the first mixed build is measured.
     w8a8_mixed:
-      nyu-depth-v2-val: {abs_rel: 0.0718, delta1: 0.9453}
+      nyu-depth-v2-val: {abs_rel: 0.0559, delta1: 0.9680}
     w8a16:
-      nyu-depth-v2-val: {abs_rel: 0.0513, delta1: 0.9730}
+      nyu-depth-v2-val: {abs_rel: 0.0514, delta1: 0.9729}
 performance:
-  run_tests: false
-  skip_reason: Awaiting the first w8a8_mixed hardware throughput result; the previous 24 FPS was full INT8.
+  run_tests: true
   expected:
-    w16a16: {throughput_fps: 13.1}
+    w16a16: {throughput_fps: 13.06}
+    w8a8_mixed: {throughput_fps: 15.95}
     w8a16: {throughput_fps: 13.8}
