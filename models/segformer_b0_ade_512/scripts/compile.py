@@ -11,7 +11,8 @@ import os
 import shutil
 import tarfile
 import tempfile
-from collections import Counter
+from collections import Counter, defaultdict
+from collections.abc import Iterator
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -78,19 +79,61 @@ def _bf16_regions(profile_id: str, parameters: dict[str, Any]) -> list[str]:
     return regions
 
 
+def _precision(node: Any) -> QuantizationPrecision | None:
+    config = getattr(node.ir, "quant_config", None)
+    return None if config is None else config.quantization_precision.value
+
+
+def _quantized_nodes(net: Any) -> Iterator[tuple[Any, list[Any], list[Any]]]:
+    """Yield each quantized operation of the network and its subnetworks, with the nodes it reads and that read it."""
+    readers = defaultdict(list)
+    for node in net.nodes.values():
+        for name in node.input_node_names:
+            readers[name].append(node)
+    for node in net.nodes.values():
+        if hasattr(node.ir, "nodes"):
+            yield from _quantized_nodes(node.ir)
+        elif _precision(node) is not None:
+            yield node, [net.nodes[name] for name in node.input_node_names if name in net.nodes], readers[node.name]
+
+
 def _operation_counts(quantized: Any) -> tuple[Counter[str], Counter[str]]:
     """Count the quantized operations by type: all of them, and those that run BF16."""
     # The quantized model keeps its network private, and AFE renames every node, so count by operation.
     operations, bf16 = Counter(), Counter()
-    for node in quantized._net.iter_nodes_recursive():
-        config = getattr(node.ir, "quant_config", None)
-        if config is None:
-            continue
+    for node, _, _ in _quantized_nodes(quantized._net):
         kind = type(node.ir.operation).__name__
         operations[kind] += 1
-        if config.quantization_precision.value == QuantizationPrecision.BFLOAT_16:
+        if _precision(node) == QuantizationPrecision.BFLOAT_16:
             bf16[kind] += 1
     return operations, bf16
+
+
+def _describe(node: Any) -> str:
+    """The node's operation type, precision and source ONNX operations."""
+    precision = _precision(node)
+    sources = ",".join(name.removeprefix("/model/") for name in node.source_node_names or ()) or node.name
+    return f"{type(getattr(node.ir, 'operation', node.ir)).__name__}:{precision.value if precision else '-'}({sources})"
+
+
+def _marked_precision_mismatches(quantized: Any, marks: dict[str, str]) -> list[str]:
+    """Describe each quantized operation whose precision differs from the marks on its source ONNX operations, and log
+    the BF16 operations that no mark covers."""
+    mismatches, unmarked_bf16 = [], []
+    for node, inputs, readers in _quantized_nodes(quantized._net):
+        marked = {QuantizationPrecision(marks[name]) for name in node.source_node_names or () if name in marks}
+        precision = _precision(node)
+        if marked and marked != {precision}:
+            mismatches.append(
+                f"{_describe(node)} marked {sorted(item.value for item in marked)}; "
+                f"inputs {[_describe(item) for item in inputs]}; readers {[_describe(item) for item in readers]}"
+            )
+        elif not marked and precision == QuantizationPrecision.BFLOAT_16:
+            unmarked_bf16.append(_describe(node))
+    for mismatch in mismatches:
+        logging.warning("Precision differs from its mark: %s", mismatch)
+    logging.info("Unmarked BF16 operations: %s", unmarked_bf16)
+    return mismatches
 
 
 def _require_bf16_regions(bf16: Counter[str], regions: list[str]) -> None:
@@ -178,13 +221,14 @@ def compile_model(source: Path, output_dir: Path, profile_id: str, dataset: Path
 
     with tempfile.TemporaryDirectory(prefix=f"{MODEL_ID}-", dir=os.environ.get("RUNNER_TEMP")) as temporary:
         build_dir = Path(temporary)
-        graph = source
+        graph, marks = source, {}
         if regions:
             # The marks go on a copy, so the fidelity check still compares with the unmarked source.
             graph = build_dir / "graphs" / "model.onnx"
             graph.parent.mkdir()
             shutil.copyfile(source, graph)
-            logging.info("Precision marks for %s: %s", regions, annotate_bf16_regions(graph, regions))
+            marks = annotate_bf16_regions(graph, regions)
+            logging.info("Precision marks for %s: %s", regions, dict(Counter(marks.values())))
         importer = onnx_source(str(graph), shape_dict={INPUT: INPUT_SHAPE}, layout="NCHW")
         loaded = load_model(importer, target=gen2_target)
         logging.info("Quantizing %s with %d sample(s)", precision, len(samples))
@@ -197,7 +241,10 @@ def compile_model(source: Path, output_dir: Path, profile_id: str, dataset: Path
         operations, bf16 = _operation_counts(quantized)
         logging.info("Quantized operations: %s", dict(sorted(operations.items())))
         if regions:
+            mismatches = _marked_precision_mismatches(quantized, marks)
             _require_bf16_regions(bf16, regions)
+            if mismatches:
+                raise RuntimeError(f"{len(mismatches)} operations did not quantize at their marked precision")
         # The option applies to every LayerNorm and INT8 ones reject it, so only a build whose LayerNorms all run
         # BF16 keeps FP32 intermediates.
         bf16_norms = bf16["LayerNormOp"] == operations["LayerNormOp"] > 0 and bool(regions)

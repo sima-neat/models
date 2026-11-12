@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import io
+import logging
 import random
 import sys
 import tarfile
+from collections import Counter
 from collections.abc import Callable
+from enum import Enum
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
+from typing import Any
 
 import numpy as np
 import onnx
@@ -118,8 +122,6 @@ def test_bf16_regions_belong_to_a_w8a8_profile_marked_mixed(load_script: Callabl
 
 
 def test_bf16_check_requires_each_marked_region_to_quantize_bf16(load_script: Callable[[str], ModuleType]) -> None:
-    from collections import Counter
-
     recipe = load_script("compile")
 
     regions = ["attention_core", "norms", "gelu"]
@@ -136,6 +138,55 @@ def test_bf16_check_requires_each_marked_region_to_quantize_bf16(load_script: Ca
     ]:
         with pytest.raises(RuntimeError, match="expected BF16 operations"):
             recipe._require_bf16_regions(bf16, marked)
+
+
+def _quantized_node(name: str, kind: str, precision: Any, sources: list[str], inputs: tuple[str, ...] = ()) -> Any:
+    config = SimpleNamespace(quantization_precision=SimpleNamespace(value=precision))
+    return SimpleNamespace(
+        name=name,
+        input_node_names=list(inputs),
+        source_node_names=sources,
+        ir=SimpleNamespace(operation=type(kind, (), {})(), quant_config=config),
+    )
+
+
+class _Precision(Enum):
+    # AFE's QuantizationPrecision values, for checks that run without the Model Compiler.
+    INT_8 = "int8"
+    BFLOAT_16 = "bfloat16"
+
+
+def test_marked_precision_check_names_each_operation_off_its_mark(
+    load_script: Callable[[str], ModuleType], monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    recipe = load_script("compile")
+    monkeypatch.setattr(recipe, "QuantizationPrecision", _Precision)
+    int8, bf16 = _Precision.INT_8, _Precision.BFLOAT_16
+    # AFE left a marked LayerNorm INT8 and ran the Linear layer reading it BF16, despite its INT8 mark.
+    nodes = [
+        _quantized_node("conv", "ConvAddActivationOp", int8, ["/model/embed/Conv"]),
+        _quantized_node("norm", "LayerNormOp", int8, ["/model/embed/LayerNormalization"], ("conv",)),
+        _quantized_node("query", "ConvAddActivationOp", bf16, ["/model/query/MatMul", "/model/query/Add"], ("norm",)),
+        _quantized_node("softmax", "SoftmaxOp", bf16, ["/model/Softmax"], ("query",)),
+        _quantized_node("scale", "ConstantOp", bf16, []),
+    ]
+    segment = SimpleNamespace(
+        name="MLA_0", input_node_names=[], source_node_names=None, ir=SimpleNamespace(nodes={n.name: n for n in nodes})
+    )
+    quantized = SimpleNamespace(_net=SimpleNamespace(nodes={"MLA_0": segment}))
+    marks = {"/model/embed/LayerNormalization": "bfloat16", "/model/query/MatMul": "int8", "/model/Softmax": "bfloat16"}
+
+    with caplog.at_level(logging.INFO):
+        mismatches = recipe._marked_precision_mismatches(quantized, marks)
+
+    query = "ConvAddActivationOp:bfloat16(query/MatMul,query/Add)"
+    norm = "LayerNormOp:int8(embed/LayerNormalization)"
+    assert mismatches == [
+        f"{norm} marked ['bfloat16']; inputs ['ConvAddActivationOp:int8(embed/Conv)']; readers ['{query}']",
+        f"{query} marked ['int8']; inputs ['{norm}']; readers ['SoftmaxOp:bfloat16(Softmax)']",
+    ]
+    assert "Unmarked BF16 operations: ['ConstantOp:bfloat16(scale)']" in caplog.text
+    assert recipe._operation_counts(quantized)[1] == {"ConvAddActivationOp": 1, "SoftmaxOp": 1, "ConstantOp": 1}
 
 
 def test_compile_rejects_an_undeclared_build_profile(load_script: Callable[[str], ModuleType]) -> None:
@@ -205,8 +256,11 @@ def _segformer_block_graph() -> onnx.ModelProto:
     nodes, inits = [], []
 
     def const(name: str, value) -> str:
-        inits.append(numpy_helper.from_array(np.asarray(value, np.float32 if np.asarray(value).dtype.kind == "f"
-                                                        else np.int64), name))
+        inits.append(
+            numpy_helper.from_array(
+                np.asarray(value, np.float32 if np.asarray(value).dtype.kind == "f" else np.int64), name
+            )
+        )
         return name
 
     def op(kind: str, inputs: list[str], name: str, **attributes) -> str:
@@ -224,12 +278,20 @@ def _segformer_block_graph() -> onnx.ModelProto:
         return op("Add", [const(prefix + ".b", np.zeros(cout, np.float32)), y], prefix + "/Add")
 
     def layer_norm(prefix: str, x: str, c: int) -> str:
-        return op("LayerNormalization", [x, const(prefix + ".g", np.ones(c, np.float32)),
-                                         const(prefix + ".beta", np.zeros(c, np.float32))],
-                  prefix + "/LayerNormalization", axis=-1)
+        return op(
+            "LayerNormalization",
+            [x, const(prefix + ".g", np.ones(c, np.float32)), const(prefix + ".beta", np.zeros(c, np.float32))],
+            prefix + "/LayerNormalization",
+            axis=-1,
+        )
 
-    x = op("Conv", ["pixel_values", weight("pe.w", 8, 3, 4, 4), const("pe.b", np.zeros(8, np.float32))],
-           "/patch_embeddings.0/proj/Conv", strides=[4, 4], kernel_shape=[4, 4])
+    x = op(
+        "Conv",
+        ["pixel_values", weight("pe.w", 8, 3, 4, 4), const("pe.b", np.zeros(8, np.float32))],
+        "/patch_embeddings.0/proj/Conv",
+        strides=[4, 4],
+        kernel_shape=[4, 4],
+    )
     x = op("Reshape", [x, shape("s0", 1, 8, 16)], "/patch_embeddings.0/Reshape")
     x = op("Transpose", [x], "/patch_embeddings.0/Transpose", perm=[0, 2, 1])
     embedded = layer_norm("/patch_embeddings.0/layer_norm", x, 8)
@@ -239,8 +301,13 @@ def _segformer_block_graph() -> onnx.ModelProto:
     q = op("Transpose", [q], "/block.0.0/attention/self/Transpose", perm=[0, 2, 1, 3])
     kv = op("Transpose", [normed], "/block.0.0/attention/self/Transpose_1", perm=[0, 2, 1])
     kv = op("Reshape", [kv, shape("s2", 1, 8, 4, 4)], "/block.0.0/attention/self/Reshape_1")
-    kv = op("Conv", [kv, weight("sr.w", 8, 8, 2, 2), const("sr.b", np.zeros(8, np.float32))],
-            "/block.0.0/attention/self/sr/Conv", strides=[2, 2], kernel_shape=[2, 2])
+    kv = op(
+        "Conv",
+        [kv, weight("sr.w", 8, 8, 2, 2), const("sr.b", np.zeros(8, np.float32))],
+        "/block.0.0/attention/self/sr/Conv",
+        strides=[2, 2],
+        kernel_shape=[2, 2],
+    )
     kv = op("Reshape", [kv, shape("s3", 1, 8, 4)], "/block.0.0/attention/self/Reshape_2")
     kv = op("Transpose", [kv], "/block.0.0/attention/self/Transpose_2", perm=[0, 2, 1])
     kv = layer_norm("/block.0.0/attention/self/layer_norm", kv, 8)
@@ -261,8 +328,14 @@ def _segformer_block_graph() -> onnx.ModelProto:
     hidden = linear("/block.0.0/mlp/dense1", layer_norm("/block.0.0/layer_norm_2", residual, 8), 8, 32)
     hidden = op("Transpose", [hidden], "/block.0.0/mlp/dwconv/Transpose", perm=[0, 2, 1])
     hidden = op("Reshape", [hidden, shape("s7", 1, 32, 4, 4)], "/block.0.0/mlp/dwconv/Reshape")
-    hidden = op("Conv", [hidden, weight("dw.w", 32, 1, 3, 3), const("dw.b", np.zeros(32, np.float32))],
-                "/block.0.0/mlp/dwconv/dwconv/Conv", group=32, kernel_shape=[3, 3], pads=[1, 1, 1, 1])
+    hidden = op(
+        "Conv",
+        [hidden, weight("dw.w", 32, 1, 3, 3), const("dw.b", np.zeros(32, np.float32))],
+        "/block.0.0/mlp/dwconv/dwconv/Conv",
+        group=32,
+        kernel_shape=[3, 3],
+        pads=[1, 1, 1, 1],
+    )
     hidden = op("Reshape", [hidden, shape("s8", 1, 32, 16)], "/block.0.0/mlp/dwconv/Reshape_1")
     hidden = op("Transpose", [hidden], "/block.0.0/mlp/dwconv/Transpose_1", perm=[0, 2, 1])
     gelu = op("Div", [hidden, const("sqrt2", np.float32(np.sqrt(2)))], "/block.0.0/mlp/intermediate_act_fn/Div")
@@ -277,7 +350,8 @@ def _segformer_block_graph() -> onnx.ModelProto:
     classifier = [output, weight("cls.w", 5, 8, 1, 1), const("cls.b", np.zeros(5, np.float32))]
     nodes.append(helper.make_node("Conv", classifier, ["logits"], name="/decode_head/classifier/Conv"))
     graph = helper.make_graph(
-        nodes, "segformer_block",
+        nodes,
+        "segformer_block",
         [helper.make_tensor_value_info("pixel_values", TensorProto.FLOAT, [1, 3, 16, 16])],
         [helper.make_tensor_value_info("logits", TensorProto.FLOAT, [1, 5, 4, 4])],
         inits,
@@ -296,17 +370,25 @@ def block_surgery(load_script: Callable[[str], ModuleType], monkeypatch: pytest.
 
 def test_each_region_finds_its_operations_in_a_block(block_surgery: ModuleType) -> None:
     graph = block_surgery._index(_segformer_block_graph())
-    found = {region: sorted(node.name for node in find(graph))
-             for region, find in block_surgery.REGION_OPERATIONS.items()}
+    found = {
+        region: sorted(node.name for node in find(graph)) for region, find in block_surgery.REGION_OPERATIONS.items()
+    }
 
-    assert found["attention_core"] == sorted(f"/block.0.0/attention/self/{name}"
-                                             for name in ("MatMul", "Div", "Softmax", "MatMul_1"))
+    assert found["attention_core"] == sorted(
+        f"/block.0.0/attention/self/{name}" for name in ("MatMul", "Div", "Softmax", "MatMul_1")
+    )
     # Every LayerNorm, including those after the patch embedding and the spatial reduction, and both residual sums.
-    assert found["norms"] == sorted([
-        "/patch_embeddings.0/layer_norm/LayerNormalization", "/block.0.0/layer_norm_1/LayerNormalization",
-        "/block.0.0/attention/self/layer_norm/LayerNormalization", "/block.0.0/layer_norm_2/LayerNormalization",
-        "/layer_norm.0/LayerNormalization", "/block.0.0/Add", "/block.0.0/Add_1",
-    ])
+    assert found["norms"] == sorted(
+        [
+            "/patch_embeddings.0/layer_norm/LayerNormalization",
+            "/block.0.0/layer_norm_1/LayerNormalization",
+            "/block.0.0/attention/self/layer_norm/LayerNormalization",
+            "/block.0.0/layer_norm_2/LayerNormalization",
+            "/layer_norm.0/LayerNormalization",
+            "/block.0.0/Add",
+            "/block.0.0/Add_1",
+        ]
+    )
     # The GELU's five operations fuse into one, marked at its final multiply.
     assert found["gelu"] == ["/block.0.0/mlp/intermediate_act_fn/Mul_1"]
 
@@ -317,9 +399,13 @@ def test_attention_and_norm_marks_end_at_their_first_int8_readers(block_surgery:
     assert sum(precision == "bfloat16" for precision in marks.values()) == 11
     # Readers looked up through layout operations: every Linear layer and convolution after a region stays INT8.
     assert {name for name, precision in marks.items() if precision == "int8"} == {
-        "/block.0.0/attention/self/query/MatMul", "/block.0.0/attention/self/sr/Conv",
-        "/block.0.0/attention/self/key/MatMul", "/block.0.0/attention/self/value/MatMul",
-        "/block.0.0/attention/output/dense/MatMul", "/block.0.0/mlp/dense1/MatMul", "/decode_head/classifier/Conv",
+        "/block.0.0/attention/self/query/MatMul",
+        "/block.0.0/attention/self/sr/Conv",
+        "/block.0.0/attention/self/key/MatMul",
+        "/block.0.0/attention/self/value/MatMul",
+        "/block.0.0/attention/output/dense/MatMul",
+        "/block.0.0/mlp/dense1/MatMul",
+        "/decode_head/classifier/Conv",
     }
 
 
@@ -350,7 +436,8 @@ def test_annotation_writes_the_marks_and_keeps_the_interface(tmp_path: Path, blo
 
     model = onnx.load(path)
     annotations = [node for node in model.graph.node if node.op_type == "AnnotatePrecision"]
-    assert written == {"bfloat16": 11, "int8": 7}
+    assert written == block_surgery.precision_marks(_segformer_block_graph(), ["attention_core", "norms"])
+    assert Counter(written.values()) == {"bfloat16": 11, "int8": 7}
     assert len(annotations) == 18 and all(node.domain == "ai.sima" for node in annotations)
     assert [value.name for value in model.graph.output] == ["logits"]
     assert any(item.domain == "ai.sima" for item in model.opset_import)

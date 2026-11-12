@@ -95,7 +95,8 @@ def _attention_core_operations(graph: GraphIndex) -> list[onnx.NodeProto]:
 def _norm_operations(graph: GraphIndex) -> list[onnx.NodeProto]:
     """Every LayerNorm, and every residual sum: the Adds of two activations (a bias or GELU Add reads a constant)."""
     return [
-        node for node in graph.producers.values()
+        node
+        for node in graph.producers.values()
         if node.op_type == "LayerNormalization" or (node.op_type == "Add" and len(_variable_inputs(graph, node)) == 2)
     ]
 
@@ -164,8 +165,8 @@ def precision_marks(model: onnx.ModelProto, regions: list[str]) -> dict[str, str
     return marks
 
 
-def annotate_bf16_regions(graph: Path, regions: list[str]) -> dict[str, int]:
-    """Mark the regions' operations BF16 for AFE, in place; return how many marks of each precision it wrote."""
+def annotate_bf16_regions(graph: Path, regions: list[str]) -> dict[str, str]:
+    """Mark the regions' operations BF16 for AFE, in place; return the precision marked after each operation."""
     model = onnx.load(graph)
     marks = precision_marks(model, regions)
     nodes = []
@@ -190,4 +191,4 @@ def annotate_bf16_regions(graph: Path, regions: list[str]) -> dict[str, int]:
     model.opset_import.append(helper.make_opsetid("ai.sima", 1))
     onnx.checker.check_model(model)
     onnx.save(model, graph)
-    return {precision: list(marks.values()).count(precision) for precision in ("bfloat16", "int8")}
+    return marks
