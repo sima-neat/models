@@ -57,18 +57,19 @@ build_profiles:
         parameters: {precision: w16a16, calibration_bins: 2048, calibration_samples: 32}
       memory_encoder:
         parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 32}
-  # Every component with INT8 weights and BF16 activations.
-  w8a16:
-    calibration_dataset: davis-2017-cal
-    components:
-      image_encoder:
-        parameters: {precision: w8a16, calibration_bins: 2048, calibration_samples: 32}
-      memory_attention:
-        parameters: {precision: w8a16, calibration_bins: 2048, calibration_samples: 32}
-      mask_decoder:
-        parameters: {precision: w8a16, calibration_bins: 2048, calibration_samples: 32}
-      memory_encoder:
-        parameters: {precision: w8a16, calibration_bins: 2048, calibration_samples: 32}
+  # Every component with INT8 weights and BF16 activations. Not built yet: the image encoder fails the compiler's
+  # simulator check, and the memory attention fails its memory layout.
+  # w8a16:
+  #   calibration_dataset: davis-2017-cal
+  #   components:
+  #     image_encoder:
+  #       parameters: {precision: w8a16, calibration_bins: 2048, calibration_samples: 32}
+  #     memory_attention:
+  #       parameters: {precision: w8a16, calibration_bins: 2048, calibration_samples: 32}
+  #     mask_decoder:
+  #       parameters: {precision: w8a16, calibration_bins: 2048, calibration_samples: 32}
+  #     memory_encoder:
+  #       parameters: {precision: w8a16, calibration_bins: 2048, calibration_samples: 32}
   # Every component INT8, the fastest and least accurate build.
   w8a8:
     calibration_dataset: davis-2017-cal
