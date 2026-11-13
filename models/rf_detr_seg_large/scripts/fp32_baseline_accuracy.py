@@ -41,9 +41,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", type=Path, required=True, help="JSON file for the metrics")
     parser.add_argument("--limit", type=int, help="score a seeded sample of images, for a quick check")
     args = parser.parse_args(argv)
-    dataset_id, dataset_dir = args.dataset.split("=", 1)
-    report = accuracy.evaluate(onnx_pipeline(args.onnx), dataset_id, Path(dataset_dir), args.limit)
-    metrics = report.document["datasets"][dataset_id]["metrics"]
+    dataset_dir = args.dataset.split("=", 1)[1]
+    # Only the metrics: a model report records the board it ran on, which a host lacks.
+    metrics = accuracy.evaluate(onnx_pipeline(args.onnx), Path(dataset_dir), args.limit)["metrics"]
     args.output.write_text(json.dumps(metrics, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(json.dumps({name: round(value, 4) for name, value in metrics.items()}))
     return 0

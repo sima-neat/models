@@ -186,11 +186,10 @@ def coco_stats(scorer: COCOeval_faster, metrics: dict[str, str]) -> dict[str, fl
 
 def evaluate(
     infer: Callable[[np.ndarray], tuple[np.ndarray, np.ndarray, np.ndarray]],
-    dataset_id: str,
     dataset: Path,
     limit: int | None,
-) -> model_report.Report:
-    """Run infer on every val2017 image and return the accuracy report of its masks and boxes."""
+) -> dict:
+    """Run infer on every val2017 image and return the dataset's mask and box result for the accuracy report."""
     with contextlib.redirect_stdout(io.StringIO()):
         ground_truth = COCO(str(dataset / ANNOTATIONS))
     available = sorted(ground_truth.getImgIds())
@@ -232,17 +231,15 @@ def evaluate(
         stats.update(coco_stats(scorer, metrics))
     scoring_seconds = time.monotonic() - started
 
-    return model_report.from_accuracy({
-        dataset_id: {
-            "metrics": stats,
-            "split": IMAGES, "evaluated_samples": len(image_ids), "available_samples": len(available),
-            "details": {
-                "detections": len(detections),
-                "inference_seconds": round(inference_seconds, 1),
-                "scoring_seconds": round(scoring_seconds, 1),
-            },
+    return {
+        "metrics": stats,
+        "split": IMAGES, "evaluated_samples": len(image_ids), "available_samples": len(available),
+        "details": {
+            "detections": len(detections),
+            "inference_seconds": round(inference_seconds, 1),
+            "scoring_seconds": round(scoring_seconds, 1),
         },
-    })
+    }
 
 
 def parse_mpks(values: list[str]) -> dict[str, Path]:
@@ -264,10 +261,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--limit", type=int, help="measure a seeded sample of images (local runs only)")
     args = parser.parse_args(argv)
     dataset_id, dataset_dir = args.dataset.split("=", 1)
-    report = evaluate(board_pipeline(parse_mpks(args.mpk)), dataset_id, Path(dataset_dir), args.limit)
-    report.save(args.output)
-    measured = report.document["datasets"][dataset_id]["metrics"]
-    print(json.dumps({name: round(value, 4) for name, value in measured.items()}))
+    result = evaluate(board_pipeline(parse_mpks(args.mpk)), Path(dataset_dir), args.limit)
+    model_report.from_accuracy({dataset_id: result}).save(args.output)
+    print(json.dumps({name: round(value, 4) for name, value in result["metrics"].items()}))
     return 0
 
 
