@@ -8,7 +8,6 @@ from typing import Any
 import numpy as np
 import pytest
 from model_registry.model_tests import measured_shortfalls
-from PIL import Image
 
 
 def _ramp_logits(accuracy: ModuleType) -> np.ndarray:
@@ -112,12 +111,14 @@ def test_logits_come_back_channels_first_from_either_layout(load_script: Callabl
 
 
 def test_samples_pair_each_image_with_its_label_map(load_script: Callable[[str], ModuleType], tmp_path: Path) -> None:
+    # The DevKit's test environment has no Pillow; the scoring tests above do not need it.
+    image = pytest.importorskip("PIL.Image")
     accuracy = load_script("accuracy")
     root = tmp_path / accuracy.DATASET
     for folder, suffix in (("images", "jpg"), ("annotations", "png")):
         (root / folder / accuracy.SPLIT).mkdir(parents=True)
         for name in ("ADE_val_00000002", "ADE_val_00000001"):
-            Image.new("L", (4, 3)).save(root / folder / accuracy.SPLIT / f"{name}.{suffix}")
+            image.new("L", (4, 3)).save(root / folder / accuracy.SPLIT / f"{name}.{suffix}")
 
     # The archive's top folder or the folder itself.
     for directory in (tmp_path, root):
