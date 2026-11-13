@@ -127,3 +127,8 @@ reference_metrics:
   dataset: {id: coco-2017, split: val}
   conditions: 384x384
   metrics: {coco_mask_map: 0.431, coco_mask_ap50: 0.662}
+- origin: fp32_baseline
+  script: scripts/fp32_baseline_accuracy.py
+  dataset: {id: coco-2017, split: val}
+  conditions: FP32 ONNX from convert.py on ONNX Runtime CPU; images stretched to 384x384, decoded and scored as accuracy.py does; 5000 val2017 images
+  metrics: {coco_mask_map: 0.4306, coco_mask_ap50: 0.6665, coco_box_map: 0.5161}

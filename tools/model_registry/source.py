@@ -22,6 +22,7 @@ VULCAN_ONNX_RE = re.compile(r"^/models-onnx/[a-z][a-z0-9_]*/[a-f0-9]{64}/[0-9]+-
 GITHUB_RELEASE_RE = re.compile(
     r"^/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/releases/download/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$"
 )
+GITHUB_RAW_RE = re.compile(r"^/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/[a-f0-9]{40}/.+$")
 
 
 def _require_hugging_face_commit(path: str) -> None:
@@ -39,11 +40,17 @@ def _require_github_release_file(path: str) -> None:
         raise SourcePolicyError("GitHub sources must be a release file addressed by its tag")
 
 
+def _require_github_raw_commit(path: str) -> None:
+    if not GITHUB_RAW_RE.fullmatch(path):
+        raise SourcePolicyError("Raw GitHub sources must use a full commit and file path")
+
+
 # Every approved HTTPS host and the check its URL path must pass. Approving a host is one entry here.
 HTTPS_HOST_CHECKS: dict[str, Callable[[str], None]] = {
     "artifacts.stg.neat.sima.ai": _require_vulcan_onnx,
     "github.com": _require_github_release_file,
     "huggingface.co": _require_hugging_face_commit,
+    "raw.githubusercontent.com": _require_github_raw_commit,
 }
 
 

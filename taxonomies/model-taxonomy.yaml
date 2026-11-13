@@ -215,6 +215,11 @@ architectures:
     description: Detects objects and outlines each instance with a segmentation mask using transformer-based detectors.
     paradigm: transformer
     allowed_model_types: [vision]
+  segformer:
+    display_name: SegFormer
+    description: Labels every pixel of an image with hierarchical transformer encoders and lightweight decoders.
+    paradigm: transformer
+    allowed_model_types: [vision]
   siglip:
     display_name: SigLIP
     description: Encodes images and text into shared embeddings for similarity search and classification.
