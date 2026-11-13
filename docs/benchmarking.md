@@ -212,6 +212,15 @@ dataset-image test in `tests/test_model_report.py` skips a model without an
 image input, so its own `tests/benchmark/test_performance.py` checks the sample,
 the tensors and the CPU steps.
 
+Neat builds the image route only in front of an MPK with one input. A model
+whose image component also takes a tensor, such as EfficientSAM3's image model
+with its packed text, therefore runs that component on the tensor route. Its
+script still letterboxes the dataset image into the 1280x720 frame, then
+stretches and normalizes the frame on the CPU for every timed frame, as its
+`accuracy.py` prepares each image, and names that step in `workload`. The
+shared frame test checks only the frame for such a script, so its own
+`tests/benchmark/test_performance.py` checks the CPU step.
+
 A model without an accuracy dataset builds a fixed, realistic input in its
 own script and takes no `--dataset`. An image model passes one 1280x720 RGB
 frame on the image route, as above, and the shared fixed-frame test in

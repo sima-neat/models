@@ -1,0 +1,39 @@
+conversion:
+  run_tests: true
+compile:
+  run_tests: true
+accuracy:
+  run_tests: true
+  expected:
+    w16a16:
+      coco-2017-val:
+        coco_map: 0.18144916318057627
+        coco_ap50: 0.2530488030210334
+        coco_ap75: 0.1996930768295077
+        coco_ap_small: 0.06116493353802374
+        coco_ap_medium: 0.23085727810812173
+        coco_ap_large: 0.38387568958430807
+        coco_ar1: 0.24018612602122794
+        coco_ar10: 0.3733929647565568
+        coco_ar100: 0.38086597897533164
+        coco_ar_small: 0.08327109943457513
+        coco_ar_medium: 0.39572319837025727
+        coco_ar_large: 0.6746911549707603
+        coco_mask_map: 0.1605774323822304
+        coco_mask_ap50: 0.23199550112541822
+        coco_mask_ap75: 0.16675219829954796
+        coco_mask_ap_small: 0.04901490733395869
+        coco_mask_ap_medium: 0.17600354169077323
+        coco_mask_ap_large: 0.37314932536272094
+        coco_mask_ar1: 0.22303744803719847
+        coco_mask_ar10: 0.3394135473321228
+        coco_mask_ar100: 0.34645780998876247
+        coco_mask_ar_small: 0.0795880739290165
+        coco_mask_ar_medium: 0.35448306595365425
+        coco_mask_ar_large: 0.6137758458646616
+performance:
+  run_tests: true
+  expected:
+    w16a16:
+      throughput_fps: 8.808851122226326
+      latency_avg_ms: 154.00205755769275

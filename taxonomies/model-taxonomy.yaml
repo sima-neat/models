@@ -100,6 +100,11 @@ architectures:
     description: Classifies images by combining features across layers and resolutions.
     paradigm: cnn
     allowed_model_types: [vision]
+  efficientsam3:
+    display_name: EfficientSAM3
+    description: Detects and segments objects described by text prompts in images.
+    paradigm: transformer
+    allowed_model_types: [vision]
   gemma4:
     display_name: Gemma4
     description: Generates text and supports conversational tasks with text and multimodal inputs.

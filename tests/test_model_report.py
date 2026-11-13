@@ -619,6 +619,11 @@ def test_every_multi_component_script_feeds_its_backbone_a_dataset_frame(script,
     assert image.parent.name == splits[metadata["accuracy"]["datasets"][0]["id"]]
     assert_letterboxed_frame(frame)
     assert frame.options["memory"] == "EV74"
+    if "image_options" not in functions:
+        # Neat builds its image route only in front of an MPK with one input. An image component that also takes a
+        # tensor, such as EfficientSAM3's image model, prepares the frame on the CPU; its own tests check that step.
+        assert functions["tensor_options"]().preprocess.kind == "Tensor"
+        return
     options = functions["image_options"]()
     assert (options.preprocess.kind, options.preprocess.resize.mode) == ("Image", "Stretch")
     # The first component normalizes with the ImageNet preset, or with the mean and std of its own preprocessing.

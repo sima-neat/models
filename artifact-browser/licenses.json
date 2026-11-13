@@ -59,6 +59,11 @@
     "summary": "Academic use only, never commercial, and no license grants redistribution, so SiMa.ai does not offer this model for download.",
     "downloadable": false
   },
+  "LicenseRef-SAM-License": {
+    "name": "SAM License",
+    "summary": "Use and redistribution are subject to Meta’s SAM License, including its trade-control restrictions. Include a copy of the license.",
+    "downloadable": true
+  },
   "LicenseRef-Swallow-Llama-Gemma": {
     "name": "Swallow Llama and Gemma terms",
     "summary": "Use and redistribution are subject to the upstream Llama and Gemma terms and use policies. Include the licenses, attribution and notices.",

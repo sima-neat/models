@@ -1,0 +1,147 @@
+display_name: EfficientSAM3 RepViT-M
+description: Text-prompted EfficientSAM3 detector and segmenter with a RepViT-M image encoder.
+model_type: vision
+tasks: [instance_segmentation, object_detection]
+
+modalities:
+  inputs: [image, text]
+  outputs: [bounding_boxes, masks, class_scores]
+
+architecture: efficientsam3
+
+# The model card declares Apache-2.0 for the distilled RepViT encoder. The text encoder, fusion encoder, decoder and
+# heads are Meta's SAM 3 weights and the neck is fine-tuned from SAM 3's, so the package as a whole is distributed
+# under the SAM License (the LICENSE in sam3 0.1.4), which requires a copy of the agreement.
+license:
+  spdx: LicenseRef-SAM-License
+  redistribution: restricted
+  attribution: EfficientSAM3 is published on Hugging Face by Simon7108528; its RepViT image encoder is Apache-2.0. Its text encoder, fusion encoder, decoder and heads are Meta's SAM 3 weights, distributed under the SAM License. The CLIP BPE vocabulary is OpenAI's, under the MIT License.
+
+upstream:
+  repository: https://huggingface.co/Simon7108528/EfficientSAM3
+  revision: 85b05896928f974e308f889d7ccb2eefc069de98
+  derived_from: https://github.com/SimonZeng7108/efficientsam3/tree/bd0936c788fed8d51fa799437f05abd97b401b06
+
+# Stage 1 supplies SAM 3's text encoder, fusion encoder, decoder and heads; the fine-tuned student (efficientsam3_ft)
+# supplies the RepViT trunk and neck, which find about three times as many COCO objects from a text prompt as Stage 1's.
+# Its MobileCLIP-S0 text encoder is not loaded. requirements-convert-nodeps.txt installs sam3 without its
+# dependencies; requirements-convert.txt pins those the converter uses, including the available iopath 0.1.9 wheel.
+conversion:
+  # The assembled upstream weights with grid-72 PyTorch reference cases. surgery.py validates the reconstruction,
+  # reduces the token grid to 48 and exports ONNX, so compiler adaptations do not rerun the conversion.
+  outputs: [weights.pth]
+  source:
+    repository: Simon7108528/EfficientSAM3
+    revision: 85b05896928f974e308f889d7ccb2eefc069de98
+    main_file: efficient_sam3_repvit_m.pt
+    files:
+      efficient_sam3_repvit_m.pt:
+        uri: hf://models/Simon7108528/EfficientSAM3@85b05896928f974e308f889d7ccb2eefc069de98/stage1_all_converted/efficient_sam3_repvit_m.pt
+        sha256: 2694a10ca7d4e470d7fd79b9c7fb0d97a902133fdb900615e1de5aff682704d0
+        size_bytes: 1727097589
+      efficientsam3_repvit.pt:
+        uri: hf://models/Simon7108528/EfficientSAM3@85b05896928f974e308f889d7ccb2eefc069de98/efficientsam3_ft/efficientsam3_repvit.pt
+        sha256: cf9dc34f7e7a4fd6967e21ce660d45f7d6512669556c02658eadf469bdae20ab
+        size_bytes: 482292909
+      vocab.json:
+        uri: hf://models/openai/clip-vit-base-patch32@3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268/vocab.json
+        sha256: 5047b556ce86ccaf6aa22b3ffccfc52d391ea4accdab9c2f2407da5b742d4363
+        size_bytes: 862328
+      merges.txt:
+        uri: hf://models/openai/clip-vit-base-patch32@3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268/merges.txt
+        sha256: f526393189112391ce6f9795d4695f704121ce452c3aad1f5335cc41337eba85
+        size_bytes: 524657
+
+resources:
+  sam_license:
+    source:
+      repository: facebook/sam3
+      revision: 3c879f39826c281e95690f02c7821c4de09afae7
+      files:
+        LICENSE: {sha256: bec48f70bd37bf8280a9d1ebf01642d26086f6122ba735baa08fe03c5a6e7448, size_bytes: 7352}
+    install_path: licenses/sam3
+  clip_license:
+    source:
+      repository: cubert-gmbh/clip
+      revision: a223b3db0b7bd1b55cf8f6421629b30b46c995de
+      files:
+        LICENSE: {sha256: 987e63b32f6c89ff5160e429458a872ff048e6860b590a3912e938f9da8f14db, size_bytes: 1064}
+    install_path: licenses/clip
+
+compilation:
+  format: onnx
+  source: conversion
+  components: [text_encoder, image_model]
+
+calibrations:
+- id: coco-2017-cal
+  dataset: {id: coco-2017, variant: cal, sha256: 54c64d84122eba371ac014d7b43849a461551c2e6c5c430b5ead90ec1dec12b1, size_bytes: 187510866}
+
+# On-demand because Spot runners lost this ~4 h compile three times mid-run, at the default size because its
+# measured peak (21.4 GiB) fits the default runner.
+build_profiles:
+  # The image model calibrates on the quantized text encoder's features, as the board runs them.
+  w16a16:
+    calibration_dataset: coco-2017-cal
+    runner_market: on-demand
+    components:
+      text_encoder:
+        parameters: {precision: w16a16}
+      image_model:
+        # The two mask-head GroupNorm rsqrt UDFs run in INT8 and require calibration ranges.
+        parameters: {precision: w16a16, calibration_bins: 2048, calibration_samples: 16}
+
+pipeline:
+- {component: text_encoder}
+- {cpu: Pack text features and token mask}
+- {component: image_model}
+
+numerical_fidelity:
+  # Query reassignment can lower numerical similarity for equivalent detections.
+  status: diagnostic
+  dataset: {id: coco-2017, variant: cal, sha256: 54c64d84122eba371ac014d7b43849a461551c2e6c5c430b5ead90ec1dec12b1, size_bytes: 187510866}
+  selection: {method: seeded_random_without_replacement, seed: 0, offset: 16, samples: 4}
+  outputs: [detections, mask_logits]
+
+# accuracy.py prompts each of the 100 lowest-ID val2017 images with all 80 category names.
+accuracy:
+  datasets:
+  - {id: coco-2017, variant: val, sha256: a40de1caf42b47c5a8976eb97efe3c83f3a41337c4d16d318eb15d65c293f2da, size_bytes: 898368520}
+
+performance: {}
+
+reference_metrics:
+- origin: fp32_baseline
+  script: scripts/fp32_baseline_accuracy.py
+  dataset:
+    id: coco-2017
+    split: val
+  conditions: FP32 ONNX Runtime 1.21.1 CUDA, TF32 disabled; 100 lowest-ID val2017 images, all 80 prompts;
+    16-token context, stretch 1008x1008, 48x48 token grid and 192x192 masks; same preprocessing and scoring
+    as DevKit. Uses SAM 3's text encoder instead of the fine-tuned release's MobileCLIP-S0 and reduces its
+    upstream 72x72 token grid.
+  metrics:
+    coco_map: 0.1861565190535409
+    coco_ap50: 0.25731022978438
+    coco_ap75: 0.20137157517063975
+    coco_ap_small: 0.06266564039265046
+    coco_ap_medium: 0.2314821351148375
+    coco_ap_large: 0.39372364335283333
+    coco_ar1: 0.24306390422130866
+    coco_ar10: 0.3706143432410676
+    coco_ar100: 0.37821175604469187
+    coco_ar_small: 0.0848155625806583
+    coco_ar_medium: 0.39564383329089214
+    coco_ar_large: 0.6605396303258145
+    coco_mask_map: 0.16472478698203186
+    coco_mask_ap50: 0.2399492358591196
+    coco_mask_ap75: 0.17122256151368967
+    coco_mask_ap_small: 0.049613146987689975
+    coco_mask_ap_medium: 0.18333234277003824
+    coco_mask_ap_large: 0.3838569331180193
+    coco_mask_ar1: 0.22613349744374295
+    coco_mask_ar10: 0.3388232706999413
+    coco_mask_ar100: 0.34438670623971146
+    coco_mask_ar_small: 0.08083897079847005
+    coco_mask_ar_medium: 0.3448187759952466
+    coco_mask_ar_large: 0.6117123538011697
