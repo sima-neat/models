@@ -58,7 +58,7 @@ build_profiles:
         parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 50}
 
   # Every Linear layer and convolution stays INT8; the operations INT8 handles worst run BF16: the attention scores,
-  # softmax over 256 keys and weighted values, the residual stream's LayerNorms and sums (single channels reach up to
+  # softmax over 300 keys and weighted values, the residual stream's LayerNorms and sums (single channels reach up to
   # 21 times the median channel's peak in stages 3 and 4), and the GELU.
   # surgery.BF16_REGIONS lists each region's operations.
   w8a8_mixed:
@@ -76,7 +76,7 @@ numerical_fidelity:
   outputs: [logits]
 
 accuracy:
-  # ADE20K's 2,000 SceneParse150 validation images and label maps, scored single scale on the package's 512x512 stretch
+  # ADE20K's 2,000 SceneParse150 validation images and label maps, scored single scale with 640x480 letterbox
   # (see accuracy.py).
   datasets:
   - {id: ade20k, variant: val, sha256: b98b1c9c66fe7d4531e34de3256d54a192ee123e8b0fa5b81dfc81fb0a27c453, size_bytes: 87700104}
@@ -87,10 +87,10 @@ reference_metrics:
 - origin: fp32_baseline
   script: scripts/fp32_baseline_accuracy.py
   dataset: {id: ade20k, split: val}
-  conditions: FP32 ONNX on ONNX Runtime CPU; each image stretched to 512x512, ImageNet-normalized; single scale; 2000 images
-  metrics: {miou: 0.3594}
+  conditions: FP32 ONNX on ONNX Runtime CUDA (TF32 disabled); centered 640x480 letterbox with RGB 114 padding, ImageNet normalization; single scale; 2000 images
+  metrics: {miou: 0.3675}
 - source: https://arxiv.org/abs/2105.15203v3
   dataset: {id: ade20k, split: val}
   conditions: 512x512 training crops; evaluation resizes the short side to 512 and keeps the aspect ratio; single-scale
-  note: Table 2 of the SegFormer paper, MiT-B0 row. This package stretches every image to 512x512 instead, so its scores are not directly comparable.
+  note: Table 2 of the SegFormer paper, MiT-B0 row. This package letterboxes to a fixed 640x480 instead, so its scores are not directly comparable.
   metrics: {miou: 0.374}

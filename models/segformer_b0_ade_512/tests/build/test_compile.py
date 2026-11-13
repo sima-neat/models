@@ -33,9 +33,9 @@ def _write_archive(path: Path, files: dict[str, bytes]) -> Path:
     return path
 
 
-def test_preprocessing_stretches_to_512_and_normalizes(load_script: Callable[[str], ModuleType]) -> None:
+def test_preprocessing_letterboxes_to_640x480_and_normalizes(load_script: Callable[[str], ModuleType]) -> None:
     calibration = load_script("calibration")
-    # A portrait image, red above blue, stretches without cropping: each colour keeps half the rows.
+    # A portrait image keeps its aspect ratio and gets padding on both sides.
     image = Image.new("RGB", (100, 300), (255, 0, 0))
     image.paste((0, 0, 255), (0, 150, 100, 300))
     stream = io.BytesIO()
@@ -43,12 +43,23 @@ def test_preprocessing_stretches_to_512_and_normalizes(load_script: Callable[[st
 
     result = calibration.preprocess_image(stream.getvalue())
 
-    assert result.shape == (512, 512, 3)
+    assert result.shape == (480, 640, 3)
     assert result.dtype == np.float32
     red = (np.asarray([1, 0, 0], np.float32) - calibration.MEAN) / calibration.STD
     blue = (np.asarray([0, 0, 1], np.float32) - calibration.MEAN) / calibration.STD
     np.testing.assert_allclose(result[200, 256], red, atol=1e-5)
     np.testing.assert_allclose(result[312, 256], blue, atol=1e-5)
+    padding = (np.full(3, 114 / 255, np.float32) - calibration.MEAN) / calibration.STD
+    np.testing.assert_allclose(result[200, 0], padding, atol=1e-5)
+    np.testing.assert_allclose(result[200, 639], padding, atol=1e-5)
+
+
+@pytest.mark.parametrize(
+    ("size", "geometry"),
+    [((100, 300), (240, 0, 160, 480)), ((321, 77), (0, 163, 640, 154)), ((301, 801), (229, 0, 181, 480))],
+)
+def test_letterbox_geometry_matches_neat_rounding(size, geometry, load_script: Callable[[str], ModuleType]) -> None:
+    assert load_script("calibration").letterbox_geometry(*size) == geometry
 
 
 def test_calibration_draws_a_seeded_sample_from_cal2017_only(
@@ -61,7 +72,7 @@ def test_calibration_draws_a_seeded_sample_from_cal2017_only(
 
     samples = calibration.calibration_samples(archive, 4)
 
-    assert samples.shape == (4, 512, 512, 3)
+    assert samples.shape == (4, 480, 640, 3)
     with pytest.raises(ValueError, match="cannot select 7 calibration images from 6"):
         calibration.calibration_samples(archive, 7)
 
@@ -209,8 +220,8 @@ def test_logits_come_back_in_onnx_order(load_script: Callable[[str], ModuleType]
 def test_mpk_interface_is_the_float32_onnx_interface(load_script: Callable[[str], ModuleType]) -> None:
     recipe = load_script("compile")
 
-    assert recipe.INPUT_BYTES == {"pixel_values": 3 * 512 * 512 * 4}
-    assert recipe.OUTPUT_BYTES == [150 * 128 * 128 * 4]
+    assert recipe.INPUT_BYTES == {"pixel_values": 3 * 480 * 640 * 4}
+    assert recipe.OUTPUT_BYTES == [150 * 120 * 160 * 4]
 
 
 @pytest.mark.parametrize(

@@ -2,9 +2,9 @@
 
 The baseline is the accuracy the package would reach without compilation or quantization, on the same ADE20K
 validation images and scoring. The ONNX has no Neat pipeline, so each image is preprocessed on the host as
-SegformerImageProcessor does (Pillow's bilinear stretch to 512x512, ImageNet normalization), where the board uses
-Neat's preprocessing. Run it on a host with onnxruntime and tools/model_report on PYTHONPATH, on the model.onnx that
-convert.py writes:
+the package requires (Pillow's bilinear letterbox to 640x480, RGB 114 padding, ImageNet normalization), where the board
+uses Neat's preprocessing. Run it on a host with onnxruntime and tools/model_report on PYTHONPATH, on the model.onnx
+that convert.py writes:
 
     PYTHONPATH=tools python models/segformer_b0_ade_512/scripts/fp32_baseline_accuracy.py \\
         --onnx model.onnx --dataset ade20k-val=<directory> --output fp32-baseline.json

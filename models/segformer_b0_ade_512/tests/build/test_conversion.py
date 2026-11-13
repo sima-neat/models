@@ -18,7 +18,7 @@ def converter(load_script: Callable[[str], ModuleType]) -> ModuleType:
 
 
 def _logits(seed=0):
-    return np.random.RandomState(seed).normal(0, 4, (1, 150, 128, 128)).astype(np.float32)
+    return np.random.RandomState(seed).normal(0, 4, (1, 150, 120, 160)).astype(np.float32)
 
 
 @pytest.mark.parametrize("case", ["valid", "shape", "nan", "drift"])

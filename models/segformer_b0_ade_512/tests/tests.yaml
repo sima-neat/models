@@ -4,6 +4,7 @@ compile:
   run_tests: true
 accuracy:
   run_tests: true
+  # Retain the measured 512x512 expectations until the new 640x480 builds have DevKit results.
   expected:
     w16a16:
       ade20k-val:
@@ -16,6 +17,7 @@ accuracy:
         miou: 0.3561
 performance:
   run_tests: true
+  # Historical 512x512 throughput; update from the first 640x480 DevKit measurement.
   expected:
     w16a16:
       throughput_fps: 124.1

@@ -1,4 +1,4 @@
-"""Export SegFormer-B0 (ADE20K, 512x512) from its Hugging Face checkpoint and check ONNX against PyTorch."""
+"""Export SegFormer-B0 (ADE20K, 640x480) from its Hugging Face checkpoint and check ONNX against PyTorch."""
 
 import argparse
 import tempfile
@@ -14,12 +14,12 @@ MODEL_DIR = Path(__file__).resolve().parents[1]
 FILES = ("config.json", "model.safetensors")
 EXPORTER = "4.57.1"
 OPSET = 17
-IMAGE_SIZE = 512
+IMAGE_WIDTH, IMAGE_HEIGHT = 640, 480
 CLASS_COUNT = 150
 # The decode head predicts at a quarter of the input resolution; the CPU upsamples the logits.
 INTERFACE = {
-    "pixel_values": [1, 3, IMAGE_SIZE, IMAGE_SIZE],
-    "logits": [1, CLASS_COUNT, IMAGE_SIZE // 4, IMAGE_SIZE // 4],
+    "pixel_values": [1, 3, IMAGE_HEIGHT, IMAGE_WIDTH],
+    "logits": [1, CLASS_COUNT, IMAGE_HEIGHT // 4, IMAGE_WIDTH // 4],
 }
 SEEDS = range(123, 133)
 

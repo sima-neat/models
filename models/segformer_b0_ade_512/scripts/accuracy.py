@@ -1,11 +1,10 @@
 """Measure SegFormer-B0's semantic segmentation on ADE20K's validation split with its MPK on a board.
 
-Each original-size image enters Neat's preprocessing on the board, as an application runs the model: a stretch to
-512x512 and ImageNet normalization. Scoring follows the SceneParse150 protocol the SegFormer paper reports, single
-scale: the logits are interpolated bilinearly to the label map's size (align_corners=False, as SegformerImageProcessor's
-post-processing does) and each pixel's class is their argmax. Label 0 (unlabeled or other) is ignored and labels 1 to
-150 are the classes. mIoU is the mean, over the classes that occur in the labels or the predictions, of each class's
-intersection over union accumulated over the whole split.
+Each original-size image enters Neat's preprocessing on the board: centered letterbox to 640x480 with RGB 114 padding
+and ImageNet normalization. Scoring maps each original pixel through the unpadded image region into the logits,
+using bilinear interpolation with align_corners=False, then takes its class argmax. Label 0 (unlabeled or other) is
+ignored and labels 1 to 150 are the classes. mIoU averages each class's intersection over union over the whole split,
+including classes present in either the labels or predictions.
 """
 
 from __future__ import annotations
@@ -20,13 +19,13 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
+from calibration import IMAGE_HEIGHT, IMAGE_WIDTH, PAD_VALUE, letterbox_geometry
 
 DATASET = "ade20k-val"
 SPLIT = "validation"
 IMAGES = 2000
 CLASS_COUNT = 150
-IMAGE_SIZE = 512
-LOGITS_SIZE = IMAGE_SIZE // 4
+LOGITS_HEIGHT, LOGITS_WIDTH = IMAGE_HEIGHT // 4, IMAGE_WIDTH // 4
 # Rows of the full-size image interpolated at once, which bounds each scorer's buffer to classes x ROWS x width.
 ROWS = 64
 TIMEOUT_MS = 120000
@@ -36,9 +35,9 @@ QUEUE_DEPTH = 4
 WORKERS, PREFETCH, SCORERS = 4, 8, 6
 
 
-def _interpolation(source: int, target: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Source indices and weights of a bilinear resize with align_corners=False, as PyTorch interpolates."""
-    position = np.maximum((np.arange(target) + 0.5) * (source / target) - 0.5, 0.0)
+def _interpolation(source: int, target: int, offset: int, extent: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Map original pixel centers into the unpadded region of the quarter-resolution logits."""
+    position = np.maximum((offset + (np.arange(target) + 0.5) * extent / target) / 4 - 0.5, 0.0)
     low = np.minimum(np.floor(position).astype(np.int64), source - 1)
     high = np.minimum(low + 1, source - 1)
     return low, high, (position - low).astype(np.float32)
@@ -58,16 +57,17 @@ def candidate_classes(logits: np.ndarray) -> np.ndarray:
 
 
 def segment(logits: np.ndarray, height: int, width: int) -> np.ndarray:
-    """Each pixel's class: the argmax of the CHW logits interpolated to height x width."""
-    if logits.shape != (CLASS_COUNT, LOGITS_SIZE, LOGITS_SIZE) or not np.isfinite(logits).all():
-        raise ValueError(f"expected finite {CLASS_COUNT}x{LOGITS_SIZE}x{LOGITS_SIZE} logits, got {logits.shape}")
+    """Each original pixel's class, excluding letterbox padding before taking the argmax."""
+    if logits.shape != (CLASS_COUNT, LOGITS_HEIGHT, LOGITS_WIDTH) or not np.isfinite(logits).all():
+        raise ValueError(f"expected finite {CLASS_COUNT}x{LOGITS_HEIGHT}x{LOGITS_WIDTH} logits, got {logits.shape}")
     candidates = candidate_classes(logits.astype(np.float32, copy=False))
     if candidates.size == 1:
         return np.full((height, width), candidates[0], np.uint8)
     logits = logits[candidates].astype(np.float32, copy=False)
-    left, right, across = _interpolation(LOGITS_SIZE, width)
+    pad_left, pad_top, scaled_width, scaled_height = letterbox_geometry(width, height)
+    left, right, across = _interpolation(LOGITS_WIDTH, width, pad_left, scaled_width)
     columns = logits[:, :, left] * (1 - across) + logits[:, :, right] * across
-    top, bottom, down = _interpolation(LOGITS_SIZE, height)
+    top, bottom, down = _interpolation(LOGITS_HEIGHT, height, pad_top, scaled_height)
     classes = np.empty((height, width), np.uint8)
     for start in range(0, height, ROWS):
         rows = slice(start, start + ROWS)
@@ -106,9 +106,9 @@ def channels_first(output: np.ndarray) -> np.ndarray:
     logits = np.asarray(output)
     if logits.ndim == 4 and logits.shape[0] == 1:
         logits = logits[0]
-    if logits.shape == (LOGITS_SIZE, LOGITS_SIZE, CLASS_COUNT):
+    if logits.shape == (LOGITS_HEIGHT, LOGITS_WIDTH, CLASS_COUNT):
         return logits.transpose(2, 0, 1)
-    if logits.shape == (CLASS_COUNT, LOGITS_SIZE, LOGITS_SIZE):
+    if logits.shape == (CLASS_COUNT, LOGITS_HEIGHT, LOGITS_WIDTH):
         return logits
     raise ValueError(f"unexpected logits shape {np.shape(output)}")
 
@@ -209,7 +209,8 @@ def model_logits(path: Path, images: Sequence[Path]) -> Iterator[np.ndarray]:
     options.preprocess.input_max_width = max(width for width, _ in sizes)
     options.preprocess.input_max_height = max(height for _, height in sizes)
     options.preprocess.resize.enable = pyneat.AutoFlag.On
-    options.preprocess.resize.mode = pyneat.ResizeMode.Stretch
+    options.preprocess.resize.mode = pyneat.ResizeMode.Letterbox
+    options.preprocess.resize.pad_value = PAD_VALUE
     options.preprocess.normalize.enable = pyneat.AutoFlag.On
     options.preprocess.preset = pyneat.NormalizePreset.ImageNet
     run_options = pyneat.RunOptions()
@@ -258,8 +259,8 @@ def main(argv: list[str] | None = None) -> int:
                 "details": {
                     "pixel_accuracy": round(measured["pixel_accuracy"], 4),
                     "classes_present": measured["classes"],
-                    "protocol": "Neat preprocessing (512x512 stretch, ImageNet), single scale, logits interpolated "
-                    "bilinearly to the label size",
+                    "protocol": "Neat preprocessing (640x480 letterbox, RGB 114 padding, ImageNet), single scale, "
+                    "logits mapped bilinearly through the unpadded region to the label size",
                     "inference_seconds": round(seconds, 1),
                 },
             },
