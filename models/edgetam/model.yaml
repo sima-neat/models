@@ -44,32 +44,57 @@ calibrations:
 build_profiles:
   # The image encoder runs BF16: at INT8 every RepViT stage adds error. Its GELUs run as INT8 lookup tables, which
   # are faster and closer to FP32 than the erf the compiler builds for a BF16 GELU (surgery.py). The memory attention
-  # runs INT8 with its attention scores and softmax in BF16, where the -1e4 scores of empty memory slots stay exact.
-  # The decoder runs BF16, because INT8 cannot represent its object pointer gate; its Sin and Cos still use INT8
-  # lookup tables, so it calibrates. The memory encoder runs INT8.
-  w16a16_w8a8_mixed_w16a16_w8a8:
+  # runs INT8 weights with BF16 activations, where the -1e4 scores of empty memory slots stay exact. The decoder runs
+  # BF16, because INT8 cannot represent its object pointer gate; its Sin and Cos still use INT8 lookup tables, so it
+  # calibrates. The memory encoder runs INT8.
+  w16a16_w8a16_w16a16_w8a8:
     calibration_dataset: davis-2017-cal
     components:
       image_encoder:
         parameters: {precision: w16a16, calibration_bins: 2048, calibration_samples: 32}
       memory_attention:
-        parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 32, bf16_regions: [attention]}
+        parameters: {precision: w8a16, calibration_bins: 2048, calibration_samples: 32}
       mask_decoder:
         parameters: {precision: w16a16, calibration_bins: 2048, calibration_samples: 32}
       memory_encoder:
         parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 32}
   # The same build with an INT8 image encoder: faster, at a lower J&F.
-  w8a8_w8a8_mixed_w16a16_w8a8:
+  w8a8_w8a16_w16a16_w8a8:
     calibration_dataset: davis-2017-cal
     components:
       image_encoder:
         parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 32}
       memory_attention:
-        parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 32, bf16_regions: [attention]}
+        parameters: {precision: w8a16, calibration_bins: 2048, calibration_samples: 32}
       mask_decoder:
         parameters: {precision: w16a16, calibration_bins: 2048, calibration_samples: 32}
       memory_encoder:
         parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 32}
+  # The two builds above with an INT8 memory attention whose attention scores and softmax run in BF16. Not built:
+  # that memory attention takes 2 ms a frame longer on the DevKit than the W8A16 one and is further from FP32, at the
+  # same J&F.
+  # w16a16_w8a8_mixed_w16a16_w8a8:
+  #   calibration_dataset: davis-2017-cal
+  #   components:
+  #     image_encoder:
+  #       parameters: {precision: w16a16, calibration_bins: 2048, calibration_samples: 32}
+  #     memory_attention:
+  #       parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 32, bf16_regions: [attention]}
+  #     mask_decoder:
+  #       parameters: {precision: w16a16, calibration_bins: 2048, calibration_samples: 32}
+  #     memory_encoder:
+  #       parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 32}
+  # w8a8_w8a8_mixed_w16a16_w8a8:
+  #   calibration_dataset: davis-2017-cal
+  #   components:
+  #     image_encoder:
+  #       parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 32}
+  #     memory_attention:
+  #       parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 32, bf16_regions: [attention]}
+  #     mask_decoder:
+  #       parameters: {precision: w16a16, calibration_bins: 2048, calibration_samples: 32}
+  #     memory_encoder:
+  #       parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 32}
   # Every component with INT8 weights and BF16 activations. Not built yet: the image encoder fails the compiler's
   # simulator check.
   # w8a16:
