@@ -11,8 +11,7 @@ import os
 import shutil
 import tarfile
 import tempfile
-from collections import Counter, defaultdict
-from collections.abc import Iterator
+from collections import Counter
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -22,9 +21,9 @@ from afe.apis.defines import (
     BiasCorrectionType,
     HistogramMSEMethod,
     InputName,
-    RequantizationMode,
+    QuantizationParams,
+    SkipCalibration,
     bfloat16_scheme,
-    default_quantization,
     gen2_target,
     quantization_scheme,
 )
@@ -48,13 +47,9 @@ LOGITS_SHAPE = (1, CLASS_COUNT, IMAGE_SIZE // 4, IMAGE_SIZE // 4)
 # MPK manifests record each public tensor's size in bytes; the MPK keeps the ONNX float32 interface.
 INPUT_BYTES = {INPUT: math.prod(INPUT_SHAPE) * 4}
 OUTPUT_BYTES = [math.prod(LOGITS_SHAPE) * 4]
-# The quantized operation types that identify each region, and how many of them must run BF16 when the region is
-# marked (and none when it is not). attention_core: the eight softmaxes. norms: the normalizations of the twenty
-# LayerNorms that read a BF16 input (two per block and one closing each stage; a LayerNorm normalizes at its input's
-# precision, so the four after the INT8 patch embeddings stay INT8), and the scale and shift of all 24 marked
-# LayerNorms, which AFE lowers as convolutions, so any other BF16 convolution is a Linear layer or convolution that
-# left INT8. gelu: the eight GELUs, which AFE lowers as one GELU operation, or around an Erf when it does not fuse the
-# exported division by sqrt(2).
+# In the mixed build, four patch-embedding LayerNorms normalize INT8 inputs; the other 20 normalize BF16 inputs.
+# AFE lowers all 24 marked LayerNorms' scale and shift as BF16 convolutions.
+# Unfused GELUs are identified by their Erf operation.
 REGION_BF16_OPERATIONS = {
     "attention_core": {("SoftmaxOp",): 8},
     "norms": {("LayerNormOp",): 20, ("ConvAddActivationOp",): 24},
@@ -83,69 +78,29 @@ def _bf16_regions(profile_id: str, parameters: dict[str, Any]) -> list[str]:
     return regions
 
 
-def _precision(node: Any) -> QuantizationPrecision | None:
-    config = getattr(node.ir, "quant_config", None)
-    return None if config is None else config.quantization_precision.value
-
-
-def _quantized_nodes(net: Any) -> Iterator[tuple[Any, list[Any], list[Any]]]:
-    """Yield each quantized operation of the network and its subnetworks, with the nodes it reads and that read it."""
-    readers = defaultdict(list)
-    for node in net.nodes.values():
-        for name in node.input_node_names:
-            readers[name].append(node)
-    for node in net.nodes.values():
-        if hasattr(node.ir, "nodes"):
-            yield from _quantized_nodes(node.ir)
-        elif _precision(node) is not None:
-            yield node, [net.nodes[name] for name in node.input_node_names if name in net.nodes], readers[node.name]
-
-
-def _operation_counts(quantized: Any) -> tuple[Counter[str], Counter[str]]:
-    """Count the quantized operations by type: all of them, and those that run BF16."""
-    # The quantized model keeps its network private, and AFE renames every node, so count by operation.
-    operations, bf16 = Counter(), Counter()
-    for node, _, _ in _quantized_nodes(quantized._net):
+def _check_precision(quantized: Any, marks: dict[str, str], regions: list[str]) -> None:
+    """Verify source precision marks and the BF16 operation counts after AFE lowering."""
+    bf16, mismatches = Counter(), []
+    for node in quantized._net.iter_nodes_recursive():
+        config = getattr(node.ir, "quant_config", None)
+        if config is None or config.quantization_precision.value is None:
+            continue
+        precision = config.quantization_precision.value
         kind = type(node.ir.operation).__name__
-        operations[kind] += 1
-        if _precision(node) == QuantizationPrecision.BFLOAT_16:
+        if precision == QuantizationPrecision.BFLOAT_16:
             bf16[kind] += 1
-    return operations, bf16
-
-
-def _describe(node: Any) -> str:
-    """The node's operation type, precision and source ONNX operations."""
-    # A node without a precision of its own holds AFE's EmptyValue, which has no value.
-    precision = getattr(_precision(node), "value", "-")
-    sources = ",".join(name.removeprefix("/model/") for name in node.source_node_names or ()) or node.name
-    return f"{type(getattr(node.ir, 'operation', node.ir)).__name__}:{precision}({sources})"
-
-
-def _marked_precision_mismatches(quantized: Any, marks: dict[str, str]) -> list[str]:
-    """Describe each quantized operation whose precision differs from the marks on its source ONNX operations, and log
-    the BF16 operations that no mark covers.
-
-    AFE gives a LayerNorm's mark to its scale and shift, a separate convolution, and normalizes at its input's
-    precision, so LayerNorm normalizations are left to the BF16 counts. AFE names no source for some operations, such
-    as those scale and shift convolutions, so the counts also cover the operations logged as unmarked.
-    """
-    mismatches, unmarked_bf16 = [], []
-    for node, inputs, readers in _quantized_nodes(quantized._net):
-        if type(node.ir.operation).__name__ == "LayerNormOp":
+        # LayerNorm's mark applies to its affine convolution; its normalization is checked by count.
+        if kind == "LayerNormOp":
             continue
         marked = {QuantizationPrecision(marks[name]) for name in node.source_node_names or () if name in marks}
-        precision = _precision(node)
         if marked and marked != {precision}:
             mismatches.append(
-                f"{_describe(node)} marked {sorted(item.value for item in marked)}; "
-                f"inputs {[_describe(item) for item in inputs]}; readers {[_describe(item) for item in readers]}"
+                f"{node.name} ({kind}): {getattr(precision, 'value', '-')}, "
+                f"expected {sorted(item.value for item in marked)} from {node.source_node_names}"
             )
-        elif not marked and precision == QuantizationPrecision.BFLOAT_16:
-            unmarked_bf16.append(_describe(node))
-    for mismatch in mismatches:
-        logging.warning("Precision differs from its mark: %s", mismatch)
-    logging.info("Unmarked BF16 operations: %s", unmarked_bf16)
-    return mismatches
+    if mismatches:
+        raise RuntimeError("Operations did not quantize at their marked precision:\n" + "\n".join(mismatches))
+    _require_bf16_regions(bf16, regions)
 
 
 def _require_bf16_regions(bf16: Counter[str], regions: list[str]) -> None:
@@ -161,24 +116,22 @@ def _require_bf16_regions(bf16: Counter[str], regions: list[str]) -> None:
         raise RuntimeError(f"expected BF16 operations by region {expected}, found {found}")
 
 
-def _quantization(precision: str, calibration_bins: int | None) -> Any:
+def _quantization(precision: str, calibration_bins: int | None) -> QuantizationParams:
+    """Only INT8 activations need calibration; BF16 uses the SDK's skip-calibration path."""
     if precision == "w8a8":
-        config = (
-            default_quantization.with_activation_quantization(
-                quantization_scheme(asymmetric=True, per_channel=False, bits=8)
-            )
-            .with_weight_quantization(quantization_scheme(asymmetric=False, per_channel=True, bits=8))
-            .with_calibration(HistogramMSEMethod(calibration_bins))
-            .with_bias_correction(BiasCorrectionType.REGULAR)
+        return QuantizationParams(
+            calibration_method=HistogramMSEMethod(calibration_bins),
+            activation_quantization_scheme=quantization_scheme(asymmetric=True, per_channel=False, bits=8),
+            weight_quantization_scheme=quantization_scheme(asymmetric=False, per_channel=True, bits=8),
+            biascorr_type=BiasCorrectionType.REGULAR,
         )
-    elif precision == "w16a16":
-        config = default_quantization.with_activation_quantization(bfloat16_scheme()).with_weight_quantization(
-            bfloat16_scheme()
+    if precision == "w16a16":
+        return QuantizationParams(
+            calibration_method=SkipCalibration(),
+            activation_quantization_scheme=bfloat16_scheme(),
+            weight_quantization_scheme=bfloat16_scheme(),
         )
-    else:
-        raise ValueError(f"unsupported precision: {precision}")
-    # with_activation_quantization turns per-token quantization on for BF16; neither build uses it.
-    return config.with_requantization_mode(RequantizationMode.sima).with_per_token_quant(False)
+    raise ValueError(f"unsupported precision: {precision}")
 
 
 def _read_mpk_manifest(archive: Path) -> tuple[list[str], dict[str, Any]]:
@@ -225,13 +178,12 @@ def compile_model(source: Path, output_dir: Path, profile_id: str, dataset: Path
     regions = _bf16_regions(profile_id, parameters)
     calibration_bins = int(parameters["calibration_bins"]) if precision == "w8a8" else None
     quantization = _quantization(precision, calibration_bins)
+    calibration_data = None
     if precision == "w8a8":
         if dataset is None:
             raise ValueError("the INT8 build requires --dataset from dataset-registry")
         samples = calibration_samples(dataset, int(parameters["calibration_samples"]))
-    else:
-        # BF16 derives nothing from representative data, but quantize() still needs one sample.
-        samples = np.zeros((1, IMAGE_SIZE, IMAGE_SIZE, 3), dtype=np.float32)
+        calibration_data = convert_data_generator_to_iterable(DataGenerator({InputName(INPUT): samples}))
     component_dir = output_dir / COMPONENT_ID
     component_dir.mkdir(parents=True, exist_ok=False)
 
@@ -247,20 +199,15 @@ def compile_model(source: Path, output_dir: Path, profile_id: str, dataset: Path
             logging.info("Precision marks for %s: %s", regions, dict(Counter(marks.values())))
         importer = onnx_source(str(graph), shape_dict={INPUT: INPUT_SHAPE}, layout="NCHW")
         loaded = load_model(importer, target=gen2_target)
-        logging.info("Quantizing %s with %d sample(s)", precision, len(samples))
+        logging.info("Quantizing %s", precision)
         quantized = loaded.quantize(
-            calibration_data=convert_data_generator_to_iterable(DataGenerator({InputName(INPUT): samples})),
+            calibration_data=calibration_data,
             quantization_config=quantization,
             model_name=f"{MODEL_ID}_{profile_id}",
             log_level=logging.INFO,
         )
-        operations, bf16 = _operation_counts(quantized)
-        logging.info("Quantized operations: %s", dict(sorted(operations.items())))
         if regions:
-            mismatches = _marked_precision_mismatches(quantized, marks)
-            _require_bf16_regions(bf16, regions)
-            if mismatches:
-                raise RuntimeError(f"{len(mismatches)} operations did not quantize at their marked precision")
+            _check_precision(quantized, marks, regions)
         quantized.compile(
             output_path=str(build_dir),
             batch_size=1,

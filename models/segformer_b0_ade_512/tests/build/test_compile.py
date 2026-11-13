@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import io
-import logging
 import random
 import sys
 import tarfile
@@ -144,11 +143,10 @@ def test_bf16_check_requires_each_marked_region_to_quantize_bf16(load_script: Ca
             recipe._require_bf16_regions(bf16, marked)
 
 
-def _quantized_node(name: str, kind: str, precision: Any, sources: list[str], inputs: tuple[str, ...] = ()) -> Any:
+def _quantized_node(name: str, kind: str, precision: Any, sources: list[str]) -> Any:
     config = SimpleNamespace(quantization_precision=SimpleNamespace(value=precision))
     return SimpleNamespace(
         name=name,
-        input_node_names=list(inputs),
         source_node_names=sources,
         ir=SimpleNamespace(operation=type(kind, (), {})(), quant_config=config),
     )
@@ -161,7 +159,7 @@ class _Precision(Enum):
 
 
 def test_marked_precision_check_names_each_operation_off_its_mark(
-    load_script: Callable[[str], ModuleType], monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    load_script: Callable[[str], ModuleType], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     recipe = load_script("compile")
     monkeypatch.setattr(recipe, "QuantizationPrecision", _Precision)
@@ -171,31 +169,24 @@ def test_marked_precision_check_names_each_operation_off_its_mark(
     # softmax INT8 despite its BF16 mark. The softmax's reader has no precision of its own (AFE's EmptyValue).
     nodes = [
         _quantized_node("conv", "ConvAddActivationOp", int8, ["/model/embed/Conv"]),
-        _quantized_node("norm", "LayerNormOp", int8, ["/model/embed/LayerNormalization"], ("conv",)),
-        _quantized_node("affine", "ConvAddActivationOp", bf16, ["Not available"], ("norm",)),
-        _quantized_node("query", "ConvAddActivationOp", bf16, ["/model/query/MatMul", "/model/query/Add"], ("affine",)),
-        _quantized_node("softmax", "SoftmaxOp", int8, ["/model/Softmax"], ("query",)),
-        _quantized_node("context", "BatchMatmulOp", SimpleNamespace(empty=""), ["/model/MatMul_1"], ("softmax",)),
+        _quantized_node("norm", "LayerNormOp", int8, ["/model/embed/LayerNormalization"]),
+        _quantized_node("affine", "ConvAddActivationOp", bf16, ["Not available"]),
+        _quantized_node("query", "ConvAddActivationOp", bf16, ["/model/query/MatMul", "/model/query/Add"]),
+        _quantized_node("softmax", "SoftmaxOp", int8, ["/model/Softmax"]),
+        _quantized_node("context", "BatchMatmulOp", SimpleNamespace(empty=""), ["/model/MatMul_1"]),
         _quantized_node("scale", "ConstantOp", bf16, []),
     ]
-    segment = SimpleNamespace(
-        name="MLA_0", input_node_names=[], source_node_names=None, ir=SimpleNamespace(nodes={n.name: n for n in nodes})
-    )
-    quantized = SimpleNamespace(_net=SimpleNamespace(nodes={"MLA_0": segment}))
+    segment = SimpleNamespace(name="MLA_0", ir=SimpleNamespace())
+    quantized = SimpleNamespace(_net=SimpleNamespace(iter_nodes_recursive=lambda: iter([segment, *nodes])))
     marks = {"/model/embed/LayerNormalization": "bfloat16", "/model/query/Add": "int8", "/model/Softmax": "bfloat16"}
 
-    with caplog.at_level(logging.INFO):
-        mismatches = recipe._marked_precision_mismatches(quantized, marks)
+    with pytest.raises(RuntimeError, match="marked precision") as failed:
+        recipe._check_precision(quantized, marks, ["attention_core", "norms", "gelu"])
 
-    query = "ConvAddActivationOp:bfloat16(query/MatMul,query/Add)"
-    softmax = "SoftmaxOp:int8(Softmax)"
-    assert mismatches == [
-        f"{query} marked ['int8']; inputs ['ConvAddActivationOp:bfloat16(Not available)']; readers ['{softmax}']",
-        f"{softmax} marked ['bfloat16']; inputs ['{query}']; readers ['BatchMatmulOp:-(MatMul_1)']",
+    assert str(failed.value).splitlines()[1:] == [
+        "query (ConvAddActivationOp): bfloat16, expected ['int8'] from ['/model/query/MatMul', '/model/query/Add']",
+        "softmax (SoftmaxOp): int8, expected ['bfloat16'] from ['/model/Softmax']",
     ]
-    unmarked = "['ConvAddActivationOp:bfloat16(Not available)', 'ConstantOp:bfloat16(scale)']"
-    assert f"Unmarked BF16 operations: {unmarked}" in caplog.text
-    assert recipe._operation_counts(quantized)[1] == {"ConvAddActivationOp": 2, "ConstantOp": 1}
 
 
 def test_compile_rejects_an_undeclared_build_profile(load_script: Callable[[str], ModuleType]) -> None:
