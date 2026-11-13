@@ -1,0 +1,103 @@
+# A build profile of this model compiles for over 20 minutes, so it builds only on request.
+build-on-demand: true
+display_name: RF-DETR Seg Small
+description: A compact RF-DETR transformer instance segmenter for COCO objects.
+model_type: vision
+tasks: [instance_segmentation]
+
+modalities:
+  inputs: [image]
+  outputs: [bounding_boxes, class_scores, masks]
+
+architecture: rf_detr_seg
+
+license:
+  spdx: Apache-2.0
+  redistribution: allowed
+  attribution: RF-DETR Seg Small is distributed by Roboflow under Apache-2.0.
+
+upstream:
+  repository: https://huggingface.co/Roboflow/rf-detr-seg-small
+  revision: f4dbd7b1421861b638a68ceb50dbde7d64395307
+
+conversion:
+  source:
+    repository: Roboflow/rf-detr-seg-small
+    revision: f4dbd7b1421861b638a68ceb50dbde7d64395307
+    main_file: model.safetensors
+    files:
+      model.safetensors: {sha256: 1cfe10da7c4f13453d4ebb061f73e856fbbf563ca2e09d9035e0826d7c982a5b, size_bytes: 134910788}
+      config.json: {sha256: ed122e9233d559ab8b8552e192cda5e57a87d2ccb30d7f926ead280f0ee819aa, size_bytes: 5778}
+      preprocessor_config.json: {sha256: d7a4562ce4ebbbba4904e82edcb415f3f7637c0b9e98752d2cbc6a06bdf25740, size_bytes: 442}
+
+compilation:
+  format: onnx
+  source: conversion
+  components: [backbone, decoder]
+
+calibrations:
+- id: coco-2017-cal
+  dataset: {id: coco-2017, variant: cal, sha256: 54c64d84122eba371ac014d7b43849a461551c2e6c5c430b5ead90ec1dec12b1, size_bytes: 187510866}
+
+# Every profile requests on-demand because Spot runners repeatedly lost RF-DETR
+# compiles mid-run (sima-neat/vulcan#298).
+build_profiles:
+  w8a8_w16a16:
+    calibration_dataset: coco-2017-cal
+    runner_market: on-demand
+    components:
+      backbone:
+        parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 50}
+      # Sin/Cos use INT8 lookup tables even at BF16, so the decoder needs calibrated ranges.
+      decoder:
+        parameters: {precision: w16a16, calibration_bins: 2048, calibration_samples: 50}
+
+  w8a16_w16a16:
+    # The decoder calibrates on this backbone's outputs; W8A16 skips backbone calibration.
+    calibration_dataset: coco-2017-cal
+    runner_market: on-demand
+    components:
+      backbone:
+        parameters: {precision: w8a16, per_token: true}
+      # Sin/Cos use INT8 lookup tables even at BF16, so the decoder needs calibrated ranges.
+      decoder:
+        parameters: {precision: w16a16, calibration_bins: 2048, calibration_samples: 50}
+
+  w8a8_mixed_w16a16:
+    calibration_dataset: coco-2017-cal
+    runner_market: on-demand
+    components:
+      backbone:
+        # A W8A8 backbone whose residual stream, global attention, projector, proposal head and outputs run BF16.
+        parameters:
+          precision: w8a8
+          calibration_bins: 2048
+          calibration_samples: 50
+          bf16_regions: [residual, attention_global, projector, head, outputs]
+      # Sin/Cos use INT8 lookup tables even at BF16, so the decoder needs calibrated ranges.
+      decoder:
+        parameters: {precision: w16a16, calibration_bins: 2048, calibration_samples: 50}
+
+pipeline:
+- {component: backbone}
+- {cpu: Top 100 proposals}
+- {component: decoder}
+
+numerical_fidelity:
+  # Reordered queries can lower numerical similarity for equivalent detections.
+  status: diagnostic
+  dataset: {id: coco-2017, variant: cal, sha256: 54c64d84122eba371ac014d7b43849a461551c2e6c5c430b5ead90ec1dec12b1, size_bytes: 187510866}
+  selection: {method: seeded_random_without_replacement, seed: 42, offset: 50, samples: 10}
+  outputs: [dets, labels, masks]
+
+accuracy:
+  datasets:
+  - {id: coco-2017, variant: val, sha256: a40de1caf42b47c5a8976eb97efe3c83f3a41337c4d16d318eb15d65c293f2da, size_bytes: 898368520}
+
+performance: {}
+
+reference_metrics:
+- source: https://github.com/roboflow/rf-detr/blob/a459eeade6387927c599a50f287a319a19d7ae82/README.md
+  dataset: {id: coco-2017, split: val}
+  conditions: 384x384
+  metrics: {coco_mask_map: 0.431, coco_mask_ap50: 0.662}
