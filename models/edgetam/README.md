@@ -21,7 +21,7 @@ subtract (0.485, 0.456, 0.406) and divide by (0.229, 0.224, 0.225).
 1. Run `image_encoder`.
 2. On a tracked frame, run `memory_attention` on `image_embeddings` and the memory bank; its `conditioned_embeddings` replace the embeddings in step 3.
 3. Run `mask_decoder` on the embeddings, both feature maps and the prompt. Prompt the first frame with a click, a click and a background click, or a box's two corners. `point_coords` holds (x + 0.5) / 512 − 1 and (y + 0.5) / 512 − 1 in 1024×1024 pixels; `point_types` is one-hot over padding, background, foreground, box top-left and box bottom-right. Pad unused slots; tracked frames are all padding.
-4. From `mask_logits` (1×256×256×4, the four masks on the last axis), with one point or none take the best of masks 1 to 3 by `iou_scores` and its `object_pointers` row. With two points take pointer 0 and mask 0, unless under 98% of its pixels above −0.05 are above 0.05; then the best of masks 1 to 3.
+4. From `mask_logits` (1×256×256×4, channels-last), with one point or none take the best of masks 1 to 3 by `iou_scores` and its `object_pointers` row. With two points take pointer 0 and mask 0, unless under 98% of its pixels above −0.05 are above 0.05; then the best of masks 1 to 3.
 5. If `object_score_logits` is 0 or below, set the mask to −1024.
 6. Resize the mask bilinearly to 1024×1024 for `memory_encoder`, with the frame's `image_embeddings`: thresholded at 0 on the prompted frame, through a sigmoid otherwise.
 
