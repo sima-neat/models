@@ -59,6 +59,8 @@ JsonObject = dict[str, Any]
 Request = Callable[[str, str, JsonObject | None, str], JsonObject]
 ReadRequest = Callable[[str], JsonObject]
 DownloadRequest = Callable[[str], bytes]
+# Catalog fields the registry owns for each ref: a snapshot may omit them but not carry another ref's.
+SERVER_OWNED_SELECTIONS = ("approved_deployments", "branch_deployments")
 
 
 def canonical_sha256(value: Any) -> str:
@@ -1123,7 +1125,11 @@ def publish_catalog(
         for source in sources:
             for model in source.get("models", []):
                 if model["id"] in deferred:
-                    previous["models"].append(model)
+                    # The registry fills in this ref's own approved and branch deployments and rejects a
+                    # snapshot that carries another ref's, such as a base branch's promoted builds.
+                    previous["models"].append(
+                        {key: value for key, value in model.items() if key not in SERVER_OWNED_SELECTIONS}
+                    )
                     previous.setdefault("pending_builds", []).extend(
                         item for item in source.get("pending_builds", []) if item["model_id"] == model["id"]
                     )

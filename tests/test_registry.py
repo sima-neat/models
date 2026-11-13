@@ -1609,6 +1609,27 @@ def test_deferred_conversion_inheritance_respects_catalog_revision(monkeypatch, 
     assert result.get("pending_builds", []) == ([pending] if has_previous else [])
 
 
+def test_deferred_conversion_inheritance_leaves_base_branch_selections_to_the_registry(monkeypatch):
+    """A dispatch that selects other conversions must not post a base branch's approved builds as its own."""
+    base = {"id": "deferred", "builds": [], "packages": [{"run_id": "base-package"}],
+            "approved_deployments": {"w8a8": {"run_id": "approved"}},
+            "branch_deployments": {"w8a8": {"run_id": "branch"}}}
+    monkeypatch.setattr("model_registry.registry.load_models", lambda root: {"deferred": object()})
+    monkeypatch.setattr("model_registry.registry._catalog_models", lambda models: {})
+    monkeypatch.setattr("model_registry.registry._head_matrix", lambda *args: [])
+    monkeypatch.setattr("model_registry.registry.build_catalog_snapshot", lambda **kwargs: kwargs["previous"])
+    result = publish_catalog(
+        repository=ROOT, api_url="https://registry.example.invalid",
+        read_api_url="https://registry.example.invalid", aws_region="us-west-2",
+        branch="feature", git_sha="a" * 40, base_branches=["develop"],
+        request=lambda *args: {"stored": True},
+        read_request=lambda url: {"catalog": (
+            {"document": {"models": [base], "pending_builds": []}} if url.endswith("develop") else None
+        )},
+    )["catalog"]
+    assert result["models"] == [{"id": "deferred", "builds": [], "packages": [{"run_id": "base-package"}]}]
+
+
 @pytest.mark.parametrize("continuing_revision", [False, True])
 def test_progress_publication_keeps_the_prior_pending_order_and_clears_only_its_builds(
     monkeypatch, caplog, continuing_revision
