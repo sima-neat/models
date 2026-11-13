@@ -33,20 +33,13 @@ def test_every_build_profile_is_named_after_its_component_precisions(compiler: M
         compiler.check_profile_id(profile["id"], compiler.component_parameters(profile["id"]))
 
 
-def test_profile_id_must_mark_a_component_with_bf16_regions_mixed(compiler: ModuleType) -> None:
+def test_profile_id_writes_a_repeated_precision_once(compiler: ModuleType) -> None:
     parameters = {component: {"precision": "w8a8"} for component in compiler.COMPONENTS}
     compiler.check_profile_id("w8a8", parameters)
-    parameters["memory_attention"]["bf16_regions"] = ["attention"]
-    with pytest.raises(ValueError, match="w8a8_w8a8_mixed_w8a8"):
+    parameters["mask_decoder"]["precision"] = "w16a16"
+    with pytest.raises(ValueError, match="w8a8_w16a16_w8a8"):
         compiler.check_profile_id("w8a8", parameters)
-    compiler.check_profile_id("w8a8_w8a8_mixed_w8a8", parameters)
-
-
-def test_bf16_regions_belong_to_a_w8a8_component(compiler: ModuleType) -> None:
-    with pytest.raises(ValueError, match="W8A8"):
-        compiler.bf16_regions("memory_attention", {"precision": "w16a16", "bf16_regions": ["attention"]})
-    with pytest.raises(ValueError, match="unknown"):
-        compiler.bf16_regions("image_encoder", {"precision": "w8a8", "bf16_regions": ["attention"]})
+    compiler.check_profile_id("w8a8_w16a16_w8a8", parameters)
 
 
 def test_only_a_w16a16_image_encoder_runs_its_gelus_in_int8(compiler: ModuleType) -> None:

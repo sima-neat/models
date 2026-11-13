@@ -70,31 +70,6 @@ build_profiles:
         parameters: {precision: w16a16, calibration_bins: 2048, calibration_samples: 32}
       memory_encoder:
         parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 32}
-  # The two builds above with an INT8 memory attention whose attention scores and softmax run in BF16. Not built:
-  # that memory attention takes 2 ms a frame longer on the DevKit than the W8A16 one and is further from FP32, at the
-  # same J&F.
-  # w16a16_w8a8_mixed_w16a16_w8a8:
-  #   calibration_dataset: davis-2017-cal
-  #   components:
-  #     image_encoder:
-  #       parameters: {precision: w16a16, calibration_bins: 2048, calibration_samples: 32}
-  #     memory_attention:
-  #       parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 32, bf16_regions: [attention]}
-  #     mask_decoder:
-  #       parameters: {precision: w16a16, calibration_bins: 2048, calibration_samples: 32}
-  #     memory_encoder:
-  #       parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 32}
-  # w8a8_w8a8_mixed_w16a16_w8a8:
-  #   calibration_dataset: davis-2017-cal
-  #   components:
-  #     image_encoder:
-  #       parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 32}
-  #     memory_attention:
-  #       parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 32, bf16_regions: [attention]}
-  #     mask_decoder:
-  #       parameters: {precision: w16a16, calibration_bins: 2048, calibration_samples: 32}
-  #     memory_encoder:
-  #       parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 32}
   # Every component with INT8 weights and BF16 activations. Not built yet: the image encoder fails the compiler's
   # simulator check.
   # w8a16:

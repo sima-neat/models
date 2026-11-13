@@ -2,11 +2,10 @@
 """Build EdgeTAM's four per-frame graphs with surgery.py, quantize each, and compile each into a Modalix MPK.
 
 compile.py receives the converted image_encoder.onnx as --model, with weights.pth beside it. Every component
-calibrates on the inputs that tracking DAVIS cal objects with the FP32 graphs gives it (calibration.py), and runs the
-operations of its bf16_regions, if it declares any, in BF16. A W16A16 image encoder runs its GELUs as INT8 lookup
-tables. Each component quantizes and compiles in its own process,
-so the compiler's memory returns to the system between them. Each quantized component's agreement with FP32 on a
-tracked clip it did not calibrate on is printed. compile-outputs.json records every MPK and derived graph.
+calibrates on the inputs that tracking DAVIS cal objects with the FP32 graphs gives it (calibration.py). A W16A16
+image encoder runs its GELUs as INT8 lookup tables. Each component quantizes and compiles in its own process, so the
+compiler's memory returns to the system between them. Each quantized component's agreement with FP32 on a tracked
+clip it did not calibrate on is printed. compile-outputs.json records every MPK and derived graph.
 """
 
 from __future__ import annotations
@@ -19,7 +18,6 @@ import os
 import shutil
 import tarfile
 import tempfile
-from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -44,15 +42,7 @@ from model_registry.conversion import conversion_outputs
 from model_registry.fetch import sha256_file
 from model_registry.model import load_model as load_metadata
 from sima_utils.data.data_generator import DataGenerator
-from surgery import (
-    BF16_REGIONS,
-    COMPONENTS,
-    INT8_GELUS,
-    INTERFACES,
-    annotate_bf16_regions,
-    annotate_int8_gelus,
-    export_components,
-)
+from surgery import COMPONENTS, INT8_GELUS, INTERFACES, annotate_int8_gelus, export_components
 
 MODEL_DIR = Path(__file__).resolve().parents[1]
 MODEL_ID = "edgetam"
@@ -60,8 +50,6 @@ MODEL_ID = "edgetam"
 # components, on CHECK_FRAMES of its frames, and is not calibrated on.
 CALIBRATION_CLIPS = 12
 CHECK_FRAMES = 8
-# The softmaxes the memory attention's attention region runs in BF16: two self and two cross attentions.
-BF16_SOFTMAXES = 4
 # The terminal EV74 plugin only converts the MLA result to the float32 interface.
 OUTPUT_KERNELS = {"pass_through", "cast_transform", "dequantization_transform"}
 
@@ -76,30 +64,17 @@ def component_parameters(profile_id: str) -> dict[str, dict[str, Any]]:
     return parameters
 
 
-def bf16_regions(component: str, parameters: dict[str, Any]) -> list[str]:
-    """The regions a component runs in BF16; only a W8A8 component has them."""
-    regions = parameters.get("bf16_regions", [])
-    if regions and (parameters["precision"] != "w8a8" or len(set(regions)) != len(regions)):
-        raise ValueError(f"{component} bf16_regions must name distinct regions of a W8A8 component: {regions}")
-    unknown = sorted(set(regions) - set(BF16_REGIONS[component]))
-    if unknown:
-        raise ValueError(f"unknown {component} BF16 regions {unknown}; choose from {list(BF16_REGIONS[component])}")
-    return regions
-
-
 def int8_gelus(component: str, parameters: dict[str, Any]) -> bool:
     """Whether the component's GELUs run as INT8 lookup tables: those surgery.py lists, in a W16A16 component."""
     return parameters["precision"] == "w16a16" and component in INT8_GELUS
 
 
 def check_profile_id(profile_id: str, parameters: dict[str, dict[str, Any]]) -> None:
-    """The profile ID is each component's precision token, with mixed after one that has BF16 regions, in component
-    order and with a repeated token written once (naming-conventions.yaml)."""
+    """The profile ID is each component's precision token, in component order and with a repeated token written once
+    (naming-conventions.yaml)."""
     tokens = []
     for component in COMPONENTS:
-        token = parameters[component]["precision"] + (
-            "_mixed" if bf16_regions(component, parameters[component]) else ""
-        )
+        token = parameters[component]["precision"]
         if not tokens or tokens[-1] != token:
             tokens.append(token)
     if profile_id != "_".join(tokens):
@@ -154,22 +129,6 @@ def calibration_data(component: str, samples: list[dict[str, np.ndarray]]) -> An
         for name in INTERFACES[component]["inputs"]
     }
     return convert_data_generator_to_iterable(DataGenerator(stacked))
-
-
-def require_bf16_regions(quantized: Any, component: str, regions: list[str]) -> None:
-    """Fail unless every softmax of the regions runs in BF16; ignored annotations would silently build plain W8A8."""
-    counts = Counter(
-        type(node.ir.operation).__name__
-        for node in quantized._net.iter_nodes_recursive()
-        if getattr(node.ir, "quant_config", None) is not None
-        and node.ir.quant_config.quantization_precision.value == QuantizationPrecision.BFLOAT_16
-    )
-    print(f"{component} BF16 operations: {dict(sorted(counts.items()))}", flush=True)
-    if counts["SoftmaxOp"] != BF16_SOFTMAXES:
-        raise RuntimeError(
-            f"{component} declares BF16 regions {regions}, but {counts['SoftmaxOp']} of {BF16_SOFTMAXES} softmaxes"
-            " run in BF16"
-        )
 
 
 def require_int8_gelus(quantized: Any, component: str) -> None:
@@ -241,19 +200,12 @@ class ComponentBuild:
 
 
 def quantize_component(build: ComponentBuild, samples: list[dict[str, np.ndarray]]) -> Any:
-    """Import the component's graph, with its BF16 regions or INT8 GELUs marked if it has any, and quantize it on
-    the samples."""
+    """Import the component's graph, with its GELUs marked INT8 if it runs them so, and quantize it on the samples."""
     component, parameters = build.component, build.parameters
-    regions = bf16_regions(component, parameters)
     gelus = int8_gelus(component, parameters)
     source = build.graph
-    annotated = build.graph.with_name(f"{component}-annotated.onnx")
-    if regions:
-        source = annotated
-        marks = annotate_bf16_regions(build.graph, source, component, regions)
-        print(f"Marked {marks['bfloat16']} {component} operations BF16 and {marks['int8']} INT8 for {regions}")
     if gelus:
-        source = annotated
+        source = build.graph.with_name(f"{component}-annotated.onnx")
         marks = annotate_int8_gelus(build.graph, source, component)
         print(f"Marked {marks['int8']} {component} GELUs INT8 and the {marks['bfloat16']} operations after them BF16")
     importer = onnx_source(
@@ -272,8 +224,6 @@ def quantize_component(build: ComponentBuild, samples: list[dict[str, np.ndarray
         )
     except SystemExit as error:
         raise RuntimeError(f"quantizing {component} failed; the AFE log above names the cause") from error
-    if regions:
-        require_bf16_regions(quantized, component, regions)
     if gelus:
         require_int8_gelus(quantized, component)
     return quantized

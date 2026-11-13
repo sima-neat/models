@@ -110,27 +110,11 @@ GATE_SCALE = 1e4
 # EdgeTAM scales mask probabilities to logits for the memory encoder.
 MASK_SCALE = 20.0
 MASK_BIAS = -10.0
-# The operations a W8A8 component can run in BF16, by the names the export gives them, and how many it has.
-BF16_REGIONS = {
-    "memory_attention": {
-        # The empty-slot scores, and each attention's query-key product, softmax over the keys and weighted sum of
-        # the values, with the empty-slot scores added in cross attention.
-        "attention": (
-            r"/(MatMul|MatMul_1|Sub_1|Mul)"
-            r"|/self_attention(_1)?/(MatMul|Softmax|MatMul_1)"
-            r"|/cross_attention(_1)?/(MatMul|Add_2|Softmax|MatMul_1)",
-            18,
-        ),
-    },
-    "mask_decoder": {},
-    "memory_encoder": {},
-    "image_encoder": {},
-}
 # The GELUs a W16A16 component runs as INT8 lookup tables, by the name of the last operation the export writes each
 # as, and how many it has. The compiler builds a BF16 GELU from an erf approximation instead, which is slower and
 # agrees less with FP32. The mask decoder's two GELUs are too little work to give it a second precision.
 INT8_GELUS = {"image_encoder": (r"/vision/.*/act1?/Mul_1", 27)}
-# Operations that move values without computing: a region ends at the first other operation that reads it.
+# Operations that move values without computing: a GELU's INT8 ends at the first other operation that reads it.
 LAYOUT_OPS = {"Reshape", "Transpose", "Split", "Concat", "Slice", "Squeeze", "Unsqueeze"}
 
 
@@ -747,58 +731,37 @@ def _first_operations(readers, value):
     return operations
 
 
-def _marks(model, operations, precision, reader_precision):
-    """Return the precision to annotate after each operation, by name: precision for the operations and
-    reader_precision for the operations that first read their results.
+def gelu_marks(model, component):
+    """Return the precision to annotate after each operation, by name: int8 for the component's GELUs and bfloat16
+    for the operations that first read them.
 
-    The compiler gives an annotation's precision to the operation producing its input, and each later operation takes
-    the precision its inputs share, so a mark on each first reader ends the marked operations' precision.
+    The compiler fuses the five operations the export writes a GELU as, and gives the annotation after the last one
+    to the fused GELU. Each later operation takes the precision its inputs share, so a mark on each first reader ends
+    the GELU's INT8.
     """
+    pattern, count = INT8_GELUS[component]
+    gelus = [node for node in model.graph.node if re.fullmatch(pattern, node.name)]
+    if len(gelus) != count:
+        raise ValueError(f"expected {count} {component} GELUs, found {len(gelus)}")
     readers = defaultdict(list)
     for node in model.graph.node:
         for value in node.input:
             readers[value].append(node)
-    marked = {node.name for node in operations}
-    marks = {_annotated_operation(node, readers).name: precision for node in operations}
-    for node in operations:
-        for output in node.output:
-            for reader in _first_operations(readers, output):
-                if reader.name not in marked:
-                    marks.setdefault(_annotated_operation(reader, readers).name, reader_precision)
+
+    marks = {gelu.name: "int8" for gelu in gelus}
+    for gelu in gelus:
+        for reader in _first_operations(readers, gelu.output[0]):
+            marks.setdefault(_annotated_operation(reader, readers).name, "bfloat16")
     return marks
 
 
-def _named_operations(model, pattern, count, what):
-    operations = [node for node in model.graph.node if re.fullmatch(pattern, node.name)]
-    if len(operations) != count:
-        raise ValueError(f"expected {count} {what}, found {len(operations)}")
-    return operations
-
-
-def precision_marks(model, component, regions):
-    """bfloat16 for the regions' operations and int8 for the operations that first read their results."""
-    operations = []
-    for region in regions:
-        pattern, count = BF16_REGIONS[component][region]
-        operations.extend(_named_operations(model, pattern, count, f"{component} {region} operations"))
-    return _marks(model, operations, "bfloat16", "int8")
-
-
-def gelu_marks(model, component):
-    """int8 for the component's GELUs and bfloat16 for the operations that first read them.
-
-    The compiler fuses the five operations the export writes a GELU as, and gives the annotation after the last one
-    to the fused GELU.
-    """
-    pattern, count = INT8_GELUS[component]
-    return _marks(model, _named_operations(model, pattern, count, f"{component} GELUs"), "int8", "bfloat16")
-
-
-def _annotate(model, marks, output):
-    """Write the graph with each mark's precision annotated after its operation; return the marks per precision.
+def annotate_int8_gelus(source, output, component):
+    """Write the graph with the component's GELUs marked INT8 for the compiler; return the marks per precision.
 
     ONNX Runtime cannot run the annotated graph, so checks against FP32 keep using the source.
     """
+    model = onnx.load(source)
+    marks = gelu_marks(model, component)
     nodes = []
     for node in model.graph.node:
         nodes.append(node)
@@ -821,18 +784,6 @@ def _annotate(model, marks, output):
     onnx.checker.check_model(model)
     onnx.save(model, output)
     return {precision: list(marks.values()).count(precision) for precision in ("bfloat16", "int8")}
-
-
-def annotate_bf16_regions(source, output, component, regions):
-    """Write the graph with the regions' operations marked BF16 for the compiler; return the marks per precision."""
-    model = onnx.load(source)
-    return _annotate(model, precision_marks(model, component, regions), output)
-
-
-def annotate_int8_gelus(source, output, component):
-    """Write the graph with the component's GELUs marked INT8 for the compiler; return the marks per precision."""
-    model = onnx.load(source)
-    return _annotate(model, gelu_marks(model, component), output)
 
 
 def main():
