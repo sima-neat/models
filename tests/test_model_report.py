@@ -485,9 +485,11 @@ def test_every_single_component_script_benchmarks_a_dataset_image(script, monkey
         assert (options.superpoint.profile, options.top_k) == ("MagicLeapDemoV1", 1000)
         assert "v_scene/1.ppm" in report["workload"]
     elif first_accuracy_dataset(script) == "ade20k":
-        # A semantic segmenter benchmarks an ADE20K validation image, stretched to its input with the ImageNet preset.
+        # SegFormer letterboxes the ADE20K image with the same padding and normalization as its accuracy stage.
         assert_letterboxed_frame(frame)
-        assert (options.preprocess.resize.mode, options.preprocess.preset) == ("Stretch", "ImageNet")
+        assert (options.preprocess.resize.mode, options.preprocess.preset) == ("Letterbox", "ImageNet")
+        assert options.preprocess.resize.pad_value == 114
+        assert "640x480, raw 160x120 logits" in report["workload"]
         assert "ADE_val_00000001.jpg" in report["workload"]
     elif first_accuracy_dataset(script) == "pitts30k":
         # A place-recognition model benchmarks a Pittsburgh 30k image, stretched to its input with the ImageNet preset.
