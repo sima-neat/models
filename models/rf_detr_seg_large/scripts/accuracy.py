@@ -162,6 +162,16 @@ def decode(
     ]
 
 
+def coco_results(detections: list[dict], iou_type: str) -> list[dict]:
+    """Return copies of the results with only the box or only the mask.
+
+    COCO.loadRes takes each result's area from its box when it has one, which would sort masks into the
+    small, medium and large ranges by box size.
+    """
+    dropped = "segmentation" if iou_type == "bbox" else "bbox"
+    return [{key: value for key, value in result.items() if key != dropped} for result in detections]
+
+
 def coco_stats(scorer: COCOeval_faster, metrics: dict[str, str]) -> dict[str, float]:
     """Return every declared metric by its COCOeval label; COCOeval reports -1 for an empty object-size range."""
     if list(scorer.params.maxDets) != MAX_DETECTIONS:
@@ -210,10 +220,10 @@ def evaluate(
     if not detections:
         raise SystemExit("the model produced no detections")
     started = time.monotonic()
-    with contextlib.redirect_stdout(io.StringIO()):
-        results = ground_truth.loadRes(detections)
     stats = {}
     for iou_type, metrics in METRICS.items():
+        with contextlib.redirect_stdout(io.StringIO()):
+            results = ground_truth.loadRes(coco_results(detections, iou_type))
         scorer = COCOeval_faster(ground_truth, results, iou_type, print_function=log)
         scorer.params.imgIds = image_ids
         scorer.evaluate()

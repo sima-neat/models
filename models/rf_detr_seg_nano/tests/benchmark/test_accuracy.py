@@ -58,6 +58,21 @@ def test_decode_drops_unused_coco_slots_and_rejects_another_mask_layout(
         accuracy.decode(dets, labels, masks.transpose(2, 0, 1), image_id=7, width=200, height=100, valid=valid)
 
 
+def test_mask_results_carry_no_box_so_coco_measures_the_mask_area(
+    load_script: Callable[[str], ModuleType],
+) -> None:
+    accuracy = load_script("accuracy")
+    detections = [{"image_id": 7, "category_id": 18, "bbox": [0, 0, 10, 10], "score": 0.9, "segmentation": {}}]
+
+    assert accuracy.coco_results(detections, "segm") == [
+        {"image_id": 7, "category_id": 18, "score": 0.9, "segmentation": {}}
+    ]
+    assert accuracy.coco_results(detections, "bbox") == [
+        {"image_id": 7, "category_id": 18, "bbox": [0, 0, 10, 10], "score": 0.9}
+    ]
+    assert "bbox" in detections[0] and "segmentation" in detections[0]
+
+
 def test_fp32_baseline_feeds_nchw_and_returns_masks_in_the_mpk_layout(
     monkeypatch: pytest.MonkeyPatch, load_script: Callable[[str], ModuleType]
 ) -> None:
