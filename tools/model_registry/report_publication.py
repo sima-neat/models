@@ -28,7 +28,7 @@ from .dependencies import resolve_benchmark_runtime
 from .errors import ValidationError
 from .fetch import sha256_file
 from .fingerprints import BENCHMARK_RUN_TYPES, benchmark_fingerprint
-from .model import load_and_validate_model
+from .model import build_profile_for, load_and_validate_model
 from .model_tests import require_test_outcome
 from .registry import S3ArtifactStore, SigV4RegistryClient, canonical_sha256
 
@@ -55,20 +55,30 @@ def _read_json(path: Path, label: str) -> Any:
         raise ValidationError(f"could not read {label} {path}: {exc}") from exc
 
 
-def compiled_mpks(compiled_dir: str | Path, model: JsonObject, build_profile_id: str) -> dict[str, JsonObject]:
-    """Each component's compiled MPK, from the profile's compile-outputs.json, checked against the file."""
+def compiled_components(compiled_dir: str | Path, model: JsonObject, build_profile_id: str) -> dict[str, JsonObject]:
+    """Each compiled component archive or native manifest, checked against compile-outputs.json."""
     profile_dir = Path(compiled_dir).expanduser().resolve() / model["id"] / build_profile_id
     outputs = _read_json(profile_dir / "compile-outputs.json", "compile outputs").get("outputs", [])
     mpks = {}
     for component in model["components"]:
         matches = [item for item in outputs if isinstance(item, dict) and item.get("component_id") == component["id"]]
-        if len(matches) != 1 or "mpk_path" not in matches[0]:
-            raise ValidationError(f"{profile_dir}: the benchmark needs exactly one compiled {component['id']} MPK")
-        path = profile_dir / matches[0]["mpk_path"]
-        if sha256_file(path)[0] != matches[0].get("mpk_sha256"):
-            raise ValidationError(f"{path}: MPK SHA-256 does not match compile-outputs.json")
-        mpks[component["id"]] = {"path": path, "sha256": matches[0]["mpk_sha256"]}
+        native = component["interface"]["format"] == "huggingface"
+        path_field, sha_field = ("artifact_path", "artifact_sha256") if native else ("mpk_path", "mpk_sha256")
+        if len(matches) != 1 or path_field not in matches[0]:
+            raise ValidationError(f"{profile_dir}: the benchmark needs exactly one compiled {component['id']} artifact")
+        path = profile_dir / matches[0][path_field]
+        if sha256_file(path)[0] != matches[0].get(sha_field):
+            label = "artifact" if native else "MPK"
+            raise ValidationError(f"{path}: {label} SHA-256 does not match compile-outputs.json")
+        mpks[component["id"]] = {"path": path, "sha256": matches[0][sha_field]}
     return mpks
+
+
+def compiled_mpks(compiled_dir: str | Path, model: JsonObject, build_profile_id: str) -> dict[str, JsonObject]:
+    """Each verified MPK for a Core benchmark."""
+    if any(component["interface"]["format"] != "onnx" for component in model["components"]):
+        raise ValidationError("model-component-mpks requires ONNX components")
+    return compiled_components(compiled_dir, model, build_profile_id)
 
 
 def model_component_mpks(
@@ -79,13 +89,23 @@ def model_component_mpks(
     return [f"{component}={mpk['path']}" for component, mpk in mpks.items()]
 
 
+def model_component_artifacts(
+    compiled_dir: str | Path, repository: str | Path, model_id: str, build_profile_id: str
+) -> list[str]:
+    """``component=path`` for each verified MPK or native deployment manifest."""
+    components = compiled_components(
+        compiled_dir, _model(Path(repository).expanduser().resolve(), model_id), build_profile_id
+    )
+    return [f"{component}={artifact['path']}" for component, artifact in components.items()]
+
+
 def _registered_builds(
     compiled_dir: Path, model: JsonObject, build_profile_id: str
 ) -> tuple[dict[str, JsonObject], str]:
     """Each component's compile run and MPK digest, and the profile's package run."""
     profile_dir = compiled_dir / model["id"] / build_profile_id
     builds = {}
-    for component_id, mpk in compiled_mpks(compiled_dir, model, build_profile_id).items():
+    for component_id, mpk in compiled_components(compiled_dir, model, build_profile_id).items():
         path = profile_dir / component_id / "registry-publication.json"
         runs = _read_json(path, "compile publication").get("runs", [])
         if len(runs) != 1 or runs[0].get("component_id") != component_id:
@@ -112,11 +132,12 @@ def _run_id(value: Any, path: Path) -> str:
         raise ValidationError(f"{path}: run ID must be a UUID") from exc
 
 
-def runner_environment() -> JsonObject:
+def runner_environment(*, native: bool = False) -> JsonObject:
     """The DevKit's installation and clocks, without taking performance measurements."""
     # Core installs the Neat runtime as Scheduler packages named simaai-*.
+    patterns = ["sima-lmm-*"] if native else ["*neat*", "simaai-*"]
     packages = subprocess.run(
-        ["dpkg-query", "-W", "-f=${db:Status-Abbrev}\t${binary:Package}\t${Version}\n", "*neat*", "simaai-*"],
+        ["dpkg-query", "-W", "-f=${db:Status-Abbrev}\t${binary:Package}\t${Version}\n", *patterns],
         capture_output=True,
         text=True,
         check=True,
@@ -170,6 +191,37 @@ def check_report(
             measured = report["datasets"][name]["metrics"]
             _check_metrics(f"{report_path}: {name}", stage, measured, dataset["required_metrics"])
         return report
+    native = model["components"][0]["interface"]["format"] == "huggingface"
+    if native:
+        from model_report import telemetry_metrics
+        from model_report.generation_benchmark import validate_report
+
+        if "generation" not in report:
+            raise ValidationError(f"{report_path}: a native LLiMa performance report needs generation workloads")
+        try:
+            validate_report(report["generation"])
+        except ValueError as exc:
+            raise ValidationError(str(exc)) from exc
+        for workload in report["generation"]["workloads"]:
+            _check_metrics(str(report_path), stage,
+                           {name: metric["value"] for name, metric in workload["metrics"].items()},
+                           ["ttft_ms", "prefill_tps", "decode_tps"] if workload["kind"] in ("text", "text_dataset")
+                           else ["ttft_ms", "decode_tps"])
+            _check_metrics(str(report_path), stage, telemetry_metrics(workload.get("telemetry", {})),
+                           ["avg_power_watts"])
+            if "baseline" in workload:
+                _check_metrics(str(report_path), stage, telemetry_metrics(workload["baseline"].get("telemetry", {})),
+                               ["avg_power_watts"])
+        if report["generation"]["settings"].get("decoding") == "speculative":
+            declared = build_profile_for(model, build_profile_id).get("benchmark_baseline")
+            baseline = report["generation"]["baseline"]
+            if not declared or (baseline["model_id"], baseline["build_profile_id"]) != (
+                declared["model_id"], declared["build_profile"]
+            ):
+                raise ValidationError("generation report does not use the declared benchmark baseline")
+        return report
+    if "generation" in report:
+        raise ValidationError(f"{report_path}: generation workloads require a native LLiMa model")
     scope = model["performance"].get("scope", "model")
     if report.get("scope", "model") != scope:
         raise ValidationError(f"{report_path}: performance scope must be {scope}")
@@ -281,9 +333,20 @@ def publish_report(
     report = check_report(output / REPORT_FILE, root, model_id, build_profile_id, stage)
     model = _model(root, model_id)
     builds, package_run_id = _registered_builds(Path(compiled_dir).expanduser().resolve(), model, build_profile_id)
+    baseline_builds = {}
+    baseline = report.get("generation", {}).get("baseline")
+    if baseline:
+        reference = _model(root, baseline["model_id"])
+        baseline_builds, _ = _registered_builds(Path(compiled_dir).resolve(), reference, baseline["build_profile_id"])
+        if len(baseline_builds) != 1 or next(iter(baseline_builds.values())) != {
+            "run_id": baseline["compile_run_id"], "artifact_sha256": baseline["artifact_sha256"]
+        }:
+            raise ValidationError("baseline report does not match its registered compilation")
     fingerprint = benchmark_fingerprint(root, model, build_profile_id, builds, stage)
     run_type = BENCHMARK_RUN_TYPES[stage]
-    board = {**_read_json(output / ENVIRONMENT_FILE, "runner environment"), "pyneat": report["runtime"]["pyneat"]}
+    native = "generation" in report
+    tool = "llima" if native else "pyneat"
+    board = {**_read_json(output / ENVIRONMENT_FILE, "runner environment"), tool: report["runtime"][tool]}
     runtime = resolve_benchmark_runtime(root)
     report_digest = canonical_sha256(report)
     stable_digest = hashlib.sha256(f"{package_run_id}:{fingerprint}:{report_digest}".encode()).hexdigest()
@@ -302,7 +365,7 @@ def publish_report(
         "environment": {
             "fingerprint": canonical_sha256(board),
             "toolchain_name": "sima-neat",
-            "toolchain_version": report["runtime"]["pyneat"],
+            "toolchain_version": report["runtime"][tool],
             "target_platform": runtime["devkit"]["platform_version"],
             "target_device": board["board_model"],
             "operating_system": board["kernel_release"],
@@ -328,15 +391,26 @@ def publish_report(
             f"/v1/runs/{run_id}/inputs/{name}",
             {
                 "input_type": "model-pack",
-                "source_reference": f"vulcan://runs/{build['run_id']}/artifacts/mpk",
+                "source_reference": f"vulcan://runs/{build['run_id']}/artifacts/{'llima' if native else 'mpk'}",
                 "sha256": build["artifact_sha256"],
-                "media_type": "application/gzip",
+                "media_type": "application/json" if native else "application/gzip",
                 "metadata": {**subject, "component_id": component_id, "compile_run_id": build["run_id"]},
             },
             f"{stable_key}-{name}",
         )
+    for component_id, build in baseline_builds.items():
+        name = f"baseline-model-{component_id.replace('_', '-')}"
+        client.request("PUT", f"/v1/runs/{run_id}/inputs/{name}", {
+            "input_type": "model-pack",
+            "source_reference": f"vulcan://runs/{build['run_id']}/artifacts/llima",
+            "sha256": build["artifact_sha256"], "media_type": "application/json",
+            "metadata": {"model_id": baseline["model_id"], "build_profile_id": baseline["build_profile_id"],
+                         "component_id": component_id, "compile_run_id": build["run_id"]},
+        }, f"{stable_key}-{name}")
     # Vulcan completes a run only once its canonical parameters are stored.
     parameters = {stage: model[stage], "builds": builds, "runtime": runtime}
+    if baseline:
+        parameters["benchmark_baseline"] = baseline
     client.request(
         "PUT",
         f"/v1/runs/{run_id}/parameters",
@@ -346,7 +420,9 @@ def publish_report(
 
     files = {"model-report": (REPORT_FILE, "model-report", "application/json")}
     if (output / CORE_REPORT_FILE).is_file():
-        files["core-benchmark-report"] = (CORE_REPORT_FILE, "benchmark-report", "application/json")
+        files["llima-benchmark-report" if native else "core-benchmark-report"] = (
+            CORE_REPORT_FILE, "benchmark-report", "application/json"
+        )
     if report.get("scope") == "components":
         for component in report["components"]:
             filename = f"{component}-{CORE_REPORT_FILE}"
@@ -374,10 +450,19 @@ def publish_report(
         )
         for name, (filename, artifact_type, media_type) in files.items()
     }
+    summary = report
+    if native:
+        # Full-dataset token timings belong in the artifact, not an unbounded inline API response.
+        def compact(workload):
+            return {key: compact(value) if key == "baseline" else value
+                    for key, value in workload.items() if key != "requests"}
+
+        summary = {**report, "generation": {**report["generation"],
+            "workloads": [compact(workload) for workload in report["generation"]["workloads"]]}}
     test_body: JsonObject = {
         "status": test_status,
-        # The model browser reads the whole report from here.
-        "summary": report,
+        # The browser uses aggregates; Raw result retains every request in the registered artifact.
+        "summary": summary,
         "report_artifact_id": artifacts["model-report"]["artifact_id"],
     }
     if f"{stage}-log" in artifacts:
@@ -407,6 +492,32 @@ def publish_report(
             for name, value in sorted(report["metrics"].items())
         ]
     )
+    if native:
+        from model_report import telemetry_metrics
+
+        measurements = []
+        for workload in report["generation"]["workloads"]:
+            scopes = [("target", workload)]
+            if "baseline" in workload:
+                scopes.append(("baseline", workload["baseline"]))
+            for role, reading in scopes:
+                dimensions = {**subject, "workload_id": workload["id"], "workload_kind": workload["kind"],
+                              "role": role, "decoding": "ordinary" if role == "baseline" else
+                              report["generation"]["settings"].get("decoding", "ordinary")}
+                if reading["kind"] == "text":
+                    dimensions["input_tokens"] = str(reading["input_tokens"])
+                if "dataset" in reading:
+                    dimensions["dataset"] = reading["dataset"]["name"]
+                if role == "baseline":
+                    dimensions.update(baseline_model_id=baseline["model_id"],
+                                      baseline_build_profile_id=baseline["build_profile_id"])
+                metrics = {name: metric["value"] for name, metric in reading["metrics"].items()}
+                metrics.update(telemetry_metrics(reading.get("telemetry", {})))
+                count = reading["metrics"]["decode_tps"]["sample_count"]
+                measurements.extend(
+                    _measurement(f"{fingerprint}-{workload['id']}-{role}-{name}", name, value, count, dimensions)
+                    for name, value in sorted(metrics.items())
+                )
     # check_report() requires the declared metrics, so a report always has at least one.
     client.request(
         "POST", f"/v1/runs/{run_id}/measurements/batch", {"measurements": measurements}, f"{stable_key}-measurements"

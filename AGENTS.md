@@ -150,11 +150,15 @@ required metrics (performance: `throughput_fps`); optional expectations and
 the shared regression thresholds remain gates.
 
 When no published score matches a package's setup, the model may add a standalone
-`scripts/fp32_baseline_accuracy.py`, as `models/superglue_outdoor` does. It scores the
-FP32 ONNX the model compiles on a host with the model's own `accuracy.py` scoring, without
+`scripts/fp32_baseline_accuracy.py`, as `models/superglue_outdoor` does. It scores an
+FP32 ONNX on a host with the model's own `accuracy.py` scoring, without
 `model_registry` imports, credentials or YAML. Its output becomes the
-`reference_metrics` entry with `origin: fp32_baseline`. No stage runs it and no
-fingerprint includes it ([FP32 baseline](docs/local-accuracy-development.md#fp32-baseline)).
+`reference_metrics` entry with `origin: fp32_baseline`. The baseline is a manual host
+measurement: run the script on the ONNX its docstring names, produced by the model's own
+`convert.py` (and `surgery.py` when the script scores the rewritten graph). No stage runs
+it and no fingerprint includes it, so that ONNX need not match the sha256 of the file
+Vulcan Model Convert published. The pull request gives the command and its output
+([FP32 baseline](docs/local-accuracy-development.md#fp32-baseline)).
 
 ## LLiMa models
 
@@ -177,6 +181,7 @@ subfolders, use the target's `config.json` as `compilation.source.main_file`, an
 subfolder in `parameters.draft_model_path`. Deploy and publish the complete pair.
 An optional profile-level `benchmark_baseline` links to a normal-decoding model
 and build profile; it affects performance fingerprints, never compilation.
+See [LLiMa performance](docs/benchmarking.md#llima-text-and-image-performance).
 
 Start with one 4K profile per LLM/VLM. Declare `max_num_tokens: 4096` and
 `language_group_size` in its component parameters. Image dimensions are optional
@@ -325,7 +330,8 @@ in the same commit.
   and accuracy (`model_accuracy` runs) separately with `model-registry
   publish-report`, each under the profile's `model_package` run with its test
   outcome. A failed test fails its check job after publication; the completed
-  run is not benchmarked again. On-demand builds are not benchmarked.
+  run is not benchmarked again. Pushes do not benchmark on-demand builds.
+  The manual `promoted_missing` checkbox queues missing stages except `text_generation`/`visual_question_answering` models.
   A manual dispatch of the same workflow resolves its own config and runner.
 - Benchmark setup uses `neat-core.install_target` from the measured source's
   `deps/manifest.json`. `ensure-neat-core` resolves floating targets once and

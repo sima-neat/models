@@ -43,14 +43,15 @@ build_profiles:
       model:
         parameters: {precision: w16a16}
 
-  # INT8 everywhere except the class and box heads, which run BF16. It loses 3 to 4 COCO mAP points to w16a16,
-  # and the compiler lowers the precision of saturating INT8 backbone convolutions. compile.py keeps its recipe;
-  # uncomment the profile once its accuracy is improved.
-  # w8a8_mixed:
-  #   calibration_dataset: coco-2017-cal
-  #   components:
-  #     model:
-  #       parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 50, bf16_regions: [heads]}
+  # INT8 backbone; the transformer (attention, LayerNorms and residual sums, feed-forward networks) and the class and
+  # box heads run BF16. surgery.BF16_REGIONS lists each region's operations. BF16 heads alone lost 3 to 4 COCO mAP
+  # points to w16a16; keeping the transformer BF16 too recovers most of them, while the saturating backbone
+  # convolutions stay INT8.
+  w8a8_mixed:
+    calibration_dataset: coco-2017-cal
+    components:
+      model:
+        parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 50, bf16_regions: [attention, residual, ffn, heads]}
 
 accuracy:
   # The reference resizes the shortest side to 800, caps the longest at 1333 and masks the padding. accuracy.py
@@ -62,8 +63,7 @@ performance: {}
 
 # No published score is comparable to this package. The paper scores each image with its shortest side at 800, its
 # longest at most 1333 and the padding masked, while this package stretches every image to 640x640.
-# scripts/fp32_baseline_accuracy.py measures the FP32 baseline on this package's own inputs instead, on the ONNX
-# Vulcan Model Convert produced.
+# scripts/fp32_baseline_accuracy.py measures the FP32 baseline on this package's own inputs instead.
 reference_metrics:
 - origin: fp32_baseline
   script: scripts/fp32_baseline_accuracy.py

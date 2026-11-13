@@ -1,5 +1,6 @@
 import json
 import runpy
+import shutil
 import subprocess
 import sys
 import types
@@ -215,7 +216,7 @@ def test_every_metric_names_its_stage_unit_direction_and_measurement():
 
 def test_the_package_needs_only_the_standard_library():
     probe = (
-        "import sys, model_report; "
+        "import sys, model_report, model_report.generation_benchmark, model_report.board_telemetry; "
         "third_party = {name.partition('.')[0] for name in sys.modules} - set(sys.stdlib_module_names); "
         "print(sorted(third_party - {'model_report', '__main__'}))"
     )
@@ -227,6 +228,17 @@ def test_the_package_needs_only_the_standard_library():
     assert result.stdout.strip() == "[]"
 
 
+def test_native_performance_script_runs_without_registry_package(tmp_path):
+    shutil.copytree(REPOSITORY / "tools/model_report", tmp_path / "model_report")
+    script = REPOSITORY / "models/qwen3_0_6b/scripts/performance.py"
+    probe = (
+        f"import sys, runpy; sys.path.insert(0, {str(tmp_path)!r}); "
+        f"sys.argv = [{str(script)!r}, '--help']; runpy.run_path({str(script)!r}, run_name='__main__')"
+    )
+    result = subprocess.run([sys.executable, "-I", "-S", "-c", probe], capture_output=True, text=True, check=True)
+    assert "--deployment" in result.stdout and "--output" in result.stdout
+
+
 class BenchmarkOptions:
     """PyNeat's BenchmarkOptions, which rejects a field Core does not have."""
 
@@ -236,12 +248,13 @@ class BenchmarkOptions:
 
 
 class ModelOptions:
-    """PyNeat's ModelOptions, with the preprocessing fields the scripts set."""
+    """PyNeat's ModelOptions, with the preprocessing and execution fields the scripts set."""
 
     def __init__(self):
         self.preprocess = types.SimpleNamespace(
             resize=types.SimpleNamespace(), normalize=types.SimpleNamespace(), color_convert=types.SimpleNamespace()
         )
+        self.advanced_execution = types.SimpleNamespace()
         self.superpoint = types.SimpleNamespace()
 
 
@@ -296,8 +309,8 @@ def write_image(path, value, size=SOURCE_SIZE):
 
 def benchmark_dataset(root):
     """A dataset with the files each script samples from: COCO val2017, ImageNet's val2012 and ImageNet mini's val
-    split, an HPatches val sequence, DOTA's val images, and the Scene Flow test list. Only the second COCO image labels
-    a person, so a pose script must pick it."""
+    split, an HPatches val sequence, DOTA's val images, Pittsburgh 30k, and the Scene Flow test list. Only the second
+    COCO image labels a person, so a pose script must pick it."""
     write_image(root / STEREO_PAIR.format(view="left"), STEREO_LEFT, STEREO_VIEW)
     write_image(root / STEREO_PAIR.format(view="right"), STEREO_RIGHT, STEREO_VIEW)
     disparity = STEREO_PAIR.replace("frames_finalpass", "disparity").format(view="left").replace(".png", ".pfm")
@@ -311,6 +324,7 @@ def benchmark_dataset(root):
     write_image(root / "val/v_scene/1.ppm", 200)
     write_image(root / "val/rgb_0001.jpg", 200)
     write_image(root / "test/rgb_0001.jpg", 200)
+    write_image(root / "images/000/000000_pitch1_yaw1.jpg", 200)
     keypoints = {
         "images": [{"id": 1, "file_name": "000000000001.jpg"}, {"id": 2, "file_name": "000000000002.jpg"}],
         "annotations": [{"image_id": 1, "num_keypoints": 0}, {"image_id": 2, "num_keypoints": 17}],
@@ -351,7 +365,8 @@ def performance_scripts(*, components: bool, accuracy: bool | None = None) -> li
         model = yaml.safe_load(path.read_text(encoding="utf-8"))
         if accuracy is not None and ("accuracy" in model) != accuracy:
             continue
-        if "performance" in model and ("components" in model["compilation"]) == components:
+        if ("performance" in model and model["compilation"]["format"] == "onnx"
+                and ("components" in model["compilation"]) == components):
             scripts.append(path.parent / "scripts/performance.py")
     assert scripts
     return scripts
@@ -467,6 +482,11 @@ def test_every_single_component_script_benchmarks_a_dataset_image(script, monkey
         assert not hasattr(options.preprocess, "preset")
         assert (options.superpoint.profile, options.top_k) == ("MagicLeapDemoV1", 1000)
         assert "v_scene/1.ppm" in report["workload"]
+    elif first_accuracy_dataset(script) == "pitts30k":
+        # A place-recognition model benchmarks a Pittsburgh 30k image, stretched to its input with the ImageNet preset.
+        assert_letterboxed_frame(frame)
+        assert (options.preprocess.resize.mode, options.preprocess.preset) == ("Stretch", "ImageNet")
+        assert "_pitch1_yaw1.jpg" in report["workload"]
     else:
         assert_letterboxed_frame(frame)
         assert options.preprocess.resize.mode == "Stretch"

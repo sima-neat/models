@@ -65,6 +65,22 @@ class Report:
         return path
 
 
+def from_generation(generation: dict[str, Any], runtime: dict[str, Any]) -> Report:
+    """A native LLiMa performance report, with timings and telemetry per text/image workload."""
+    return Report({
+        "schema": SCHEMA, "schema_version": SCHEMA_VERSION, "stage": "performance",
+        "runtime": runtime, "metrics": {},
+        "workload": "Full dataset comparisons" if generation["settings"].get("decoding") == "speculative"
+        else "Text buckets and an encoder-sized image when supported",
+        "telemetry": {}, "components": {}, "generation": generation,
+    }, {CORE_REPORT_FILE: generation})
+
+
+def telemetry_metrics(telemetry: dict[str, Any]) -> dict[str, float]:
+    """The measured board metrics in the same units as Core's performance report."""
+    return _performance_metrics({}, telemetry)
+
+
 def from_performance(
     benchmark: Any,
     models: dict[str, Any],
@@ -200,7 +216,7 @@ def _header(stage: str) -> dict[str, Any]:
 def _performance_metrics(report: dict[str, Any], telemetry: dict[str, Any]) -> dict[str, float]:
     metrics = {}
     for name, metric in METRICS.items():
-        if "report" in metric and report[metric["report"]] > 0:
+        if "report" in metric and report.get(metric["report"], 0) > 0:
             metrics[name] = float(report[metric["report"]])
         elif "telemetry" in metric:
             field, statistic, unit = metric["telemetry"]

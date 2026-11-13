@@ -306,7 +306,7 @@ branch, a base branch's catalog records a build with its current compile
 fingerprint. It runs a benchmark (the performance or accuracy stage) only when
 no completed registry run carries its current benchmark fingerprint. Models
 with `build-on-demand: true` compile only when a manual dispatch selects them,
-and their builds are not benchmarked; see [on-demand
+and benchmarks require a separate manual dispatch; see [on-demand
 builds](#on-demand-builds).
 
 | Stage | Fingerprint inputs |
@@ -314,7 +314,7 @@ builds](#on-demand-builds).
 | conversion | the model's own conversion inputs: the upstream checkpoint, `conversion.outputs`, and `convert.py` with its requirements and the files it uses. No shared file is an input. See [when to run Convert again](conversion-artifacts.md#when-to-run-convert-again) |
 | compile (ONNX) | the model and profile IDs, the target, each component's ID and the source identity and layout, each component's `parameters`, the model's pinned `resources`, the profile's calibration pin, the `numerical_fidelity` section, compile/surgery code, the Model Compiler version, `scripts/run_model_compilation.sh`, the shared model loader, and the MLA stage simulation (`tools/model_registry/mla_stage_simulation.py`) |
 | compile (LLiMa) | checkpoint content hashes, the target, component graph `parameters`, and the pinned Model Compiler identity including its build revision |
-| performance | the compile run and MPK digest of every component, the `performance` declaration, the profile's optional `benchmark_baseline`, the model's `performance.py` and `requirements-performance.txt`, the shared benchmark tooling and `scripts/run_model_performance.sh`, and the DevKit runtime pin |
+| performance | each component's compile run (plus its MPK digest for ONNX), the `performance` declaration, the optional `benchmark_baseline` and its compile fingerprint, `performance.py` and its requirements, shared benchmark tooling and runner scripts, and the Core/MoLE runtime pins |
 | accuracy | the compile run and MPK digest of every component, each `accuracy` dataset's name, pin, and the metrics its `datasets/<id>.yaml` requires for the model's tasks, `accuracy.py` and `requirements-accuracy.txt`, the shared benchmark tooling, `scripts/run_model_accuracy.sh`, `scripts/cache_accuracy_dataset.sh`, `scripts/install_dataset_registry.sh`, `tools/model_registry/runtime_files.py` (verified supporting-file inputs), and the DevKit runtime pin |
 
 ONNX compile code includes every `.py` and `.sh` under `scripts/` except
@@ -346,7 +346,8 @@ is always benchmarked again.
 | `accuracy.build_profiles`, a new `datasets/` file, or an entry for a task no such model has | nothing; a newly benchmarked profile runs because it has no run yet |
 | `scripts/run_model_performance.sh` | every performance stage |
 | `scripts/run_model_accuracy.sh`, `scripts/cache_accuracy_dataset.sh`, `scripts/install_dataset_registry.sh`, or `tools/model_registry/runtime_files.py` (verified supporting-file inputs) | every accuracy stage |
-| the DevKit runtime pin, the benchmarking workflow, `tools/model_registry/neat_core.py`, `tools/model_report/__init__.py`, `schemas/model-report.schema.json`, or `report_publication.py` | every performance and accuracy stage |
+| the Core runtime target, the benchmarking workflow, `tools/model_registry/neat_core.py`, `tools/model_report/__init__.py`, `schemas/model-report.schema.json`, or `report_publication.py` | every performance and accuracy stage |
+| the MoLE revision (`llima.install_target`) or `LLIMA_PERFORMANCE_TOOLING` in `fingerprints.py` | native LLM/VLM performance stages |
 | a source, a component's `parameters`, the profile's calibration, or `numerical_fidelity` | that model's affected builds, then their benchmarks |
 | an ONNX compile script or other ONNX compile input | that model's affected builds, then their benchmarks |
 | the Model Compiler pin | every build, then every benchmark |
@@ -655,9 +656,7 @@ and the pinned compiler identity. Declare graph-changing options in component
 Script edits, logging, job counts and runner selection do not invalidate it.
 README and hero changes remain outside compile identities.
 
-Omit `calibrations`, `numerical_fidelity`, `accuracy`, and `performance` when no
-corresponding stage is implemented. A manual Qwen build compiles and publishes only; performance
-and accuracy are separate follow-ups [#294](https://github.com/sima-neat/models/issues/294)
-and [#295](https://github.com/sima-neat/models/issues/295). The default Qwen profile
-requests the expensive runner with twenty compile jobs, 4096 tokens, 448×448 input,
-and language group size 128.
+Enable LLM/VLM performance with `performance: {}` and a `scripts/performance.py`
+entry point. Speculative profiles also declare an ordinary `benchmark_baseline`.
+See [LLiMa performance](benchmarking.md#llima-text-and-image-performance).
+Omit stages that are not implemented.

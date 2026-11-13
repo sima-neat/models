@@ -1,6 +1,8 @@
 # DevKit performance
 
-The performance stage measures each build profile's whole model on a Modalix
+For LLMs and VLMs, see [LLiMa performance](#llima-text-and-image-performance).
+
+The Core performance stage measures each build profile's whole model on a Modalix
 DevKit: every compiled MPK and the CPU work between them. Each model's
 standalone `scripts/performance.py` contains its benchmark setup, including
 its input: one image from the model's accuracy dataset in a 1280x720 frame,
@@ -12,6 +14,14 @@ multi-component model, times its pipeline itself in its script. Core owns
 warmup, latency and throughput measurement, board telemetry, and runner
 lifetime. The scripts hand Core's results to `tools/model_report`, which
 writes the one report the registry publishes.
+
+In **Actions → Vulcan Model Benchmarking → Run workflow**, select Develop/Main,
+the registry environment and stages, then check **Benchmark promoted models
+missing results (excludes text generation)** to queue missing measurements for promoted
+profiles without `text_generation` or `visual_question_answering` tasks.
+Leave the per-model fields empty. Each profile runs separately;
+the summary lists queued and skipped profiles. Leave the checkbox unchecked to
+benchmark one model, including an LLM/VLM.
 
 ## Set up a DevKit
 
@@ -431,8 +441,8 @@ before Models consumes them.
 Model authors do not publish benchmark results directly. After a build profile's
 package publishes, **Vulcan Model Compile** starts **Vulcan Model
 Benchmarking** on the same branch for each build profile whose performance or
-accuracy benchmark fingerprint has no completed run. On-demand builds are not
-benchmarked. The DevKit has no publication credentials.
+accuracy benchmark fingerprint has no completed run. On-demand builds require a
+manual benchmark dispatch. The DevKit has no publication credentials.
 
 On the DevKit, the workflow first checks that the profile's components are
 registered and its package receipt is present. It then caches the model's
@@ -489,3 +499,44 @@ Because the performance stage has its own fingerprint, editing the model's
 publication tooling, or the DevKit runtime pin reruns the performance benchmark
 from the published MPKs without recompiling. See [what a change
 reruns](adding-a-model.md#9-know-what-a-change-reruns).
+
+## LLiMa text and image performance
+
+LLMs and VLMs declare `performance: {}`. CI uses Core's LLiMa runtime and
+installs MoLE from the LLiMa revision in `deps/manifest.json`, reusing matching
+installations on NVMe.
+
+| Deployment | Workloads |
+| --- | --- |
+| Ordinary LLM | Text input buckets |
+| Ordinary VLM | Text buckets, plus one encoder-sized image with “Describe what you see in the image.” |
+| Speculative LLM | Full GSM8K, BFCL v3 simple/multiple and AlpacaEval datasets |
+| Speculative VLM | Those text datasets, plus full RealWorldQA, DocVQA validation and ChartQA at dataset image resolution |
+
+Text buckets double from 128 through `max_context - 1024`, including that
+boundary: 128, 256, 512, 1024, 2048 and 3072 for 4K context. Ordinary workloads
+use one warmup and five measurements; datasets use one warmup and one measurement
+per prompt. Warmup is excluded, and caches reset before every request. Image and
+dataset requests allow up to 256 generated tokens; ordinary text measures the
+first token plus 256 decode steps.
+
+Speculative profiles declare an ordinary model/profile in `benchmark_baseline`.
+Both deployments use the same dataset sources, prompts, context and output
+budgets. BFCL is skipped for both deployments if either lacks a native tool
+template; the reason is recorded in the log and JSON report.
+Reports include TTFT, text prefill TPS, decode TPS excluding the first
+token, draft contribution (accepted/generated tokens) and speedup (aggregate
+speculative/ordinary decode TPS). Power, temperature, CPU and memory are recorded
+per workload and deployment. Failed requests prevent publication.
+
+Run **Vulcan Model Benchmarking** with `stages=performance`, `model_id`,
+`build_profile_id`, `compile_invocation_id` and the current catalog revision as
+`source_sha`. The workflow branch must match `source_branch`; leave `source_run_id`
+empty. Deployments and packages must already be registered. Full dataset runs
+allow 72 hours. For feature-branch testing against Develop deployments, set
+`deployment_branch=develop` and use the feature branch's source SHA.
+
+For local runs, use MoLE with `PYTHONPATH=tools` and the model's `performance.py`
+with `--deployment`, `--output` and, for speculative models, `--baseline` pointing
+to the staged baseline receipt. Results use `model-report.json`; raw reports
+retain request and token timings.

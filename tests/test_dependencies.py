@@ -27,6 +27,7 @@ def test_repository_benchmark_runtime_uses_source_revision_package() -> None:
     runtime = resolve_benchmark_runtime(ROOT)
     assert runtime["devkit"] == {**manifest["devkit"], "platform_version": manifest["platform-version"]}
     assert runtime["neat_core"] == manifest["neat-core"]
+    assert runtime["llima"] == manifest["llima"]
     assert "benchmarker" not in runtime
 
 

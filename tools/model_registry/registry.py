@@ -31,6 +31,7 @@ from .artifact import (
     verify_artifact,
     verify_llima,
 )
+from .benchmark_declarations import benchmarked_profiles
 from .compile_matrix import build_matrix
 from .dependencies import resolve_model_compiler
 from .documentation import load_model_documentation
@@ -38,7 +39,7 @@ from .errors import ModelRegistryError, ValidationError
 from .fetch import sha256_file
 from .fingerprints import benchmark_fingerprint, compile_fingerprint
 from .mla_stage_simulation import SIMULATION_FILE
-from .model import compile_invocations_for, load_and_validate_model, load_models, mpk_filename
+from .model import build_profile_for, compile_invocations_for, load_and_validate_model, load_models, mpk_filename
 from .package import FIDELITY_FILE
 from .registry_http import RegistryPublicationError, SigV4RegistryClient
 from .registry_http import read_registry_json_authenticated as _public_registry_json
@@ -384,6 +385,80 @@ def _head_matrix(root: Path, models: dict[str, Any]) -> list[JsonObject]:
     )["include"]
 
 
+def _catalog_outputs(model: JsonObject) -> tuple[list[JsonObject], list[JsonObject]]:
+    """Resolve selected deployments without changing server-owned approval records."""
+    selections = {**model.get("approved_deployments", {}), **model.get("branch_deployments", {})}
+    builds = [item for item in model.get("builds", []) if item.get("build_profile_id") not in selections]
+    packages = [item for item in model.get("packages", []) if item.get("build_profile_id") not in selections]
+    for profile_id, selection in selections.items():
+        requirements = selection["requirements"]
+        components = [item for item in selection["artifacts"] if item.get("component_id")]
+        for component in components:
+            invocation = next(item for item in requirements["invocations"]
+                              if component["component_id"] in item["component_ids"])
+            builds.append({
+                **component, "build_profile_id": profile_id, "compile_invocation_id": profile_id,
+                "compile_fingerprint": invocation["compile_fingerprint"],
+            })
+        for package in (item for item in selection["artifacts"] if item.get("package_id")):
+            requirement = next(item for item in requirements["packages"] if item["id"] == package["package_id"])
+            packages.append({
+                **package, "build_profile_id": profile_id,
+                "component_run_ids": {item["component_id"]: item["run_id"] for item in components
+                                      if item["component_id"] in requirement["component_ids"]},
+            })
+    return builds, packages
+
+
+def _refresh_approved_benchmarks(
+    root: Path, document: JsonObject, source: JsonObject, read_api_url: str, read: ReadRequest,
+    *, model_id: str | None = None, profile_id: str | None = None,
+) -> None:
+    """Point at the approved producing runs, without changing approval-owned outputs or fingerprint formats."""
+    if document.get("git_ref") not in {"refs/heads/develop", "refs/heads/main"}:
+        return
+    previous = {model["id"]: model for model in source.get("models", [])}
+    digests = {}
+    for entry in document.get("models", []):
+        if model_id is not None and entry["id"] != model_id:
+            continue
+        selections = previous.get(entry["id"], {}).get("approved_deployments", {})
+        if not selections:
+            continue
+        model = load_and_validate_model(root / "models" / entry["id"])
+        fingerprints = dict(entry.get("benchmark_fingerprints", {}))
+        for selected_profile, selection in selections.items():
+            if profile_id is not None and selected_profile != profile_id:
+                continue
+            # Raw builds may still describe an older automatic build of this profile.
+            fingerprints.pop(selected_profile, None)
+            stages = [stage for stage in ("performance", "accuracy")
+                      if selected_profile in benchmarked_profiles(model, stage)]
+            if not stages:
+                continue
+            builds = {build["component_id"]: build for build in _catalog_outputs({
+                "approved_deployments": {selected_profile: selection},
+            })[0]}
+            if set(builds) != {component["id"] for component in model["components"]}:
+                continue
+            for component in model["components"]:
+                if component["interface"]["format"] == "huggingface":
+                    continue
+                build = builds[component["id"]]
+                run_id = build["run_id"]
+                if run_id not in digests:
+                    artifact = read(f"{read_api_url.rstrip('/')}/v1/runs/{quote(run_id, safe='')}/artifacts/mpk")
+                    digests[run_id] = _require_sha256(artifact.get("artifact", {}).get("sha256"), "artifact sha256")
+                build["artifact_sha256"] = digests[run_id]
+            fingerprints[selected_profile] = {
+                stage: benchmark_fingerprint(root, model, selected_profile, builds, stage) for stage in stages
+            }
+        if fingerprints:
+            entry["benchmark_fingerprints"] = fingerprints
+        else:
+            entry.pop("benchmark_fingerprints", None)
+
+
 def build_catalog_snapshot(
     *,
     repository: str | Path,
@@ -620,6 +695,8 @@ def build_catalog_snapshot(
                 packages_by_model[model_id], key=lambda item: (item["build_profile_id"], item["package_id"])
             ),
         }
+        if "parameter_count_billion" in model:
+            entry["parameter_count_billion"] = model["parameter_count_billion"]
         if benchmark_fingerprints_by_model[model_id]:
             entry["benchmark_fingerprints"] = dict(sorted(benchmark_fingerprints_by_model[model_id].items()))
         if model.get("build-on-demand", False):
@@ -1062,6 +1139,9 @@ def publish_catalog(
         incremental=True,
         documentation_receipts=documentation_receipts,
     )
+    _refresh_approved_benchmarks(
+        root, document, target_catalog.get("document", {}) if target_catalog else {}, read_api_url, read,
+    )
     if continuing_revision and isinstance(target_catalog, dict) and "pending_builds" in target_catalog["document"]:
         document["pending_builds"] = _remaining_pending_builds(target_catalog["document"], document)
     previous_snapshot = target_catalog.get("canonical_sha256") if isinstance(target_catalog, dict) else None
@@ -1142,19 +1222,24 @@ def stage_catalog_build(
     compile_invocation_id: str,
     read_request: ReadRequest | None = None,
     download_request: DownloadRequest | None = None,
+    expected_compile_fingerprint: str | None = None,
+    deployment_branch: str | None = None,
 ) -> JsonObject:
     """Restore a complete invocation from durable registry MPKs for later stages."""
     root = Path(repository).expanduser().resolve()
     output = Path(output_dir).expanduser().resolve()
     read = read_request or _public_registry_json
     base_url = api_url.rstrip("/")
+    catalog_branch = deployment_branch or branch
     catalog_payload = read(
         f"{base_url}/v1/repositories/sima-neat/models/catalogs/current?"
-        f"git_ref={quote(f'refs/heads/{branch}', safe='')}"
+        f"git_ref={quote(f'refs/heads/{catalog_branch}', safe='')}"
     )
     catalog_record = catalog_payload.get("catalog")
     document = catalog_record.get("document") if isinstance(catalog_record, dict) else None
-    if not isinstance(document, dict) or document.get("catalog_revision") != catalog_revision:
+    if not isinstance(document, dict) or (
+        catalog_branch == branch and document.get("catalog_revision") != catalog_revision
+    ):
         raise ValidationError("current catalog does not match the requested catalog revision")
     catalog_model = next(
         (item for item in document.get("models", []) if isinstance(item, dict) and item.get("id") == model_id),
@@ -1172,15 +1257,24 @@ def stage_catalog_build(
     )
     if invocation is None:
         raise ValidationError(f"compile invocation is absent from the current model: {compile_invocation_id}")
+    if catalog_branch != branch and expected_compile_fingerprint is None:
+        expected_compile_fingerprint = compile_fingerprint(
+            root, model_id, build_profile_id, compile_invocation_id, resolve_model_compiler(root)["identity"]
+        )
+    catalog_builds, catalog_packages = _catalog_outputs(catalog_model)
     builds = {
         item["component_id"]: item
-        for item in catalog_model.get("builds", [])
+        for item in catalog_builds
         if isinstance(item, dict)
         and item.get("build_profile_id") == build_profile_id
         and item.get("compile_invocation_id") == compile_invocation_id
     }
     if set(builds) != set(invocation["component_ids"]):
         raise ValidationError("current catalog does not link every component in the compile invocation")
+    if expected_compile_fingerprint and any(
+        build.get("compile_fingerprint") != expected_compile_fingerprint for build in builds.values()
+    ):
+        raise ValidationError("benchmark needs a registered build matching its current model/compiler")
 
     staged_outputs = []
     for component_id in invocation["component_ids"]:
@@ -1199,7 +1293,7 @@ def stage_catalog_build(
         download_url = artifact.get("download_url")
         if not isinstance(digest, str) or len(digest) != 64 or not isinstance(download_url, str):
             raise ValidationError(f"artifact registry returned incomplete MPK metadata for {run_id}")
-        if digest != build.get("artifact_sha256"):
+        if digest != build.get("artifact_sha256", digest):
             raise ValidationError(f"registry MPK checksum does not match the current catalog for {run_id}")
         component_dir = output / model_id / build_profile_id / component_id
         component_dir.mkdir(parents=True, exist_ok=True)
@@ -1268,7 +1362,7 @@ def stage_catalog_build(
     profile_dir = output / model_id / build_profile_id
     runtime_files = []
     package = next((
-        item for item in catalog_model.get("packages", [])
+        item for item in catalog_packages
         if isinstance(item, dict) and (item.get("build_profile_id"), item.get("package_id")) == (
             build_profile_id, "default"
         )
@@ -1283,8 +1377,8 @@ def stage_catalog_build(
             raise ValidationError("artifact registry returned invalid package metadata")
         if "runtime_files" in metadata:
             component_runs = {item["component_id"]: item["run_id"] for item in staged_outputs}
-            if (artifact.get("sha256") != package.get("artifact_sha256")
-                    or artifact.get("size_bytes") != package.get("size_bytes")
+            if (artifact.get("sha256") != package.get("artifact_sha256", artifact.get("sha256"))
+                    or artifact.get("size_bytes") != package.get("size_bytes", artifact.get("size_bytes"))
                     or not isinstance(artifact.get("download_url"), str)
                     or metadata.get("component_run_ids") != component_runs
                     or package.get("component_run_ids") != component_runs):
@@ -1316,6 +1410,37 @@ def stage_catalog_build(
             encoding="utf-8",
         )
     return {"count": len(staged_outputs), "outputs": staged_outputs}
+
+
+
+def stage_benchmark_baseline(
+    *, repository: str | Path, output_dir: str | Path, model_id: str, build_profile_id: str, **registry_options
+) -> JsonObject:
+    """Restore the declared ordinary deployment and retain its compile identities beside the benchmark input."""
+    root = Path(repository).resolve()
+    output = Path(output_dir).resolve()
+    receipt = output / "benchmark-baseline.json"
+    receipt.unlink(missing_ok=True)
+    model = load_and_validate_model(root / "models" / model_id)
+    baseline = build_profile_for(model, build_profile_id).get("benchmark_baseline")
+    if not baseline:
+        return {"count": 0}
+    reference = load_and_validate_model(root / "models" / baseline["model_id"])
+    profile = baseline["build_profile"]
+    invocation = build_matrix({reference["id"]: reference}, [reference["id"]], [profile],
+        repository=root, compiler_version=resolve_model_compiler(root)["identity"])["include"][0]
+    if reference["components"][0]["interface"]["format"] != "huggingface":
+        raise ValidationError("a speculative benchmark baseline must be a native LLiMa deployment")
+    result = stage_catalog_build(repository=root, output_dir=output, model_id=reference["id"],
+        build_profile_id=profile, compile_invocation_id=invocation["compile_invocation_id"],
+        expected_compile_fingerprint=invocation["compile_fingerprint"], **registry_options)
+    component = result["outputs"][0]
+    identity = {"model_id": reference["id"], "display_name": reference["display_name"], "build_profile_id": profile,
+                "deployment": f"{reference['id']}/{profile}/{component['component_id']}/deployment",
+                "compile_run_id": component["run_id"], "artifact_sha256": component["artifact_sha256"]}
+    receipt.parent.mkdir(parents=True, exist_ok=True)
+    receipt.write_text(json.dumps(identity, indent=2) + "\n")
+    return result
 
 
 def _require_text(value: Any, field: str) -> str:

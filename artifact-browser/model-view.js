@@ -150,6 +150,11 @@ const RAILS = {
 // and a depth when it is part of the row above it.
 const DETAIL_CARDS = [
   ["performance", "Performance", "gauge", [], [
+    ["Time to first token", ["ttft_ms"], "First token, including vision."],
+    ["Prefill", ["prefill_tps"], "Input tokens / TTFT."],
+    ["Decode", ["decode_tps"], "Excludes the first token."],
+    ["Draft contribution", ["draft_contribution_pct"], "Accepted / generated tokens."],
+    ["Decode speedup", ["decode_speedup"], "Speculative TPS / ordinary TPS."],
     ["Throughput", ["throughput_fps"], "Inferences completed per second, several inputs in flight."],
     ["Latency (mean)", ["latency_avg_ms"], "Mean time for one inference."],
     ["Latency (p50 / p95 / p99)", ["latency_p50_ms", "latency_p95_ms", "latency_p99_ms"], "p50: 50% of inferences are faster.\np95: 95% are faster.\np99: 99% are faster."],
@@ -589,6 +594,58 @@ function performanceSummary(performance, run, modelId, componentId = "") {
     ${disclosure(`performance:${run.id}${componentId ? `:${componentId}` : ""}`, "Performance Details", details.markup, details.titles.join(" · "))}`;
 }
 
+function generativeBenchmark(performance, run) {
+  const benchmark = {...performance.generation, workloads: performance.workloads};
+  const label = workload => workload.label;
+  const cells = (workload, keys) => keys.map(key => {
+    const value = workload.metrics?.[key]?.value;
+    return `<td>${Number.isFinite(value) ? value.toFixed(key === "decode_speedup" ? 2 : 1) : "—"}</td>`;
+  }).join("");
+  const rows = benchmark.workloads.filter(workload => workload.kind === "text").map(workload =>
+    `<tr><th scope="row">${escapeHtml(label(workload))}</th>${cells(workload, ["ttft_ms", "prefill_tps", "decode_tps"])}</tr>`).join("");
+  const images = benchmark.workloads.filter(workload => workload.kind === "image_text").map(workload =>
+    `<div class="benchmark-measurements image-performance"><h4>Image + text</h4>
+      <p class="benchmark-input">One ${escapeHtml(workload.image_size.join(" × "))} image with the prompt “${escapeHtml(workload.prompt)}”</p>
+      <div class="benchmark-measurements-wrap"><table aria-label="Image and text performance"><thead><tr>
+        <th scope="col">TTFT (ms)</th><th scope="col">Decode (tokens/s)</th>
+      </tr></thead><tbody><tr>${cells(workload, ["ttft_ms", "decode_tps"])}</tr></tbody></table></div>
+    </div>`).join("");
+  const datasetTable = (kind, title) => {
+    const workloads = benchmark.workloads.filter(workload => workload.kind === kind);
+    if (!workloads.length) return "";
+    const rows = workloads.map(workload => `<tr><th scope="row">${escapeHtml(label(workload))}</th>
+      <td>${escapeHtml(workload.metrics.decode_tps.sample_count)}</td>${cells(workload.baseline, ["ttft_ms"])}
+      ${cells(workload, ["ttft_ms"])}${cells(workload.baseline, ["decode_tps"])}${cells(workload, ["decode_tps", "draft_contribution_pct", "decode_speedup"])}</tr>`).join("");
+    return `<div class="benchmark-measurements"><h4>${title}</h4><div class="benchmark-measurements-wrap">
+      <table aria-label="${title}"><thead><tr><th scope="col">Dataset</th><th scope="col">Requests</th>
+      <th scope="col">Ordinary TTFT (ms)</th><th scope="col">Speculative TTFT (ms)</th>
+      <th scope="col">Ordinary (tokens/s)</th><th scope="col">Speculative (tokens/s)</th>
+      <th scope="col">Draft contribution (%)</th><th scope="col">Speedup (×)</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
+  };
+  const options = benchmark.workloads.map(workload =>
+    `<option value="${escapeHtml(workload.id)}">${escapeHtml(label(workload))}</option>`).join("");
+  const panels = benchmark.workloads.map((workload, index) => {
+    const details = reading => performanceDetails({...performance, ...reading, components: [],
+      workload: label(workload), samples: reading.metrics.decode_tps.sample_count}, run).markup;
+    return `<div data-genai-details="${escapeHtml(workload.id)}"${index ? " hidden" : ""}>${details(workload)}
+      ${workload.baseline ? `<h4>Ordinary baseline</h4>${details(workload.baseline)}` : ""}</div>`;
+  }).join("");
+  const details = `<p>Board telemetry covers measured requests, excluding warmup and model loading.</p>
+    <label class="workload-picker">Workload <select data-genai-workload>${options}</select></label>${panels}
+    <p>Decode TPS excludes the first token. Image TTFT includes native image preprocessing and vision encoding.
+    Draft contribution is accepted draft tokens divided by all generated tokens. Speedup compares aggregate decode TPS on the same dataset and output budget.</p>`;
+  const speculative = benchmark.settings?.decoding === "speculative";
+  return `<div data-generative-benchmark>${benchmark.synthetic ? '<p class="benchmark-context">Synthetic preview data — for visualization only.</p>' : ""}${rows ? `<div class="benchmark-measurements"><h4>Text</h4>
+    <div class="benchmark-measurements-wrap"><table aria-label="Text performance"><thead><tr>
+    <th scope="col">Workload</th><th scope="col">TTFT (ms)</th><th scope="col">Prefill (tokens/s)</th><th scope="col">Decode (tokens/s)</th>
+    </tr></thead><tbody>${rows}</tbody></table></div></div>` : ""}${images}
+    ${speculative ? `<p>Compared with ${escapeHtml(benchmark.baseline?.display_name || benchmark.baseline?.model_id)} on identical prompts and output budgets.</p>` : ""}
+    ${datasetTable("text_dataset", "Text datasets")}${datasetTable("image_dataset", "Image + text datasets")}
+    <p class="benchmark-context">${speculative ? "Full datasets · one measurement per prompt · one excluded warmup per dataset and deployment"
+      : `1 warmup · ${escapeHtml(benchmark.settings?.repetitions)} measured runs`} · empty cache · up to 256 output tokens${speculative ? "" : " (text buckets: first token plus 256 decode steps)"}</p>
+    ${disclosure("genai-method", "Measurement details", details, "Heat · CPU · Power · Memory")}</div>`;
+}
+
 // Component and role ids read as words: "feature_extractor" becomes "Feature extractor".
 function humanize(id) {
   const words = String(id).replaceAll("_", " ");
@@ -670,6 +727,7 @@ function modelPerformance(variant, modelId) {
   if (result.kind === "missing") return `<p class="muted-message">Not measured at this revision.</p>`;
   if (result.kind === "unsupported") return `<p class="muted-message">This result format is not supported by this browser.</p>`;
   const { run } = benchmarkRun;
+  if (result.value.generation) return generativeBenchmark(result.value, run);
   const components = result.value.components.map((component) => ({ ...component, label: humanize(component.id) }));
   const summary = result.value.scope === "components"
     ? componentPanels(components.map(({ label }) => label), components.map((component) =>

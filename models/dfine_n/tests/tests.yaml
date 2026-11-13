@@ -1,0 +1,59 @@
+# Published registry runs of revision 74b36629 (orchestrator 43248379467), CPU float decode.
+conversion:
+  run_tests: true
+compile:
+  run_tests: true
+accuracy:
+  run_tests: true
+  expected:
+    w16a16:
+      coco-2017-val:
+        coco_map: 0.416733662665512
+        coco_ap50: 0.5971927061939634
+        coco_ap75: 0.44483382735064214
+        coco_ap_small: 0.20947421980092198
+        coco_ap_medium: 0.4572328665394218
+        coco_ap_large: 0.618151962588033
+        coco_ar1: 0.33680112940573126
+        coco_ar10: 0.5585622337977568
+        coco_ar100: 0.6219324163775595
+        coco_ar_small: 0.37592539314911877
+        coco_ar_medium: 0.6881961585533196
+        coco_ar_large: 0.8542692084925588
+    w8a8_w16a16:
+      coco-2017-val:
+        coco_map: 0.39518835416742737
+        coco_ap50: 0.568819449768952
+        coco_ap75: 0.42423415875935394
+        coco_ap_small: 0.18777332039143893
+        coco_ap_medium: 0.442711649783431
+        coco_ap_large: 0.5947845306297856
+        coco_ar1: 0.3255543837358274
+        coco_ar10: 0.5371222567565733
+        coco_ar100: 0.5947588955024771
+        coco_ar_small: 0.331491667664814
+        coco_ar_medium: 0.6744101828214457
+        coco_ar_large: 0.8381378735816218
+    w8a8_mixed_w16a16:
+      coco-2017-val:
+        coco_map: 0.415245645595433
+        coco_ap50: 0.5965581048466632
+        coco_ap75: 0.4414500378045159
+        coco_ap_small: 0.2082480462025208
+        coco_ap_medium: 0.4559249721702594
+        coco_ap_large: 0.6146541460294881
+        coco_ar1: 0.3342544639840149
+        coco_ar10: 0.5573885931662298
+        coco_ar100: 0.6222325368613473
+        coco_ar_small: 0.3703174032184969
+        coco_ar_medium: 0.6903131330633963
+        coco_ar_large: 0.8535192999153637
+performance:
+  run_tests: true
+  expected:
+    w16a16:
+      throughput_fps: 173.95288294753567
+    w8a8_w16a16:
+      throughput_fps: 203.3314177412128
+    w8a8_mixed_w16a16:
+      throughput_fps: 173.08666937241495

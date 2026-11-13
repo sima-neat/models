@@ -94,8 +94,11 @@ Remove a selected variant using the × in its table heading or its chart label.
 The chart labels only selected variants plotted against its current dataset and metric.
 Selections without matching accuracy or throughput appear only in the comparison table.
 The graph, table and model selector update together. The link
-preserves the task and selected variants. Tasks containing only LLM, VLM or audio models
-show **TBD**. Multimodal detectors can still join a vision-task comparison.
+preserves the task and selected variants. Text Generation and Visual Question Answering
+compare parameters in billions against decode speed for matching workloads.
+Image comparisons use each model's encoder resolution, listed in its tooltip and table.
+A workload selector appears when several text buckets or datasets are available.
+Audio comparisons show **TBD**. Multimodal detectors can still join a vision-task comparison.
 
 On a phone, the section navigation shortens **Developer docs** to **Docs**.
 
@@ -140,7 +143,7 @@ in this order:
    [README requirements](https://github.com/sima-neat/models/blob/develop/AGENTS.md#model-readme-requirements).
 2. **Performance.** One whole-model result for the selected build profile,
    read from the profile's [model report](benchmarking.md#workload-and-measurements).
-   Four tiles show one number each: throughput, average latency, average SoM
+   Core models show four tiles: throughput, average latency, average SoM
    power, and energy per inference. The line below them names the workload the
    report records, such as **YoloV26 box decoder, top 100**, and when it was
    measured. Its commit and GitHub workflow are those of the run that measured
@@ -148,6 +151,10 @@ in this order:
    [benchmark fingerprint](benchmarking.md#ci-and-registry-publication) changes, so that
    commit can be later than the build's. A profile with no result shows **Not measured at
    this revision.**
+   LLMs and VLMs show TTFT, prefill and decode tables for text, with image timings
+   in a separate table. Speculative models show dataset comparisons, draft
+   contribution and speedup. Measurement details show each workload's telemetry,
+   including its ordinary baseline when present.
    When the report includes MLA layer stats, **Runtime Layer Analysis**
    shows one full-width table with **Compiled layer / Execution time (µs) / Share (%)**
    headings. Each execution-time cell shows its exact value above a thin bar,

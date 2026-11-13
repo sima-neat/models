@@ -16,10 +16,17 @@ from .documentation import load_model_documentation
 from .errors import ModelRegistryError
 from .fetch import Fetcher, resolve_dataset
 from .mla_stage_simulation import write_mla_stage_simulation
-from .model import component_for, component_pipelines, load_and_validate_model, load_models, profile_component_for
+from .model import (
+    build_profile_for,
+    component_for,
+    component_pipelines,
+    load_and_validate_model,
+    load_models,
+    profile_component_for,
+)
 from .model_tests import TEST_OUTCOMES
 from .runner_approval import authorize_runner_matrix
-from .stage_plan import plan_stages, resolve_base_branches
+from .stage_plan import plan_promoted_benchmarks, plan_stages, resolve_base_branches
 
 AUTHOR_COMMANDS = frozenset(
     {
@@ -151,6 +158,13 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     stages.add_argument("--force-rebuild-all", action="store_true")
     stages.add_argument("--include-on-demand", action="store_true", help="build explicitly selected on-demand models")
 
+    promoted = subcommands.add_parser(
+        "plan-promoted-benchmarks", help="list missing promoted benchmarks, excluding text generation (CI only)"
+    )
+    promoted.add_argument("--api-url", required=True)
+    promoted.add_argument("--branch", required=True, choices=("develop", "main"))
+    promoted.add_argument("--stages", default="performance,accuracy")
+
     authorize = subcommands.add_parser(
         "authorize-runner-matrix",
         help="authorize compile runner requests against a Terraform-published Vulcan specification",
@@ -173,6 +187,11 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     )
     benchmark_runtime.add_argument("--repository", type=Path, default=Path.cwd())
 
+    benchmark_job = subcommands.add_parser("benchmark-job", help="print benchmark job settings for GitHub Actions")
+    benchmark_job.add_argument("model_dir", type=Path)
+    benchmark_job.add_argument("--build-profile", required=True)
+    benchmark_job.add_argument("--stages", required=True)
+
     core = subcommands.add_parser("ensure-neat-core", help="verify or install the selected benchmark Core artifact")
     core.add_argument("--repository", type=Path, default=Path.cwd())
     core.add_argument("--environment", default="production")
@@ -187,7 +206,8 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     devkit_accuracy.add_argument("--build-profile", required=True)
 
     inputs = subcommands.add_parser(
-        "model-component-mpks", help="print component=path for each component MPK a build profile's benchmarks run"
+        "model-component-mpks", aliases=["model-component-artifacts"],
+        help="print component=path for each verified component; the artifacts alias accepts native LLiMa deployments"
     )
     inputs.add_argument("compiled_dir", type=Path, help="root holding <model>/<profile>/compile-outputs.json")
     inputs.add_argument("--repository", type=Path, default=Path.cwd())
@@ -399,10 +419,13 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     stage_registry.add_argument("--output-dir", type=Path, required=True)
     stage_registry.add_argument("--api-url", required=True)
     stage_registry.add_argument("--branch", required=True)
+    stage_registry.add_argument("--deployment-branch", help="restore deployments from another branch's current catalog")
     stage_registry.add_argument("--catalog-revision", required=True)
     stage_registry.add_argument("--model-id", required=True)
     stage_registry.add_argument("--build-profile-id", required=True)
     stage_registry.add_argument("--compile-invocation-id", required=True)
+    stage_registry.add_argument("--benchmark-baseline", action="store_true",
+                                help="restore only the declared ordinary benchmark baseline")
     stage_registry.add_argument("--json", action="store_true", dest="json_output")
 
     if not author_safe:
@@ -680,6 +703,20 @@ def _resolve_benchmark_runtime(args: argparse.Namespace) -> int:
     return 0
 
 
+def _benchmark_job(args: argparse.Namespace) -> int:
+    model = load_and_validate_model(args.model_dir)
+    profile = build_profile_for(model, args.build_profile)
+    native = model["components"][0]["interface"]["format"] == "huggingface"
+    performance = (
+        "performance" in args.stages.split(",") and args.build_profile in benchmarked_profiles(model, "performance")
+    )
+    baseline = performance and bool(profile.get("benchmark_baseline"))
+    print(f"backend={'llima' if native else 'core'}")
+    print(f"needs_baseline={str(baseline).lower()}")
+    print(f"timeout_minutes={4320 if native and baseline else 45}")
+    return 0
+
+
 def _verify_mpk(args: argparse.Namespace) -> int:
     fields = (
         "model_id",
@@ -856,7 +893,8 @@ def _check_report(args: argparse.Namespace) -> int:
 
     report = check_report(args.output_dir / REPORT_FILE, args.repository, args.model, args.build_profile, args.stage)
     (args.output_dir / ENVIRONMENT_FILE).write_text(
-        json.dumps(runner_environment(), indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        json.dumps(runner_environment(native=True) if "generation" in report else runner_environment(),
+                   indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
     if args.stage == "accuracy":
         for name, result in report["datasets"].items():
@@ -929,17 +967,19 @@ def _publish_catalog(args: argparse.Namespace) -> int:
 
 
 def _stage_registry_build(args: argparse.Namespace) -> int:
-    from .registry import stage_catalog_build
+    from .registry import stage_benchmark_baseline, stage_catalog_build
 
-    result = stage_catalog_build(
+    stage = stage_benchmark_baseline if args.benchmark_baseline else stage_catalog_build
+    result = stage(
         repository=args.repository,
         output_dir=args.output_dir,
         api_url=args.api_url,
         branch=args.branch,
         catalog_revision=args.catalog_revision,
+        deployment_branch=args.deployment_branch,
         model_id=args.model_id,
         build_profile_id=args.build_profile_id,
-        compile_invocation_id=args.compile_invocation_id,
+        **({} if args.benchmark_baseline else {"compile_invocation_id": args.compile_invocation_id}),
     )
     print(json.dumps(result, sort_keys=True) if args.json_output else f"Staged {result['count']} registry MPK(s)")
     return 0
@@ -1005,6 +1045,14 @@ def _main(argv: Sequence[str] | None, *, author_safe: bool) -> int:
             return _reference_metrics(args)
         if args.command == "plan-stages":
             return _plan_stages(args)
+        if args.command == "plan-promoted-benchmarks":
+            from .registry import _public_registry_json
+
+            print(json.dumps(plan_promoted_benchmarks(
+                branch=args.branch, stages=args.stages.split(","),
+                read=_public_registry_json, read_api_url=args.api_url,
+            ), sort_keys=True))
+            return 0
         if args.command == "authorize-runner-matrix":
             return _authorize_runner_matrix(args)
         if args.command == "resolve-base":
@@ -1013,6 +1061,8 @@ def _main(argv: Sequence[str] | None, *, author_safe: bool) -> int:
             return _resolve_compiler(args)
         if args.command == "resolve-benchmark-runtime":
             return _resolve_benchmark_runtime(args)
+        if args.command == "benchmark-job":
+            return _benchmark_job(args)
         if args.command == "ensure-neat-core":
             from .neat_core import ensure_neat_core
 
@@ -1022,10 +1072,11 @@ def _main(argv: Sequence[str] | None, *, author_safe: bool) -> int:
             return 0
         if args.command == "resolve-devkit-accuracy":
             return _resolve_devkit_accuracy(args)
-        if args.command == "model-component-mpks":
-            from .report_publication import model_component_mpks
+        if args.command in ("model-component-mpks", "model-component-artifacts"):
+            from .report_publication import model_component_artifacts, model_component_mpks
 
-            print("\n".join(model_component_mpks(args.compiled_dir, args.repository, args.model, args.build_profile)))
+            inputs = model_component_mpks if args.command == "model-component-mpks" else model_component_artifacts
+            print("\n".join(inputs(args.compiled_dir, args.repository, args.model, args.build_profile)))
             return 0
         if args.command == "model-runtime-directory":
             from .runtime_files import read_runtime_files

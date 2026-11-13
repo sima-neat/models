@@ -168,9 +168,11 @@ ResNet-50's `calibration.py`, needs that file beside it.
 When no published score matches the package's setup, such as SuperGlue's 512
 keypoints from a 640x480 image, the model page can show an FP32 baseline instead:
 what the unquantized source model scores on the same inputs and protocol. A
-standalone `scripts/fp32_baseline_accuracy.py` measures it on a host. It runs the
-FP32 ONNX the model compiles with ONNX Runtime and scores it with the model's own `accuracy.py`,
-so only the model execution differs from the DevKit stage:
+standalone `scripts/fp32_baseline_accuracy.py` measures it by hand on a host. It runs an
+FP32 ONNX with ONNX Runtime and scores it with the model's own `accuracy.py`,
+so only the model execution differs from the DevKit stage. Its docstring names the ONNX
+it reads: the output of the model's own `convert.py`, such as DETR's, or that output
+after `surgery.py`, such as SuperGlue's:
 
 ```bash
 PYTHONPATH=tools python models/superglue_outdoor/scripts/fp32_baseline_accuracy.py \
@@ -179,8 +181,10 @@ PYTHONPATH=tools python models/superglue_outdoor/scripts/fp32_baseline_accuracy.
 ```
 
 Copy its metrics into a `reference_metrics` entry with `origin: fp32_baseline`
-([reference metrics](metadata-schema.md#reference-metrics)). No stage runs the
-script and no fingerprint includes it, so adding or editing it reruns nothing.
+([reference metrics](metadata-schema.md#reference-metrics)), and give the command and
+its output in the pull request. No stage runs the script and no fingerprint includes it,
+so adding or editing it reruns nothing, and the ONNX you convert locally need not match
+the sha256 of the file Vulcan Model Convert published.
 
 ### Report and publication
 

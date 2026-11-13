@@ -505,11 +505,99 @@ async function checkTaskComparison(browser, base) {
         if (await page.locator('.compare-table, .compare-selected').count()) throw new Error('removing the final variant left an empty table');
         if (new URL(page.url()).searchParams.getAll('build').length) throw new Error('removing the final variant left a selection in the URL');
         await page.locator('[data-compare-control="task"]').selectOption('text_generation');
-        await page.locator('.compare-tbd').waitFor();
-        if (await page.locator('.compare-chart, .compare-table, [data-compare-add]').count()) throw new Error('LLM task rendered vision measurements');
+        const workload = page.locator('[data-compare-control="workload"]');
+        await workload.waitFor();
+        if (await page.locator('[data-compare-control="graph"], .compare-bucket-line').count()) throw new Error('removed graph controls remain visible');
+        if (await page.locator('.compare-point').count() !== 1) throw new Error('LLM chart must plot Qwen measurements only');
+        if (await workload.locator('option').count() !== 6) throw new Error('LLM group mixed image and text workloads');
+        if (JSON.stringify(await page.locator('.compare-axis-title').allTextContents()) !== JSON.stringify(['Parameters (billions)', 'Decode (tokens/s)'])) throw new Error('GenAI chart uses the wrong axes');
+        await add.selectOption('qwen3_5_0_8b.w4a16');
+        await add.selectOption('gemma_4_e2b_it_textonly.w4a16');
+        const table = page.locator('.compare-table');
+        if (await table.locator('thead th').count() !== 2) throw new Error('unmeasured model is missing from selected LLMs');
+        const parameterRow = table.locator('tr').filter({has: page.getByRole('rowheader', {name: 'Parameters', exact: true})});
+        if (JSON.stringify(await parameterRow.locator('td').allTextContents()) !== JSON.stringify(['0.8 B', '5.1 B'])) throw new Error('parameter counts are missing or use deployment size');
+        const ttftRow = table.locator('tr').filter({has: page.getByRole('rowheader', {name: 'Time to first token', exact: true})});
+        if (JSON.stringify(await ttftRow.locator('td').allTextContents()) !== JSON.stringify(['43.3 ms', '—'])) throw new Error('workload table fabricated or mixed measurements');
+        await workload.selectOption('text_3072');
+        if (await ttftRow.locator('td').first().innerText() !== '910.5 ms') throw new Error('table did not follow input length');
+        const hoverNativePoint = async point => {
+          await point.scrollIntoViewIfNeeded();
+          // Scrolling intentionally hides popups; finish scrolling before moving onto the point.
+          await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+          await page.mouse.move(0, 0);
+          await point.hover();
+        };
+        await hoverNativePoint(page.locator('.compare-point'));
+        if (!(await tooltip.innerText()).includes('0.8 B') || !(await tooltip.innerText()).includes('3072 input tokens')) throw new Error('GenAI tooltip is missing parameters or workload');
+        await page.reload();
+        await table.waitFor();
+        await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
+        if (await workload.inputValue() !== 'text_3072' || await table.locator('thead th').count() !== 2) throw new Error('reload lost LLM comparison settings');
+        if (await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)) throw new Error('LLM comparison overflows the page');
+        await page.screenshot({path: `/tmp/models-ui-compare-llm-${viewport.width}-${theme}.png`});
+        await page.locator('.compare-point').click();
+        if (await table.locator('thead th').count() !== 1 || await page.locator('.compare-point').count() !== 1) throw new Error('deselection hid an available LLM point');
+        await page.locator('.compare-point').click();
+        if (await table.locator('thead th').count() !== 2) throw new Error('LLM could not be reselected');
+        await page.locator('[data-compare-control="task"]').selectOption('visual_question_answering');
+        await page.locator('.compare-point').waitFor();
+        if (await page.locator('[data-compare-control="workload"], [data-compare-control="graph"]').count()) throw new Error('VLM comparison must not have workload or graph selectors');
+        if (await add.locator('option[value^="gemma_4_e2b_it_textonly"]').count()) throw new Error('text-only model appears in the VLM group');
+        if (await table.locator('thead th').count() !== 1 || await ttftRow.locator('td').first().innerText() !== '132.3 ms') throw new Error('VLM table did not use its image-inclusive TTFT');
+        if (await page.locator('.compare-chart-dataset').innerText() !== 'Image + text at encoder resolution') throw new Error('VLM chart labels all models with one encoder resolution');
+        const resolutionRow = table.locator('tr').filter({has: page.getByRole('rowheader', {name: 'Image resolution', exact: true})});
+        if (await resolutionRow.locator('td').first().innerText() !== '448 × 448') throw new Error('VLM table did not identify its encoder resolution');
+        if (await table.getByRole('rowheader', {name: 'Prefill', exact: true}).count()) throw new Error('VLM comparison fabricated prefill TPS');
+        if (new URL(page.url()).searchParams.has('compare_workload')) throw new Error('VLM link retains a text input length');
+        await hoverNativePoint(page.locator('.compare-point'));
+        if (!(await tooltip.innerText()).includes('Image 448 × 448 + text')) throw new Error('VLM tooltip did not identify its encoder resolution');
+        await page.mouse.move(0, 0);
+        await page.screenshot({path: `/tmp/models-ui-compare-vlm-${viewport.width}-${theme}.png`});
         if (errors.length) throw new Error(errors.join('; '));
         console.log(`ok  Task comparison · ${viewport.width}px ${theme}`);
       } finally { await page.close(); }
+    }
+  }
+}
+
+async function checkGenerativeBenchmark(browser, url) {
+  for (const viewport of [{width: 1440, height: 1000}, {width: 390, height: 844}]) {
+    for (const theme of ['light', 'dark']) {
+      const page = await browser.newPage({viewport});
+      try {
+        await page.goto(url.href);
+        const table = page.getByRole('table', {name: 'Text performance', exact: true});
+        await table.waitFor();
+        await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
+        if (await table.locator('tbody tr').count() !== 6) throw new Error('missing text workloads');
+        const imageTable = page.getByRole('table', {name: 'Image and text performance', exact: true});
+        if (await imageTable.locator('thead th').count() !== 2) throw new Error('image table must show TTFT and decode only');
+        if (await imageTable.locator('tbody tr').count() !== 1) throw new Error('missing image workload');
+        if (!await page.getByText('One 448 × 448 image with the prompt “Describe what you see in the image.”', {exact: true}).isVisible()) throw new Error('missing image input description');
+        if (await page.locator('.kpis').count()) throw new Error('GenAI benchmark must not show vision FPS tiles');
+        await page.getByText('Measurement details', {exact: true}).click();
+        const picker = page.locator('[data-genai-workload]');
+        if (await picker.locator('option').count() !== 7) throw new Error('missing telemetry workload choices');
+        for (const id of ['text_n128', 'image']) {
+          await picker.selectOption(id);
+          const panel = page.locator(`[data-genai-details="${id}"]`);
+          if (!await panel.isVisible()) throw new Error('workload selection did not reveal its readings');
+          if (await page.locator('[data-genai-details]:visible').count() !== 1) throw new Error('mixed workload readings');
+          for (const title of ['Performance', 'Heat', 'CPU', 'Power', 'Memory']) {
+            if (!await panel.getByRole('heading', {name: new RegExp(`^${title}`)}).isVisible()) throw new Error(`missing ${title} card`);
+          }
+          if (await panel.locator('.core-load li').count() !== 16) throw new Error('missing per-core CPU utilization');
+          if (!await panel.locator('.rail-split').isVisible()) throw new Error('missing power rail breakdown');
+        }
+        await picker.selectOption('text_n128');
+        await page.locator('[data-generative-benchmark]').screenshot({path: `/tmp/models-genai-telemetry-${viewport.width}-${theme}.png`});
+        await page.screenshot({path: `/tmp/models-genai-${viewport.width}-${theme}.png`, fullPage: true});
+        if (await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)) throw new Error('page overflows viewport');
+        console.log(`ok  GenAI benchmark · ${viewport.width}px ${theme}`);
+      } finally {
+        await page.close();
+      }
     }
   }
 }
@@ -563,6 +651,7 @@ try {
     await checkFamilyCatalog(browser, new URL('/', variantUrl));
     await checkCatalogLayouts(browser, new URL('/', variantUrl));
     await checkTaskComparison(browser, variantUrl);
+    await checkGenerativeBenchmark(browser, new URL('/?model=qwen3_5_0_8b&variant=w4a16', variantUrl));
     await checkLicensedDownloads(browser, variantUrl);
     for (const [name, url, readySelector] of checks) {
       const problems = await checkPage(browser, url, readySelector);

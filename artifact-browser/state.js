@@ -48,6 +48,7 @@ export const state = {
   comparePicks: ["", "", ""],
   compareTask: initialQuery.get("compare_task") || "",
   compareAxis: "",
+  compareWorkload: initialQuery.get("compare_workload") || "",
   activeProfileByModel: new Map(),
   taxonomy: null,
   categorySelection: Object.fromEntries(

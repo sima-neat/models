@@ -9,5 +9,8 @@
   },
   "neat-core": {
     "install_target": "core@develop"
+  },
+  "llima": {
+    "install_target": "llima@develop:abcfe372a575"
   }
 }

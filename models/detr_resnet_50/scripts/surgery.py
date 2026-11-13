@@ -45,11 +45,22 @@ VALIDATION_SEED = 123
 # 3e-5 in the box fractions, and every confident detection keeps its class.
 LOGITS_TOLERANCE = 3e-3
 BOXES_TOLERANCE = 1e-3
-# Regions a W8A8 build can run BF16. In a host fake-quant screen at 640x640, keeping the heads float recovered 11
-# of the 13 mAP points W8A8 lost, with almost none of the MACs.
-BF16_REGIONS = ("heads",)
-# The class Linear (MatMul, Add) and the box MLP up to its logits (three MatMul and Add, two Relu).
-HEAD_OPERATIONS = 10
+# The operations a W8A8 build can run BF16, by region, and how many each region has.
+BF16_REGIONS = {
+    # 17 blocks of scores, scale, softmax, weighted values, head merge (Concat) and output projection; 50 Q, K and V
+    # Linear layers (MatMul, Add) and their head splits (Reshape, Transpose), the first cross-attention's queries being
+    # a constant; and 17 position embedding Adds, shared by each self-attention's Q and K and by every
+    # cross-attention's keys.
+    "attention": 319,
+    # 30 LayerNorms and the 29 residual sums they normalize.
+    "residual": 59,
+    # Twelve feed-forward networks of five operations.
+    "ffn": 60,
+    # The class Linear (MatMul, Add) and the box MLP up to its logits (three MatMul and Add, two Relu).
+    "heads": 10,
+}
+# Operations that move values without computing: a region ends at the first other operation that reads it.
+LAYOUT_OPS = {"Reshape", "Transpose", "Split", "Concat"}
 
 
 def _shape(value: onnx.ValueInfoProto) -> list[int]:
@@ -321,9 +332,8 @@ def _cut_box_sigmoid(model: onnx.ModelProto) -> onnx.ModelProto:
     return _prune_and_check(model)
 
 
-def _head_operations(model: onnx.ModelProto) -> list[onnx.NodeProto]:
+def _head_operations(graph: GraphIndex) -> list[onnx.NodeProto]:
     """Every operation between the decoder's last LayerNorm and the two outputs."""
-    graph = _index(model)
     found: dict[str, onnx.NodeProto] = {}
     pending = list(OUTPUTS)
     while pending:
@@ -332,23 +342,134 @@ def _head_operations(model: onnx.ModelProto) -> list[onnx.NodeProto]:
             continue
         found[node.name] = node
         pending.extend(node.input)
-    _require(len(found) == HEAD_OPERATIONS, f"expected {HEAD_OPERATIONS} head operations, found {len(found)}")
-    return [node for node in model.graph.node if node.name in found]
+    return list(found.values())
 
 
-def annotate_bf16_regions(graph: Path, regions: list[str]) -> int:
-    """Mark each region's operations BF16 for AFE, in place, and return how many were marked.
+def _projection_operations(graph: GraphIndex, value: str) -> list[onnx.NodeProto]:
+    """The Linear layer (MatMul, Add) that projects an attention's Q, K or V, the layout operations that split it into
+    heads, and the position embedding it reads."""
+    if value in graph.constants:  # The first cross-attention's queries are a folded constant.
+        return []
+    node, layout = graph.producers[value], []
+    while node.op_type in LAYOUT_OPS:
+        layout.append(node)
+        node = graph.producers[node.input[0]]
+    _require(node.op_type == "Add", f"expected the projection bias producing {value}")
+    projection = _producer(graph, _constant_operand(graph, node)[0], "MatMul")
+    operations = [projection, node, *layout]
+    embedding = graph.producers.get(projection.input[0])
+    if embedding is not None and embedding.op_type == "Add" and len(set(embedding.input) & set(graph.constants)) == 1:
+        operations.append(embedding)
+    return operations
 
-    AFE gives an AnnotatePrecision's precision to the operation producing its input. The heads end at the
-    graph outputs, so no INT8 mark is needed to close the region, and both outputs leave in BF16.
+
+def _attention_operations(graph: GraphIndex) -> list[onnx.NodeProto]:
+    """Every attention block's Q, K and V projections, scores, softmax, weighted values, head merge and output
+    projection.
+
+    AFE runs a layout operation at the global precision unless it is marked, so the head split and merge inside a block
+    are marked too. The Split has eight outputs and cannot carry a mark; its slices take the precision of their input.
     """
-    _require(list(regions) == ["heads"], f"unknown BF16 regions {regions}; choose from {list(BF16_REGIONS)}")
+    operations = []
+    for softmax in [node for node in graph.producers.values() if node.op_type == "Softmax"]:
+        scale = _producer(graph, softmax.input[0], "Mul")
+        scores = _producer(graph, scale.input[0], "Einsum")
+        values = _sole_reader(graph, softmax, "Einsum")
+        split = _sole_reader(graph, values, "Split")
+        packed = graph.users[split.output[0]][0]
+        projection = _sole_reader(graph, packed, "Conv")
+        operations += [scores, scale, softmax, values, packed, projection]
+        for value in (*scores.input, values.input[1]):
+            operations += _projection_operations(graph, value)
+    return operations
+
+
+def _residual_operations(graph: GraphIndex) -> list[onnx.NodeProto]:
+    """Every LayerNorm and the residual sum it normalizes."""
+    operations = []
+    for norm in [node for node in graph.producers.values() if node.op_type == "LayerNormalization"]:
+        operations.append(norm)
+        source = graph.producers[norm.input[0]]
+        if source.op_type == "Add":  # The decoder's last LayerNorm reads the final layer's LayerNorm instead.
+            operations.append(source)
+    return operations
+
+
+def _ffn_operations(graph: GraphIndex) -> list[onnx.NodeProto]:
+    """Every layer's feed-forward network: two Linear layers (MatMul, Add) around a Relu.
+
+    The backbone's Relus read convolutions. The box head's MLP has the same shape as a feed-forward network, but
+    its second Linear feeds a Relu rather than a residual sum.
+    """
+    operations = []
+    for relu in [node for node in graph.producers.values() if node.op_type == "Relu"]:
+        expand = graph.producers[relu.input[0]]
+        variables = [value for value in expand.input if value not in graph.constants]
+        linear = graph.producers.get(variables[0]) if expand.op_type == "Add" and len(variables) == 1 else None
+        if linear is None or linear.op_type != "MatMul":
+            continue
+        contract = _sole_reader(graph, relu, "MatMul")
+        reduce = _sole_reader(graph, contract, "Add")
+        if [reader.op_type for reader in graph.users[reduce.output[0]] if reader is not None] == ["Add"]:
+            operations += [linear, expand, relu, contract, reduce]
+    return operations
+
+
+REGION_OPERATIONS = {
+    "attention": _attention_operations,
+    "residual": _residual_operations,
+    "ffn": _ffn_operations,
+    "heads": _head_operations,
+}
+
+
+def _first_operations(graph: GraphIndex, value: str) -> list[onnx.NodeProto]:
+    """The operations that read value, looking through layout operations."""
+    operations = []
+    for reader in graph.users[value]:
+        if reader is None:
+            continue
+        if reader.op_type in LAYOUT_OPS:
+            for output in reader.output:
+                operations += _first_operations(graph, output)
+        else:
+            operations.append(reader)
+    return operations
+
+
+def precision_marks(model: onnx.ModelProto, regions: list[str]) -> dict[str, str]:
+    """Return the precision to annotate after each operation, by name: bfloat16 for the regions' operations and int8
+    for the operations that first read their results.
+
+    AFE gives an annotation's precision to the operation producing its input, and each later operation takes the
+    precision its inputs share, so an int8 mark on each first reader ends a region.
+    """
+    unknown = sorted(set(regions) - set(BF16_REGIONS))
+    _require(not unknown, f"unknown BF16 regions {unknown}; choose from {list(BF16_REGIONS)}")
+    graph = _index(model)
+    promoted = {}
+    for region in regions:
+        operations = {node.name: node for node in REGION_OPERATIONS[region](graph)}
+        _require(
+            len(operations) == BF16_REGIONS[region],
+            f"expected {BF16_REGIONS[region]} {region} operations, found {len(operations)}",
+        )
+        promoted.update(operations)
+    marks = dict.fromkeys(promoted, "bfloat16")
+    for node in promoted.values():
+        for reader in _first_operations(graph, node.output[0]):
+            marks.setdefault(reader.name, "int8")
+    return marks
+
+
+def annotate_bf16_regions(graph: Path, regions: list[str]) -> dict[str, int]:
+    """Mark the regions' operations BF16 for AFE, in place; return how many marks of each precision it wrote."""
     model = onnx.load(graph)
-    marked = {node.name for node in _head_operations(model)}
+    marks = precision_marks(model, regions)
     nodes = []
     for node in model.graph.node:
         nodes.append(node)
-        if node.name in marked:
+        if node.name in marks:
             _require(len(node.output) == 1, f"one output to annotate at {node.name}")
             value = node.output[0]
             node.output[0] = f"{value}/unannotated"
@@ -359,7 +480,7 @@ def annotate_bf16_regions(graph: Path, regions: list[str]) -> int:
                     [value],
                     name=f"{node.name}/AnnotatePrecision",
                     domain="ai.sima",
-                    precision="bfloat16",
+                    precision=marks[node.name],
                 )
             )
     del model.graph.node[:]
@@ -367,7 +488,7 @@ def annotate_bf16_regions(graph: Path, regions: list[str]) -> int:
     model.opset_import.append(helper.make_opsetid("ai.sima", 1))
     onnx.checker.check_model(model)
     onnx.save(model, graph)
-    return len(marked)
+    return {precision: list(marks.values()).count(precision) for precision in ("bfloat16", "int8")}
 
 
 def validate_rewrite(source: Path, rewritten: Path, inputs: np.ndarray) -> None:

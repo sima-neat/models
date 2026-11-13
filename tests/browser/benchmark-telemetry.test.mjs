@@ -98,6 +98,25 @@ test('reads accuracy per dataset, in the order the run parameters declare them',
   assert.equal(readAccuracy({run, parameters: {}, report: {...report, datasets: null}}).kind, 'unsupported');
 });
 
+test('adapts dataset comparisons without inventing an image size or mixing baseline telemetry', () => {
+  const report = fixture('performance');
+  const metrics = {decode_tps: {value: 32, sample_count: 3}, draft_contribution_pct: {value: 50}, decode_speedup: {value: 1.6}};
+  report.generation = {settings: {decoding: 'speculative'}, workloads: [{
+    id: 'dataset_chartqa', kind: 'image_dataset', dataset: {name: 'chartqa'}, metrics,
+    telemetry: {cpu_usage_pct: {samples: 3, mean: 20}},
+    baseline: {id: 'dataset_chartqa', kind: 'image_dataset', dataset: {name: 'chartqa'},
+      metrics: {decode_tps: {value: 20, sample_count: 3}}, telemetry: {cpu_usage_pct: {samples: 3, mean: 10}}},
+  }]};
+  const workload = performance(report).value.workloads[0];
+  assert.equal(workload.label, 'ChartQA');
+  assert.equal(workload.key, 'dataset_chartqa');
+  assert.equal(workload.measurements.decode_speedup.value, 1.6);
+  assert.equal(workload.measurements.draft_contribution_pct.value, 50);
+  assert.equal(workload.measurements.avg_cpu_usage_pct.value, 20);
+  assert.equal(workload.baseline.measurements.avg_cpu_usage_pct.value, 10);
+  assert.equal(workload.baseline.measurements.decode_tps.value, 20);
+});
+
 test('independent components retain separate metrics, telemetry and workloads without an aggregate', () => {
   const saved = fixture('performance');
   const stats = saved.components.model;
