@@ -246,7 +246,7 @@ def quantize_component(build: ComponentBuild, samples: list[dict[str, np.ndarray
     regions = bf16_regions(component, parameters)
     gelus = int8_gelus(component, parameters)
     source = build.graph
-    annotated = build.build_dir.with_name(f"{component}-annotated.onnx")
+    annotated = build.graph.with_name(f"{component}-annotated.onnx")
     if regions:
         source = annotated
         marks = annotate_bf16_regions(build.graph, source, component, regions)
