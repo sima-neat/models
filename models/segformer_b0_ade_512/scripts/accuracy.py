@@ -239,6 +239,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--mpk", action="append", required=True, help="model=<path>")
     parser.add_argument("--dataset", required=True, help=f"{DATASET}=<extracted directory>")
     parser.add_argument("--output", type=Path, required=True, help="directory for model-report.json")
+    parser.add_argument("--resources", type=Path, help="package resource directory (license only)")
     parser.add_argument("--limit", type=int, help="measure the first images only (local runs only)")
     args = parser.parse_args(argv)
     root, images, available = parse_dataset(parser, args.dataset, args.limit)

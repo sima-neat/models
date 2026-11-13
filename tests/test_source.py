@@ -80,11 +80,22 @@ def test_github_release_file_addressed_by_tag_is_a_source() -> None:
     assert source.filename == "yolov8n-obb.pt"
 
 
+@pytest.mark.parametrize("path", ["LICENSE", "licenses/LICENSE"])
+def test_github_raw_file_requires_a_full_commit(path: str) -> None:
+    uri = f"https://raw.githubusercontent.com/NVlabs/SegFormer/{REVISION}/{path}"
+    source = SourceSpec(uri=uri, sha256=DIGEST, size_bytes=10)
+    assert source.resolve_url() == uri
+    assert source.filename == "LICENSE"
+
+
 @pytest.mark.parametrize(
     ("uri", "reason"),
     [
         ("https://api.github.com/repos/ultralytics/assets/releases/assets/508126877", "host is not approved"),
-        ("https://raw.githubusercontent.com/ultralytics/assets/main/yolov8n-obb.pt", "host is not approved"),
+        ("https://raw.githubusercontent.com/ultralytics/assets/main/yolov8n-obb.pt", "full commit"),
+        ("https://raw.githubusercontent.com/NVlabs/SegFormer/master/LICENSE", "full commit"),
+        ("https://raw.githubusercontent.com/NVlabs/SegFormer/1022b45/LICENSE", "full commit"),
+        (f"https://raw.githubusercontent.com/NVlabs/SegFormer/{REVISION}/", "file path"),
         ("https://github.com/ultralytics/assets/raw/main/yolov8n-obb.pt", "by its tag"),
         ("https://github.com/ultralytics/assets/archive/refs/tags/v8.4.0.zip", "by its tag"),
         ("https://github.com/ultralytics/assets/releases/latest/download/yolov8n-obb.pt", "by its tag"),
