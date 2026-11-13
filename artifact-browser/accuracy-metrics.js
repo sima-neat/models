@@ -60,6 +60,7 @@ export const ACCURACY_METRIC_LABELS = {
   d1_all: "D1-all",
   abs_rel: "AbsRel",
   delta1: "δ1",
+  miou: "mIoU",
 };
 
 // Accuracy metrics with non-default units, directions or display settings; matches metrics.json.

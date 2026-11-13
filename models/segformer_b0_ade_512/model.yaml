@@ -1,0 +1,96 @@
+display_name: SegFormer-B0 ADE20K
+description: Labels every pixel of a scene with one of the 150 ADE20K classes.
+model_type: vision
+tasks: [semantic_segmentation]
+
+modalities:
+  inputs: [image]
+  outputs: [masks]
+
+architecture: segformer
+
+# The NVIDIA Source Code License for SegFormer allows use only noncommercially, for research or evaluation.
+license:
+  spdx: LicenseRef-NVIDIA-Source-Code-License-SegFormer
+  redistribution: restricted
+  attribution: SegFormer by NVIDIA, under the NVIDIA Source Code License (https://github.com/NVlabs/SegFormer/blob/master/LICENSE).
+
+upstream:
+  repository: https://huggingface.co/nvidia/segformer-b0-finetuned-ade-512-512
+  revision: 489d5cd81a0b59fab9b7ea758d3548ebe99677da
+  derived_from: https://github.com/NVlabs/SegFormer
+
+conversion:
+  source:
+    repository: nvidia/segformer-b0-finetuned-ade-512-512
+    revision: 489d5cd81a0b59fab9b7ea758d3548ebe99677da
+    main_file: config.json
+    files:
+      config.json: {sha256: 209caa9091e4632f7c8883c11170cd08ad29af68b23c09590aa4a5befb1a2a7f, size_bytes: 6884}
+      model.safetensors: {sha256: 6ae39addd01de6b1b8bde2cf677d43a5cd733424b8d186de3f95d1c51fee23f9, size_bytes: 15036944}
+
+resources:
+  license:
+    source:
+      uri: https://raw.githubusercontent.com/NVlabs/SegFormer/1022b45ddb0d18c6288683d60139ac9b1e83a5f2/LICENSE
+      sha256: f549820c06519e3105e5174a2fd7285224ffd2268a7f879a843b1a255fd04a61
+      size_bytes: 4065
+    install_path: LICENSE
+
+compilation:
+  format: onnx
+  source: conversion
+
+calibrations:
+- id: coco-2017-cal
+  dataset: {id: coco-2017, variant: cal, sha256: 54c64d84122eba371ac014d7b43849a461551c2e6c5c430b5ead90ec1dec12b1, size_bytes: 187510866}
+
+build_profiles:
+  w16a16:
+    components:
+      model:
+        parameters: {precision: w16a16}
+
+  w8a8:
+    calibration_dataset: coco-2017-cal
+    components:
+      model:
+        parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 50}
+
+  # Every Linear layer and convolution stays INT8; the operations INT8 handles worst run BF16: the attention scores,
+  # softmax over 256 keys and weighted values, the residual stream's LayerNorms and sums (single channels reach up to
+  # 21 times the median channel's peak in stages 3 and 4), and the GELU.
+  # surgery.BF16_REGIONS lists each region's operations.
+  w8a8_mixed:
+    calibration_dataset: coco-2017-cal
+    components:
+      model:
+        parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 50,
+                     bf16_regions: [attention_core, norms, gelu]}
+
+# Scored against the ONNX source rather than ADE20K labels, which no registry dataset holds.
+numerical_fidelity:
+  status: diagnostic
+  dataset: {id: coco-2017, variant: val, sha256: a40de1caf42b47c5a8976eb97efe3c83f3a41337c4d16d318eb15d65c293f2da, size_bytes: 898368520}
+  selection: {method: seeded_random_without_replacement, seed: 42, offset: 0, samples: 20}
+  outputs: [logits]
+
+accuracy:
+  # ADE20K's 2,000 SceneParse150 validation images and label maps, scored single scale on the package's 512x512 stretch
+  # (see accuracy.py).
+  datasets:
+  - {id: ade20k, variant: val, sha256: b98b1c9c66fe7d4531e34de3256d54a192ee123e8b0fa5b81dfc81fb0a27c453, size_bytes: 87700104}
+
+performance: {}
+
+reference_metrics:
+- origin: fp32_baseline
+  script: scripts/fp32_baseline_accuracy.py
+  dataset: {id: ade20k, split: val}
+  conditions: FP32 ONNX on ONNX Runtime CPU; each image stretched to 512x512, ImageNet-normalized; single scale; 2000 images
+  metrics: {miou: 0.3594}
+- source: https://arxiv.org/abs/2105.15203v3
+  dataset: {id: ade20k, split: val}
+  conditions: 512x512 training crops; evaluation resizes the short side to 512 and keeps the aspect ratio; single-scale
+  note: Table 2 of the SegFormer paper, MiT-B0 row. This package stretches every image to 512x512 instead, so its scores are not directly comparable.
+  metrics: {miou: 0.374}
