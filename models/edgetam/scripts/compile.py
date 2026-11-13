@@ -174,8 +174,8 @@ def require_bf16_regions(quantized: Any, component: str, regions: list[str]) -> 
 def require_int8_gelus(quantized: Any, component: str) -> None:
     """Fail unless every listed GELU runs in INT8; ignored annotations would silently build the BF16 erf."""
     gelus = sum(
-        type(node.ir.operation).__name__ == "GeluOp"
-        and getattr(node.ir, "quant_config", None) is not None
+        getattr(node.ir, "quant_config", None) is not None
+        and type(node.ir.operation).__name__ == "GeluOp"
         and node.ir.quant_config.quantization_precision.value == QuantizationPrecision.INT_8
         for node in quantized._net.iter_nodes_recursive()
     )
