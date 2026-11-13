@@ -1,0 +1,116 @@
+display_name: D-FINE Nano
+description: Nano D-FINE COCO object detector with default deformable-attention sampling.
+model_type: vision
+tasks:
+- object_detection
+modalities:
+  inputs:
+  - image
+  outputs:
+  - bounding_boxes
+  - class_scores
+architecture: dfine
+license:
+  spdx: Apache-2.0
+  redistribution: allowed
+  attribution: D-FINE is distributed by the D-FINE authors under Apache-2.0; this
+    checkpoint is the USTC community Transformers port.
+upstream:
+  repository: https://huggingface.co/ustc-community/dfine-nano-coco
+  revision: 066438d3d8f0da137a37b38fdf3368fd4afceced
+conversion:
+  source:
+    repository: ustc-community/dfine-nano-coco
+    revision: 066438d3d8f0da137a37b38fdf3368fd4afceced
+    main_file: model.safetensors
+    files:
+      model.safetensors:
+        sha256: 19e06bdc873da819920a8d373b879721a5b9759d822f8213220bb09abbdab58b
+        size_bytes: 15278996
+      config.json:
+        sha256: 7edf2d96d3deb10aa4ec920be0e8e444b617454545bb58093e32bd8e2b96fa2f
+        size_bytes: 6557
+      preprocessor_config.json:
+        sha256: cd38cd59999e7a95d68e487fbe5132df3d4e5c32a0836add57e6126ba0c4eaf1
+        size_bytes: 444
+compilation:
+  format: onnx
+  source: conversion
+  components:
+  - backbone
+  - decoder
+calibrations:
+- id: coco-2017-cal
+  dataset: &id001
+    id: coco-2017
+    variant: cal
+    sha256: 54c64d84122eba371ac014d7b43849a461551c2e6c5c430b5ead90ec1dec12b1
+    size_bytes: 187510866
+# BF16 activations need no calibrated ranges, so only W8A8 backbones calibrate. The W16A16 decoder
+# keeps no INT8 lookup table once surgery.py bounds the reference logits (checked with the pinned
+# compiler: every decoder operation quantizes BF16 without calibration data).
+build_profiles:
+  w16a16:
+    components:
+      backbone:
+        parameters:
+          precision: w16a16
+      decoder:
+        parameters:
+          precision: w16a16
+  w8a8_w16a16:
+    calibration_dataset: coco-2017-cal
+    components:
+      backbone:
+        parameters:
+          precision: w8a8
+          calibration_bins: 1024
+          calibration_samples: 50
+      decoder:
+        parameters:
+          precision: w16a16
+  w8a8_mixed_w16a16:
+    calibration_dataset: coco-2017-cal
+    components:
+      backbone:
+        parameters:
+          precision: w8a8
+          calibration_bins: 1024
+          calibration_samples: 50
+          # Keep HGNet, non-convolution arithmetic and output producers BF16;
+          # the remaining neck/projection convolutions run INT8.
+          bf16_regions: [backbone, nonconv, outputs]
+      decoder:
+        parameters:
+          precision: w16a16
+pipeline:
+- component: backbone
+- cpu: Top 300 content/reference queries
+- component: decoder
+numerical_fidelity:
+  status: diagnostic
+  dataset: *id001
+  selection:
+    method: seeded_random_without_replacement
+    seed: 42
+    offset: 50
+    samples: 10
+  outputs:
+  - pred_boxes
+  - pred_logits
+accuracy:
+  datasets:
+  - id: coco-2017
+    variant: val
+    sha256: a40de1caf42b47c5a8976eb97efe3c83f3a41337c4d16d318eb15d65c293f2da
+    size_bytes: 898368520
+performance: {}
+# The paper's tables list no Nano row; the official README's model zoo does.
+reference_metrics:
+- source: https://github.com/Peterande/D-FINE/blob/956d1709314c2c6a4df6f34de232054578a7449f/README.md
+  dataset:
+    id: coco-2017
+    split: val
+  conditions: 640x640, D-FINE-N, Model Zoo COCO table
+  metrics:
+    coco_map: 0.428

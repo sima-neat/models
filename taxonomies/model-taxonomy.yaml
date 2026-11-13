@@ -80,6 +80,11 @@ architectures:
     description: Detects objects in images by predicting a set of boxes with a transformer.
     paradigm: transformer
     allowed_model_types: [vision]
+  dfine:
+    display_name: D-FINE
+    description: Detects objects in images by refining box edges as distributions with a transformer decoder.
+    paradigm: transformer
+    allowed_model_types: [vision]
   dinov3:
     display_name: DINOv3
     description: Encodes images into a global embedding and patch embeddings with a vision transformer.
@@ -155,6 +160,11 @@ architectures:
     description: Generates text for conversational and instruction-following tasks.
     paradigm: transformer
     allowed_model_types: [llm]
+  netvlad:
+    display_name: NetVLAD
+    description: Describes a whole image as one place descriptor for recognizing places seen before.
+    paradigm: cnn
+    allowed_model_types: [vision]
   phi:
     display_name: Phi
     description: Generates text for conversational and reasoning tasks.
