@@ -254,6 +254,7 @@ test('a download is offered only under a listed license that permits redistribut
   const {readFile} = await import('node:fs/promises');
   const licenses = JSON.parse(await readFile(new URL('../../artifact-browser/licenses.json', import.meta.url), 'utf8'));
   assert.equal(downloadOffered('Apache-2.0', licenses), true);
+  assert.equal(downloadOffered('LicenseRef-NVIDIA-Source-Code-License-SegFormer', licenses), true);
   assert.equal(downloadOffered('LicenseRef-MagicLeap-Noncommercial-Research', licenses), false);
   assert.equal(downloadOffered('LicenseRef-Unlisted', licenses), false);
   assert.equal(downloadOffered(undefined, licenses), false);

@@ -406,8 +406,10 @@ requires a new workflow run. Compiler outputs and publication receipts remain
 GitHub artifacts for recovery. An on-demand profile is always rebuilt whole,
 since older source runs cannot be rebound as new provenance. Ordinary automatic fingerprint reuse is unchanged.
 
-Vulcan limits a candidate to 32 roles, 512 required names, 512 actual S3
-dependencies and a 1 MiB frozen manifest. The producer checks the role/name
+Vulcan limits a candidate to 32 roles, 4,096 required names, 4,096 actual S3
+dependencies and a 4 MiB frozen manifest. Large inventories require
+[Vulcan #475](https://github.com/sima-neat/vulcan/pull/475) deployed in the target
+environment before publication. The producer checks the role/name
 limits before publication; the backend validates the actual frozen dependency
 set. Candidate IDs and scheduling policy do not enter compilation fingerprints.
 

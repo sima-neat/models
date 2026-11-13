@@ -149,8 +149,12 @@ def publish_candidate(
             ]),
             "inputs": sorted(f"component-{component}" for component in package["components"]),
         }
-    if len(roles) > 32 or sum(len(role["artifacts"]) + len(role["inputs"]) for role in roles.values()) > 512:
-        raise ValidationError("candidate exceeds Vulcan's 32-role / 512-required-name limits")
+    required_names = sum(len(role["artifacts"]) + len(role["inputs"]) for role in roles.values())
+    if len(roles) > 32 or required_names > 4096:
+        raise ValidationError(
+            f"candidate exceeds Vulcan's 32-role / 4096-required-name limits "
+            f"({len(roles)} roles, {required_names} required names)"
+        )
     body = {
         "git_ref": f"refs/heads/{branch}", "commit_sha": git_sha,
         "model_id": model_id, "profile_id": build_profile_id,
