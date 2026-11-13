@@ -124,6 +124,10 @@ BF16_REGIONS = {
     "memory_encoder": {},
     "image_encoder": {},
 }
+# The GELUs a W16A16 component runs as INT8 lookup tables, by the name of the last operation the export writes each
+# as, and how many it has. The compiler builds a BF16 GELU from an erf approximation instead, which is slower and
+# agrees less with FP32. The mask decoder's two GELUs are too little work to give it a second precision.
+INT8_GELUS = {"image_encoder": (r"/vision/.*/act1?/Mul_1", 27)}
 # Operations that move values without computing: a region ends at the first other operation that reads it.
 LAYOUT_OPS = {"Reshape", "Transpose", "Split", "Concat", "Slice", "Squeeze", "Unsqueeze"}
 
@@ -272,7 +276,9 @@ def build_components(weights):
     class Attention(torch.nn.Module):
         """One head's attention with rotary encoding from constant tables, and scores added before the softmax.
 
-        The attention scale, 1/16, is folded into the query projections; a power of two, it folds exactly.
+        The attention scale, 1/16, is folded into the query projections; a power of two, it folds exactly. The
+        value projection follows the weighted sum: softmax weights sum to 1, so the result is the same, and cross
+        attention sums its 64-channel memories before widening them to 256 channels.
         """
 
         def __init__(self, attention, query_rope, key_rope):
@@ -293,7 +299,7 @@ def build_components(weights):
             weights = torch.matmul(query, key.transpose(1, 2))
             if scores is not None:
                 weights = weights + scores
-            return self.o_proj(torch.matmul(torch.softmax(weights, dim=-1), self.v_proj(value)))
+            return self.o_proj(self.v_proj(torch.matmul(torch.softmax(weights, dim=-1), value)))
 
     class MemoryAttention(torch.nn.Module):
         def __init__(self):
@@ -734,40 +740,58 @@ def _first_operations(readers, value):
     return operations
 
 
-def precision_marks(model, component, regions):
-    """Return the precision to annotate after each operation, by name: bfloat16 for the regions' operations and int8
-    for the operations that first read their results.
+def _marks(model, operations, precision, reader_precision):
+    """Return the precision to annotate after each operation, by name: precision for the operations and
+    reader_precision for the operations that first read their results.
 
     The compiler gives an annotation's precision to the operation producing its input, and each later operation takes
-    the precision its inputs share, so an int8 mark on each first reader ends a region.
+    the precision its inputs share, so a mark on each first reader ends the marked operations' precision.
     """
     readers = defaultdict(list)
     for node in model.graph.node:
         for value in node.input:
             readers[value].append(node)
-    promoted = {}
-    for region in regions:
-        pattern, count = BF16_REGIONS[component][region]
-        operations = [node for node in model.graph.node if re.fullmatch(pattern, node.name)]
-        if len(operations) != count:
-            raise ValueError(f"expected {count} {component} {region} operations, found {len(operations)}")
-        promoted.update({node.name: node for node in operations})
-    marks = {_annotated_operation(node, readers).name: "bfloat16" for node in promoted.values()}
-    for node in promoted.values():
+    marked = {node.name for node in operations}
+    marks = {_annotated_operation(node, readers).name: precision for node in operations}
+    for node in operations:
         for output in node.output:
             for reader in _first_operations(readers, output):
-                if reader.name not in promoted:
-                    marks.setdefault(_annotated_operation(reader, readers).name, "int8")
+                if reader.name not in marked:
+                    marks.setdefault(_annotated_operation(reader, readers).name, reader_precision)
     return marks
 
 
-def annotate_bf16_regions(source, output, component, regions):
-    """Write the graph with the regions' operations marked BF16 for the compiler; return the marks per precision.
+def _named_operations(model, pattern, count, what):
+    operations = [node for node in model.graph.node if re.fullmatch(pattern, node.name)]
+    if len(operations) != count:
+        raise ValueError(f"expected {count} {what}, found {len(operations)}")
+    return operations
+
+
+def precision_marks(model, component, regions):
+    """bfloat16 for the regions' operations and int8 for the operations that first read their results."""
+    operations = []
+    for region in regions:
+        pattern, count = BF16_REGIONS[component][region]
+        operations.extend(_named_operations(model, pattern, count, f"{component} {region} operations"))
+    return _marks(model, operations, "bfloat16", "int8")
+
+
+def gelu_marks(model, component):
+    """int8 for the component's GELUs and bfloat16 for the operations that first read them.
+
+    The compiler fuses the five operations the export writes a GELU as, and gives the annotation after the last one
+    to the fused GELU.
+    """
+    pattern, count = INT8_GELUS[component]
+    return _marks(model, _named_operations(model, pattern, count, f"{component} GELUs"), "int8", "bfloat16")
+
+
+def _annotate(model, marks, output):
+    """Write the graph with each mark's precision annotated after its operation; return the marks per precision.
 
     ONNX Runtime cannot run the annotated graph, so checks against FP32 keep using the source.
     """
-    model = onnx.load(source)
-    marks = precision_marks(model, component, regions)
     nodes = []
     for node in model.graph.node:
         nodes.append(node)
@@ -790,6 +814,18 @@ def annotate_bf16_regions(source, output, component, regions):
     onnx.checker.check_model(model)
     onnx.save(model, output)
     return {precision: list(marks.values()).count(precision) for precision in ("bfloat16", "int8")}
+
+
+def annotate_bf16_regions(source, output, component, regions):
+    """Write the graph with the regions' operations marked BF16 for the compiler; return the marks per precision."""
+    model = onnx.load(source)
+    return _annotate(model, precision_marks(model, component, regions), output)
+
+
+def annotate_int8_gelus(source, output, component):
+    """Write the graph with the component's GELUs marked INT8 for the compiler; return the marks per precision."""
+    model = onnx.load(source)
+    return _annotate(model, gelu_marks(model, component), output)
 
 
 def main():

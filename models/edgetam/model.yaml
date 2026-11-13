@@ -42,10 +42,11 @@ calibrations:
   dataset: {id: davis-2017, variant: cal, sha256: cf0d9d6d24e218adcc95980e6526bda94e52668a0710200e704014357ec80f8a, size_bytes: 61547807}
 
 build_profiles:
-  # The image encoder runs BF16: at INT8 every RepViT stage adds error, and its image embeddings keep a cosine of only
-  # 0.81 with FP32. The memory attention runs INT8 with its attention scores and softmax in BF16, where the -1e4
-  # scores of empty memory slots stay exact. The decoder runs BF16, because INT8 cannot represent its object pointer
-  # gate; its Sin and Cos still use INT8 lookup tables, so it calibrates. The memory encoder runs INT8.
+  # The image encoder runs BF16: at INT8 every RepViT stage adds error. Its GELUs run as INT8 lookup tables, which
+  # are faster and closer to FP32 than the erf the compiler builds for a BF16 GELU (surgery.py). The memory attention
+  # runs INT8 with its attention scores and softmax in BF16, where the -1e4 scores of empty memory slots stay exact.
+  # The decoder runs BF16, because INT8 cannot represent its object pointer gate; its Sin and Cos still use INT8
+  # lookup tables, so it calibrates. The memory encoder runs INT8.
   w16a16_w8a8_mixed_w16a16_w8a8:
     calibration_dataset: davis-2017-cal
     components:
@@ -57,8 +58,20 @@ build_profiles:
         parameters: {precision: w16a16, calibration_bins: 2048, calibration_samples: 32}
       memory_encoder:
         parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 32}
+  # The same build with an INT8 image encoder: faster, at a lower J&F.
+  w8a8_w8a8_mixed_w16a16_w8a8:
+    calibration_dataset: davis-2017-cal
+    components:
+      image_encoder:
+        parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 32}
+      memory_attention:
+        parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 32, bf16_regions: [attention]}
+      mask_decoder:
+        parameters: {precision: w16a16, calibration_bins: 2048, calibration_samples: 32}
+      memory_encoder:
+        parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 32}
   # Every component with INT8 weights and BF16 activations. Not built yet: the image encoder fails the compiler's
-  # simulator check, and the memory attention fails its memory layout.
+  # simulator check.
   # w8a16:
   #   calibration_dataset: davis-2017-cal
   #   components:
@@ -70,18 +83,20 @@ build_profiles:
   #       parameters: {precision: w8a16, calibration_bins: 2048, calibration_samples: 32}
   #     memory_encoder:
   #       parameters: {precision: w8a16, calibration_bins: 2048, calibration_samples: 32}
-  # Every component INT8, the fastest and least accurate build.
-  w8a8:
-    calibration_dataset: davis-2017-cal
-    components:
-      image_encoder:
-        parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 32}
-      memory_attention:
-        parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 32}
-      mask_decoder:
-        parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 32}
-      memory_encoder:
-        parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 32}
+  # Every component INT8. Not built yet: the INT8 memory attention keeps a cosine of only 0.51 with FP32, because
+  # the -1e4 scores of empty memory slots set its softmax's scale, and a memory attention with INT8 query-key
+  # products stopped the DevKit's MLA while tracking.
+  # w8a8:
+  #   calibration_dataset: davis-2017-cal
+  #   components:
+  #     image_encoder:
+  #       parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 32}
+  #     memory_attention:
+  #       parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 32}
+  #     mask_decoder:
+  #       parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 32}
+  #     memory_encoder:
+  #       parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 32}
 
 # performance.py tracks one clicked object through a fixed frame: every component and the CPU steps between them.
 performance: {}

@@ -7,7 +7,7 @@ import json
 import tarfile
 from collections.abc import Callable
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 import numpy as np
 import pytest
@@ -46,6 +46,79 @@ def test_bf16_regions_belong_to_a_w8a8_component(compiler: ModuleType) -> None:
         compiler.bf16_regions("memory_attention", {"precision": "w16a16", "bf16_regions": ["attention"]})
     with pytest.raises(ValueError, match="unknown"):
         compiler.bf16_regions("image_encoder", {"precision": "w8a8", "bf16_regions": ["attention"]})
+
+
+def test_only_a_w16a16_image_encoder_runs_its_gelus_in_int8(compiler: ModuleType) -> None:
+    assert compiler.int8_gelus("image_encoder", {"precision": "w16a16"})
+    assert not compiler.int8_gelus("image_encoder", {"precision": "w8a16"})
+    assert not compiler.int8_gelus("image_encoder", {"precision": "w8a8"})
+    assert not compiler.int8_gelus("mask_decoder", {"precision": "w16a16"})
+
+
+def test_gelu_marks_are_int8_on_each_gelu_and_bf16_on_the_operation_after_it(
+    load_script: Callable[[str], ModuleType], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    onnx = pytest.importorskip("onnx")
+    surgery = load_script("surgery")
+    monkeypatch.setitem(surgery.INT8_GELUS, "image_encoder", (surgery.INT8_GELUS["image_encoder"][0], 1))
+    helper, scope = onnx.helper, "/vision/stem/act1"
+    value = helper.make_tensor_value_info
+    weight = onnx.numpy_helper.from_array(np.ones((2, 2, 1, 1), np.float32), "weight")
+    constants = [
+        onnx.numpy_helper.from_array(np.float32(number), name)
+        for name, number in (("root", 1.41), ("one", 1), ("half", 0.5))
+    ]
+    nodes = [
+        helper.make_node("Conv", ["input", "weight"], ["features"], name="/vision/stem/conv1/Conv"),
+        helper.make_node("Div", ["features", "root"], ["scaled"], name=f"{scope}/Div"),
+        helper.make_node("Erf", ["scaled"], ["erf"], name=f"{scope}/Erf"),
+        helper.make_node("Add", ["erf", "one"], ["shifted"], name=f"{scope}/Add"),
+        helper.make_node("Mul", ["features", "shifted"], ["product"], name=f"{scope}/Mul"),
+        helper.make_node("Mul", ["product", "half"], ["activated"], name=f"{scope}/Mul_1"),
+        helper.make_node("Conv", ["activated", "weight"], ["output"], name="/vision/stem/conv2/Conv"),
+    ]
+    graph = helper.make_graph(
+        nodes,
+        "gelu",
+        [value("input", onnx.TensorProto.FLOAT, [1, 2, 4, 4])],
+        [value("output", onnx.TensorProto.FLOAT, [1, 2, 4, 4])],
+        [weight, *constants],
+    )
+    source, annotated = tmp_path / "source.onnx", tmp_path / "annotated.onnx"
+    onnx.save(helper.make_model(graph, opset_imports=[helper.make_opsetid("", surgery.OPSET)]), source)
+
+    assert surgery.gelu_marks(onnx.load(source), "image_encoder") == {
+        f"{scope}/Mul_1": "int8",
+        "/vision/stem/conv2/Conv": "bfloat16",
+    }
+    assert surgery.annotate_int8_gelus(source, annotated, "image_encoder") == {"bfloat16": 1, "int8": 1}
+    annotations = {
+        node.input[0]: helper.get_attribute_value(node.attribute[0]).decode()
+        for node in onnx.load(annotated).graph.node
+        if node.op_type == "AnnotatePrecision"
+    }
+    assert annotations == {"activated/unannotated": "int8", "output/unannotated": "bfloat16"}
+
+
+def test_a_build_fails_when_a_listed_gelu_does_not_run_in_int8(compiler: ModuleType) -> None:
+    gelu, count = type("GeluOp", (), {}), compiler.INT8_GELUS["image_encoder"][1]
+
+    def quantized(int8: int) -> SimpleNamespace:
+        precisions = [compiler.QuantizationPrecision.INT_8] * int8 + ["bfloat16"] * (count - int8)
+        nodes = [
+            SimpleNamespace(
+                ir=SimpleNamespace(
+                    operation=gelu(),
+                    quant_config=SimpleNamespace(quantization_precision=SimpleNamespace(value=precision)),
+                )
+            )
+            for precision in precisions
+        ]
+        return SimpleNamespace(_net=SimpleNamespace(iter_nodes_recursive=lambda: iter(nodes)))
+
+    compiler.require_int8_gelus(quantized(count), "image_encoder")
+    with pytest.raises(RuntimeError, match=f"{count - 1} of {count} image_encoder GELUs"):
+        compiler.require_int8_gelus(quantized(count - 1), "image_encoder")
 
 
 def _mpk_manifest(compiler: ModuleType, component: str) -> dict:
