@@ -166,9 +166,9 @@ def select_mask(outputs: dict[str, np.ndarray], multimask: bool) -> tuple[np.nda
     if multimask:
         mask, pointer = masks[best], pointers[best]
     else:
-        stable = (
-            (masks[0] > STABILITY_DELTA).sum() / max((masks[0] > -STABILITY_DELTA).sum(), 1)
-        ) >= STABILITY_THRESHOLD
+        # transformers scores a mask that is empty at both thresholds as stable.
+        union = (masks[0] > -STABILITY_DELTA).sum()
+        stable = union == 0 or (masks[0] > STABILITY_DELTA).sum() / union >= STABILITY_THRESHOLD
         mask, pointer = (masks[0] if stable else masks[best]), pointers[0]
     if outputs["object_score_logits"][0, 0] <= 0:
         mask = np.full_like(mask, NO_OBJECT_LOGIT)

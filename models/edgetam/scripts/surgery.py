@@ -1,7 +1,7 @@
 """Build EdgeTAM's four per-frame graphs for the compiler from the converted image encoder and weights, and check them.
 
 transformers' EdgeTAM video model tracks with Python lists of earlier frames' memories. The graphs here run one frame
-with fixed shapes, and every rewrite keeps the tracker's numbers:
+with fixed shapes, and every rewrite but the mask decoder's no-object gate keeps the tracker's numbers:
 
 - image_encoder adds the no-memory embedding to the vision features, so its image_embeddings feed the mask decoder
   directly on a prompted frame. memory_attention and memory_encoder subtract it again.
@@ -13,7 +13,8 @@ with fixed shapes, and every rewrite keeps the tracker's numbers:
   without rotary encoding get cos 1 and sin 0.
 - mask_decoder embeds PROMPT_POINTS prompt slots from normalized coordinates and one-hot point types, as the
   prompt encoder does, and returns all four masks, their scores and four object pointers, so the CPU picks the
-  mask. Each pointer is the no-object pointer when the object score is not positive. The prompt encoder appends one
+  mask. Each pointer is the no-object pointer when the object score is not positive, and a blend of the two for
+  a score below 1e-4, where transformers already keeps the object's pointer. The prompt encoder appends one
   padding point to the user's points, and a tracked frame has two padding points. The slots hold up to two points
   and padding in the rest; identical padding tokens stay identical through the decoder, so n of them weigh as m
   when every attention that reads them as keys adds log(m / n) to their scores.
@@ -103,7 +104,8 @@ SEEDS = range(123, 126)
 MAX_RELATIVE_ERROR = 1e-3
 # The score added to every key of an empty memory slot; exp(-1e4) is 0 in float32 and BF16.
 EMPTY_SLOT_SCORE = -1e4
-# The no-object gate is 1 for object scores of at least 1e-4 and 0 for scores of 0 or less, as score > 0 is.
+# The no-object gate is 1 for object scores of at least 1e-4 and 0 for scores of 0 or less, as transformers'
+# score > 0 is. Between them it rises linearly, where transformers' is already 1.
 GATE_SCALE = 1e4
 # EdgeTAM scales mask probabilities to logits for the memory encoder.
 MASK_SCALE = 20.0
@@ -239,6 +241,11 @@ def image_position_encoding(prompt_encoder):
     rows, columns = torch.meshgrid(torch.arange(64), torch.arange(64), indexing="ij")
     centres = torch.stack([(columns + 0.5) / 64, (rows + 0.5) / 64], dim=-1)[None]
     return prompt_encoder.shared_embedding(centres).permute(0, 3, 1, 2).clone()
+
+
+def object_gate(object_score):
+    """How much of the object's pointer the decoder keeps: 0 for a score of 0 or less, 1 from 1 / GATE_SCALE up."""
+    return (object_score * GATE_SCALE).clip(0, 1)
 
 
 def padding_scores(padding):
@@ -436,7 +443,7 @@ def build_components(weights):
             masks = (hyper @ upscaled.flatten(2)).reshape(1, MASKS, MASK_SIZE, MASK_SIZE)
             iou_scores = decoder.iou_prediction_head(queries[:, 1:2]).reshape(1, MASKS)
             object_score = decoder.pred_obj_score_head(queries[:, 0:1])
-            visible = torch.clamp(object_score * GATE_SCALE, 0, 1)
+            visible = object_gate(object_score)
             pointers = self.object_pointer_proj(mask_tokens)
             pointers = self.no_object_pointer + visible * (pointers - self.no_object_pointer)
             return masks, iou_scores, object_score.reshape(1, 1), pointers

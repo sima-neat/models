@@ -20,6 +20,7 @@ import shutil
 import tarfile
 import tempfile
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -303,8 +304,16 @@ def check_against_fp32(quantized: Any, build: ComponentBuild, checks: list[dict[
         raise RuntimeError(f"{build.component} quantized outputs are not finite on the check clip: {similarity}")
 
 
-def compile_component(quantized: Any, build: ComponentBuild) -> Path:
-    """Compile the quantized component into build_dir; return its audited MPK."""
+def built_archive(build: ComponentBuild) -> Path:
+    """The one MPK in the component's build_dir."""
+    archives = sorted(build.build_dir.glob("*_mpk.tar.gz"))
+    if len(archives) != 1:
+        raise RuntimeError(f"expected one {build.component} MPK, found {len(archives)}")
+    return archives[0]
+
+
+def compile_component(quantized: Any, build: ComponentBuild) -> None:
+    """Compile the quantized component into build_dir and audit its MPK."""
     build.build_dir.mkdir(parents=True)
     try:
         quantized.compile(
@@ -318,26 +327,28 @@ def compile_component(quantized: Any, build: ComponentBuild) -> Path:
         )
     except SystemExit as error:
         raise RuntimeError(f"compiling {build.component} failed; the AFE log above names the cause") from error
-    archives = sorted(build.build_dir.glob("*_mpk.tar.gz"))
-    if len(archives) != 1:
-        raise RuntimeError(f"expected one {build.component} MPK, found {len(archives)}")
-    audit_mpk(archives[0], build.component)
-    return archives[0]
+    audit_mpk(built_archive(build), build.component)
 
 
-def build_component(build: ComponentBuild) -> Path:
-    """Quantize, check and compile one component; return its MPK."""
+def build_component(build: ComponentBuild) -> None:
+    """Quantize, check and compile one component into its build_dir."""
     logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s", force=True)
     calibration = CalibrationSet.load(build.calibration)
     quantized = quantize_component(build, calibration.samples)
     check_against_fp32(quantized, build, calibration.checks)
-    return compile_component(quantized, build)
+    compile_component(quantized, build)
 
 
-def build_in_process(build: ComponentBuild) -> Path:
-    """Build one component in its own process, so the compiler's memory returns to the system after it."""
-    with multiprocessing.get_context("spawn").Pool(1) as pool:
-        return pool.apply(build_component, (build,))
+def run_in_process(target: Callable[..., None], *arguments: Any) -> None:
+    """Run target in its own process, so the compiler's memory returns to the system after it.
+
+    A process that raises or is killed, as one out of memory is, exits with a nonzero code, which fails the build.
+    """
+    process = multiprocessing.get_context("spawn").Process(target=target, args=arguments)
+    process.start()
+    process.join()
+    if process.exitcode != 0:
+        raise RuntimeError(f"{target.__name__} failed with exit code {process.exitcode}")
 
 
 def write_compile_outputs(
@@ -384,16 +395,16 @@ def compile_model(
             calibration.save(calibration_paths[component])
         archives = {}
         for component in COMPONENTS:
-            built = build_in_process(
-                ComponentBuild(
-                    component=component,
-                    graph=graphs[component],
-                    calibration=calibration_paths[component],
-                    build_dir=temporary_dir / "mpk" / component,
-                    model_name=f"{MODEL_ID}_{profile_id}_{component}",
-                    parameters=parameters[component],
-                )
+            build = ComponentBuild(
+                component=component,
+                graph=graphs[component],
+                calibration=calibration_paths[component],
+                build_dir=temporary_dir / "mpk" / component,
+                model_name=f"{MODEL_ID}_{profile_id}_{component}",
+                parameters=parameters[component],
             )
+            run_in_process(build_component, build)
+            built = built_archive(build)
             archives[component] = output_dir / component / built.name
             archives[component].parent.mkdir(parents=True)
             shutil.copyfile(built, archives[component])

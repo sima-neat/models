@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import tarfile
 from collections.abc import Callable
 from pathlib import Path
@@ -323,6 +324,11 @@ def test_mask_choice_follows_transformers_multimask_rules(calibration: ModuleTyp
     unstable[0, :128] = 0.0
     mask, pointer = calibration.select_mask(_decoded(unstable, [0.1, 0.1, 0.8, 0.2], 1.0), multimask=False)
     assert mask[0, 0] == 3.0 and pointer[0] == 0
+    # A mask 0 that is empty at both stability thresholds is stable, so it stays.
+    empty = masks.copy()
+    empty[0] = -1.0
+    mask, pointer = calibration.select_mask(_decoded(empty, [0.1, 0.1, 0.8, 0.2], 1.0), multimask=False)
+    assert mask[0, 0] == -1.0 and pointer[0] == 0
     # An absent object's mask is all background.
     mask, _ = calibration.select_mask(_decoded(masks, [0.9, 0.1, 0.8, 0.2], -1.0), multimask=True)
     assert (mask == calibration.NO_OBJECT_LOGIT).all()
@@ -334,3 +340,14 @@ def test_compiled_build_holds_one_audited_mpk_per_component_in_run_order(compile
     assert [graph["component_id"] for graph in manifest["derived_graphs"]] == compiler.COMPONENTS
     for output in manifest["outputs"]:
         compiler.audit_mpk(compiled / output["mpk_path"], output["component_id"])
+
+
+def test_a_killed_build_process_fails_the_build(compiler: ModuleType) -> None:
+    with pytest.raises(RuntimeError, match="exit code 9"):
+        compiler.run_in_process(os._exit, 9)
+
+
+def test_object_gate_is_a_step_except_just_above_zero(load_script: Callable[[str], ModuleType]) -> None:
+    gate = load_script("surgery").object_gate(np.array([-1.0, 0.0, 5e-5, 1e-4, 3.0]))
+    # transformers' score > 0 is already 1 at 5e-5, where this gate is half open.
+    assert gate.tolist() == pytest.approx([0.0, 0.0, 0.5, 1.0, 1.0])
