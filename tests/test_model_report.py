@@ -255,6 +255,7 @@ class ModelOptions:
             resize=types.SimpleNamespace(), normalize=types.SimpleNamespace(), color_convert=types.SimpleNamespace()
         )
         self.advanced_execution = types.SimpleNamespace()
+        self.processcvu = types.SimpleNamespace()
         self.superpoint = types.SimpleNamespace()
 
 
