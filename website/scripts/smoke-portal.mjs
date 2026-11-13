@@ -236,6 +236,12 @@ async function checkCatalogLayouts(browser, url) {
         if (!/%/.test(await resnet.locator('[data-table-accuracy]').innerText())) throw new Error('missing measured accuracy');
         const original = await resnet.locator('[data-table-performance]').innerText();
         if (!original.includes('inferences/s') || !original.includes('ms')) throw new Error('missing throughput or latency');
+        const languageReading = await page.locator('[data-catalog-entry="qwen3_5_0_8b"][data-catalog-task="text_generation"] [data-table-performance]').innerText();
+        if (!languageReading.includes('tokens/s') || !languageReading.includes('TTFT 43.3–910.5 ms') || !languageReading.includes('6 workloads')) throw new Error('catalog lost the measured text workload ranges');
+        const imageReading = await page.locator('[data-catalog-entry="qwen3_5_0_8b"][data-catalog-task="visual_question_answering"] [data-table-performance]').innerText();
+        if (!imageReading.includes('tokens/s') || !imageReading.includes('TTFT 132.3 ms') || !imageReading.includes('1 workload')) throw new Error('catalog mixed image timings with text workloads');
+        const unmeasured = await page.locator('[data-catalog-entry="gemma_4_e2b_it_textonly"] [data-table-performance]').innerText();
+        if (unmeasured !== 'Not measured') throw new Error('catalog fabricated an unmeasured language model result');
         await resnet.getByRole('combobox').selectOption('w16a16');
         await settled();
         if (await resnet.locator('[data-table-performance]').innerText() === original) throw new Error('precision changed without refreshing measurements');
@@ -510,7 +516,7 @@ async function checkTaskComparison(browser, base) {
         if (await page.locator('[data-compare-control="graph"], .compare-bucket-line').count()) throw new Error('removed graph controls remain visible');
         if (await page.locator('.compare-point').count() !== 1) throw new Error('LLM chart must plot Qwen measurements only');
         if (await workload.locator('option').count() !== 6) throw new Error('LLM group mixed image and text workloads');
-        if (JSON.stringify(await page.locator('.compare-axis-title').allTextContents()) !== JSON.stringify(['Parameters (billions)', 'Decode (tokens/s)'])) throw new Error('GenAI chart uses the wrong axes');
+        if (JSON.stringify(await page.locator('.compare-axis-title').allTextContents()) !== JSON.stringify(['Parameters (billions)', 'Generation (tokens/s)'])) throw new Error('GenAI chart uses the wrong axes');
         await add.selectOption('qwen3_5_0_8b.w4a16');
         await add.selectOption('gemma_4_e2b_it_textonly.w4a16');
         const table = page.locator('.compare-table');
@@ -571,6 +577,9 @@ async function checkGenerativeBenchmark(browser, url) {
         await table.waitFor();
         await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
         if (await table.locator('tbody tr').count() !== 6) throw new Error('missing text workloads');
+        if (!await table.getByRole('columnheader', {name: 'Generation (tokens/s)', exact: true}).isVisible()) throw new Error('generation rate uses an unclear heading');
+        const explanation = await table.locator('thead .info-mark').getAttribute('data-tooltip');
+        if (!explanation?.startsWith('Time to first token:')) throw new Error('TTFT has no explanation');
         const imageTable = page.getByRole('table', {name: 'Image and text performance', exact: true});
         if (await imageTable.locator('thead th').count() !== 2) throw new Error('image table must show TTFT and decode only');
         if (await imageTable.locator('tbody tr').count() !== 1) throw new Error('missing image workload');

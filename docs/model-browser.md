@@ -34,6 +34,11 @@ usable build do not appear. Search always shows matching individual models.
 The table always shows individual models,
 selected precision, measured accuracy and whole-model performance. Changing
 the precision updates its measurements; opening the model shows the full results.
+LLM and VLM rows show generation speed in tokens/s and TTFT (time to first
+token) as ranges across measured workloads, with the workload count. Hover over
+the reading for the workload names. Text Generation rows use text workloads;
+Visual Question Answering rows use image workloads. Open the model for each
+workload's exact result.
 Both views share search and filters. The table groups models by task, with the
 same model-family ordering inside each group. Models with multiple tasks appear
 in every applicable group; selecting a task filter shows only that group. The
@@ -95,7 +100,7 @@ The chart labels only selected variants plotted against its current dataset and 
 Selections without matching accuracy or throughput appear only in the comparison table.
 The graph, table and model selector update together. The link
 preserves the task and selected variants. Text Generation and Visual Question Answering
-compare parameters in billions against decode speed for matching workloads.
+compare parameters in billions against generation speed for matching workloads.
 Image comparisons use each model's encoder resolution, listed in its tooltip and table.
 A workload selector appears when several text buckets or datasets are available.
 Audio comparisons show **TBD**. Multimodal detectors can still join a vision-task comparison.
@@ -151,10 +156,14 @@ in this order:
    [benchmark fingerprint](benchmarking.md#ci-and-registry-publication) changes, so that
    commit can be later than the build's. A profile with no result shows **Not measured at
    this revision.**
-   LLMs and VLMs show TTFT, prefill and decode tables for text, with image timings
-   in a separate table. Speculative models show dataset comparisons, draft
-   contribution and speedup. Measurement details show each workload's telemetry,
-   including its ordinary baseline when present.
+   LLMs and VLMs show TTFT, prefill and generation tables for text, with image timings
+   in a separate table. TTFT headings explain time to first token in a tooltip.
+   Speculative models compare **Baseline** with **MTP**, **DFlash** or **EAGLE3**
+   when the compiled build identifies its method. The baseline is the target
+   model without speculative decoding. Generation speedup excludes prompt
+   processing and the first token; draft contribution is the percentage of
+   generated tokens accepted from the draft model. Measurement details show
+   each workload's telemetry for both deployments.
    When the report includes MLA layer stats, **Runtime Layer Analysis**
    shows one full-width table with **Compiled layer / Execution time (µs) / Share (%)**
    headings. Each execution-time cell shows its exact value above a thin bar,

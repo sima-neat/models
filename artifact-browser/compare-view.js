@@ -81,8 +81,8 @@ function comparisonTable(columns) {
   const rows = generative ? [
     ["ttft_ms", "Time to first token"],
     ...(state.compareTask === "visual_question_answering" ? [] : [["prefill_tps", "Prefill"]]),
-    ["decode_tps", "Decode"],
-    ["draft_contribution_pct", "Draft contribution"], ["decode_speedup", "Decode speedup"],
+    ["decode_tps", "Generation"],
+    ["draft_contribution_pct", "Draft contribution"], ["decode_speedup", "Generation speedup"],
     ...PERFORMANCE_ROWS.filter(([key]) => !["throughput_fps", "latency_avg_ms", "energy_per_inference_joules"].includes(key)),
   ] : PERFORMANCE_ROWS;
   const performance = rows.map(([key, label]) => {
@@ -162,7 +162,7 @@ function generativePlot(columns) {
     return [{column, x, y: decode.number, label}];
   });
   return measurementChart(columns, plotted, {
-    title: "Parameters & decode speed", xLabel: "Parameters (billions)", yLabel: "Decode (tokens/s)",
+    title: "Parameters & generation speed", xLabel: "Parameters (billions)", yLabel: "Generation (tokens/s)",
     subtitle: comparisonLabel(workloads.find(workload => workload.key === state.compareWorkload)),
     controls: workloads.length > 1 ? selectControl("Workload", "workload", workloads.map(workload => [workload.key, comparisonLabel(workload)]), state.compareWorkload) : "",
     note: "Variants without matching measurements remain available in Add model.",
@@ -286,7 +286,7 @@ export function showComparisonTooltip(point) {
     ${field("Variant", variantLabel(column.option.profile))}
     ${generative ? field("Parameters", parameterText(column.option.model)) +
       field("Workload", comparisonWorkload(column.performance)?.label || "Not measured") +
-      field("Decode", measuredText(comparisonWorkload(column.performance)?.measurements.decode_tps, "decode_tps")?.text || "Not measured")
+      field("Generation", measuredText(comparisonWorkload(column.performance)?.measurements.decode_tps, "decode_tps")?.text || "Not measured")
       : field("Throughput", throughput?.text || "Not measured") +
       field("Accuracy", column.accuracy ? `${column.accuracy.value} · ${column.accuracy.label}` : "Not measured")}</dl>`;
   tooltip.hidden = false;

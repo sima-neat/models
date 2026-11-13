@@ -313,10 +313,26 @@ function catalogMetric(measurements, key) {
   return reading ? `${reading.value.toFixed(1)} ${reading.unit}` : null;
 }
 
-// The whole model's throughput and latency for the build profile.
-function tablePerformance(variant) {
+// Show token rates per task for generation, or inference throughput and latency for other models.
+function tablePerformance(variant, task) {
   const order = variant.details.map((detail) => detail.summary.run.metadata.component_id);
   const result = readPerformance(variant.performance, order);
+  if (result.kind === "supported" && result.value.generation) {
+    const kinds = task === "visual_question_answering" ? ["image_text", "image_dataset"] : ["text", "text_dataset"];
+    const workloads = result.value.workloads.filter((workload) => kinds.includes(workload.kind));
+    const range = (key) => {
+      const values = workloads.map((workload) => metricDisplay(workload.measurements[key], metricDefinition(key)))
+        .filter(Boolean);
+      if (!values.length) return null;
+      const low = Math.min(...values.map(({ value }) => value)).toFixed(1);
+      const high = Math.max(...values.map(({ value }) => value)).toFixed(1);
+      return `${low === high ? low : `${low}–${high}`} ${values[0].unit}`;
+    };
+    const rate = range("decode_tps");
+    const ttft = range("ttft_ms");
+    const context = workloads.map((workload) => workload.label).join(", ");
+    return `<span class="catalog-reading" title="${escapeHtml(context)}"><span>${escapeHtml(rate || "Not measured")}</span>${ttft ? `<small>TTFT ${escapeHtml(ttft)}</small>` : ""}${rate ? `<small>${workloads.length} workload${workloads.length === 1 ? "" : "s"}</small>` : ""}</span>`;
+  }
   if (result.kind === "supported" && result.value.scope === "components") {
     return result.value.components.map(({ id, measurements }) => {
       const label = id.replaceAll("_", " ");
@@ -332,7 +348,7 @@ function tablePerformance(variant) {
 }
 
 function renderCatalogTable(models) {
-  const renderRow = (model) => {
+  const renderRow = (model, task) => {
     const active = activeModelBuild(model);
     const profiles = profileGroups(model);
     const name = model.display_name || model.model_id;
@@ -340,7 +356,7 @@ function renderCatalogTable(models) {
       ? `<select data-catalog-profile="${escapeHtml(model.model_id)}" aria-label="Precision for ${escapeHtml(name)}">${profiles.map(([id]) =>
         `<option value="${escapeHtml(id)}"${id === active.profile ? " selected" : ""}>${escapeHtml(variantLabel(id))}</option>`).join("")}</select>`
       : `<span class="catalog-precision">${escapeHtml(variantLabel(active.profile))}</span>`;
-    return `<tr data-catalog-entry="${escapeHtml(model.model_id)}">
+    return `<tr data-catalog-entry="${escapeHtml(model.model_id)}" data-catalog-task="${escapeHtml(task)}">
       <th scope="row"><button class="catalog-model-link" type="button" data-run-id="${escapeHtml(active.build.run_id)}">${escapeHtml(name)}${icons.arrow}</button></th>
       <td>${precision}</td>
       <td data-table-accuracy><span class="catalog-pending">Loading…</span></td>
@@ -365,7 +381,7 @@ function renderCatalogTable(models) {
         <div class="catalog-table-scroll" role="region" aria-label="${escapeHtml(taskLabel(task))} model table" tabindex="0">
           <table class="catalog-table" aria-labelledby="${escapeHtml(headingId)}">
             <thead><tr><th scope="col">Model</th><th scope="col">Precision</th><th scope="col">Accuracy</th><th scope="col">Performance</th></tr></thead>
-            <tbody>${entries.map(renderRow).join("")}</tbody></table></div></section>`;
+            <tbody>${entries.map((model) => renderRow(model, task)).join("")}</tbody></table></div></section>`;
     }).join("");
   // A model page hides the list; returning to the list renders the table again and loads its details then.
   if (state.selectedId) return;
@@ -382,10 +398,9 @@ function renderCatalogTable(models) {
       const accuracyHtml = accuracy
         ? `<span class="catalog-reading"><span>${escapeHtml(accuracy.value)}</span><small>${escapeHtml(accuracy.label)}</small></span>`
         : `<span class="catalog-unavailable">Not measured</span>`;
-      const performanceHtml = tablePerformance(variant);
       rows.forEach((row) => {
         row.querySelector("[data-table-accuracy]").innerHTML = accuracyHtml;
-        row.querySelector("[data-table-performance]").innerHTML = performanceHtml;
+        row.querySelector("[data-table-performance]").innerHTML = tablePerformance(variant, row.dataset.catalogTask);
       });
     } catch {
       if (requestId !== tableRequestId) return;

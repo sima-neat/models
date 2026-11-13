@@ -516,9 +516,11 @@ Speculative profiles declare an ordinary model/profile in `benchmark_baseline`.
 Both deployments use the same dataset sources, prompts, context and output
 budgets. BFCL is skipped for both deployments if either lacks a native tool
 template; the reason is recorded in the log and JSON report.
-Reports include TTFT, text prefill TPS, decode TPS excluding the first
-token, draft contribution (accepted/generated tokens) and speedup (aggregate
-speculative/ordinary decode TPS). Power, temperature, CPU and memory are recorded
+Reports include TTFT (time to first token), text prefill TPS, decode TPS excluding the first
+token, draft contribution (accepted draft/generated tokens) and generation speedup (aggregate
+speculative/baseline decode TPS, excluding prompt processing and the first token). The browser
+labels decode TPS as generation speed and the non-speculative comparison as Baseline.
+Power, temperature, CPU and memory are recorded
 per workload and deployment. Failed requests prevent publication.
 
 Run **Vulcan Model Benchmarking** with `stages=performance`, `model_id`,

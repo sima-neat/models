@@ -83,7 +83,7 @@
   "miou": {"stage": "accuracy", "label": "mIoU", "unit": "ratio", "direction": "higher", "registry_name": "model.accuracy.miou", "aggregation": "raw", "digits": 3},
   "ttft_ms": {"stage": "performance", "label": "Time to first token", "unit": "ms", "direction": "lower", "registry_name": "model.generation.ttft", "aggregation": "mean", "digits": 1},
   "prefill_tps": {"stage": "performance", "label": "Prefill throughput", "unit": "tokens/s", "direction": "higher", "registry_name": "model.generation.prefill_rate", "aggregation": "mean", "digits": 1},
-  "decode_tps": {"stage": "performance", "label": "Decode throughput", "unit": "tokens/s", "direction": "higher", "registry_name": "model.generation.decode_rate", "aggregation": "mean", "digits": 1},
+  "decode_tps": {"stage": "performance", "label": "Generation speed", "unit": "tokens/s", "direction": "higher", "registry_name": "model.generation.decode_rate", "aggregation": "mean", "digits": 1},
   "draft_contribution_pct": {"stage": "performance", "label": "Draft contribution", "unit": "%", "direction": "higher", "registry_name": "model.generation.draft_contribution", "aggregation": "mean", "digits": 1},
-  "decode_speedup": {"stage": "performance", "label": "Decode speedup", "unit": "×", "direction": "higher", "registry_name": "model.generation.decode_speedup", "aggregation": "mean", "digits": 2}
+  "decode_speedup": {"stage": "performance", "label": "Generation speedup", "unit": "×", "direction": "higher", "registry_name": "model.generation.decode_speedup", "aggregation": "mean", "digits": 2}
 }
