@@ -22,6 +22,15 @@ upstream:
   revision: 14d7ecc48c656b94e5184519f698cd5386c5a2bf
   derived_from: https://github.com/facebookresearch/EdgeTAM/tree/7711e012a30a2402c4eaab637bdb00a521302c91
 
+resources:
+  license:
+    # The checkpoint repository omits LICENSE. The EdgeTAM code repository carries the Apache-2.0 text.
+    source:
+      uri: https://raw.githubusercontent.com/facebookresearch/EdgeTAM/7711e012a30a2402c4eaab637bdb00a521302c91/LICENSE
+      sha256: c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4
+      size_bytes: 11357
+    install_path: licenses/LICENSE
+
 # convert.py exports the image encoder, whose RepViT backbone needs timm, and republishes the renamed checkpoint, from
 # which surgery.py builds the other three components at compile time.
 conversion:

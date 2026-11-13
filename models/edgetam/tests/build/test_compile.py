@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import shutil
 import tarfile
 from collections.abc import Callable
 from pathlib import Path
@@ -245,7 +246,9 @@ def test_cal_sequences_read_alike_from_the_archive_and_its_extracted_directory(
     with tarfile.open(archive, "w:gz") as stream:
         stream.add(tmp_path / "davis", arcname="davis")
 
-    for dataset in (archive, tmp_path / "davis"):
+    renamed = tmp_path / "davis-2017-cal"
+    shutil.copytree(tmp_path / "davis", renamed)
+    for dataset in (archive, tmp_path, tmp_path / "davis", renamed):
         with calibration.DavisCal(dataset) as cal:
             assert cal.sequences() == ["bear"] and cal.frames("bear") == ["00000", "00001"]
             assert cal.image("bear", "00000").size == (64, 48)

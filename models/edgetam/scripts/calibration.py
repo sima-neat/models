@@ -54,7 +54,8 @@ class DavisCal:
     def __init__(self, dataset: Path):
         if dataset.is_dir():
             self.archive = None
-            self.files = {_davis_path(str(path)): path for path in dataset.rglob("*") if path.is_file()}
+            root = dataset / "davis" if (dataset / "davis").is_dir() else dataset
+            self.files = {path.relative_to(root).as_posix(): path for path in root.rglob("*") if path.is_file()}
         elif tarfile.is_tarfile(dataset):
             self.archive = tarfile.open(dataset)
             self.files = {_davis_path(member.name): member for member in self.archive.getmembers() if member.isfile()}
