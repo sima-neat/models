@@ -499,9 +499,9 @@ jobs:
               cat "$failure" >&2
               exit 1
             fi
-            # Concurrent publishers retry at different, growing intervals.
-            delay=$(( 2 ** attempt > 30 ? 30 : 2 ** attempt ))
-            sleep "$(( delay + RANDOM % 5 ))"
+            # Each publisher waits a random time up to a growing ceiling, so those that lost together retry apart.
+            ceiling=$(( 2 ** attempt > 30 ? 30 : 2 ** attempt ))
+            sleep "$(( 1 + RANDOM % ceiling ))"
           done
 
   # The benchmarks start as soon as this build publishes, while other builds may still compile.

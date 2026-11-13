@@ -1132,7 +1132,8 @@ def test_concurrent_builds_retry_catalog_snapshot_conflicts() -> None:
     assert "for attempt in 1 2 3 4 5 6 7 8; do" in catalog
     assert "grep -q 'catalog_snapshot_conflict'" in catalog
     assert "(( attempt == 8 ))" in catalog
-    assert 'sleep "$(( delay + RANDOM % 5 ))"' in catalog
+    assert "ceiling=$(( 2 ** attempt > 30 ? 30 : 2 ** attempt ))" in catalog
+    assert 'sleep "$(( 1 + RANDOM % ceiling ))"' in catalog
 
 
 # Scripts the workflows invoke
