@@ -260,7 +260,7 @@ def measure_throughput(backbone: pyneat.ModelRunner, decoder: pyneat.ModelRunner
 
 def write_report(
     output: Path,
-    image: str,
+    input_label: str,
     latencies: list[float],
     throughput: Throughput,
     models: dict[str, pyneat.Model],
@@ -279,7 +279,7 @@ def write_report(
         benchmark,
         models,
         workload=(
-            f"{image} in a {FRAME_WIDTH}x{FRAME_HEIGHT} RGB frame, Neat preprocessing stretched to "
+            f"{input_label} in a {FRAME_WIDTH}x{FRAME_HEIGHT} RGB frame, Neat preprocessing stretched to "
             f"{IMAGE_SIZE}x{IMAGE_SIZE}, backbone, top {QUERY_COUNT} proposals on the CPU, and decoder up to its mask "
             f"logits (not resized to the image), pipelined {QUEUE_DEPTH} frames deep"
         ),

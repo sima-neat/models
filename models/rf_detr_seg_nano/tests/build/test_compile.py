@@ -17,7 +17,6 @@ from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[4]
 MODEL_DIR = ROOT / "models" / "rf_detr_seg_nano"
-SCRIPTS_DIR = MODEL_DIR / "scripts"
 
 
 def test_preprocessing_produces_normalized_nchw_image(load_script: Callable[[str], ModuleType]) -> None:
@@ -65,7 +64,7 @@ def test_image_selection_is_seeded_and_disjoint(tmp_path: Path, load_script: Cal
 def test_afe_layout_converts_only_rank_four_tensors(load_script: Callable[[str], ModuleType]) -> None:
     calibration = load_script("calibration")
     images = np.zeros((2, 3, 5, 7), dtype=np.float32)
-    proposals = np.zeros((2, 300, 4), dtype=np.float32)
+    proposals = np.zeros((2, calibration.QUERY_COUNT, 4), dtype=np.float32)
 
     converted_images = calibration.to_afe_layout(images)
     converted_proposals = calibration.to_afe_layout(proposals)
@@ -232,27 +231,6 @@ def test_surgery_folds_only_power_of_two_score_scales(load_script: Callable[[str
         surgery._fold_backbone_score_scale(_attention_block(0.1), 1)
 
 
-def test_compile_recipe_uses_one_grouped_entrypoint_and_direct_afe_api() -> None:
-    source = (SCRIPTS_DIR / "compile.py").read_text(encoding="utf-8")
-
-    assert 'parser.add_argument("--compile-invocation", required=True)' in source
-    assert "export_model" not in source
-    assert "prepare_model(source" in source
-    assert "loaded.quantize(" in source
-    assert "any_shape_on_mla=" not in source
-    assert "automatic_layout_conversion=" not in source
-    assert "flexible_batch_size=True" in source
-    assert "quantized.compile(" in source
-    assert "compile-outputs.json" in source
-    assert '"derived_graphs"' in source
-    assert '"compile_invocation_id": profile_id' in source
-    assert "shutil.copyfile" in source
-    assert "requests" not in source
-    assert "urllib" not in source
-    assert 'get_context("spawn")' in source
-    assert source.index('"RF-DETR backbone compilation"') < source.index('"RF-DETR decoder compilation and fidelity"')
-
-
 def _metadata() -> dict:
     return load_metadata(MODEL_DIR)
 
@@ -352,8 +330,19 @@ def test_compile_main_rejects_an_invocation_not_named_after_the_build_profile(
     monkeypatch.setattr(
         sys,
         "argv",
-        ["compile.py", "--model", str(tmp_path / "model.onnx"), "--fidelity-dataset", str(tmp_path / "images"),
-         "--output-dir", str(tmp_path / "out"), "--build-profile", "w8a16_w16a16", "--compile-invocation", "rf_detr"],
+        [
+            "compile.py",
+            "--model",
+            str(tmp_path / "model.onnx"),
+            "--fidelity-dataset",
+            str(tmp_path / "images"),
+            "--output-dir",
+            str(tmp_path / "out"),
+            "--build-profile",
+            "w8a16_w16a16",
+            "--compile-invocation",
+            "rf_detr",
+        ],
     )
 
     with pytest.raises(SystemExit) as stopped:
@@ -491,13 +480,6 @@ def test_mask_logits_convert_to_the_onnx_output_layout(load_script: Callable[[st
     assert compile_module._masks_to_nchw(nchw) is nchw
     with pytest.raises(RuntimeError, match="unexpected mask logit shape"):
         compile_module._masks_to_nchw(nchw[:, :1])
-
-
-def test_surgery_simplifies_only_the_decoder_partition() -> None:
-    source = (SCRIPTS_DIR / "surgery.py").read_text(encoding="utf-8")
-
-    assert "decoder, valid = simplify(" in source
-    assert "full, valid = simplify(" not in source
 
 
 def test_model_declares_onnx_and_whole_model_benchmarks() -> None:

@@ -19,7 +19,7 @@ def _outputs(accuracy: ModuleType) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     queries, size = accuracy.QUERY_COUNT, accuracy.MASK_SIZE
     dets = np.full((1, queries, 4), 0.1, np.float32)
     dets[0, QUERY] = [0.5, 0.25, 0.5, 0.5]
-    labels = np.full((1, queries, accuracy.CLASSES), -20.0, np.float32)
+    labels = np.full((1, queries, accuracy.CLASS_COUNT), -20.0, np.float32)
     labels[0, QUERY, CATEGORY] = 4.0
     masks = np.full((size, size, queries), -5.0, np.float32)
     masks[: size // 2, :, QUERY] = 5.0
@@ -30,9 +30,9 @@ def test_decode_scales_the_box_and_encodes_the_resized_mask(load_script: Callabl
     pytest.importorskip("cv2")
     pytest.importorskip("faster_coco_eval")
     accuracy = load_script("accuracy")
-    valid = np.ones(accuracy.CLASSES, bool)
+    valid = np.ones(accuracy.CLASS_COUNT, bool)
 
-    (result,) = accuracy.decode(*_outputs(accuracy), image_id=7, width=200, height=100, valid=valid)
+    (result,) = accuracy.decode(*_outputs(accuracy), record={"id": 7, "width": 200, "height": 100}, valid=valid)
 
     assert result["image_id"] == 7
     assert result["category_id"] == CATEGORY
@@ -50,12 +50,14 @@ def test_decode_drops_unused_coco_slots_and_rejects_another_mask_layout(
     pytest.importorskip("faster_coco_eval")
     accuracy = load_script("accuracy")
     dets, labels, masks = _outputs(accuracy)
-    valid = np.ones(accuracy.CLASSES, bool)
+    valid = np.ones(accuracy.CLASS_COUNT, bool)
     valid[CATEGORY] = False
 
-    assert accuracy.decode(dets, labels, masks, image_id=7, width=200, height=100, valid=valid) == []
+    assert accuracy.decode(dets, labels, masks, record={"id": 7, "width": 200, "height": 100}, valid=valid) == []
     with pytest.raises(ValueError, match="unexpected mask logits"):
-        accuracy.decode(dets, labels, masks.transpose(2, 0, 1), image_id=7, width=200, height=100, valid=valid)
+        accuracy.decode(
+            dets, labels, masks.transpose(2, 0, 1), record={"id": 7, "width": 200, "height": 100}, valid=valid
+        )
 
 
 def test_mask_results_carry_no_box_so_coco_measures_the_mask_area(

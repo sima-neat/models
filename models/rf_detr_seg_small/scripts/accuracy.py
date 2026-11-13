@@ -30,7 +30,7 @@ from PIL import Image
 
 ANNOTATIONS = "annotations/instances_val2017.json"
 IMAGES = "val2017"
-CLASSES = 91
+CLASS_COUNT = 91
 MASK_SIZE = IMAGE_SIZE // 4
 # Upstream's num_select: how many query/class pairs PostProcess keeps per image.
 TOP_K = 100
@@ -88,17 +88,19 @@ def board_pipeline(mpks: dict[str, Path]) -> Callable[[np.ndarray], tuple[np.nda
     import pyneat
 
     def runner(path):
-        model, built = pyneat.Model(str(path)), []
+        model = pyneat.Model(str(path))
+        built = None
 
         def run(*inputs):
+            nonlocal built
             # Inputs stay alive until run() returns, so NumPy arrays are wrapped without a copy.
             tensors = [
                 item if isinstance(item, pyneat.Tensor) else pyneat.Tensor.from_numpy(item, copy=False)
                 for item in inputs
             ]
-            if not built:
-                built.append(model.build(tensors))
-            return built[0].run(tensors, timeout_ms=120000)
+            if built is None:
+                built = model.build(tensors)
+            return built.run(tensors, timeout_ms=120000)
 
         return run
 
@@ -108,8 +110,8 @@ def board_pipeline(mpks: dict[str, Path]) -> Callable[[np.ndarray], tuple[np.nda
         features, scores, boxes = backbone(image)
         proposals = select_top_proposals(scores.to_numpy(), boxes.to_numpy())
         # The decoder's EV74 input stage needs the features in EV74 memory; only the proposals pass through NumPy.
-        # Copies, because the runner reuses its output buffers while a decoder process may still read them.
         outputs = decoder(features.cvu(), proposals)
+        # Copies, because the runner reuses its output buffers while a decoder process may still read them.
         dets, labels, masks = (output.to_numpy(copy=True) for output in outputs)
         # The MPK returns the mask logits channels-last: [1, height, width, query].
         return dets, labels, masks[0]
@@ -117,14 +119,13 @@ def board_pipeline(mpks: dict[str, Path]) -> Callable[[np.ndarray], tuple[np.nda
     return infer
 
 
-def decode(
-    dets: np.ndarray, labels: np.ndarray, masks: np.ndarray, image_id: int, width: int, height: int, valid: np.ndarray
-) -> list[dict]:
-    """Return the COCO results, each with a box and an RLE mask, for one image.
+def decode(dets: np.ndarray, labels: np.ndarray, masks: np.ndarray, record: dict, valid: np.ndarray) -> list[dict]:
+    """Return the COCO results, each with a box and an RLE mask, for the image that record describes.
 
     masks holds each query's mask logits as [height, width, query].
     """
-    if dets.shape != (1, QUERY_COUNT, 4) or labels.shape != (1, QUERY_COUNT, CLASSES):
+    width, height = record["width"], record["height"]
+    if dets.shape != (1, QUERY_COUNT, 4) or labels.shape != (1, QUERY_COUNT, CLASS_COUNT):
         raise ValueError(f"unexpected decoder outputs: dets={dets.shape}, labels={labels.shape}")
     if masks.shape != (MASK_SIZE, MASK_SIZE, QUERY_COUNT):
         raise ValueError(f"unexpected mask logits: {masks.shape}")
@@ -133,10 +134,10 @@ def decode(
     scores = (1.0 / (1.0 + np.exp(-np.clip(labels[0], -80, 80)))).ravel()
     order = np.argsort(-scores, kind="stable")[:TOP_K]
     # RF-DETR keeps the 91 original COCO slots; 11 of them are unused.
-    order = order[(scores[order] >= SCORE_THRESHOLD) & valid[order % CLASSES]]
+    order = order[(scores[order] >= SCORE_THRESHOLD) & valid[order % CLASS_COUNT]]
     if not order.size:
         return []
-    queries = order // CLASSES
+    queries = order // CLASS_COUNT
     cx, cy, w, h = dets[0, queries].T
     x1, x2 = np.clip((cx - w / 2) * width, 0, width), np.clip((cx + w / 2) * width, 0, width)
     y1, y2 = np.clip((cy - h / 2) * height, 0, height), np.clip((cy + h / 2) * height, 0, height)
@@ -150,14 +151,14 @@ def decode(
         rles.extend(mask_util.encode(np.asfortranarray(binary)))
     return [
         {
-            "image_id": image_id,
+            "image_id": record["id"],
             "category_id": int(category),
             "bbox": [float(x), float(y), float(right - x), float(bottom - y)],
             "score": float(score),
             "segmentation": rle,
         }
         for x, y, right, bottom, score, category, rle in zip(
-            x1, y1, x2, y2, scores[order], order % CLASSES, rles, strict=True
+            x1, y1, x2, y2, scores[order], order % CLASS_COUNT, rles, strict=True
         )
     ]
 
@@ -195,7 +196,7 @@ def evaluate(
     available = sorted(ground_truth.getImgIds())
     image_ids = sorted(random.Random(0).sample(available, limit)) if limit else available
     records = ground_truth.loadImgs(image_ids)
-    valid = np.isin(np.arange(CLASSES), ground_truth.getCatIds())
+    valid = np.isin(np.arange(CLASS_COUNT), ground_truth.getCatIds())
 
     detections: list[dict] = []
     started = time.monotonic()
@@ -205,9 +206,7 @@ def evaluate(
         pending: deque = deque()
         for count, (record, image) in enumerate(zip(records, images), start=1):
             dets, labels, masks = infer(image)
-            pending.append(
-                decoders.submit(decode, dets, labels, masks, record["id"], record["width"], record["height"], valid)
-            )
+            pending.append(decoders.submit(decode, dets, labels, masks, record, valid))
             if len(pending) > 2 * DECODERS:
                 detections.extend(pending.popleft().result())
             if count == 1 or count % 250 == 0 or count == len(records):
@@ -233,7 +232,9 @@ def evaluate(
 
     return {
         "metrics": stats,
-        "split": IMAGES, "evaluated_samples": len(image_ids), "available_samples": len(available),
+        "split": IMAGES,
+        "evaluated_samples": len(image_ids),
+        "available_samples": len(available),
         "details": {
             "detections": len(detections),
             "inference_seconds": round(inference_seconds, 1),
@@ -243,8 +244,8 @@ def evaluate(
 
 
 def parse_mpks(values: list[str]) -> dict[str, Path]:
-    mpks = dict(value.split("=", 1) for value in values)
-    if set(mpks) != {"backbone", "decoder"}:
+    mpks = dict(value.split("=", 1) for value in values if "=" in value)
+    if len(mpks) != len(values) or set(mpks) != {"backbone", "decoder"}:
         raise SystemExit("--mpk must name exactly backbone=<path> and decoder=<path>")
     return {name: Path(path) for name, path in mpks.items()}
 

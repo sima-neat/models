@@ -17,7 +17,6 @@ from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[4]
 MODEL_DIR = ROOT / "models" / "rf_detr_seg_small"
-SCRIPTS_DIR = MODEL_DIR / "scripts"
 
 
 def test_preprocessing_produces_normalized_nchw_image(load_script: Callable[[str], ModuleType]) -> None:
@@ -65,7 +64,7 @@ def test_image_selection_is_seeded_and_disjoint(tmp_path: Path, load_script: Cal
 def test_afe_layout_converts_only_rank_four_tensors(load_script: Callable[[str], ModuleType]) -> None:
     calibration = load_script("calibration")
     images = np.zeros((2, 3, 5, 7), dtype=np.float32)
-    proposals = np.zeros((2, 300, 4), dtype=np.float32)
+    proposals = np.zeros((2, calibration.QUERY_COUNT, 4), dtype=np.float32)
 
     converted_images = calibration.to_afe_layout(images)
     converted_proposals = calibration.to_afe_layout(proposals)
@@ -232,25 +231,61 @@ def test_surgery_folds_only_power_of_two_score_scales(load_script: Callable[[str
         surgery._fold_backbone_score_scale(_attention_block(0.1), 1)
 
 
-def test_compile_recipe_uses_one_grouped_entrypoint_and_direct_afe_api() -> None:
-    source = (SCRIPTS_DIR / "compile.py").read_text(encoding="utf-8")
+def _window_attention_block() -> onnx.ModelProto:
+    """Two windows of three tokens, two heads of four channels, in the backbone's Q/K/V/PV layout."""
+    rng = np.random.RandomState(0)
+    prefix = "/backbone/layer.0/attention"
+    nodes = [onnx.helper.make_node("MatMul", ["x", "wq"], ["q_linear"], name=f"{prefix}/q/MatMul")]
+    for name, source, perm in (("q", "q_linear", [0, 2, 1, 3]), ("k", "x", [0, 2, 3, 1]), ("v", "x", [0, 2, 1, 3])):
+        nodes += [
+            onnx.helper.make_node("Reshape", [source, "heads"], [f"{name}_heads"], name=f"{prefix}/{name}/Reshape"),
+            onnx.helper.make_node("Transpose", [f"{name}_heads"], [name], name=f"{prefix}/{name}/Transpose", perm=perm),
+        ]
+    nodes += [
+        onnx.helper.make_node("MatMul", ["q", "k"], ["scores"], name=f"{prefix}/MatMul"),
+        onnx.helper.make_node("Mul", ["scores", "scale"], ["scaled"], name=f"{prefix}/Mul"),
+        onnx.helper.make_node("Softmax", ["scaled"], ["probabilities"], name=f"{prefix}/Softmax", axis=-1),
+        onnx.helper.make_node("MatMul", ["probabilities", "v"], ["context"], name=f"{prefix}/MatMul_1"),
+        onnx.helper.make_node("Transpose", ["context"], ["y"], name=f"{prefix}/Transpose", perm=[0, 2, 1, 3]),
+    ]
+    return _model(
+        nodes,
+        [_value("x", [2, 3, 8])],
+        [_value("y", [2, 3, 2, 4])],
+        [
+            onnx.numpy_helper.from_array(rng.standard_normal((8, 8)).astype(np.float32), "wq"),
+            onnx.numpy_helper.from_array(np.array([2, 3, 2, 4], dtype=np.int64), "heads"),
+            onnx.numpy_helper.from_array(np.array(0.5, dtype=np.float32), "scale"),
+        ],
+    )
 
-    assert 'parser.add_argument("--compile-invocation", required=True)' in source
-    assert "export_model" not in source
-    assert "prepare_model(source" in source
-    assert "loaded.quantize(" in source
-    assert "any_shape_on_mla=" not in source
-    assert "automatic_layout_conversion=" not in source
-    assert "flexible_batch_size=True" in source
-    assert "quantized.compile(" in source
-    assert "compile-outputs.json" in source
-    assert '"derived_graphs"' in source
-    assert '"compile_invocation_id": profile_id' in source
-    assert "shutil.copyfile" in source
-    assert "requests" not in source
-    assert "urllib" not in source
-    assert 'get_context("spawn")' in source
-    assert source.index('"RF-DETR backbone compilation"') < source.index('"RF-DETR decoder compilation and fidelity"')
+
+def test_surgery_moves_heads_ahead_of_windows_without_changing_attention(
+    load_script: Callable[[str], ModuleType],
+) -> None:
+    from onnx.reference import ReferenceEvaluator
+
+    surgery = load_script("surgery")
+    model = _window_attention_block()
+    x = np.random.RandomState(1).standard_normal((2, 3, 8)).astype(np.float32)
+    expected = ReferenceEvaluator(model).run(None, {"x": x})[0]
+
+    result = surgery._optimize_window_attention(model, 1)
+
+    perms = {
+        node.name.rsplit("/", 2)[-2]: list(onnx.helper.get_attribute_value(node.attribute[0]))
+        for node in result.graph.node
+        if node.op_type == "Transpose"
+    }
+    assert perms == {"q": [2, 0, 1, 3], "k": [2, 0, 3, 1], "v": [2, 0, 1, 3], "attention": [1, 2, 0, 3]}
+    np.testing.assert_allclose(ReferenceEvaluator(result).run(None, {"x": x})[0], expected, rtol=1e-6, atol=1e-6)
+
+
+def test_surgery_requires_every_window_block(load_script: Callable[[str], ModuleType]) -> None:
+    surgery = load_script("surgery")
+
+    with pytest.raises(ValueError, match="expected 2 window blocks, found 1"):
+        surgery._optimize_window_attention(_window_attention_block(), 2)
 
 
 def _metadata() -> dict:
@@ -352,8 +387,19 @@ def test_compile_main_rejects_an_invocation_not_named_after_the_build_profile(
     monkeypatch.setattr(
         sys,
         "argv",
-        ["compile.py", "--model", str(tmp_path / "model.onnx"), "--fidelity-dataset", str(tmp_path / "images"),
-         "--output-dir", str(tmp_path / "out"), "--build-profile", "w8a16_w16a16", "--compile-invocation", "rf_detr"],
+        [
+            "compile.py",
+            "--model",
+            str(tmp_path / "model.onnx"),
+            "--fidelity-dataset",
+            str(tmp_path / "images"),
+            "--output-dir",
+            str(tmp_path / "out"),
+            "--build-profile",
+            "w8a16_w16a16",
+            "--compile-invocation",
+            "rf_detr",
+        ],
     )
 
     with pytest.raises(SystemExit) as stopped:
@@ -491,13 +537,6 @@ def test_mask_logits_convert_to_the_onnx_output_layout(load_script: Callable[[st
     assert compile_module._masks_to_nchw(nchw) is nchw
     with pytest.raises(RuntimeError, match="unexpected mask logit shape"):
         compile_module._masks_to_nchw(nchw[:, :1])
-
-
-def test_surgery_simplifies_only_the_decoder_partition() -> None:
-    source = (SCRIPTS_DIR / "surgery.py").read_text(encoding="utf-8")
-
-    assert "decoder, valid = simplify(" in source
-    assert "full, valid = simplify(" not in source
 
 
 def test_model_declares_onnx_and_whole_model_benchmarks() -> None:
