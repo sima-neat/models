@@ -78,6 +78,32 @@ build_profiles:
       decoder:
         parameters: {precision: w16a16, calibration_bins: 2048, calibration_samples: 50}
 
+  w8a16_w8a8_mixed:
+    # The decoder calibrates on this backbone's outputs; W8A16 skips backbone calibration.
+    calibration_dataset: coco-2017-cal
+    runner_market: on-demand
+    components:
+      backbone:
+        parameters: {precision: w8a16, per_token: true}
+      decoder:
+        # A W8A8 decoder whose transformer and outputs run BF16; the mask head and mask product run INT8.
+        parameters:
+          precision: w8a8
+          calibration_bins: 2048
+          calibration_samples: 50
+          bf16_regions: [transformer, outputs]
+
+  # A W8A16 decoder fails in the compiler's large-tensor support ("Overlap in L1 detected");
+  # restore this profile once it compiles.
+  # w8a16_w8a16:
+  #   calibration_dataset: coco-2017-cal
+  #   runner_market: on-demand
+  #   components:
+  #     backbone:
+  #       parameters: {precision: w8a16, per_token: true}
+  #     decoder:
+  #       parameters: {precision: w8a16, per_token: true, calibration_bins: 2048, calibration_samples: 50}
+
 pipeline:
 - {component: backbone}
 - {cpu: Top 100 proposals}

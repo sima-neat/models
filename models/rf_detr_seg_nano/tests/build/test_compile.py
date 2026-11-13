@@ -679,28 +679,60 @@ def test_only_the_outputs_region_promotes_the_operations_producing_backbone_outp
     assert surgery._promoted(found, ["residual", "head", "outputs"]) == {"norm", "exp", "box", "boxes"}
 
 
+def test_decoder_regions_leave_the_mask_branch_int8(load_script: Callable[[str], ModuleType]) -> None:
+    surgery = load_script("surgery")
+    softmaxes = [f"softmax_{index}" for index in range(surgery.DECODER_SOFTMAXES)]
+    values = ["features", *softmaxes]
+    nodes = [
+        onnx.helper.make_node("Softmax", [source], [name], name=name, axis=-1)
+        for source, name in zip(values, softmaxes, strict=False)
+    ]
+    nodes += [
+        onnx.helper.make_node("Relu", [values[-1]], ["dets"], name="box"),
+        onnx.helper.make_node("Neg", [values[-1]], ["labels"], name="class"),
+        onnx.helper.make_node("Relu", ["features"], ["mask_features"], name="mask_head"),
+        onnx.helper.make_node("Mul", ["mask_features", values[-1]], ["masks"], name="mask_product"),
+    ]
+    model = _model(nodes, [_value("features", [1, 4])], [_value(name, [1, 4]) for name in ("dets", "labels", "masks")])
+
+    found = surgery._decoder_region_operations(model)
+
+    assert {node.name for node in found["transformer"]} == {*softmaxes, "box", "class"}
+    assert {node.name for node in found["outputs"]} == {"box", "class", "mask_product"}
+    assert surgery._promoted(found, ["transformer", "outputs"]) == {*softmaxes, "box", "class", "mask_product"}
+    with pytest.raises(ValueError, match=f"expected {surgery.DECODER_SOFTMAXES} decoder softmaxes, found"):
+        surgery._decoder_region_operations(_model(nodes[1:], model.graph.input, model.graph.output))
+
+
 def test_bf16_regions_require_the_mixed_token(load_script: Callable[[str], ModuleType]) -> None:
     compile_module = load_script("compile")
-    decoder = {"precision": "w16a16"}
+    w16a16 = {"precision": "w16a16"}
 
-    def regions(profile_id: str, backbone: dict, decoder: dict = decoder) -> list[str]:
+    def regions(profile_id: str, backbone: dict, decoder: dict = w16a16) -> dict[str, list[str]]:
         return compile_module._bf16_regions(profile_id, {"backbone": backbone, "decoder": decoder})
 
     w8a8 = {"precision": "w8a8", "bf16_regions": ["residual", "head"]}
-    assert regions("w8a8_mixed_w16a16", w8a8) == ["residual", "head"]
-    assert regions("w8a8_w16a16", {"precision": "w8a8"}) == []
+    assert regions("w8a8_mixed_w16a16", w8a8) == {"backbone": ["residual", "head"], "decoder": []}
+    assert regions("w8a8_w16a16", {"precision": "w8a8"}) == {"backbone": [], "decoder": []}
+    mixed_decoder = {"precision": "w8a8", "bf16_regions": ["transformer", "outputs"]}
+    assert regions("w8a16_w8a8_mixed", {"precision": "w8a16"}, mixed_decoder) == {
+        "backbone": [],
+        "decoder": ["transformer", "outputs"],
+    }
     with pytest.raises(ValueError, match="must have the mixed token"):
         regions("w8a8_w16a16", w8a8)
     with pytest.raises(ValueError, match="must have the mixed token"):
         regions("w8a8_mixed_w16a16", {"precision": "w8a8"})
-    with pytest.raises(ValueError, match=r"unknown BF16 regions \['embed'\]"):
+    with pytest.raises(ValueError, match=r"unknown backbone BF16 regions \['embed'\]"):
         regions("w8a8_mixed_w16a16", {"precision": "w8a8", "bf16_regions": ["embed"]})
+    with pytest.raises(ValueError, match=r"unknown decoder BF16 regions \['residual'\]"):
+        regions("w8a16_w8a8_mixed", {"precision": "w8a16"}, {"precision": "w8a8", "bf16_regions": ["residual"]})
     with pytest.raises(ValueError, match="distinct regions of a W8A8 backbone"):
         regions("w8a16_mixed_w16a16", {"precision": "w8a16", "bf16_regions": ["residual"]})
     with pytest.raises(ValueError, match="distinct regions of a W8A8 backbone"):
         regions("w8a8_mixed_w16a16", {"precision": "w8a8", "bf16_regions": ["residual", "residual"]})
-    with pytest.raises(ValueError, match="only the backbone"):
-        regions("w8a8_w16a16", {"precision": "w8a8"}, {**decoder, "bf16_regions": ["head"]})
+    with pytest.raises(ValueError, match="distinct regions of a W8A8 decoder"):
+        regions("w8a8_w16a16_mixed", {"precision": "w8a8"}, {**w16a16, "bf16_regions": ["transformer"]})
 
 
 def test_the_bf16_guard_requires_the_operations_afe_quantized_in_bf16(
@@ -719,14 +751,22 @@ def test_the_bf16_guard_requires_the_operations_afe_quantized_in_bf16(
 
     blocks = compile_module.GLOBAL_ATTENTION_BLOCKS
     global_softmaxes = [node(softmax, bf16) for _ in range(blocks)]
-    compile_module._require_bf16_regions(quantized(*global_softmaxes, node(softmax, "int8")), ["attention_global"])
-    compile_module._require_bf16_regions(quantized(node(add, bf16), node(softmax, "int8")), ["residual"])
+
+    def require(nodes: list[SimpleNamespace], component_id: str, regions: list[str]) -> None:
+        compile_module._require_bf16_regions(quantized(*nodes), component_id, regions)
+
+    require([*global_softmaxes, node(softmax, "int8")], "backbone", ["attention_global"])
+    require([node(add, bf16), node(softmax, "int8")], "backbone", ["residual"])
+    decoder_softmaxes = [node(softmax, bf16) for _ in range(compile_module.DECODER_SOFTMAXES)]
+    require(decoder_softmaxes, "decoder", ["transformer", "outputs"])
     with pytest.raises(RuntimeError, match=f"including {blocks} softmaxes"):
-        compile_module._require_bf16_regions(quantized(*global_softmaxes[:-1]), ["attention_global"])
+        require(global_softmaxes[:-1], "backbone", ["attention_global"])
     with pytest.raises(RuntimeError, match="including 0 softmaxes"):
-        compile_module._require_bf16_regions(quantized(node(add, "int8")), ["residual"])
+        require([node(add, "int8")], "backbone", ["residual"])
     with pytest.raises(RuntimeError, match="including 0 softmaxes"):
-        compile_module._require_bf16_regions(quantized(node(add, bf16), node(softmax, bf16)), ["residual"])
+        require([node(add, bf16), node(softmax, bf16)], "backbone", ["residual"])
+    with pytest.raises(RuntimeError, match=f"including {compile_module.DECODER_SOFTMAXES} softmaxes"):
+        require(decoder_softmaxes[:-1], "decoder", ["transformer"])
 
 
 def test_an_afe_system_exit_fails_the_phase(

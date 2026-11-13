@@ -40,9 +40,11 @@ from model_registry.fetch import sha256_file
 from model_registry.model import load_model as load_metadata
 from sima_utils.data.data_generator import DataGenerator
 from surgery import (
-    BF16_REGIONS,
+    BACKBONE_BF16_REGIONS,
     BOUNDARY_SHAPES,
     BOXES,
+    DECODER_BF16_REGIONS,
+    DECODER_SOFTMAXES,
     FEATURES,
     GLOBAL_ATTENTION_BLOCKS,
     INPUT,
@@ -62,6 +64,7 @@ MODEL_ID = "rf_detr_seg_medium"
 # Precisions with BF16 activations. Their layer norms keep FP32 intermediates, as every measured build did.
 A16_PRECISIONS = ("w8a16", "w16a16")
 COMPONENT_IDS = ("backbone", "decoder")
+COMPONENT_BF16_REGIONS = {"backbone": BACKBONE_BF16_REGIONS, "decoder": DECODER_BF16_REGIONS}
 # Files the compilation phases pass to each other in the temporary directory.
 REFERENCE_OUTPUTS = "reference_outputs.npz"
 BACKBONE_OUTPUTS = "backbone_outputs.npz"
@@ -98,18 +101,21 @@ def _component_name(profile_id: str, component_id: str) -> str:
     return f"{MODEL_ID}_{profile_id}_{component_id}"
 
 
-def _bf16_regions(profile_id: str, component_parameters: dict[str, dict[str, Any]]) -> list[str]:
-    """Return the backbone regions the build profile runs BF16, checking that its ID marks it mixed."""
-    if "bf16_regions" in component_parameters["decoder"]:
-        raise ValueError("only the backbone declares bf16_regions")
-    parameters = component_parameters["backbone"]
-    regions = parameters.get("bf16_regions", [])
-    if regions and (parameters["precision"] != "w8a8" or len(set(regions)) != len(regions)):
-        raise ValueError(f"bf16_regions must name distinct regions of a W8A8 backbone: {regions}")
-    unknown = sorted(set(regions) - set(BF16_REGIONS))
-    if unknown:
-        raise ValueError(f"unknown BF16 regions {unknown}; choose from {list(BF16_REGIONS)}")
-    if bool(regions) != ("mixed" in profile_id.split("_")):
+def _bf16_regions(profile_id: str, component_parameters: dict[str, dict[str, Any]]) -> dict[str, list[str]]:
+    """Return the regions each component runs BF16, checking that the profile ID marks the build mixed."""
+    regions = {}
+    for component_id, parameters in component_parameters.items():
+        component_regions = parameters.get("bf16_regions", [])
+        if component_regions and (
+            parameters["precision"] != "w8a8" or len(set(component_regions)) != len(component_regions)
+        ):
+            raise ValueError(f"bf16_regions must name distinct regions of a W8A8 {component_id}: {component_regions}")
+        known = COMPONENT_BF16_REGIONS[component_id]
+        unknown = sorted(set(component_regions) - set(known))
+        if unknown:
+            raise ValueError(f"unknown {component_id} BF16 regions {unknown}; choose from {list(known)}")
+        regions[component_id] = component_regions
+    if any(regions.values()) != ("mixed" in profile_id.split("_")):
         raise ValueError(f"build profile {profile_id!r} must have the mixed token exactly when it has bf16_regions")
     return regions
 
@@ -178,8 +184,8 @@ def _quantize_component(
     )
 
 
-def _require_bf16_regions(quantized: Any, regions: list[str]) -> None:
-    """Fail when AFE ignored the BF16 annotations, which would silently build a W8A8 backbone."""
+def _require_bf16_regions(quantized: Any, component_id: str, regions: list[str]) -> None:
+    """Fail when AFE ignored the BF16 annotations, which would silently build a W8A8 component."""
     # The quantized model keeps its network private, and AFE renames every node, so count by operation.
     counts = Counter(
         type(node.ir.operation).__name__
@@ -187,9 +193,10 @@ def _require_bf16_regions(quantized: Any, regions: list[str]) -> None:
         if getattr(node.ir, "quant_config", None) is not None
         and node.ir.quant_config.quantization_precision.value == QuantizationPrecision.BFLOAT_16
     )
-    logging.info("BF16 backbone operations: %s", dict(sorted(counts.items())))
+    logging.info("BF16 %s operations: %s", component_id, dict(sorted(counts.items())))
     # Softmax stays one AFE node, unlike LayerNorm, whose scale and bias AFE splits off.
-    softmaxes = GLOBAL_ATTENTION_BLOCKS if "attention_global" in regions else 0
+    region_softmaxes = {"attention_global": GLOBAL_ATTENTION_BLOCKS, "transformer": DECODER_SOFTMAXES}
+    softmaxes = sum(region_softmaxes.get(region, 0) for region in regions)
     if not counts or counts["SoftmaxOp"] != softmaxes:
         raise RuntimeError(f"expected BF16 operations including {softmaxes} softmaxes, found {dict(counts)}")
 
@@ -478,23 +485,29 @@ def _prepare_phase(
     source: Path,
     fidelity_dataset: Path,
     evaluation_names: tuple[str, ...],
-    bf16_regions: list[str],
+    bf16_regions: dict[str, list[str]],
     temporary_dir: Path,
 ) -> None:
     """Split the ONNX into the two component graphs, check the split, and save the reference outputs.
 
-    Then mark the backbone's BF16 regions, which ONNX Runtime cannot run.
+    Then mark each component's BF16 regions, which ONNX Runtime cannot run.
     """
     backbone_graph, decoder_graph = prepare_model(source, temporary_dir / "graphs")
     images = load_images(fidelity_dataset, evaluation_names)
     validate_float_split(source, backbone_graph, decoder_graph, images[0])
     np.savez(temporary_dir / REFERENCE_OUTPUTS, **_reference_outputs(source, images))
 
-    if bf16_regions:
-        marks = annotate_bf16_regions(backbone_graph, bf16_regions)
-        logging.info(
-            "Marked %d backbone operations BF16 and %d INT8 for %s", marks["bfloat16"], marks["int8"], bf16_regions
-        )
+    for component_id, graph in zip(COMPONENT_IDS, (backbone_graph, decoder_graph), strict=True):
+        regions = bf16_regions[component_id]
+        if regions:
+            marks = annotate_bf16_regions(graph, component_id, regions)
+            logging.info(
+                "Marked %d %s operations BF16 and %d INT8 for %s",
+                marks["bfloat16"],
+                component_id,
+                marks["int8"],
+                regions,
+            )
 
 
 def _backbone_phase(
@@ -520,7 +533,7 @@ def _backbone_phase(
     )
 
     if parameters.get("bf16_regions"):
-        _require_bf16_regions(backbone, parameters["bf16_regions"])
+        _require_bf16_regions(backbone, "backbone", parameters["bf16_regions"])
     _compile_component(backbone, temporary_dir / name, "backbone", parameters["precision"])
 
     features, scores, boxes = zip(
@@ -563,6 +576,8 @@ def _decoder_phase(
         calibration_inputs,
         {tensor: tuple(BOUNDARY_SHAPES[tensor]) for tensor in (FEATURES, PROPOSALS)},
     )
+    if parameters.get("bf16_regions"):
+        _require_bf16_regions(decoder, "decoder", parameters["bf16_regions"])
     _compile_component(decoder, temporary_dir / name, "decoder", parameters["precision"])
 
     metrics = _measure_fidelity(decoder, backbone_outputs, reference)

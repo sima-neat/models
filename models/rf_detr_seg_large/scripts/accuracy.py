@@ -233,7 +233,9 @@ def evaluate(
 
     return {
         "metrics": stats,
-        "split": IMAGES, "evaluated_samples": len(image_ids), "available_samples": len(available),
+        "split": IMAGES,
+        "evaluated_samples": len(image_ids),
+        "available_samples": len(available),
         "details": {
             "detections": len(detections),
             "inference_seconds": round(inference_seconds, 1),

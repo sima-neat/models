@@ -48,7 +48,12 @@ BOUNDARY_SHAPES = {
 }
 
 # Backbone regions a mixed build profile can run BF16 in an otherwise INT8 backbone.
-BF16_REGIONS = ("residual", "attention_global", "projector", "head", "outputs")
+BACKBONE_BF16_REGIONS = ("residual", "attention_global", "projector", "head", "outputs")
+# The decoder's transformer computes the boxes and class logits; the mask head and mask product that only
+# the masks need stay INT8.
+DECODER_BF16_REGIONS = ("transformer", "outputs")
+# Each decoder layer has a self-attention softmax and a deformable-attention weight softmax.
+DECODER_SOFTMAXES = 2 * DECODER_LAYERS
 # Operations that only move values. AFE gives most of them the precision their inputs share, but runs a Concat INT8.
 LAYOUT_OPS = {"Reshape", "Transpose", "Slice", "Split", "Concat", "Tile"}
 
@@ -679,8 +684,8 @@ def _backbone_blocks(model: onnx.ModelProto) -> list[dict[str, Any]]:
     return blocks
 
 
-def _region_operations(model: onnx.ModelProto) -> dict[str, list[onnx.NodeProto]]:
-    """Find the operations of each BF16 region by structure."""
+def _backbone_region_operations(model: onnx.ModelProto) -> dict[str, list[onnx.NodeProto]]:
+    """Find the operations of each backbone BF16 region by structure."""
     graph = _index(model)
     blocks = _backbone_blocks(model)
     residual = [node for block in blocks for node in block["residual"]]
@@ -705,10 +710,23 @@ def _region_operations(model: onnx.ModelProto) -> dict[str, list[onnx.NodeProto]
     }
 
 
+def _decoder_region_operations(model: onnx.ModelProto) -> dict[str, list[onnx.NodeProto]]:
+    """Find the operations of each decoder BF16 region by structure."""
+    graph = _index(model)
+    transformer = _upstream(graph.producers, ["dets", "labels"])
+    softmaxes = sum(node.op_type == "Softmax" for node in transformer)
+    _require(softmaxes == DECODER_SOFTMAXES, f"expected {DECODER_SOFTMAXES} decoder softmaxes, found {softmaxes}")
+    return {
+        "transformer": transformer,
+        # The operations whose results leave the decoder, and the layout operations after them.
+        "outputs": [node for node in model.graph.node if None in _readers(graph.users, node.output[0])],
+    }
+
+
 def _promoted(region_operations: dict[str, list[onnx.NodeProto]], regions: list[str]) -> set[str]:
     """Return the names of the operations the regions run BF16.
 
-    Neat cannot run a backbone whose outputs mix BF16 and INT8, so only the outputs region promotes the
+    Neat cannot run a component whose outputs mix BF16 and INT8, so only the outputs region promotes the
     operations that produce them. It marks their layout operations too, because AFE runs a Concat INT8.
     """
     promoted = {node.name for region in regions for node in region_operations[region] if node.op_type not in LAYOUT_OPS}
@@ -756,10 +774,11 @@ def _insert_precision_hints(model: onnx.ModelProto, marks: dict[str, str]) -> No
     model.opset_import.append(helper.make_opsetid("ai.sima", 1))
 
 
-def annotate_bf16_regions(graph: Path, regions: list[str]) -> dict[str, int]:
-    """Rewrite the backbone graph to run the regions' operations BF16; return the marks per precision."""
+def annotate_bf16_regions(graph: Path, component_id: str, regions: list[str]) -> dict[str, int]:
+    """Rewrite a component graph to run the regions' operations BF16; return the marks per precision."""
     model = onnx.load(graph)
-    marks = _precision_marks(model, _promoted(_region_operations(model), regions))
+    find_regions = {"backbone": _backbone_region_operations, "decoder": _decoder_region_operations}[component_id]
+    marks = _precision_marks(model, _promoted(find_regions(model), regions))
     _insert_precision_hints(model, marks)
     onnx.checker.check_model(model)
     onnx.save(model, graph)
