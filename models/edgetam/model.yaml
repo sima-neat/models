@@ -1,3 +1,5 @@
+# Each build profile compiles for over an hour, so this model builds only on request.
+build-on-demand: true
 display_name: EdgeTAM
 description: Segments an object through a video from a click or a box on one frame, with Meta's on-device Segment Anything 2 tracker.
 model_type: vision
