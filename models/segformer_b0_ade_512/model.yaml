@@ -67,9 +67,20 @@ numerical_fidelity:
   selection: {method: seeded_random_without_replacement, seed: 42, offset: 0, samples: 20}
   outputs: [logits]
 
+accuracy:
+  # ADE20K's 2,000 SceneParse150 validation images and label maps, scored single scale on the package's 512x512 stretch
+  # (see accuracy.py).
+  datasets:
+  - {id: ade20k, variant: val, sha256: b98b1c9c66fe7d4531e34de3256d54a192ee123e8b0fa5b81dfc81fb0a27c453, size_bytes: 87700104}
+
 performance: {}
 
 reference_metrics:
+- origin: fp32_baseline
+  script: scripts/fp32_baseline_accuracy.py
+  dataset: {id: ade20k, split: val}
+  conditions: FP32 ONNX on ONNX Runtime CPU; each image stretched to 512x512, ImageNet-normalized; single scale; 2000 images
+  metrics: {miou: 0.3594}
 - source: https://arxiv.org/abs/2105.15203v3
   dataset: {id: ade20k, split: val}
   conditions: 512x512 training crops; evaluation resizes the short side to 512 and keeps the aspect ratio; single-scale

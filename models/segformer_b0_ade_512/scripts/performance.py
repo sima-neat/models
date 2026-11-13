@@ -1,29 +1,53 @@
-"""Benchmark one compiled SegFormer-B0 MPK with Neat Core on a fixed 720p frame and save its report."""
+"""Benchmark one compiled SegFormer-B0 MPK with Neat Core on an ADE20K image and save its report."""
 
 import argparse
+import random
+from pathlib import Path
 
+import cv2
 import model_report
 import numpy as np
 import pyneat
 
-# The model declares no accuracy dataset, so the benchmark input is a fixed, seeded 720p camera-like frame:
-# smooth colour gradients with sensor-like noise.
-FRAME_WIDTH, FRAME_HEIGHT, SEED = 1280, 720, 0
+DATASET = "ade20k-val"
+IMAGES = "images/validation"
+# The benchmark input is a 720p camera frame, letterboxed with grey padding.
+FRAME_WIDTH, FRAME_HEIGHT, FILL = 1280, 720, 114
 
 
-def synthetic_frame() -> np.ndarray:
-    rows = np.linspace(0, 1, FRAME_HEIGHT, dtype=np.float32)[:, None]
-    columns = np.linspace(0, 1, FRAME_WIDTH, dtype=np.float32)[None, :]
-    channels = [rows * 200 + 30, columns * 180 + 40, (1 - rows) * columns * 220 + 20]
-    base = np.stack([np.broadcast_to(channel, (FRAME_HEIGHT, FRAME_WIDTH)) for channel in channels], axis=-1)
-    noise = np.random.default_rng(SEED).normal(0, 8, base.shape)
-    return np.clip(base + noise, 0, 255).astype(np.uint8)
+def sample_image(dataset: Path) -> Path:
+    """One validation image, chosen with a fixed seed so every run measures the same input."""
+    root = dataset / DATASET if (dataset / DATASET).is_dir() else dataset
+    images = sorted((root / IMAGES).glob("*.jpg"))
+    if not images:
+        raise SystemExit(f"{root} has no images under {IMAGES}/")
+    return random.Random(0).choice(images)
+
+
+def read_rgb(path: Path) -> np.ndarray:
+    image = cv2.imread(str(path), cv2.IMREAD_COLOR | cv2.IMREAD_IGNORE_ORIENTATION)
+    if image is None:
+        raise SystemExit(f"could not read {path}")
+    return cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+
+
+def letterbox_to_720p(image: np.ndarray) -> np.ndarray:
+    """Scale an RGB image to fit a 1280x720 frame and pad it to the frame, centered."""
+    scale = min(FRAME_WIDTH / image.shape[1], FRAME_HEIGHT / image.shape[0])
+    width, height = round(image.shape[1] * scale), round(image.shape[0] * scale)
+    left, top = (FRAME_WIDTH - width) // 2, (FRAME_HEIGHT - height) // 2
+    frame = np.full((FRAME_HEIGHT, FRAME_WIDTH, 3), FILL, np.uint8)
+    frame[top : top + height, left : left + width] = cv2.resize(image, (width, height), interpolation=cv2.INTER_LINEAR)
+    return frame
 
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--mpk", required=True, help="compiled model archive")
+parser.add_argument("--dataset", required=True, help=f"{DATASET}=<extracted directory>")
 parser.add_argument("--output", required=True, help="directory for model-report.json")
 args = parser.parse_args()
+dataset_id, dataset_dir = args.dataset.split("=", 1)
+image = sample_image(Path(dataset_dir))
 
 options = pyneat.ModelOptions()
 # Neat stretches the frame to 512x512, normalizes, quantizes and tessellates it inside the measured pipeline.
@@ -44,13 +68,14 @@ benchmark_options.num_samples = 1000
 benchmark_options.min_duration_ms = 60000
 benchmark_options.include_mla_layer_stats = True
 benchmark_options.include_mla_stage_stats = True
-benchmark_options.inputs = [pyneat.Tensor.from_numpy(synthetic_frame(), copy=True, image_format=pyneat.PixelFormat.RGB)]
+frame = letterbox_to_720p(read_rgb(image))
+benchmark_options.inputs = [pyneat.Tensor.from_numpy(frame, copy=True, image_format=pyneat.PixelFormat.RGB)]
 report = model_report.from_performance(
     model.benchmark(benchmark_options),
     {"model": model},
     workload=(
-        f"Seeded synthetic {FRAME_WIDTH}x{FRAME_HEIGHT} RGB frame, Neat preprocessing stretched to 512x512, "
-        "raw 128x128 logits"
+        f"{dataset_id} {image.name} in a {FRAME_WIDTH}x{FRAME_HEIGHT} RGB frame, Neat preprocessing stretched to "
+        "512x512, raw 128x128 logits"
     ),
 )
 report.save(args.output)

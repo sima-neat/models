@@ -1,0 +1,3 @@
+# ADE20K scene parsing (SceneParse150): mean intersection over union over the 150 classes.
+required_metrics:
+  semantic_segmentation: [miou]
