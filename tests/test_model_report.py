@@ -309,13 +309,15 @@ def write_image(path, value, size=SOURCE_SIZE):
 
 def benchmark_dataset(root):
     """A dataset with the files each script samples from: COCO val2017, ImageNet's val2012 and ImageNet mini's val
-    split, an HPatches val sequence, DOTA's val images, Pittsburgh 30k, and the Scene Flow test list. Only the second
-    COCO image labels a person, so a pose script must pick it."""
+    split, a DAVIS val sequence, an HPatches val sequence, DOTA's val images, Pittsburgh 30k, and the Scene Flow test
+    list. Only the second COCO image labels a person, so a pose script must pick it."""
     write_image(root / STEREO_PAIR.format(view="left"), STEREO_LEFT, STEREO_VIEW)
     write_image(root / STEREO_PAIR.format(view="right"), STEREO_RIGHT, STEREO_VIEW)
     disparity = STEREO_PAIR.replace("frames_finalpass", "disparity").format(view="left").replace(".png", ".pfm")
     pair = f"{STEREO_PAIR.format(view='left')} {STEREO_PAIR.format(view='right')} {disparity}\n"
     (root / "sceneflow_finalpass_test.txt").write_text(pair, encoding="utf-8")
+    write_image(root / "val/bear/00000.jpg", 200)
+    (root / "val.txt").write_text("bear\n", encoding="utf-8")
     write_image(root / "val2017/000000000001.jpg", 200)
     write_image(root / "val2017/000000000002.jpg", 200)
     write_image(root / "val2012/ILSVRC2012_val_00000001.JPEG", 200)
@@ -608,7 +610,7 @@ def test_every_multi_component_script_feeds_its_backbone_a_dataset_frame(script,
     frame = functions["frame_tensor"](image)
 
     metadata = yaml.safe_load((script.parents[1] / "model.yaml").read_text(encoding="utf-8"))
-    splits = {"coco-2017": "val2017", "imagenet-2012": "val2012"}
+    splits = {"coco-2017": "val2017", "imagenet-2012": "val2012", "davis-2017": "bear"}
     assert image.parent.name == splits[metadata["accuracy"]["datasets"][0]["id"]]
     assert_letterboxed_frame(frame)
     assert frame.options["memory"] == "EV74"

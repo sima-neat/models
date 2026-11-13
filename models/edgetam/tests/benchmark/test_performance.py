@@ -12,6 +12,8 @@ import pytest
 from model_registry.model_tests import measured_shortfalls
 
 COMPONENTS = ["image_encoder", "memory_attention", "mask_decoder", "memory_encoder"]
+# A click on the benchmark frame, as (x, y) frame pixels.
+CLICK = (700.0, 400.0)
 
 
 @pytest.fixture
@@ -82,11 +84,11 @@ def test_the_tracker_reads_the_graphs_interfaces(script: ModuleType, load_script
 
 
 def test_prompts_match_the_calibration_trackers(script: ModuleType, calibration: ModuleType) -> None:
-    x, y = script.CLICK
+    x, y = CLICK
     model_pixel = (x * script.IMAGE_SIZE / script.FRAME_WIDTH, y * script.IMAGE_SIZE / script.FRAME_HEIGHT)
     click = calibration.Prompt(points=(model_pixel,), types=("foreground",)).inputs()
 
-    coords, types = script.prompt_arrays([script.CLICK], ["foreground"])
+    coords, types = script.prompt_arrays([CLICK], ["foreground"])
     no_coords, no_types = script.prompt_arrays([], [])
 
     np.testing.assert_allclose(coords, _channels_last(click["point_coords"]), atol=1e-6)
@@ -144,15 +146,28 @@ def test_the_memory_bank_matches_the_calibration_trackers(script: ModuleType, ca
                 np.testing.assert_array_equal(array, expected)
 
 
-def test_the_scene_is_fixed_and_the_click_lands_on_the_sail(script: ModuleType) -> None:
-    pytest.importorskip("cv2")
-    frame = script.scene()
-    x, y = script.CLICK
+def test_the_frame_is_a_seeded_sequences_first_frame_and_the_click_lands_inside_its_object(
+    script: ModuleType, tmp_path: Path
+) -> None:
+    cv2 = pytest.importorskip("cv2")
+    for sequence in ("bear", "camel"):
+        for frame in ("00000", "00001"):
+            (tmp_path / "val" / sequence).mkdir(parents=True, exist_ok=True)
+            (tmp_path / "annotations" / sequence).mkdir(parents=True, exist_ok=True)
+            assert cv2.imwrite(str(tmp_path / "val" / sequence / f"{frame}.jpg"), np.full((480, 640, 3), 200, np.uint8))
+            objects = np.zeros((480, 640), np.uint8)
+            # A thin object and a 100x100 object that touches the image's left edge.
+            objects[10:14, 300:600] = 38
+            objects[200:300, 0:100] = 75
+            assert cv2.imwrite(str(tmp_path / "annotations" / sequence / f"{frame}.png"), objects)
+    (tmp_path / "val.txt").write_text("bear\ncamel\n", encoding="utf-8")
 
-    assert (frame.shape, str(frame.dtype)) == ((script.FRAME_HEIGHT, script.FRAME_WIDTH, 3), "uint8")
-    assert np.array_equal(frame, script.scene()) and frame.std() > 10
-    # The sail is near white; the sea and the sky around it are not.
-    assert frame[y, x].min() > 220 and frame[y, x - 200].min() < 200
+    image = script.sample_image(tmp_path)
+    x, y = script.object_click(image)
+
+    assert image == script.sample_image(tmp_path) and image.name == "00000.jpg"
+    # A 640x480 image fills 960x720 of the frame, 160 columns in: the click is the square's centre, scaled by 1.5.
+    assert (x, y) == pytest.approx((160 + 50 * 1.5, 250 * 1.5), abs=2)
 
 
 def test_the_first_frame_is_prompted_and_later_frames_attend_to_the_bank(script: ModuleType) -> None:
@@ -176,7 +191,7 @@ def test_the_first_frame_is_prompted_and_later_frames_attend_to_the_bank(script:
     tracker = script.Tracker({component: runner(component) for component in COMPONENTS})
     frame = _Tensor(np.zeros((script.FRAME_HEIGHT, script.FRAME_WIDTH, 3), np.uint8))
 
-    tracker.track(tracker.encode(frame), script.prompt_arrays([script.CLICK], ["foreground"]))
+    tracker.track(tracker.encode(frame), script.prompt_arrays([CLICK], ["foreground"]))
     mask = tracker.track(tracker.encode(frame))
 
     assert [component for component, _ in calls] == [

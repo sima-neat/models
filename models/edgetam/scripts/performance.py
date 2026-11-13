@@ -3,8 +3,9 @@
 Given --mpk <component>=<path> for image_encoder, memory_attention, mask_decoder and memory_encoder, the script
 measures one tracked frame: Neat's preprocessing and the image encoder, the memory attention over the memory bank,
 the mask decoder, the mask choice and upsampling on the CPU, and the memory encoder, whose memory joins the bank.
-EdgeTAM declares no accuracy dataset, so the script builds its own 720p frame, a seeded sea with one sailboat. It
-clicks the boat on the first frame and tracks it through repeats of that frame.
+The input is the first frame of one seeded DAVIS 2017 val sequence from --dataset davis-2017-val=<directory>,
+letterboxed into a 720p frame. The script clicks an annotated object on it and tracks the object through repeats of
+that frame.
 
 Latency runs one frame at a time and reports each step's share. In the throughput pass the image encoder works ahead
 on the next frames while the tracker finishes the current one. A frame's memory attention needs the previous frame's
@@ -16,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import collections
+import random
 import threading
 import time
 from collections.abc import Callable, Iterator
@@ -49,27 +51,52 @@ TIMEOUT_MS = 10000
 QUEUE_DEPTH = 2
 # The benchmark input is a 720p camera frame.
 FRAME_WIDTH, FRAME_HEIGHT = 1280, 720
-HORIZON = 300
-# The sailboat's sail and hull, as (x, y) frame pixels, and the first frame's click on the sail.
-SAIL = [(650, 180), (650, 470), (830, 470)]
-HULL = [(520, 480), (880, 480), (820, 550), (580, 550)]
-CLICK = (700, 400)
+FILL = 114
+SPLIT = "val"
 
 
-def scene() -> np.ndarray:
-    """A fixed 1280x720 RGB frame: a sailboat on the sea under a clear sky, with seeded waves and sensor noise."""
-    rng = np.random.default_rng(0)
-    rows = np.arange(FRAME_HEIGHT, dtype=np.float32)[:, None, None] / FRAME_HEIGHT
-    sky = np.asarray([150, 190, 235], np.float32) * (1.0 - 0.4 * rows)
-    sea = np.asarray([30, 95, 150], np.float32) * (1.4 - 0.6 * rows)
-    frame = np.where(rows * FRAME_HEIGHT < HORIZON, sky, sea) * np.ones((1, FRAME_WIDTH, 1), np.float32)
-    for _ in range(60):
-        x, y = int(rng.uniform(0, FRAME_WIDTH)), int(rng.uniform(HORIZON + 10, FRAME_HEIGHT))
-        cv2.line(frame, (x, y), (x + int(rng.uniform(20, 90)), y), (150.0, 190.0, 215.0), 2)
-    cv2.fillPoly(frame, [np.asarray(HULL, np.int32)], (120.0, 60.0, 40.0))
-    cv2.fillPoly(frame, [np.asarray(SAIL, np.int32)], (245.0, 245.0, 235.0))
-    frame += rng.normal(0.0, 3.0, frame.shape).astype(np.float32)
-    return np.clip(frame, 0, 255).astype(np.uint8)
+def sample_image(dataset: Path) -> Path:
+    """The first frame of one val sequence, chosen with a fixed seed so every run measures the same input."""
+    sequences = (dataset / f"{SPLIT}.txt").read_text(encoding="utf-8").split()
+    frames = sorted((dataset / SPLIT / random.Random(0).choice(sequences)).glob("*.jpg"))
+    if not frames:
+        raise SystemExit(f"{dataset} has no frames under {SPLIT}/")
+    return frames[0]
+
+
+def read_rgb(path: Path) -> np.ndarray:
+    image = cv2.imread(str(path), cv2.IMREAD_COLOR | cv2.IMREAD_IGNORE_ORIENTATION)
+    if image is None:
+        raise SystemExit(f"could not read {path}")
+    return cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+
+
+def letterbox(width: int, height: int) -> tuple[float, int, int]:
+    """The scale and the left and top padding that centre a width x height image in the 1280x720 frame."""
+    scale = min(FRAME_WIDTH / width, FRAME_HEIGHT / height)
+    return scale, (FRAME_WIDTH - round(width * scale)) // 2, (FRAME_HEIGHT - round(height * scale)) // 2
+
+
+def letterbox_to_720p(image: np.ndarray) -> np.ndarray:
+    """Scale an RGB image to fit a 1280x720 frame and pad it to the frame, centered."""
+    scale, left, top = letterbox(image.shape[1], image.shape[0])
+    width, height = round(image.shape[1] * scale), round(image.shape[0] * scale)
+    frame = np.full((FRAME_HEIGHT, FRAME_WIDTH, 3), FILL, np.uint8)
+    frame[top : top + height, left : left + width] = cv2.resize(image, (width, height), interpolation=cv2.INTER_LINEAR)
+    return frame
+
+
+def object_click(image: Path) -> tuple[float, float]:
+    """The first frame's click, as (x, y) frame pixels: the annotated pixel farthest from the background."""
+    annotation = image.parents[2] / "annotations" / image.parent.name / f"{image.stem}.png"
+    objects = cv2.imread(str(annotation), cv2.IMREAD_GRAYSCALE)
+    if objects is None or not objects.any():
+        raise SystemExit(f"{annotation} annotates no object")
+    # The mask is padded so an object touching the frame's edge still counts the edge as background.
+    depth = cv2.distanceTransform(cv2.copyMakeBorder((objects > 0).astype(np.uint8), 1, 1, 1, 1, 0), cv2.DIST_L2, 5)
+    y, x = np.unravel_index(np.argmax(depth[1:-1, 1:-1]), objects.shape)
+    scale, left, top = letterbox(objects.shape[1], objects.shape[0])
+    return left + (x + 0.5) * scale, top + (y + 0.5) * scale
 
 
 def image_options() -> pyneat.ModelOptions:
@@ -257,10 +284,13 @@ def mla_stats(mpk: Path) -> tuple[dict[str, object], dict[str, object]]:
     return {"status": layer_stats.status, "layers": layers}, {"status": stage_stats.status, "stages": stages}
 
 
-def frame_tensor() -> pyneat.Tensor:
-    """The scene, placed once in the memory the image encoder reads and reused for every frame."""
+def frame_tensor(path: Path) -> pyneat.Tensor:
+    """The image's 720p frame, placed once in the memory the image encoder reads and reused for every frame."""
     return pyneat.Tensor.from_numpy(
-        scene(), copy=True, image_format=pyneat.PixelFormat.RGB, memory=pyneat.TensorMemory.EV74
+        letterbox_to_720p(read_rgb(path)),
+        copy=True,
+        image_format=pyneat.PixelFormat.RGB,
+        memory=pyneat.TensorMemory.EV74,
     )
 
 
@@ -387,6 +417,7 @@ def measure_throughput(tracker: Tracker, frame: pyneat.Tensor) -> Throughput:
 
 def write_report(
     output: Path,
+    frame_name: str,
     latencies: list[float],
     throughput: Throughput,
     models: dict[str, pyneat.Model],
@@ -405,11 +436,11 @@ def write_report(
         benchmark,
         models,
         workload=(
-            f"tracked frames after one click, on a fixed {FRAME_WIDTH}x{FRAME_HEIGHT} RGB sailboat scene the script "
-            f"builds: Neat preprocessing stretched to {IMAGE_SIZE}x{IMAGE_SIZE}, image encoder, memory attention "
-            f"over {MEMORY_SLOTS} memories and {OBJECT_POINTERS} object pointers, mask decoder, mask choice and "
-            f"upsampling on the CPU, and memory encoder; latency one frame at a time, throughput with the image "
-            f"encoder up to {QUEUE_DEPTH} frames ahead"
+            f"tracked frames after one click on an annotated object, on {frame_name} letterboxed to "
+            f"{FRAME_WIDTH}x{FRAME_HEIGHT} RGB: Neat preprocessing stretched to {IMAGE_SIZE}x{IMAGE_SIZE}, image "
+            f"encoder, memory attention over {MEMORY_SLOTS} memories and {OBJECT_POINTERS} object pointers, mask "
+            f"decoder, mask choice and upsampling on the CPU, and memory encoder; latency one frame at a time, "
+            f"throughput with the image encoder up to {QUEUE_DEPTH} frames ahead"
         ),
         telemetry=throughput.telemetry,
         mla_layer_stats=mla_layer_stats,
@@ -418,7 +449,7 @@ def write_report(
     report.save(output)
 
 
-def benchmark_tracking(mpks: dict[str, Path], output: Path) -> None:
+def benchmark_tracking(mpks: dict[str, Path], dataset_id: str, dataset: Path, output: Path) -> None:
     mla_layer_stats, mla_stage_stats = {}, {}
     for name, mpk in mpks.items():
         mla_layer_stats[name], mla_stage_stats[name] = mla_stats(mpk)
@@ -426,10 +457,11 @@ def benchmark_tracking(mpks: dict[str, Path], output: Path) -> None:
         name: pyneat.Model(str(mpks[name]), image_options() if name == "image_encoder" else tensor_options())
         for name in COMPONENTS
     }
-    frame = frame_tensor()
+    image = sample_image(dataset)
+    frame = frame_tensor(image)
     tracker = Tracker(build_runners(models, frame))
     try:
-        tracker.track(tracker.encode(frame), prompt_arrays([CLICK], ["foreground"]))
+        tracker.track(tracker.encode(frame), prompt_arrays([object_click(image)], ["foreground"]))
         latencies = measure_latency(tracker, frame)
         # The CPU works several times in a frame, so each step's share is its total over the measured frames.
         steps_ms = {step: sum(seconds) / len(latencies) * 1000 for step, seconds in tracker.seconds.items()}
@@ -437,7 +469,8 @@ def benchmark_tracking(mpks: dict[str, Path], output: Path) -> None:
     finally:
         for runner in tracker.runners.values():
             runner.close()
-    write_report(output, latencies, throughput, models, mla_layer_stats, mla_stage_stats)
+    frame_name = f"{dataset_id} {image.parent.name}/{image.name}"
+    write_report(output, frame_name, latencies, throughput, models, mla_layer_stats, mla_stage_stats)
     shares = ", ".join(f"{step} {steps_ms[step]:.2f} ms" for step in [*COMPONENTS, "cpu"])
     print(
         f"{throughput.fps:.2f} FPS over {throughput.frames} frames in {throughput.seconds:.1f} s; "
@@ -455,9 +488,11 @@ def parse_mpks(values: list[str]) -> dict[str, Path]:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--mpk", action="append", required=True, help="component=path, for each component")
+    parser.add_argument("--dataset", required=True, help="davis-2017-val=<extracted davis directory>")
     parser.add_argument("--output", required=True, help="directory for model-report.json")
     args = parser.parse_args()
-    benchmark_tracking(parse_mpks(args.mpk), Path(args.output))
+    dataset_id, dataset_dir = args.dataset.split("=", 1)
+    benchmark_tracking(parse_mpks(args.mpk), dataset_id, Path(dataset_dir), Path(args.output))
 
 
 if __name__ == "__main__":

@@ -272,7 +272,8 @@ time. A result well below that rate points at the pipeline, not the model.
 A model that carries state from one input to the next cannot give every stage
 a different input. EdgeTAM tracks an object through a video, and a frame's
 memory attention reads the memory the previous frame wrote. Its script clicks
-the object on a fixed frame it builds, then measures tracked frames. In the
+an annotated object on the first frame of one DAVIS 2017 val sequence, then
+measures tracked frames on repeats of that frame. In the
 throughput pass only the image encoder works ahead, on the next frames, while
 one thread runs the memory attention, the mask decoder, the CPU steps and the
 memory encoder in order.

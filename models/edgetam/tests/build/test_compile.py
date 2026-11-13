@@ -111,23 +111,26 @@ def test_mpk_audit_rejects_another_interface_or_placement(
         compiler.audit_mpk(archive, component)
 
 
-@pytest.mark.parametrize("precision", ["w8a8", "w16a16"])
+@pytest.mark.parametrize("precision", ["w8a8", "w8a16", "w16a16"])
 def test_every_precision_calibrates_with_histogram_mse(compiler: ModuleType, precision: str) -> None:
     compiler.quantization({"precision": precision, "calibration_bins": 2048})
     arguments = compiler.QuantizationParams.call_args.kwargs
     compiler.HistogramMSEMethod.assert_called_with(2048)
     assert arguments["calibration_method"] is compiler.HistogramMSEMethod.return_value
-    # W16A16 activations and weights are BF16; W8A8 activations are asymmetric INT8 and weights per-channel INT8.
-    if precision == "w16a16":
+    # A16 activations are BF16 and W16 weights too; A8 activations are asymmetric INT8 and W8 weights per-channel
+    # INT8. Only W8A16 scales each token's activations on their own.
+    if precision.endswith("a16"):
         assert arguments["activation_quantization_scheme"] is compiler.bfloat16_scheme.return_value
     else:
         compiler.quantization_scheme.assert_any_call(asymmetric=True, per_channel=False, bits=8)
+    if precision.startswith("w8"):
         compiler.quantization_scheme.assert_any_call(asymmetric=False, per_channel=True, bits=8)
+    assert arguments.get("per_token_quant", False) == (precision == "w8a16")
 
 
 def test_quantization_rejects_another_precision(compiler: ModuleType) -> None:
-    with pytest.raises(ValueError, match="unsupported precision: w8a16"):
-        compiler.quantization({"precision": "w8a16", "calibration_bins": 2048})
+    with pytest.raises(ValueError, match="unsupported precision: w4a8"):
+        compiler.quantization({"precision": "w4a8", "calibration_bins": 2048})
 
 
 def test_calibration_sets_spread_samples_over_earlier_clips_and_check_on_the_last(
@@ -137,14 +140,69 @@ def test_calibration_sets_spread_samples_over_earlier_clips_and_check_on_the_las
         {component: [{"clip": clip, "frame": frame} for frame in range(8)] for component in calibration.COMPONENTS}
         for clip in range(3)
     ]
-    monkeypatch.setattr(calibration, "tracked_clips", lambda graphs, dataset, count: clips)
+    monkeypatch.setattr(calibration, "tracked_clips", lambda graphs, dataset, count, kept_frames: clips)
     counts = dict.fromkeys(calibration.COMPONENTS, 4)
-    sets = calibration.calibration_sets({}, Path("unused"), 3, counts)
+    sets = calibration.calibration_sets({}, Path("unused"), 3, counts, 4)
     chosen = [(sample["clip"], sample["frame"]) for sample in sets["memory_encoder"].samples]
     assert chosen == [(0, 0), (0, 5), (1, 2), (1, 7)]
-    assert [check["clip"] for check in sets["memory_encoder"].checks] == [2] * 8
+    checks = [(check["clip"], check["frame"]) for check in sets["memory_encoder"].checks]
+    assert checks == [(2, 0), (2, 2), (2, 5), (2, 7)]
     with pytest.raises(ValueError, match="needs 17"):
-        calibration.calibration_sets({}, Path("unused"), 3, dict.fromkeys(calibration.COMPONENTS, 17))
+        calibration.calibration_sets({}, Path("unused"), 3, dict.fromkeys(calibration.COMPONENTS, 17), 4)
+
+
+def _write_cal(root: Path) -> np.ndarray:
+    """A one-sequence cal split under root/davis; return its first frame's object IDs."""
+    from PIL import Image
+
+    object_ids = np.zeros((48, 64), np.uint8)
+    object_ids[4:8, 4:8] = 1
+    object_ids[20:40, 10:50] = 2
+    for frame in ("00000", "00001"):
+        for folder in ("cal", "annotations"):
+            (root / "davis" / folder / "bear").mkdir(parents=True, exist_ok=True)
+        Image.fromarray(np.full((48, 64, 3), 90, np.uint8)).save(root / "davis" / "cal" / "bear" / f"{frame}.jpg")
+        annotation = Image.fromarray(object_ids, mode="P")
+        annotation.putpalette([0, 0, 0, 128, 0, 0, 0, 128, 0])
+        annotation.save(root / "davis" / "annotations" / "bear" / f"{frame}.png")
+    (root / "davis" / "cal.txt").write_text("bear\n", encoding="utf-8")
+    return object_ids
+
+
+def test_cal_sequences_read_alike_from_the_archive_and_its_extracted_directory(
+    calibration: ModuleType, tmp_path: Path
+) -> None:
+    pytest.importorskip("PIL")
+    object_ids = _write_cal(tmp_path)
+    archive = tmp_path / "datasets__davis_2017_cal.tgz"
+    with tarfile.open(archive, "w:gz") as stream:
+        stream.add(tmp_path / "davis", arcname="davis")
+
+    for dataset in (archive, tmp_path / "davis"):
+        with calibration.DavisCal(dataset) as cal:
+            assert cal.sequences() == ["bear"] and cal.frames("bear") == ["00000", "00001"]
+            assert cal.image("bear", "00000").size == (64, 48)
+            np.testing.assert_array_equal(cal.object_ids("bear", "00001"), object_ids)
+
+
+def test_the_first_frame_is_prompted_on_its_largest_object(calibration: ModuleType, tmp_path: Path) -> None:
+    import random
+
+    pytest.importorskip("PIL")
+    mask = calibration.largest_object(_write_cal(tmp_path))
+    assert mask.sum() == 20 * 40 and mask[20, 10]
+    with pytest.raises(ValueError, match="no annotated object"):
+        calibration.largest_object(np.zeros((48, 64), np.uint8))
+
+    # Points are scaled from the 64x48 frame to the 1024x1024 model input: 16 times across, 1024 / 48 times down.
+    box = calibration.first_frame_prompt(mask, "box", random.Random(0))
+    assert box.types == ("box_top_left", "box_bottom_right")
+    np.testing.assert_allclose(box.points, [(160, 20 * 1024 / 48), (800, 40 * 1024 / 48)])
+    click = calibration.first_frame_prompt(mask, "click_and_background", random.Random(0))
+    (inside_x, inside_y), (outside_x, outside_y) = click.points
+    assert click.types == ("foreground", "background")
+    assert mask[int(inside_y * 48 / 1024), int(inside_x / 16)]
+    assert not mask[int(outside_y * 48 / 1024), int(outside_x / 16)]
 
 
 def test_prompt_inputs_normalize_points_and_pad_the_other_slots(calibration: ModuleType) -> None:
