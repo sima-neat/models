@@ -12,10 +12,10 @@ from model_registry.model_tests import measured_shortfalls
 
 def _ramp_logits(accuracy: ModuleType) -> np.ndarray:
     """Class 1 wins on the left half of the logits and class 0 on the right; the rest never win."""
-    logits = np.full((accuracy.CLASS_COUNT, accuracy.LOGITS_HEIGHT, accuracy.LOGITS_WIDTH), -1e3, np.float32)
-    column = np.arange(accuracy.LOGITS_WIDTH, dtype=np.float32)
+    logits = np.full((accuracy.CLASS_COUNT, accuracy.LOGITS_SIZE, accuracy.LOGITS_SIZE), -1e3, np.float32)
+    column = np.arange(accuracy.LOGITS_SIZE, dtype=np.float32)
     logits[0] = column
-    logits[1] = accuracy.LOGITS_WIDTH - 1 - column
+    logits[1] = accuracy.LOGITS_SIZE - 1 - column
     return logits
 
 
@@ -24,16 +24,16 @@ def test_segment_interpolates_the_logits_before_the_argmax(load_script: Callable
 
     classes = accuracy.segment(_ramp_logits(accuracy), 40, 256)
 
-    # The centered ramp changes class at the image midpoint after undoing the letterbox.
+    # At twice the width, output column i samples logit column (i + 0.5) / 2 - 0.5; the classes tie at logit column
+    # 63.5, which output column 127.5 samples.
     assert classes.shape == (40, 256) and classes.dtype == np.uint8
     assert (classes[:, :128] == 1).all() and (classes[:, 128:] == 0).all()
 
 
 def _every_class_argmax(accuracy: ModuleType, logits: np.ndarray, height: int, width: int) -> np.ndarray:
     """The argmax of all 150 classes interpolated to height x width, without pruning any class."""
-    pad_left, pad_top, scaled_width, scaled_height = accuracy.letterbox_geometry(width, height)
-    left, right, across = accuracy._interpolation(accuracy.LOGITS_WIDTH, width, pad_left, scaled_width)
-    top, bottom, down = accuracy._interpolation(accuracy.LOGITS_HEIGHT, height, pad_top, scaled_height)
+    left, right, across = accuracy._interpolation(accuracy.LOGITS_SIZE, width)
+    top, bottom, down = accuracy._interpolation(accuracy.LOGITS_SIZE, height)
     columns = logits[:, :, left] * (1 - across) + logits[:, :, right] * across
     down = down[None, :, None]
     return (columns[:, top] * (1 - down) + columns[:, bottom] * down).argmax(axis=0)
@@ -44,12 +44,11 @@ def test_segment_interpolates_only_classes_that_can_win_and_gets_the_same_argmax
 ) -> None:
     accuracy = load_script("accuracy")
     rng = np.random.default_rng(0)
-    size = (accuracy.CLASS_COUNT, accuracy.LOGITS_HEIGHT, accuracy.LOGITS_WIDTH)
+    size = (accuracy.CLASS_COUNT, accuracy.LOGITS_SIZE, accuracy.LOGITS_SIZE)
     noisy = rng.standard_normal(size).astype(np.float32)
     # Like a trained model's: four classes own regions, and the classes absent from the image sit far below them.
     peaked = rng.standard_normal(size).astype(np.float32) - 20
-    regions = rng.integers(0, 4, ((size[1] + 15) // 16, (size[2] + 15) // 16)).repeat(16, 0).repeat(16, 1)
-    regions = regions[: size[1], : size[2]]
+    regions = rng.integers(0, 4, (accuracy.LOGITS_SIZE // 16, accuracy.LOGITS_SIZE // 16)).repeat(16, 0).repeat(16, 1)
     owners = [3, 40, 77, 149]
     for index, owner in enumerate(owners):
         peaked[owner] = rng.standard_normal(size[1:]) + 10 * (regions == index)
@@ -61,18 +60,6 @@ def test_segment_interpolates_only_classes_that_can_win_and_gets_the_same_argmax
             np.testing.assert_array_equal(
                 accuracy.segment(logits, height, width), _every_class_argmax(accuracy, logits, height, width)
             )
-
-
-@pytest.mark.parametrize(("height", "width", "axis"), [(40, 256, 0), (256, 40, 1)])
-def test_segment_excludes_letterbox_padding(height, width, axis, load_script: Callable[[str], ModuleType]) -> None:
-    accuracy = load_script("accuracy")
-    logits = _ramp_logits(accuracy)
-    # Class 1 wins only outside the resized image's sampled region. Resizing the whole grid would include it.
-    coordinate = np.indices(logits.shape[1:])[axis]
-    logits[0] = coordinate
-    logits[1] = 40
-
-    assert (accuracy.segment(logits, height, width) == 0).all()
 
 
 def test_segment_rejects_unexpected_logits(load_script: Callable[[str], ModuleType]) -> None:

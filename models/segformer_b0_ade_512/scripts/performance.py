@@ -51,15 +51,14 @@ dataset_id, dataset_dir = args.dataset.split("=", 1)
 image = sample_image(Path(dataset_dir))
 
 options = pyneat.ModelOptions()
-# Neat letterboxes the frame to 640x480, normalizes, quantizes and tessellates it inside the measured pipeline.
+# Neat stretches the frame to 512x512, normalizes, quantizes and tessellates it inside the measured pipeline.
 options.preprocess.kind = pyneat.InputKind.Image
 options.preprocess.enable = pyneat.AutoFlag.On
 # Size Neat's input buffers for the benchmark frame; otherwise the execution plan shows its 1920x1080 default.
 options.preprocess.input_max_width = FRAME_WIDTH
 options.preprocess.input_max_height = FRAME_HEIGHT
 options.preprocess.resize.enable = pyneat.AutoFlag.On
-options.preprocess.resize.mode = pyneat.ResizeMode.Letterbox
-options.preprocess.resize.pad_value = FILL
+options.preprocess.resize.mode = pyneat.ResizeMode.Stretch
 options.preprocess.normalize.enable = pyneat.AutoFlag.On
 # Without a preset Neat only scales pixels to [0, 1]; the model expects ImageNet mean and std.
 options.preprocess.preset = pyneat.NormalizePreset.ImageNet
@@ -76,8 +75,8 @@ report = model_report.from_performance(
     model.benchmark(benchmark_options),
     {"model": model},
     workload=(
-        f"{dataset_id} {image.name} in a {FRAME_WIDTH}x{FRAME_HEIGHT} RGB frame, Neat preprocessing letterboxed to "
-        "640x480, raw 160x120 logits"
+        f"{dataset_id} {image.name} in a {FRAME_WIDTH}x{FRAME_HEIGHT} RGB frame, Neat preprocessing stretched to "
+        "512x512, raw 128x128 logits"
     ),
 )
 report.save(args.output)

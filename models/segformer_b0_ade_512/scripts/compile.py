@@ -32,7 +32,7 @@ from afe.apis.model import L2CachingMode
 from afe.core.configs import QuantizationPrecision
 from afe.core.utils import convert_data_generator_to_iterable
 from afe.load.importers.general_importer import onnx_source
-from calibration import IMAGE_HEIGHT, IMAGE_WIDTH, calibration_samples, fidelity_names, preprocess_image, read_images
+from calibration import IMAGE_SIZE, calibration_samples, fidelity_names, preprocess_image, read_images
 from model_registry.model import load_model as load_metadata
 from sima_utils.data.data_generator import DataGenerator
 from surgery import BF16_REGIONS, annotate_bf16_regions
@@ -41,9 +41,9 @@ MODEL_DIR = Path(__file__).resolve().parents[1]
 MODEL_ID = "segformer_b0_ade_512"
 COMPONENT_ID = "model"
 INPUT = "pixel_values"
-INPUT_SHAPE = (1, 3, IMAGE_HEIGHT, IMAGE_WIDTH)
+INPUT_SHAPE = (1, 3, IMAGE_SIZE, IMAGE_SIZE)
 CLASS_COUNT = 150
-LOGITS_SHAPE = (1, CLASS_COUNT, IMAGE_HEIGHT // 4, IMAGE_WIDTH // 4)
+LOGITS_SHAPE = (1, CLASS_COUNT, IMAGE_SIZE // 4, IMAGE_SIZE // 4)
 # MPK manifests record each public tensor's size in bytes; the MPK keeps the ONNX float32 interface.
 INPUT_BYTES = {INPUT: math.prod(INPUT_SHAPE) * 4}
 OUTPUT_BYTES = [math.prod(LOGITS_SHAPE) * 4]

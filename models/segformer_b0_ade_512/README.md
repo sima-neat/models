@@ -6,23 +6,21 @@
 
 SegFormer-B0 is the smallest size of NVIDIA's SegFormer semantic segmentation
 transformer, fine-tuned on ADE20K. It labels every pixel of a scene with one of
-150 classes, such as wall, sky, floor, tree, person and car. It takes a 640×480
-RGB image and returns class scores on a 160×120 grid, a quarter of the input
+150 classes, such as wall, sky, floor, tree, person and car. It takes a 512×512
+RGB image and returns class scores on a 128×128 grid, a quarter of the input
 resolution. A hierarchical transformer encoder reads the image at four scales,
 and a light all-MLP head fuses them. The model runs as one component.
 
 ## Inputs and outputs
 
-**Input.** Resize the image bilinearly to fit within 640×480 while preserving
-its aspect ratio. Round the resized dimensions up and center the image with
-RGB (114, 114, 114) padding. All sizes here are width × height. Scale the RGB
-values to 0–1, subtract the ImageNet mean (0.485, 0.456, 0.406), and divide by
-the standard deviation (0.229, 0.224, 0.225). Neat
-can do this with its letterbox resize and the ImageNet normalization preset.
+**Input.** Stretch the image to 512×512 with bilinear resampling, with no crop
+or padding. Scale the RGB values to 0–1, subtract the ImageNet mean (0.485,
+0.456, 0.406), and divide by the standard deviation (0.229, 0.224, 0.225). Neat
+can do this with its stretch resize and the ImageNet normalization preset.
 
-**Outputs.** `logits` holds 150 class scores for each cell of a 160×120 grid.
+**Outputs.** `logits` holds 150 class scores for each cell of a 128×128 grid.
 
-1. Map the original image's pixel centers through the resized image and padding into the quarter-resolution logits, sampling bilinearly with `align_corners=False` to exclude padding.
+1. Resize `logits` bilinearly to the image's height and width.
 2. At each pixel, take the class with the highest score.
 
 Class index i is class i of the standard 150-class ADE20K scene-parsing order,

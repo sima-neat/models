@@ -9,10 +9,10 @@ from collections.abc import Iterable
 from pathlib import Path, PurePosixPath
 
 import numpy as np
+from PIL import Image
 
-# Match Neat's centered letterbox and ImageNet normalization, in HWC order.
-IMAGE_WIDTH, IMAGE_HEIGHT = 640, 480
-PAD_VALUE = 114
+# SegformerImageProcessor: a bilinear stretch to 512x512, then ImageNet normalization, in HWC order.
+IMAGE_SIZE = 512
 RESCALE = np.float32(1 / 255)
 MEAN = np.asarray([0.485, 0.456, 0.406], dtype=np.float32)
 STD = np.asarray([0.229, 0.224, 0.225], dtype=np.float32)
@@ -23,27 +23,12 @@ VALIDATION_SPLIT = "val2017"
 CALIBRATION_SEED = 20261029
 
 
-def letterbox_geometry(width: int, height: int) -> tuple[int, int, int, int]:
-    """Return left/top padding and resized width/height, rounded up as Neat does."""
-    if height * IMAGE_WIDTH <= width * IMAGE_HEIGHT:
-        scaled_width = IMAGE_WIDTH
-        scaled_height = (height * IMAGE_WIDTH + width - 1) // width
-    else:
-        scaled_height = IMAGE_HEIGHT
-        scaled_width = (width * IMAGE_HEIGHT + height - 1) // height
-    return (IMAGE_WIDTH - scaled_width) // 2, (IMAGE_HEIGHT - scaled_height) // 2, scaled_width, scaled_height
-
-
 def preprocess_image(content: bytes) -> np.ndarray:
-    """Decode, letterbox and normalize one image into the model's float32 HWC input."""
-    from PIL import Image
-
+    """Decode, stretch and normalize one image into the model's float32 HWC input."""
     with Image.open(io.BytesIO(content)) as source:
         image = source.convert("RGB")
-    left, top, width, height = letterbox_geometry(*image.size)
-    canvas = Image.new("RGB", (IMAGE_WIDTH, IMAGE_HEIGHT), (PAD_VALUE,) * 3)
-    canvas.paste(image.resize((width, height), Image.Resampling.BILINEAR), (left, top))
-    return (np.asarray(canvas, dtype=np.float32) * RESCALE - MEAN) / STD
+    image = image.resize((IMAGE_SIZE, IMAGE_SIZE), Image.Resampling.BILINEAR)
+    return (np.asarray(image, dtype=np.float32) * RESCALE - MEAN) / STD
 
 
 def _image_names(dataset: Path) -> list[str]:

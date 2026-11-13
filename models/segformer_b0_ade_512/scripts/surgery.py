@@ -5,7 +5,7 @@ is found by walking the graph from anchor operations, and the walk fails when a 
 number of operations, so a changed export cannot silently mark the wrong operations.
 
 The regions hold the operations INT8 handles worst, while every Linear layer and convolution stays INT8: the
-attention softmax over 300 keys, the residual stream's LayerNorms and sums (single channels reach up to 21 times the
+attention softmax over 256 keys, the residual stream's LayerNorms and sums (single channels reach up to 21 times the
 median channel's peak in stages 3 and 4), and the GELU.
 """
 
