@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import collections
+import concurrent.futures
 import random
 import threading
 import time
@@ -53,6 +54,9 @@ QUEUE_DEPTH = 2
 FRAME_WIDTH, FRAME_HEIGHT = 1280, 720
 FILL = 114
 SPLIT = "val"
+# One thread per CPU core turns its share of the upsampled mask's rows into probabilities.
+CPU_CORES = 4
+MASK_THREADS = concurrent.futures.ThreadPoolExecutor(CPU_CORES)
 
 
 def sample_image(dataset: Path) -> Path:
@@ -112,6 +116,9 @@ def image_options() -> pyneat.ModelOptions:
     options.preprocess.normalize.enable = pyneat.AutoFlag.On
     # Without a preset Neat only scales pixels to [0, 1]; the model expects ImageNet mean and std.
     options.preprocess.preset = pyneat.NormalizePreset.ImageNet
+    # The output stage runs on the EV74 and writes memory the other components' input stages read, so the
+    # embeddings and features pass on without a copy. The CPU output stage writes memory only the CPU reads.
+    options.processcvu.post_run_target = "EV74"
     return options
 
 
@@ -123,6 +130,22 @@ def tensor_options() -> pyneat.ModelOptions:
     options.preprocess.color_convert.enable = pyneat.AutoFlag.Off
     options.preprocess.normalize.enable = pyneat.AutoFlag.Off
     return options
+
+
+def decoder_options() -> pyneat.ModelOptions:
+    """The mask decoder's: its input stage runs on the CPU, which reads the memory attention's output where that
+    component's CPU output stage wrote it, and the image encoder's features where the EV74 wrote them."""
+    options = tensor_options()
+    options.processcvu.pre_run_target = "A65"
+    return options
+
+
+MODEL_OPTIONS = {
+    "image_encoder": image_options,
+    "memory_attention": tensor_options,
+    "mask_decoder": decoder_options,
+    "memory_encoder": tensor_options,
+}
 
 
 def cpu_tensor(array: np.ndarray) -> pyneat.Tensor:
@@ -167,16 +190,27 @@ def choose_mask(
     return mask, pointers[best]
 
 
+def to_probabilities(logits: np.ndarray) -> None:
+    """Replace logit rows with 1 / (1 + exp(-logit)) in place.
+
+    OpenCV's exp takes a third of numpy's time on the board. It overflows to infinity for the no-object logit,
+    which gives the probability 0 it should.
+    """
+    np.negative(logits, out=logits)
+    cv2.exp(logits, dst=logits)
+    logits += 1
+    np.reciprocal(logits, out=logits)
+
+
 def memory_mask(mask: np.ndarray, prompted: bool) -> np.ndarray:
     """The memory encoder's [1, 1024, 1024, 1] mask: the logits upsampled bilinearly, thresholded on the prompted
     frame and as probabilities on a tracked one."""
-    logits = cv2.resize(mask, (IMAGE_SIZE, IMAGE_SIZE), interpolation=cv2.INTER_LINEAR)
+    values = cv2.resize(mask, (IMAGE_SIZE, IMAGE_SIZE), interpolation=cv2.INTER_LINEAR)
     if prompted:
-        values = (logits > 0).astype(np.float32)
+        values = (values > 0).astype(np.float32)
     else:
-        # OpenCV's exp takes a third of numpy's time on the board. It overflows to infinity for the no-object
-        # logit, which gives the probability 0 it should.
-        values = 1 / (1 + cv2.exp(-logits))
+        # OpenCV and numpy release the GIL, so the row blocks run on separate cores.
+        list(MASK_THREADS.map(to_probabilities, np.array_split(values, CPU_CORES)))
     return values.reshape(1, IMAGE_SIZE, IMAGE_SIZE, 1)
 
 
@@ -237,16 +271,13 @@ class Tracker:
         """Segment one frame from its image encoder outputs, prompted on the first frame and tracked on later ones,
         and add its memory to the bank; return the mask logits."""
         prompted = prompt is not None
-        # A component's input stage cannot read another component's output memory, so each output is copied.
-        with self.timed("cpu"):
-            embeddings, *high_res = [tensor.cvu() for tensor in encoded]
+        # Each component reads the previous one's outputs where they are (MODEL_OPTIONS), so none is copied.
+        embeddings, *high_res = encoded
         conditioned = embeddings
         if not prompted:
             with self.timed("cpu"):
                 bank = [cpu_tensor(array) for array in self.bank.arrays()]
             (conditioned,) = self.run("memory_attention", [embeddings, *bank])
-            with self.timed("cpu"):
-                conditioned = conditioned.cvu()
         with self.timed("cpu"):
             points = [cpu_tensor(array) for array in (prompt if prompted else prompt_arrays([], []))]
         decoded = self.run("mask_decoder", [conditioned, *high_res, *points])
@@ -453,10 +484,7 @@ def benchmark_tracking(mpks: dict[str, Path], dataset_id: str, dataset: Path, ou
     mla_layer_stats, mla_stage_stats = {}, {}
     for name, mpk in mpks.items():
         mla_layer_stats[name], mla_stage_stats[name] = mla_stats(mpk)
-    models = {
-        name: pyneat.Model(str(mpks[name]), image_options() if name == "image_encoder" else tensor_options())
-        for name in COMPONENTS
-    }
+    models = {name: pyneat.Model(str(mpks[name]), MODEL_OPTIONS[name]()) for name in COMPONENTS}
     image = sample_image(dataset)
     frame = frame_tensor(image)
     tracker = Tracker(build_runners(models, frame))

@@ -36,9 +36,6 @@ class _Tensor:
     def __init__(self, array: np.ndarray):
         self.array = np.asarray(array)
 
-    def cvu(self) -> _Tensor:
-        return self
-
     def to_numpy(self, copy: bool) -> np.ndarray:
         return self.array.copy() if copy else self.array
 
