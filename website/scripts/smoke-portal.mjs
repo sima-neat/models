@@ -246,14 +246,14 @@ async function checkCatalogLayouts(browser, url) {
         await page.locator('.catalog-table').first().waitFor();
         if (await tableButton.getAttribute('aria-pressed') !== 'true') throw new Error('returning lost table selection');
         await page.locator('#search').fill('rf detr');
-        await page.waitForFunction(() => document.querySelectorAll('.catalog-model-link').length === 8);
+        await page.waitForFunction(() => document.querySelectorAll('.catalog-model-link').length === 6);
         if ((await page.locator('.catalog-task-group h3').allInnerTexts()).sort().join() !== 'Instance Segmentation,Object Detection') throw new Error('filtered task grouping is incorrect');
         await settled();
         // A package result is the model's one reading; its components are not listed or added up.
         const packageText = await page.locator('[data-catalog-entry="rf_detr_nano"] [data-table-performance]').innerText();
         if (!packageText.includes('inferences/s') || /backbone|decoder/.test(packageText)) throw new Error('package measurement is not the model\'s one reading');
         await page.getByRole('button', {name: 'Cards', exact: true}).click();
-        if (await page.locator('.model-card').count() !== 8) throw new Error('switching lost the search filter');
+        if (await page.locator('.model-card').count() !== 6) throw new Error('switching lost the search filter');
         await tableButton.click();
         await page.locator('#search').fill('');
         if (viewport.width === 390) await page.locator('#filter-toggle').click();
