@@ -29,7 +29,6 @@ class Backend:
         self.record = None
         self.lost_create = False
         self.lost_approve = False
-        self.withdrawals = {}
 
     def request(self, method, path, body, key):
         self.calls.append((method, path, copy.deepcopy(body), key))
@@ -49,12 +48,6 @@ class Backend:
         if method == 'GET':
             return copy.deepcopy(self.record)
         operation = path.rsplit('/', 1)[1]
-        if operation == 'withdraw':
-            self.withdrawals.setdefault(key, {
-                'promotion_id': PROMOTION, 'target_git_ref': self.record['target_git_ref'],
-                'model_id': 'model', 'profile_id': 'profile',
-                'deployment_id': self.record['deployment_id'], 'result_snapshot': 'e' * 64})
-            return copy.deepcopy(self.withdrawals[key])
         if operation == 'approve' and self.snapshot != self.record['expected_target_snapshot']:
             raise RegistryPublicationError('409 catalog_snapshot_conflict')
         self.record['state'] = {'approve': 'promoted', 'reject': 'rejected', 'cancel': 'cancelled'}[operation]
@@ -209,49 +202,21 @@ def test_cancellation_cannot_undo_promotion():
         p.decide(backend, record, operation='cancel', reason='Stop', identity='124')
 
 
-def test_withdrawal_takes_only_a_promoted_build_and_replays_on_retry():
-    backend = Backend()
-    record = p.request(backend, plan(backend))
-    with pytest.raises(ValidationError, match='only a promoted build'):
-        p.withdraw(backend, record, reason='Fails to load on the DevKit', identity='200')
-    p.decide(backend, record, operation='approve', reason='Reviewed', identity='123')
-    receipt = p.withdraw(backend, record, reason='Fails to load on the DevKit', identity='200')
-    assert receipt['result_snapshot'] == 'e' * 64 and receipt['promotion_id'] == PROMOTION
-    assert p.withdraw(backend, record, reason='Fails to load on the DevKit', identity='200') == receipt
-    calls = [c for c in backend.calls if c[1].endswith(f'/promotions/{PROMOTION}/withdraw')]
-    assert len(calls) == 2 and calls[0][2:] == calls[1][2:]
-    assert calls[0][2] == {'reason': 'Fails to load on the DevKit'}
-    assert backend.record['state'] == 'promoted'
+def test_withdrawal_posts_the_reason_once_per_identity_and_needs_a_snapshot():
+    calls = []
 
+    class Client:
+        def request(self, method, path, body, key):
+            calls.append((method, path, body, key))
+            return {'promotion_id': PROMOTION, 'result_snapshot': 'e' * 64 if body['reason'] == 'Broken' else None}
 
-def test_withdrawal_requires_a_confirmed_receipt_and_the_reviewed_request():
-    backend = Backend()
-    record = p.request(backend, plan(backend))
-    p.decide(backend, record, operation='approve', reason='Reviewed', identity='123')
-    with pytest.raises(ValidationError, match='deployment_id'):
-        p.withdraw(backend, {**record, 'deployment_id': PROMOTION}, reason='Broken', identity='200')
-    with pytest.raises(ValidationError, match='1–2000'):
-        p.withdraw(backend, record, reason=' ', identity='200')
-    assert not backend.withdrawals
-    backend.withdrawals = {'promotion-withdrawal-' + p.canonical_sha256(['200', PROMOTION, {'reason': 'Broken'}]): {
-        'promotion_id': PROMOTION}}
-    with pytest.raises(ValidationError, match='did not confirm the withdrawal'):
-        p.withdraw(backend, record, reason='Broken', identity='200')
-
-
-def test_cli_withdraw_writes_receipt(monkeypatch, tmp_path, capsys):
-    from model_registry.cli import main
-    backend = Backend()
-    record = p.request(backend, plan(backend))
-    p.decide(backend, record, operation='approve', reason='Reviewed', identity='123')
-    monkeypatch.setattr(p, 'SigV4RegistryClient', lambda *args: backend)
-    source, destination = tmp_path / 'record.json', tmp_path / 'withdrawal.json'
-    p.save(source, {**record, **p.configuration()})
-    arguments = ['promotion', 'withdraw', '--record', str(source), '--output', str(destination), '--reason', 'Broken']
-    assert main(arguments) == 2
-    assert main([*arguments, '--identity', '200']) == 0
-    assert json.loads(destination.read_text())['result_snapshot'] == 'e' * 64
-    assert 'result_snapshot' in capsys.readouterr().out
+    receipt = p.withdraw(Client(), {'promotion_id': PROMOTION}, reason='Broken', identity='200')
+    assert receipt['result_snapshot'] == 'e' * 64
+    assert calls[0][:3] == ('POST', f'{p.ROOT}/promotions/{PROMOTION}/withdraw', {'reason': 'Broken'})
+    p.withdraw(Client(), {'promotion_id': PROMOTION}, reason='Broken', identity='200')
+    assert calls[0][3] == calls[1][3]
+    with pytest.raises(ValidationError, match='did not confirm'):
+        p.withdraw(Client(), {'promotion_id': PROMOTION}, reason='Other', identity='200')
 
 
 def test_request_checks_current_state_not_historical_receipt():

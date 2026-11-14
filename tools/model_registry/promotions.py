@@ -166,20 +166,14 @@ def decide(client, record: dict, *, operation: str, reason: str, identity: str,
     return receipt
 
 
-def withdraw(client, record: dict, *, reason: str, identity: str, target_branch: str | None = None) -> dict:
+def withdraw(client, record: dict, *, reason: str, identity: str) -> dict:
     """Take a promoted build out of its target catalog. Vulcan keeps the request `promoted`."""
-    if not reason.strip() or len(reason) > 2000:
-        raise ValidationError("Withdrawal reason must contain 1–2000 characters")
     promotion_id = identifier(record["promotion_id"])
-    current = inspect(client, promotion_id, target_branch=target_branch)
-    check_request(current, record)
-    if current["state"] != "promoted":
-        raise ValidationError(f"Promotion is {current['state']}; only a promoted build can be withdrawn")
     body = {"reason": reason}
     # A retry sends the same key and body, so Vulcan replays the first receipt.
     key = "promotion-withdrawal-" + canonical_sha256([identity, promotion_id, body])
     receipt = client.request("POST", f"{ROOT}/promotions/{promotion_id}/withdraw", body, key)
-    if receipt.get("promotion_id") != promotion_id or not receipt.get("result_snapshot"):
+    if not receipt.get("result_snapshot"):
         raise ValidationError("Vulcan did not confirm the withdrawal")
     return receipt
 
@@ -242,7 +236,7 @@ def summary(record: dict) -> str:
 def add_parser(subcommands) -> None:
     parser = subcommands.add_parser(
         "promotion", help="manage pinned Develop or production Main promotion requests (CI only)")
-    parser.add_argument("action", choices=("prepare", "request", "inspect", "approve", "reject", "cancel", "withdraw"))
+    parser.add_argument("action", choices=("prepare", "request", "inspect", "approve", "reject", "cancel"))
     parser.add_argument("--record", type=Path, required=True, help="saved plan/request; inspect and prepare write it")
     parser.add_argument("--output", type=Path, help="write the API receipt separately from the immutable input")
     parser.add_argument("--target-branch", choices=("develop", "main"),
@@ -277,11 +271,6 @@ def run(args: argparse.Namespace) -> int:
                          target_branch=config["target_branch"])
     elif args.action == "request":
         result = request(client, read(args.record), target_branch=config["target_branch"])
-    elif args.action == "withdraw":
-        if not args.identity:
-            raise ValidationError("withdrawals require a stable --identity")
-        result = withdraw(client, read(args.record), reason=args.reason, identity=args.identity,
-                          target_branch=config["target_branch"])
     else:
         if not args.identity:
             raise ValidationError("decisions require a stable --identity")

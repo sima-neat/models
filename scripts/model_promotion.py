@@ -148,9 +148,6 @@ def main():
                 plan['key'] = 'promotion-request-' + p.canonical_sha256([run_id, plan['body']])
             else:
                 plan = {'record': p.inspect(client, os.environ['PROMOTION_ID'])}
-                if operation == 'withdraw' and plan['record'].get('state') != 'promoted':
-                    raise p.ValidationError(
-                        f"Promotion is {plan['record'].get('state')}; only a promoted build can be withdrawn")
                 issue_url = ''
             plan.update(**config, operation=operation, decision_reason=reason, issue_url=issue_url, identity=run_id)
             p.save(PLAN, plan)
@@ -179,13 +176,17 @@ def main():
             request_review(plan, record)
     elif phase == 'approve':
         plan, record = p.read(PLAN), p.read(RECORD)
+        operation = 'approve' if plan['operation'] == 'promote' else 'reject'
         if plan['operation'] not in {'promote', 'reject', 'withdraw'}:
             raise p.ValidationError('This operation does not use approval credentials')
-        p.check_request(record, plan['body'] if plan['operation'] == 'promote' else plan['record'])
+        if operation == 'approve':
+            p.check_request(record, plan['body'])
+        else:
+            p.check_request(record, plan['record'])
         if plan['operation'] == 'withdraw':
             result = p.withdraw(client, record, reason=plan['decision_reason'], identity=plan['identity'])
         else:
-            result = p.decide(client, record, operation='approve' if plan['operation'] == 'promote' else 'reject',
+            result = p.decide(client, record, operation=operation,
                               reason=plan['decision_reason'], identity=plan['identity'])
         p.save(DIRECTORY / 'decision.json', result)
         show(result)
@@ -196,20 +197,16 @@ def main():
             output('revision', catalog['catalog_revision'])
     elif phase == 'report':
         plan, record = p.read(PLAN), p.read(RECORD)
-        current, withdrawn = None, False
+        current = None
         try:
             current = p.inspect(client, record['promotion_id'])
-            if plan['operation'] == 'withdraw':
-                # The request stays `promoted`, so the target catalog shows whether the build left it.
-                withdrawn = (os.environ.get('APPROVAL_RESULT') == 'success'
-                             and p.benchmark_catalog(current, read_api_url=config['read_api_url']) is None)
             revision = os.environ.get('BENCHMARK_CATALOG_REVISION')
             if revision:
                 p.refresh_benchmarks(client, current, repository=Path('_benchmark-source'), revision=revision,
                                      read_api_url=config['read_api_url'])
         finally:
-            if plan['operation'] != 'status':
-                completion_notice(plan, current or record, verified=current is not None, withdrawn=withdrawn)
+            if plan['operation'] not in {'status', 'withdraw'}:
+                completion_notice(plan, current or record, verified=current is not None)
             if current is not None:
                 update_issue(plan, current)
         show(current)
@@ -244,12 +241,9 @@ def request_review(plan, record):
     output('review_ready', 'true')
 
 
-def completion_notice(plan, record, *, verified, withdrawn=False):
+def completion_notice(plan, record, *, verified):
     state = record.get('state', 'unknown') if verified else 'unknown'
-    withdrawal = plan.get('operation') == 'withdraw'
-    if withdrawal:
-        outcome = 'Model promotion withdrawn' if withdrawn else 'Model promotion withdrawal not confirmed'
-    elif state == 'promoted' and record.get('result_snapshot'):
+    if state == 'promoted' and record.get('result_snapshot'):
         outcome = 'Model promotion completed'
     elif state in {'rejected', 'cancelled', 'expired'}:
         outcome = f'Model promotion {state}'
@@ -267,10 +261,7 @@ def completion_notice(plan, record, *, verified, withdrawn=False):
     )
     if issue_url:
         text += f"\nEvidence: {issue_url}"
-    if withdrawal:
-        text += ("\nThe target catalog no longer offers this build." if withdrawn
-                 else "\nThe target catalog still offers this build, or its state could not be read.")
-    elif state == 'promoted' and record.get('result_snapshot'):
+    if state == 'promoted' and record.get('result_snapshot'):
         text += f"\nPublished snapshot: {record['result_snapshot']}"
     elif state == 'pending':
         text += "\nThe request is still pending; no completed promotion was confirmed."

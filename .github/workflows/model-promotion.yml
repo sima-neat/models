@@ -182,7 +182,7 @@ jobs:
 
   approve:
     needs: [configure, prepare, request]
-    if: contains(fromJSON('["promote", "reject", "withdraw"]'), needs.prepare.outputs.operation)
+    if: needs.prepare.outputs.operation == 'promote' || needs.prepare.outputs.operation == 'reject' || needs.prepare.outputs.operation == 'withdraw'
     env:
       PROMOTION_TARGET_BRANCH: ${{ needs.configure.outputs.target_branch }}
       VULCAN_ENV: ${{ needs.configure.outputs.vulcan_environment }}
@@ -218,7 +218,7 @@ jobs:
           aws-region: us-west-2
           role-session-name: models-promotion-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
           role-to-assume: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PROMOTION_ROLE_ARN }}
-      - name: Decide the exact reviewed request or withdraw its promoted build
+      - name: Decide the exact reviewed request
         run: python scripts/model_promotion.py approve
       - uses: actions/upload-artifact@v7
         if: always()

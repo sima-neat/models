@@ -173,18 +173,14 @@ Develop execution guards keep the implementation on trusted Develop code.
    Directory roots are JSON file manifests, not ZIPs; download and verify every
    required file. Never treat compile success as proof of model runtime quality.
 
-## Status, cancellation, rejection, withdrawal, and retries
+## Status, cancellation, rejection, and retries
 
-Dispatch the same workflow from Develop with `status`, `cancel`, `reject`, or
-`withdraw`, an existing promotion UUID, and a reason. `status` and `cancel` use
-publisher credentials; `reject` and `withdraw` require the protected approver
-gate. Cancellation cannot undo a completed promotion; `withdraw` removes a
-promoted build from its target catalog. Vulcan keeps a withdrawn request
-`promoted`, so the report job confirms a withdrawal from the target catalog, and
-a retry replays the same idempotency key and body. The promotion role of each
-target needs `execute-api:Invoke` on the `withdraw` route. Management dispatches
-produce their own summaries; they do not edit the original request issue. Use
-its request UUID to check state.
+Dispatch the same workflow from Develop with `status`, `cancel`, or `reject`, an
+existing promotion UUID, and a reason. `status` and `cancel` use publisher
+credentials; `reject` requires the protected approver gate. `withdraw` uses the
+same gate to remove a promoted build from its target catalog. Cancellation cannot
+undo a completed promotion. Management dispatches produce their own summaries;
+they do not edit the original request issue. Use its request UUID to check state.
 
 Re-running jobs restores the original `promotion-plan` from the same run. The
 request body, target snapshot, and idempotency key stay unchanged. Receipts are
@@ -228,9 +224,6 @@ model-registry promotion approve --record request.json --output decision.json \
 # Publisher role; reject instead requires approver credentials:
 model-registry promotion cancel --record request.json --output cancellation.json \
   --identity "$CANCEL_OPERATION_ID" --reason 'Request superseded'
-# Approver role; status.json is the inspected record of the promoted request:
-model-registry promotion withdraw --record status.json --output withdrawal.json \
-  --identity "$WITHDRAW_OPERATION_ID" --reason 'Fails to load on a DevKit; evidence URL'
 ```
 
 ## Acceptance and remaining rollout work
