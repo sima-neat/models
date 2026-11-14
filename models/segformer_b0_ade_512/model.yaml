@@ -1,4 +1,4 @@
-display_name: SegFormer-B0 ADE20K
+display_name: SegFormer-B0
 description: Labels every pixel of a scene with one of the 150 ADE20K classes.
 model_type: vision
 tasks: [semantic_segmentation]

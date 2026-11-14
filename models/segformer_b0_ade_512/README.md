@@ -1,6 +1,6 @@
-# SegFormer-B0 ADE20K
+# SegFormer-B0
 
-![SegFormer-B0 ADE20K model hero](hero.png)
+![SegFormer-B0 model hero](hero.png)
 
 ## Overview
 

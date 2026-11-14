@@ -1,4 +1,4 @@
-display_name: YOLO-World v2 S
+display_name: YOLO-Worldv2-S
 description: Open-vocabulary detection with a BF16 CLIP text encoder and a mostly INT8 image detector, supporting 80 dynamic
   prompt slots.
 model_type: vlm

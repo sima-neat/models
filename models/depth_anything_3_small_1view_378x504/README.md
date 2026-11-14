@@ -1,6 +1,6 @@
-# Depth Anything 3 Small
+# Depth Anything 3 Small 504×378
 
-![Depth Anything 3 Small model hero](hero.png)
+![Depth Anything 3 Small 504×378 model hero](hero.png)
 
 ## Overview
 

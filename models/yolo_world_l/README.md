@@ -1,10 +1,10 @@
-# YOLO-World v2 L
+# YOLO-Worldv2-L
 
-![YOLO-World v2 L model hero](hero.png)
+![YOLO-Worldv2-L model hero](hero.png)
 
 ## Overview
 
-YOLO-World v2 L detects objects described by text, including categories outside a fixed training label list. The package contains a CLIP text encoder and an image detector. Encode class names when they change, then reuse their vectors for every image. The detector supports up to 80 active prompts through fixed input slots and a binary mask. Prompt selection also conditions image features, so changing the class list can change existing detections. With no classes selected, the application should skip detection.
+YOLO-Worldv2-L detects objects described by text, including categories outside a fixed training label list. The package contains a CLIP text encoder and an image detector. Encode class names when they change, then reuse their vectors for every image. The detector supports up to 80 active prompts through fixed input slots and a binary mask. Prompt selection also conditions image features, so changing the class list can change existing detections. With no classes selected, the application should skip detection.
 
 ## Inputs and outputs
 

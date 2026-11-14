@@ -1,6 +1,6 @@
 # A build profile of this model compiles for over 20 minutes, so it builds only on request.
 build-on-demand: true
-display_name: Depth Anything 3 Small
+display_name: Depth Anything 3 Small 504×378
 description: Single-view relative depth estimation at 378×504 (4:3).
 model_type: vision
 tasks: [depth_estimation]
