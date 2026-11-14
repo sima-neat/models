@@ -199,7 +199,7 @@ create the protected backend request and issue summary → mention model owners 
 a Slack approval reminder → protected `<VULCAN_ENV>-promote-<target_branch>`
 review → approve the exact request → report backend state and notify Slack of the outcome. Only trusted Develop workflow code
 runs; a separate approver role decides requests. Status/cancel use publisher credentials; explicit
-reject uses the matching target's protected gate. Main is production-only, keeps
+reject and withdraw use the matching target's protected gate. Main is production-only, keeps
 S3 storage, and uses a separate Main-only approver identity. It pins a completed
 Develop approval for the exact candidate and digest before its own review. The target branch,
 environment, endpoints and canonical snapshot are pinned in the immutable plan;
