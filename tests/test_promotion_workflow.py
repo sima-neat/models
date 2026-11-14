@@ -340,6 +340,55 @@ def test_completion_notice_uses_backend_outcome_not_job_success(monkeypatch, tmp
         assert ('Published snapshot: abc123' in message['text']) == (expected == 'completed')
 
 
+def test_withdrawal_uses_the_approval_gate_and_reports_the_catalog_not_the_request_state(monkeypatch, tmp_path):
+    import json
+
+    import pytest
+    config = workflow()
+    assert 'withdraw' in config.get('on', config.get(True))['workflow_dispatch']['inputs']['operation']['options']
+    assert '"withdraw"' in config['jobs']['approve']['if']
+    module = orchestration(monkeypatch, tmp_path)
+    monkeypatch.setenv('PROMOTION_TARGET_BRANCH', 'develop')
+    record = {'promotion_id': 'pinned', 'state': 'promoted', 'result_snapshot': 'abc123',
+              'deployment_id': 'candidate', 'source': {'model_id': 'rf_detr_seg_large', 'profile_id': 'w8a8'}}
+    plan = {**module.p.configuration(), 'operation': 'withdraw', 'record': record, 'decision_reason': 'Broken',
+            'identity': '123', 'issue_url': ''}
+    module.p.save(module.PLAN, plan)
+    module.p.save(module.RECORD, record)
+    calls = []
+
+    class Client:
+        def __init__(self, *args):
+            pass
+
+    monkeypatch.setattr(module.p, 'SigV4RegistryClient', Client)
+    monkeypatch.setattr(module.p, 'inspect', lambda client, promotion_id: record)
+    monkeypatch.setattr(module.p, 'withdraw', lambda client, saved, **kwargs: calls.append(kwargs) or {
+        'promotion_id': 'pinned', 'result_snapshot': 'def456'})
+    monkeypatch.setattr(module.sys, 'argv', ['model_promotion.py', 'approve'])
+    module.main()
+    assert calls == [{'reason': 'Broken', 'identity': '123'}]
+    assert json.loads((tmp_path / '_promotion/decision.json').read_text())['result_snapshot'] == 'def456'
+
+    monkeypatch.setattr(module, 'update_issue', lambda *args: None)
+    monkeypatch.setattr(module.sys, 'argv', ['model_promotion.py', 'report'])
+    for approval, selected, expected in [
+        ('success', None, 'Model promotion withdrawn ('),
+        ('success', {'catalog_revision': 'a' * 40}, 'Model promotion withdrawal not confirmed'),
+        ('failure', None, 'Model promotion withdrawal not confirmed'),
+    ]:
+        monkeypatch.setenv('APPROVAL_RESULT', approval)
+        monkeypatch.setattr(module.p, 'benchmark_catalog', lambda *args, selected=selected, **kwargs: selected)
+        module.main()
+        text = json.loads((tmp_path / '_promotion/slack-completion.json').read_text())['text']
+        assert text.startswith(expected) and 'Published snapshot' not in text
+
+    module.p.save(module.PLAN, {**plan, 'operation': 'status'})
+    monkeypatch.setattr(module.sys, 'argv', ['model_promotion.py', 'approve'])
+    with pytest.raises(module.p.ValidationError, match='approval credentials'):
+        module.main()
+
+
 def test_report_failure_still_prepares_unknown_outcome_notice(monkeypatch, tmp_path):
     import pytest
     module = orchestration(monkeypatch, tmp_path)

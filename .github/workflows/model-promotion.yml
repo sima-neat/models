@@ -18,7 +18,7 @@ on:
       operation:
         description: Promotion operation in the selected registry environment
         type: choice
-        options: [promote, status, cancel, reject]
+        options: [promote, status, cancel, reject, withdraw]
         default: promote
         required: true
       model_id:
@@ -31,7 +31,7 @@ on:
         description: "Exact finalized candidate UUID in the selected environment. Required for production; optional override in staging. Find it in that environment's build candidate.json."
         type: string
       promotion_id:
-        description: Existing promotion UUID (status, cancel, reject)
+        description: Existing promotion UUID (status, cancel, reject, withdraw)
         type: string
       reason:
         description: Reason and validation evidence links for the request or decision
@@ -182,7 +182,7 @@ jobs:
 
   approve:
     needs: [configure, prepare, request]
-    if: needs.prepare.outputs.operation == 'promote' || needs.prepare.outputs.operation == 'reject'
+    if: contains(fromJSON('["promote", "reject", "withdraw"]'), needs.prepare.outputs.operation)
     env:
       PROMOTION_TARGET_BRANCH: ${{ needs.configure.outputs.target_branch }}
       VULCAN_ENV: ${{ needs.configure.outputs.vulcan_environment }}
@@ -218,7 +218,7 @@ jobs:
           aws-region: us-west-2
           role-session-name: models-promotion-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
           role-to-assume: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PROMOTION_ROLE_ARN }}
-      - name: Decide the exact reviewed request
+      - name: Decide the exact reviewed request or withdraw its promoted build
         run: python scripts/model_promotion.py approve
       - uses: actions/upload-artifact@v7
         if: always()

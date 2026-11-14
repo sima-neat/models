@@ -110,5 +110,31 @@ Run **Promote model** from `develop` with `operation=status`, the existing
 Cancellation cannot undo a completed promotion. Keep the feature branch while
 you resolve an unfinished request.
 
+## Withdraw a promoted build
+
+Withdraw a promoted build when it should no longer be offered for download, for
+example because it fails to load on a DevKit. A withdrawal applies to one model
+profile in one environment and on one target branch. To replace a build with a
+working one, promote the replacement instead; no withdrawal is needed.
+
+Run **Promote model** from `develop` with `operation=withdraw`, the
+`promotion_id` of the run that promoted the build, that run's environment and
+`target_branch`, and a reason that links to the failure. Leave `model_id`,
+`build_profile` and `deployment_id` blank. The promotion ID is in the promoting
+run's summary and in its review issue.
+
+A maintainer approves the withdrawal at the same gate that approves promotions
+to that target. The approval job's summary then shows the new catalog snapshot,
+and the outcome message reports the promotion as withdrawn. The run fails with
+`approval_not_current` when a later promotion replaced the build; withdraw that
+later promotion instead.
+
+A withdrawal removes the build from the catalog's downloads and keeps its files
+and the promotion's history. The request itself stays `promoted`. The profile
+still exists as a build-on-demand profile with no approved build. To take the
+profile out of the catalog too, remove or disable it in a pull request, then let
+**Vulcan Model Orchestrator** publish Develop, or run **Publish Main model
+metadata** for Main. To offer the profile again, promote a working build.
+
 For workflow setup, approval permissions, CLI commands and acceptance
 records, see [Promotion operations](model-promotion-operations.md).
