@@ -127,8 +127,10 @@ function metricRow({ label, text, unit }) {
   return `<div class="metric-row"><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(text)}<small>${escapeHtml(unit)}</small></dd></div>`;
 }
 
-// The headline metrics, one number each.
-const KPI_METRICS = ["throughput_fps", "latency_avg_ms", "avg_power_watts", "energy_per_inference_joules"];
+// The headline metrics, one number each. Two more tiles follow them: SoC power and inferences per watt.
+const KPI_METRICS = ["throughput_fps", "latency_avg_ms"];
+// Metrics the page shows in no tile or card and the CSV lists with a card, such as energy with power.
+const CSV_EXTRA_METRICS = { power: ["energy_per_inference_joules"] };
 
 // The SoC draws on two SoM rails: the MLA's own and the one for the rest of the SoC.
 const SOC_RAILS = ["power_rail_mla_watts", "power_rail_soc_ddr_vdd_watts"];
@@ -185,12 +187,17 @@ const RIGHT_COLUMN_CARDS = new Set(["power", "memory", "other"]);
 // The tiles and cards place these metrics; any other measured metric is listed under Other measurements.
 const PLACED_METRICS = new Set([
   ...KPI_METRICS,
+  ...Object.values(CSV_EXTRA_METRICS).flat(),
   ...DETAIL_CARDS.flatMap(([, , , , rows]) => rows.flatMap(([, keys]) => (Array.isArray(keys) ? keys : []))),
 ]);
 
+function tile(label, text, unit, qualifier = "") {
+  return `<div class="kpi"><span>${escapeHtml(label)}${qualifier ? `<span class="qualifier">(${escapeHtml(qualifier)})</span>` : ""}</span><strong>${escapeHtml(text)}<small>${escapeHtml(unit)}</small></strong></div>`;
+}
+
 function kpiTile(key, metric) {
   const value = measuredValue(key, metric);
-  return value ? `<div class="kpi"><span>${escapeHtml(value.label)}</span><strong>${escapeHtml(value.text)}<small>${escapeHtml(value.unit.replace("/inference", ""))}</small></strong></div>` : "";
+  return value ? tile(value.label, value.text, value.unit) : "";
 }
 
 function infoMark(text) {
@@ -220,6 +227,17 @@ function railReadings(measurements, key) {
   const sum = (field) => rails.reduce((total, rail) => total + rail[field], 0);
   const reading = (value) => Number.isFinite(value) && { text: value.toFixed(2), unit: "W" };
   return [reading(sum("mean")), reading(sum("maximum"))];
+}
+
+// Average SoC power, and the inferences per second each watt of it delivers. No metric holds either: both
+// come from the SoC rails, so a report without rail readings shows neither tile.
+function socPowerTiles(measurements) {
+  const watts = powerRails(measurements).filter((rail) => SOC_RAILS.includes(rail.key));
+  if (watts.length !== SOC_RAILS.length) return "";
+  const soc = watts.reduce((total, rail) => total + rail.mean, 0);
+  const throughput = metricDisplay(measurements.throughput_fps, metricDefinition("throughput_fps"))?.value;
+  return tile("SoC power", soc.toFixed(2), "W")
+    + (soc > 0 && Number.isFinite(throughput) ? tile("Inferences per watt", (throughput / soc).toFixed(1), "inf/s/W", "SoC power") : "");
 }
 
 function railDot(key) {
@@ -326,7 +344,6 @@ function performanceDetails(performance, run) {
 
 // The CSV download: every reading of the model as one table. Context comes first, then each card's
 // metrics, every SoM rail, every CPU core, the remaining measurements, and the MLA layers of each component.
-const CSV_EXTRA_METRICS = { power: ["energy_per_inference_joules"] };
 
 function performanceCsv(performance) {
   const rows = [["Section", "Metric", "Value", "Unit", "Key", "Note"]];
@@ -380,10 +397,7 @@ function csvFileName(performance) {
 }
 
 function performanceContext(performance) {
-  return [
-    performance.workload,
-    performance.timestamp && `Measured ${formatDate(performance.timestamp, false)}`,
-  ].filter(Boolean).join(" · ");
+  return performance.timestamp ? `Measured ${formatDate(performance.timestamp, false)}` : "";
 }
 
 const EXECUTION_STAGE_INFO = {
@@ -588,7 +602,7 @@ export function highlightLayerLegend(event) {
 
 // The KPI tiles, the context line, and Performance details of one performance result.
 function performanceSummary(performance, run, modelId, componentId = "") {
-  const tiles = KPI_METRICS.map((key) => kpiTile(key, performance.measurements[key])).join("");
+  const tiles = KPI_METRICS.map((key) => kpiTile(key, performance.measurements[key])).join("") + socPowerTiles(performance.measurements);
   const details = performanceDetails(performance, run);
   return `${tiles ? `<div class="kpis">${tiles}</div>` : ""}
     <p class="performance-context">${escapeHtml(performanceContext(performance))}${measurementSource(run, modelId)}</p>
@@ -1076,8 +1090,7 @@ function catalogModelOfVariant(variant) {
   return model?.builds.some((build) => variant.runs.some((run) => run.id === build.run_id)) ? model : null;
 }
 
-// The selected variant's download sits beside the tabs that select it.
-function detailBuildSwitcher(variant, downloadAction) {
+function detailBuildSwitcher(variant) {
   const model = catalogModelOfVariant(variant);
   const inCatalog = Boolean(model);
   const profiles = inCatalog ? profileGroups({ ...model, builds: compilerFilteredBuilds(model) }) : [];
@@ -1088,7 +1101,6 @@ function detailBuildSwitcher(variant, downloadAction) {
   return `<section class="detail-build-switcher" aria-label="Variant selection">
     <strong>${profiles.length > 1 ? "Variants" : "Variant"}</strong>
     ${profiles.length ? `<div class="detail-variant-tabs" role="tablist" aria-label="${escapeHtml(model.display_name || model.model_id)} variants">${tabs}</div>` : `<span class="detail-variant-single">${escapeHtml(profileLabel(variant.anchor))}</span>`}
-    ${downloadAction}
   </section>`;
 }
 
@@ -1188,12 +1200,13 @@ export function renderDetail(variant) {
         <div class="detail-tags">${(categories.tasks || []).map((task) => detailTag(icons.task, taxonomyLabel("tasks", task), "task")).join("")}${categories.architecture?.id ? detailTag(icons.architecture, taxonomyLabel("architectures", categories.architecture.id), "architecture") : ""}${categories.model_type ? detailTag(icons.modelType, taxonomyLabel("model_types", categories.model_type), "model-type") : ""}${detailTag(icons.compiler, `${run.toolchain_name || "compiler"} ${run.toolchain_version || ""}`.trim(), "compiler")}${detailTag(icons.branch, branchName(run.git_ref), "branch")}${license?.spdx ? detailTag(icons.license, license.spdx, "license") : ""}</div>
         ${catalogModel?.description ? `<p class="lede">${escapeHtml(catalogModel.description)}</p>` : ""}
         <div class="detail-title-actions">
+          ${downloadAction}
           <div class="detail-links">${validated ? artifactValidationMark(allTests) : ""}${originalModel ? `<a class="original-model-link${originalModel.huggingFace ? "" : " external-model-link"}" href="${escapeHtml(originalModel.href)}" target="_blank" rel="noreferrer" aria-label="${escapeHtml(originalModel.label)}" data-tooltip="${escapeHtml(originalModel.label)}">${originalModel.huggingFace ? icons.huggingFace : icons.external}</a>` : ""}${sourceUrl ? `<a class="model-source-link" href="${escapeHtml(sourceUrl)}" target="_blank" rel="noreferrer" aria-label="${escapeHtml(sourceLabel)}" data-tooltip="${escapeHtml(sourceLabel)}">${icons.github}</a>` : ""}</div>
         </div>
       </div>
       ${modelHero(catalogModel)}
     </header>
-    ${detailBuildSwitcher(variant, downloadAction)}
+    ${detailBuildSwitcher(variant)}
     ${compiledLimits ? `<dl class="key-grid">${compiledLimits}</dl>` : ""}
     ${sectionNavigation(sections)}
 

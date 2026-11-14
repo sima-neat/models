@@ -282,8 +282,6 @@ main { width: min(1240px, 100%); margin: 0 auto; padding: 0 clamp(16px, 4vw, 48p
 .compare-add select:disabled { cursor: default; opacity: .6; }
 .compare-table thead .catalog-model-link { font-size: inherit; }
 .compare-empty { padding: 52px 24px; border: 1px dashed var(--line-strong); border-radius: 12px; color: var(--ink-soft); text-align: center; }
-.compare-empty h3 { margin: 14px 0 0; color: var(--ink); font-size: 20px; font-weight: 500; }
-.compare-tbd { display: inline-block; padding: 5px 12px; border-radius: 6px; color: var(--ink-soft); background: var(--surface); font: 600 12px var(--font-mono); letter-spacing: .08em; }
 .detail-content { min-width: 0; }
 .crumbs { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--ink-soft); font-size: 14px; }
 .crumbs > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -328,7 +326,6 @@ main { width: min(1240px, 100%); margin: 0 auto; padding: 0 clamp(16px, 4vw, 48p
 .detail-tag > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .detail-build-switcher { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 16px; padding: 18px 0; border-top: 1px solid var(--line); }
 .detail-build-switcher > strong { color: var(--ink-soft); font-size: 14px; font-weight: 500; }
-.detail-build-switcher > .download-action, .detail-build-switcher > .download-unavailable { margin-left: auto; }
 .detail-variant-tabs { max-width: 100%; display: inline-flex; flex-wrap: wrap; gap: 2px; padding: 3px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
 .detail-variant-tab { min-width: 0; padding: 6px 14px; border: 0; border-radius: 7px; color: var(--ink-soft); background: transparent; font: 500 13px var(--font-mono); cursor: pointer; overflow-wrap: anywhere; transition: color 140ms ease, background 140ms ease; }
 .detail-variant-tab:hover { color: var(--ink); }

@@ -667,6 +667,7 @@ async function selectCategoryFilter(elementId, value) {
   elements[elementId].value = value;
   state.categorySelection[elementId] = value;
   writeCategoryFilterUrl({ push: true });
+  populateCategoryFilters();
   updateFilterIndicators();
   if (branchSnapshotMode()) {
     renderRuns();
@@ -705,6 +706,7 @@ elements["clear-filters"].addEventListener("click", async () => {
     elements[elementId].value = "";
     state.categorySelection[elementId] = "";
   });
+  populateCategoryFilters();
   writeSearchUrl();
   writeCategoryFilterUrl();
   writeHistoryUrl();

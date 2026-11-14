@@ -9,16 +9,22 @@ const fixture = () => JSON.parse(readFileSync(
 const run = {id: 'run-1', metadata: {model_id: 'resnet_50', build_profile_id: 'w8a8', stage: 'performance'}};
 const read = (report) => readPerformance({run, parameters: {}, report}).value;
 
-test('the customer report leaves out SoM power, its energy, its rails, and Linux memory', () => {
+test('the customer report leaves out Linux memory', () => {
   const developer = read(fixture()).measurements;
   for (const key of CUSTOMER_HIDDEN_METRICS) assert.ok(developer[key], `the fixture measures ${key}`);
-  assert.ok(developer.peak_power_watts.details.breakdown.length > 1);
 
   const report = customerPerformanceReport(fixture());
   const customer = read(report).measurements;
   for (const key of CUSTOMER_HIDDEN_METRICS) assert.equal(customer[key], undefined, key);
-  for (const field of ['power_som_watts', 'power_rails_watts', 'linux_memory_used_mib']) {
-    assert.equal(report.telemetry[field], undefined, field);
+  assert.equal(report.telemetry.linux_memory_used_mib, undefined);
+});
+
+test('the customer report keeps SoM power, its rails, and the energy computed from it', () => {
+  const developer = read(fixture()).measurements;
+  const customer = read(customerPerformanceReport(fixture())).measurements;
+  assert.ok(customer.peak_power_watts.details.breakdown.length > 1);
+  for (const key of ['avg_power_watts', 'peak_power_watts', 'energy_per_inference_joules']) {
+    assert.deepEqual(customer[key], developer[key], key);
   }
 });
 
@@ -39,7 +45,7 @@ test('the customer report filters each independently measured component', () => 
   const report = customerPerformanceReport({schema: 'sima.model-report', schema_version: 1, stage: 'performance',
     runtime: {pyneat: 'test'}, scope: 'components', components: {image_encoder: component, text_encoder: component}});
   for (const {measurements} of read(report).components) {
-    assert.equal(measurements.avg_power_watts, undefined);
+    assert.ok(measurements.avg_power_watts);
     assert.equal(measurements.peak_linux_memory_mib, undefined);
     assert.equal(measurements.throughput_fps.value, metrics.throughput_fps);
   }
@@ -53,7 +59,7 @@ test('the customer report filters generation workloads and their baselines', () 
   const [measured] = read(report).workloads;
   for (const {measurements} of [measured, measured.baseline]) {
     assert.equal(measurements.decode_tps.value, 12);
-    assert.ok(measurements.avg_mla_power_watts);
+    assert.ok(measurements.avg_power_watts);
     for (const key of CUSTOMER_HIDDEN_METRICS) assert.equal(measurements[key], undefined, key);
   }
 });

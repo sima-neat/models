@@ -18,10 +18,9 @@ CI builds the customer UI from `main` and the developer UI from `develop` and
 feature branches. Both currently use the staging registry and share the staging
 publication URL; the most recently published build determines its UI. The customer
 view uses the main catalog and hides branch/compiler filters, build history,
-the Details section and contributor navigation. It also leaves out SoM power,
-energy per inference, the board's Linux memory, MLA Utilization, the **Raw
-result** download, and the commit and workflow links of each result. The
-developer view keeps all of them. Selecting a branch in the developer UI changes the catalog, not the UI.
+the Details section and contributor navigation. It also leaves out the
+board's Linux memory, MLA Utilization, the **Raw result** download, and the
+commit and workflow links of each result. The developer view keeps all of them. Selecting a branch in the developer UI changes the catalog, not the UI.
 
 While the catalog loads, the list shows a spinner. A message that a branch has
 no models appears only after the registry has answered.
@@ -83,18 +82,20 @@ The search field matches model, build-profile, and component names and the taxon
 labels and family descriptions. Task and model family filters sit beside the cards. Developer view also
 shows Branch, Compiler and Build history directly in the filter panel. Customer
 view keeps only Task and Model family. Category filters list the values the
-loaded builds use and are hidden when fewer than two remain; developer controls
+loaded builds use and are hidden when fewer than two remain. Selecting a task
+narrows Model family to the families with that task, and selecting a family
+narrows Task to that family's tasks; developer controls
 stay visible even when only one branch or compiler is available.
 
 **Compare** in the top bar explores all model variants for one task. The
 chart shows all measured precisions together. Hover over a point to see the model,
 variant, throughput and accuracy. Accuracy is the vertical axis and throughput
-in inferences/s is the horizontal axis. The dataset, variant and split appear below
-the chart title. Accuracy is grouped by dataset and metric; when more than one
-group is available, choose it with **Dataset & metric**. The axis title gives the
+in inferences/s is the horizontal axis. The dataset and its variant appear below
+the chart title. Accuracy is grouped by dataset and metric; **Dataset & metric**
+at the top right names the group on every task and selects one when a task has several. The axis title gives the
 metric's unit and says "lower is better" for an error metric such as EPE.
 A multi-component model shows its [whole-model result](benchmarking.md#multi-component-models), with all its components running as one pipeline. Select up to three points or use the compact
-**Add model** selector to show detailed measurements, including memory and, in the developer UI, SoM power.
+**Add model** selector to show detailed measurements, including power and memory.
 Remove a selected variant using the × in its table heading or its chart label.
 The chart labels only selected variants plotted against its current dataset and metric.
 Selections without matching accuracy or throughput appear only in the comparison table.
@@ -103,7 +104,7 @@ preserves the task and selected variants. Text Generation and Visual Question An
 compare parameters in billions against decode speed for matching workloads.
 Image comparisons use each model's encoder resolution, listed in its tooltip and table.
 A workload selector appears when several text buckets or datasets are available.
-Audio comparisons show **TBD**. Multimodal detectors can still join a vision-task comparison.
+The Task menu leaves out tasks with no comparison yet, such as the audio tasks. Multimodal detectors can still join a vision-task comparison.
 
 On a phone, the section navigation shortens **Developer docs** to **Docs**.
 
@@ -112,8 +113,8 @@ On a phone, the section navigation shortens **Developer docs** to **Docs**.
 Selecting an individual model opens its page. The page is built to be read at a glance:
 each section shows its key facts directly, and longer detail sits in a row
 marked with › that opens in place. The header places the model image beside its
-name, tags, description, and the validation and source-link icons in both UI
-modes; narrow screens stack them. The tags name what holds for every variant:
+name, tags, description, download action, and the validation and source-link
+icons in both UI modes; narrow screens stack them. The tags name what holds for every variant:
 tasks, model family, model type and license. The download dialog offers an outlined **Copy CLI command**
 button with a copy icon alongside browser downloads where available. Customer
 package dialogs name the model, summarize the variant and size, and show a quiet
@@ -125,11 +126,10 @@ place Cancel on the left, Copy CLI command in the middle and Download on the rig
 A model with several build profiles shows
 one tab per profile, labelled with its variant ID in uppercase, such as
 **W8A8**. Profiles with a W8A8 component come first and the page opens on the
-first tab, whatever order `model.yaml` declares. **Download** sits at the end of
-the variant row, because it downloads the selected variant, and the Performance
-and Accuracy titles name that variant.
+first tab, whatever order `model.yaml` declares. **Download** in the header
+downloads the selected variant, and the Performance and Accuracy titles name that variant.
 A model whose license does not permit redistribution has no download action. Its
-variant row shows **Not available for download** in that place, and its Details section
+header shows **Not available for download** in that place, and its Details section
 has no package card. The GitHub link in the header opens
 the model's folder at the commit the README comes from. The original-model link
 beside it opens the page `upstream.model_card` names. It shows the Hugging Face
@@ -150,11 +150,11 @@ in this order:
    [README requirements](https://github.com/sima-neat/models/blob/develop/AGENTS.md#model-readme-requirements).
 2. **Performance.** One whole-model result for the selected build profile,
    read from the profile's [model report](benchmarking.md#workload-and-measurements).
-   Core models show four tiles: throughput, average latency, average SoM
-   power, and energy per inference. The customer UI shows the first two. The
-   line below them names the workload the
-   report records, such as **YoloV26 box decoder, top 100**, and when it was
-   measured. In the developer UI it also links the commit and GitHub workflow
+   Core models show four tiles: throughput, average latency, average SoC
+   power (the MLA rail plus the rail for the rest of the SoC), and inferences
+   per watt, which is throughput divided by that SoC power. Energy per
+   inference, which uses SoM power, is in the CSV. The line below them says when the result was
+   measured; the workload the report records is in the CSV. In the developer UI it also links the commit and GitHub workflow
    of the run that measured the profile. A benchmark run is reused until its
    [benchmark fingerprint](benchmarking.md#ci-and-registry-publication) changes, so that
    commit can be later than the build's. A profile with no result shows **Not measured at
@@ -228,8 +228,7 @@ in this order:
    two peaks, an upper bound. The other SoM rails follow at the SoC's level,
    each coloured like its part of the bar. **Memory** has MLA and
    EV74 memory, which add up, and the board's Linux memory. The customer UI
-   keeps MLA power and MLA and EV74 memory, and leaves out SoM power, the
-   rail bar, the other rails, and Linux memory, here and in the CSV. Readings other than latency and throughput cover
+   leaves out Linux memory, here and in the CSV. Readings other than latency and throughput cover
    the throughput pass. The (i) mark beside a reading or
    rail explains what it measures. The footer lists the telemetry (the
    Sentinel version and the samples behind the board readings, or why they

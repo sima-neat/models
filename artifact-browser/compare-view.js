@@ -1,6 +1,6 @@
 // Explore all variants of one task; inspect up to three measured builds side by side.
-import { CUSTOMER_HIDDEN_METRICS, readPerformance } from "./model-report.js";
-import { customerView, state, elements, catalogMode, showView, taxonomyLabel } from "./state.js";
+import { readPerformance } from "./model-report.js";
+import { state, elements, catalogMode, showView, taxonomyLabel } from "./state.js";
 import { escapeHtml, variantLabel } from "./ui.js";
 import { datasetName } from "./accuracy-metrics.js";
 import { metricDefinition, metricDisplay } from "./metrics.js";
@@ -32,6 +32,21 @@ export function writePicksToUrl(url) {
   url.searchParams.delete("compare_precision");
 }
 
+// Compare opens on this task when the link names none. The first task by name, speech recognition, has no chart.
+const DEFAULT_TASK = "object_detection";
+
+// Tasks compared by parameters and decode speed. Every other task is compared by accuracy and throughput,
+// which only vision models report.
+const GENERATIVE_TASKS = ["text_generation", "visual_question_answering"];
+
+// A task is offered when a chart can plot one of its variants: the catalog names a performance benchmark for
+// the variant, and the task is generative or the model is a vision model.
+function comparableTask(task, variants) {
+  return variants.some(({ model, profile }) => model.tasks?.includes(task)
+    && model.benchmark_fingerprints?.[profile]?.performance
+    && (GENERATIVE_TASKS.includes(task) || model.model_type === "vision"));
+}
+
 const PERFORMANCE_ROWS = [
   ["throughput_fps", "Throughput"],
   ["latency_avg_ms", "Latency"],
@@ -39,7 +54,7 @@ const PERFORMANCE_ROWS = [
   ["energy_per_inference_joules", "Energy per inference"],
   ["mla_memory_peak_mib", "Peak MLA memory"],
   ["ev74_memory_peak_mib", "Peak EV74 memory"],
-].filter(([key]) => !customerView || !CUSTOMER_HIDDEN_METRICS.includes(key));
+];
 
 function catalogVariants() {
   return [...state.models].sort(compareModels).flatMap((model) => (
@@ -194,7 +209,8 @@ function comparisonPlot(columns) {
   })), {
     title: "Accuracy & speed", xLabel: "Throughput (inferences/s)", yLabel,
     subtitle: accuracy?.dataset ? `Dataset: ${datasetName(accuracy.dataset)}` : "",
-    controls: axes.length > 1 ? selectControl("Dataset & metric", "axis", axes, state.compareAxis) : "",
+    // Every task names its dataset and metric in the same place, also when there is only one to choose.
+    controls: axes.length ? selectControl("Dataset & metric", "axis", axes, state.compareAxis) : "",
     note: "Accuracy points share a dataset and metric. Use Add model for variants without matching measurements.",
     empty: "No matching measurements yet. Use Add model to inspect a variant.",
   });
@@ -309,16 +325,18 @@ export async function renderComparison() {
     return;
   }
   const all = catalogVariants();
-  const tasks = [...new Set(all.flatMap(option => option.model.tasks || []))].sort((a, b) => taxonomyLabel("tasks", a).localeCompare(taxonomyLabel("tasks", b)));
-  if (!tasks.includes(state.compareTask)) state.compareTask = all.find(option => state.comparePicks.includes(option.key))?.model.tasks?.[0] || tasks[0] || "";
+  const tasks = [...new Set(all.flatMap(option => option.model.tasks || []))].filter(task => comparableTask(task, all)).sort((a, b) => taxonomyLabel("tasks", a).localeCompare(taxonomyLabel("tasks", b)));
+  if (!tasks.includes(state.compareTask)) {
+    state.compareTask = all.find(option => state.comparePicks.includes(option.key))?.model.tasks?.[0]
+      || (tasks.includes(DEFAULT_TASK) ? DEFAULT_TASK : tasks[0]) || "";
+  }
   const taskOptions = all.filter(option => option.model.tasks?.includes(state.compareTask));
   const options = taskOptions;
   state.comparePicks = state.comparePicks.map(key => options.some(option => option.key === key) ? key : "");
-  generative = ["text_generation", "visual_question_answering"].includes(state.compareTask);
-  const pending = !generative && options.length > 0 && options.every(option => option.model.model_type !== "vision");
+  generative = GENERATIVE_TASKS.includes(state.compareTask);
   elements["compare-pane"].innerHTML = `${intro}<div class="compare-filters">${selectControl("Task", "task", tasks.map(id => [id, taxonomyLabel("tasks", id)]), state.compareTask)}</div>
-    <div class="compare-results" aria-live="polite">${pending ? '<div class="compare-empty"><span class="compare-tbd">TBD</span><h3>Model comparisons</h3></div>' : options.length ? '<p class="muted-message compare-loading" role="status"><span class="spinner"></span> Loading measurements…</p>' : '<p class="compare-empty">No models available for this task.</p>'}</div>`;
-  if (pending || !options.length) return;
+    <div class="compare-results" aria-live="polite">${options.length ? '<p class="muted-message compare-loading" role="status"><span class="spinner"></span> Loading measurements…</p>' : '<p class="compare-empty">No models available for this task.</p>'}</div>`;
+  if (!options.length) return;
   const columns = await mapWithConcurrency(options, 3, async option => {
     if (requestId !== compareRequestId) return null;
     const variant = await loadPickedVariant(option).catch(() => null);

@@ -120,9 +120,9 @@ publication URL. The last publication wins; the catalog branch selector does not
 change the site's UI. Customer view hides contributor navigation, branch/compiler
 filters, build history and the Details section while retaining browsing, comparison,
 measurements and downloads. `customerPerformanceReport` in `model-report.js` also
-removes SoM power, energy per inference and the board's Linux memory from each
-performance report as it is loaded, so no view of the customer page shows them.
-The registry still serves those readings; the customer page only leaves them out.
+removes the board's Linux memory from each performance report as it is loaded,
+so no view of the customer page shows it. The registry still serves that reading;
+the customer page only leaves it out.
 
 For a local customer build, use `MODEL_BROWSER_UI_MODE=customer` with
 `npm run build:portal --prefix website`; pass the same variable to
@@ -207,8 +207,8 @@ everything longer sits in one expandable row.
   and application instructions inline after checking their SHA-256 against the
   catalog. It renders the README from the section after Overview, because the title,
   hero, and Overview are already on the page.
-- **Performance** shows throughput, latency, SoM power, and energy per
-  inference for the whole model, one number per tile, from the build profile's
+- **Performance** shows throughput, latency, SoC power, and inferences per
+  watt of SoC power for the whole model, one number per tile, from the build profile's
   performance run. A multi-component model is measured with its components
   running together, and its layer analysis and execution graph switch between
   the components. **Performance Details** is
@@ -244,7 +244,7 @@ revision.**
 **Compare** explores the selected branch's model variants by task. All
 precisions appear together. Vision tasks plot accuracy against throughput;
 GenAI tasks plot parameters in billions against decode speed for matching
-workloads. Other tasks show **TBD**. Select up to three points or use **Add model**
+workloads. Tasks with neither are left out of the Task menu. Select up to three points or use **Add model**
 to inspect measurements in a table, including unmeasured variants.
 Links preserve the task, workload and selected builds. Build history is not compared.
 See the [model browser guide](../docs/model-browser.md#the-catalog) for the controls.

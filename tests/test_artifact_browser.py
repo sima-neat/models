@@ -1128,7 +1128,7 @@ def test_filters_list_only_used_values_and_hide_without_a_choice() -> None:
     script = _browser_source("catalog-view.js")
 
     assert '<span>Model family</span><select id="architecture-filter">' in html
-    assert "state.runs.flatMap((run) => run[field] ?? [])" in script
+    assert ".filter(underOtherSelection).flatMap((record) => record[field] ?? [])" in script
     assert "return { ...build.run, ...catalogCategories(model) };" in _browser_source("api.js")
     model_view = _browser_source("model-view.js")
     assert "const categories = catalogModel?.categories || run.model_categories || {};" in model_view
@@ -1345,7 +1345,7 @@ def test_performance_rendering_reads_the_model_report_and_is_charted() -> None:
     assert "This result format is not supported by this browser." in script
     assert '<p class="muted-message">Not measured at this revision.</p>' in script
     # Each headline tile shows one number; Performance Details has three cards on the left and two on the right.
-    assert "KPI_METRICS.map((key) => kpiTile(key, performance.measurements[key]))" in script
+    assert 'KPI_METRICS.map((key) => kpiTile(key, performance.measurements[key])).join("") + socPowerTiles(' in script
     assert '"Performance Details", details.markup' in script
     for card in ['["performance", "Performance"', '["heat", "Heat"', '["cpu", "CPU"', '["power", "Power"',
                  '["memory", "Memory"']:
@@ -1518,8 +1518,7 @@ def test_compare_explores_one_task_with_a_chart_and_selected_table() -> None:
     assert 'class="compare-tooltip"' in script
     assert 'class="compare-chart"' in script
     assert 'data-compare-toggle=' in script
-    assert 'Model comparisons' in script
-    assert 'class="compare-tbd">TBD' in script
+    assert "filter(task => comparableTask(task, all))" in script
     # The picks live in the link, so a comparison can be shared and survives reload and Back.
     assert 'params.getAll("build")' in script
     assert 'url.searchParams.set("view", "compare");' in script
@@ -1835,7 +1834,7 @@ def test_variant_page_shows_build_facts_once_and_one_row_per_component() -> None
 
     # Build-level sections render once per variant, in the page order.
     order = [
-        "detailBuildSwitcher(variant, downloadAction)", "${overviewMarkup}", 'id="components-section"',
+        "detailBuildSwitcher(variant)", "${overviewMarkup}", 'id="components-section"',
         "${accuracyMarkup}", "packageCard(fullPackage,", 'disclosure("provenance", "Build provenance"',
         "sourceInputPanel(inputs)", "licensePanel(license,",
     ]

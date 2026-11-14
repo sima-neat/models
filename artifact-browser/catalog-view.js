@@ -32,11 +32,17 @@ export function populateCategoryFilters() {
     ["task-filter", "tasks", "tasks", "Any task"],
     ["architecture-filter", "architectures", "architecture_id", "Any family"],
   ];
-  definitions.forEach(([elementId, section, field, emptyLabel]) => {
-    const element = elements[elementId];
+  const selections = definitions.map(([elementId, section]) => {
     const selection = state.categorySelection[elementId] || "";
-    const selected = Object.hasOwn(state.taxonomy[section] || {}, selection) ? selection : "";
-    const values = [...new Set([selected, ...state.runs.flatMap((run) => run[field] ?? []), ...state.models.flatMap((model) => model[field] ?? [])])].filter(Boolean);
+    return Object.hasOwn(state.taxonomy[section] || {}, selection) ? selection : "";
+  });
+  definitions.forEach(([elementId, section, field, emptyLabel], index) => {
+    const element = elements[elementId];
+    const selected = selections[index];
+    // Each filter offers only the values that have a build under the other filter's selection.
+    const other = 1 - index;
+    const underOtherSelection = (record) => !selections[other] || [record[definitions[other][2]] ?? []].flat().includes(selections[other]);
+    const values = [...new Set([selected, ...[...state.runs, ...state.models].filter(underOtherSelection).flatMap((record) => record[field] ?? [])])].filter(Boolean);
     element.innerHTML = filterOptions(section, values, emptyLabel);
     element.value = selected;
     state.categorySelection[elementId] = selected;

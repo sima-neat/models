@@ -588,10 +588,7 @@ async function checkGenerativeBenchmark(browser, url) {
             if (!await panel.getByRole('heading', {name: new RegExp(`^${title}`)}).isVisible()) throw new Error(`missing ${title} card`);
           }
           if (await panel.locator('.core-load li').count() !== 16) throw new Error('missing per-core CPU utilization');
-          // The rails add up to SoM power, which the customer view leaves out.
-          if (await panel.locator('.rail-split').isVisible() === customer) {
-            throw new Error(customer ? 'customer view shows the SoM power rails' : 'missing power rail breakdown');
-          }
+          if (!await panel.locator('.rail-split').isVisible()) throw new Error('missing power rail breakdown');
         }
         await picker.selectOption('text_n128');
         await page.locator('[data-generative-benchmark]').screenshot({path: `/tmp/models-genai-telemetry-${viewport.width}-${theme}.png`});
