@@ -237,7 +237,7 @@ function socPowerTiles(measurements) {
   const soc = watts.reduce((total, rail) => total + rail.mean, 0);
   const throughput = metricDisplay(measurements.throughput_fps, metricDefinition("throughput_fps"))?.value;
   return tile("SoC power", soc.toFixed(2), "W")
-    + (soc > 0 && Number.isFinite(throughput) ? tile("Inferences per watt", (throughput / soc).toFixed(1), "inf/s/W", "SoC power") : "");
+    + (soc > 0 && Number.isFinite(throughput) ? tile("Inferences/Watt", (throughput / soc).toFixed(1), "", "SoC Power") : "");
 }
 
 function railDot(key) {

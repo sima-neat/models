@@ -152,7 +152,8 @@ in this order:
    read from the profile's [model report](benchmarking.md#workload-and-measurements).
    Core models show four tiles: throughput, average latency, average SoC
    power (the MLA rail plus the rail for the rest of the SoC), and inferences
-   per watt, which is throughput divided by that SoC power. Energy per
+   per watt, which is throughput in inferences/s divided by that SoC power
+   in watts and is shown without a unit. Energy per
    inference, which uses SoM power, is in the CSV. The line below them says when the result was
    measured; the workload the report records is in the CSV. In the developer UI it also links the commit and GitHub workflow
    of the run that measured the profile. A benchmark run is reused until its
