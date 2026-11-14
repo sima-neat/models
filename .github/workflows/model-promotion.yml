@@ -3,6 +3,12 @@ name: Promote model
 on:
   workflow_dispatch:
     inputs:
+      environment:
+        description: Registry environment (default uses VULCAN_ENV)
+        type: choice
+        options: [default, staging, production]
+        default: default
+        required: false
       target_branch:
         description: Target catalog (Main is production-only; execute the workflow from develop)
         type: choice
@@ -10,7 +16,7 @@ on:
         default: develop
         required: true
       operation:
-        description: Promotion operation in VULCAN_ENV
+        description: Promotion operation in the selected registry environment
         type: choice
         options: [promote, status, cancel, reject]
         default: promote
@@ -22,7 +28,7 @@ on:
         description: "Promote only. ID under build_profiles in models/<model_id>/model.yaml (e.g. w4a16). Selects the newest candidate receipt."
         type: string
       deployment_id:
-        description: "Exact finalized candidate UUID in VULCAN_ENV. Required for production; optional override in staging. Find it in that environment's build candidate.json."
+        description: "Exact finalized candidate UUID in the selected environment. Required for production; optional override in staging. Find it in that environment's build candidate.json."
         type: string
       promotion_id:
         description: Existing promotion UUID (status, cancel, reject)
@@ -44,7 +50,7 @@ jobs:
   configure:
     if: github.repository == 'sima-neat/models' && github.ref == 'refs/heads/develop'
     runs-on: ubuntu-latest
-    environment: ${{ vars.VULCAN_ENV }}
+    environment: ${{ inputs.environment != 'default' && inputs.environment || vars.VULCAN_ENV }}
     outputs:
       target_branch: ${{ steps.config.outputs.target_branch }}
       vulcan_environment: ${{ steps.config.outputs.vulcan_environment }}
@@ -63,7 +69,7 @@ jobs:
         id: config
         env:
           PROMOTION_TARGET_BRANCH: ${{ inputs.target_branch }}
-          VULCAN_ENV: ${{ vars.VULCAN_ENV }}
+          VULCAN_ENV: ${{ inputs.environment != 'default' && inputs.environment || vars.VULCAN_ENV }}
           VULCAN_ARTIFACT_REGISTRY_API_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_API_URL }}
           VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL }}
         run: python scripts/model_promotion.py configure

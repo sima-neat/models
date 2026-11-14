@@ -42,6 +42,7 @@ and choose **Run workflow**. Fill in these fields:
 | Field | What to enter |
 | --- | --- |
 | Branch to run the workflow | `develop`, including for Main promotion and recovery actions |
+| `environment` | `staging` or `production` to match your tested build. `default` uses the configured `VULCAN_ENV`. |
 | `target_branch` | `develop` |
 | `operation` | `promote` |
 | `model_id` | The folder name under `models/`, such as `qwen3_5_0_8b` |
@@ -89,8 +90,8 @@ Main model and profile must be build-on-demand with requirements matching the
 candidate. This step publishes metadata; it does not copy Develop's definitions
 or approve a build.
 
-Run **Promote model** again from `develop`, using `target_branch=main` and the
-same `deployment_id`. Fill in the model, profile and required reason,
+Run **Promote model** again from `develop`, using `environment=production`,
+`target_branch=main`, and the same `deployment_id`. Fill in the model, profile and required reason,
 and leave `promotion_id` blank. Main requires its own maintainer approval.
 After the report shows `promoted`, check the selected download in Main.
 
@@ -100,7 +101,7 @@ release step.
 ## If a request does not finish
 
 Run **Promote model** from `develop` with `operation=status`, the existing
-`promotion_id`, the same `target_branch`, and a reason.
+`promotion_id`, the original environment and `target_branch`, and a reason.
 
 - **A job failed:** rerun the failed jobs if the saved plan and request are still valid. The rerun keeps the original build and request.
 - **The request expired, the target catalog changed, or the saved plan is missing or expired:** start a new workflow run and obtain a new review.

@@ -15,7 +15,6 @@ def test_workflow_is_manual_and_uses_trusted_code_with_separate_credentials():
     assert set(config.get('on', config.get(True))) == {'workflow_dispatch'}
     jobs = config['jobs']
     assert "github.ref == 'refs/heads/develop'" in jobs['configure']['if']
-    assert jobs['configure']['environment'] == '${{ vars.VULCAN_ENV }}'
     assert 'needs.configure.outputs.vulcan_environment' in jobs['approve']['environment']['name']
     assert 'issues' not in jobs['approve']['permissions']
     for name, job in jobs.items():
@@ -393,6 +392,20 @@ def test_outcome_slack_step_runs_even_if_issue_reporting_fails():
     assert notice['if'] == "always() && steps.report.outputs.completion_ready == 'true'"
     assert notice['with']['payload-file-path'] == '_promotion/slack-completion.json'
 
+
+
+def test_environment_input_selects_registry_and_preserves_configured_default():
+    config = workflow()
+    inputs = config.get('on', config.get(True))['workflow_dispatch']['inputs']
+    assert inputs['environment']['options'] == ['default', 'staging', 'production']
+    assert inputs['environment']['default'] == 'default'
+    jobs = config['jobs']
+    selection = "${{ inputs.environment != 'default' && inputs.environment || vars.VULCAN_ENV }}"
+    assert jobs['configure']['environment'] == selection
+    step = next(s for s in jobs['configure']['steps'] if s.get('id') == 'config')
+    assert step['env']['VULCAN_ENV'] == selection
+    for name in ('prepare', 'request', 'report'):
+        assert jobs[name]['environment'] == '${{ needs.configure.outputs.vulcan_environment }}'
 
 
 def test_target_is_validated_before_gate_and_propagated_to_every_job():
