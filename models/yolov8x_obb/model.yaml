@@ -22,6 +22,14 @@ upstream:
   model_card: https://github.com/ultralytics/assets/releases/tag/v8.4.0
   derived_from: https://github.com/ultralytics/ultralytics/tree/f2d3aed634a5b0e4828024718d4a61ab2f83fb19
 
+resources:
+  license:
+    source:
+      uri: https://raw.githubusercontent.com/ultralytics/ultralytics/f2d3aed634a5b0e4828024718d4a61ab2f83fb19/LICENSE
+      sha256: 0d96a4ff68ad6d4b6f1f30f713b18d5184912ba8dd389f86aa7710db079abcb0
+      size_bytes: 34523
+    install_path: licenses/LICENSE
+
 conversion:
   source:
     # Ultralytics/YOLOv8 on Hugging Face has no OBB checkpoints; use the official upstream release asset.

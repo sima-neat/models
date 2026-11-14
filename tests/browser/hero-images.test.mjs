@@ -36,7 +36,7 @@ test('API-only mode retries and removed images do not start new requests', () =>
   assert.equal(removed.requests.length, 0);
 });
 test('standard staging and production developer builds opt in by default, with an explicit rollback', () => {
-  assert.match(portalConfig({GITHUB_REF: 'refs/heads/develop'}).heroCdnBaseUrl, /stg.*images\/sha256$/);
+  assert.match(portalConfig({}).heroCdnBaseUrl, /stg.*images\/sha256$/);
   assert.equal(portalConfig({MODEL_BROWSER_UI_MODE: 'customer'}).heroCdnBaseUrl, '');
   assert.equal(portalConfig({MODEL_REGISTRY_API_URL: 'https://example.com'}).heroCdnBaseUrl, '');
   assert.equal(portalConfig({MODEL_HERO_CDN_BASE_URL: ''}).heroCdnBaseUrl, '');

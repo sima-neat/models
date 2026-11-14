@@ -19,6 +19,14 @@ upstream:
   revision: ffb9dc0ac74364ad268e066aa4aea75089bf383d
   derived_from: https://github.com/pytorch/vision/blob/134f6382956071833f05f072763c03f9858453f2/torchvision/models/resnet.py
 
+resources:
+  license:
+    source:
+      uri: https://raw.githubusercontent.com/pytorch/vision/134f6382956071833f05f072763c03f9858453f2/LICENSE
+      sha256: 6502f676851cfe25f8af75531dfb32375b7325b73c37e7b43741fa422893e71d
+      size_bytes: 1517
+    install_path: licenses/LICENSE
+
 conversion:
   source:
     repository: timm/wide_resnet50_2.tv2_in1k

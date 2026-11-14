@@ -1,6 +1,6 @@
-# Unified Model Registry portal
+# Unified Model Browser portal
 
-The combined static site serves the Model Registry catalog at `/` and the
+The combined static site serves the Model Browser catalog at `/` and the
 Docusaurus developer guide at `/docs`. Docusaurus consumes the repository's
 top-level `docs/` directory; the assembly step adds the client-only app from
 `artifact-browser/` and fingerprints its mutable assets.

@@ -1,0 +1,134 @@
+# Each build profile compiles for over an hour, so this model builds only on request.
+build-on-demand: true
+display_name: EdgeTAM
+description: Segments an object through a video from a click or a box on one frame, with Meta's on-device Segment Anything 2 tracker.
+model_type: vision
+tasks: [video_object_segmentation]
+
+modalities:
+  inputs: [video, keypoints]
+  outputs: [masks]
+
+architecture: edgetam
+
+# The upstream README: "The EdgeTAM model checkpoints and code are licensed under Apache 2.0."
+license:
+  spdx: Apache-2.0
+  redistribution: allowed
+  attribution: EdgeTAM by Chong Zhou et al. (Meta), distributed under Apache-2.0.
+
+upstream:
+  repository: https://huggingface.co/facebook/EdgeTAM
+  revision: 14d7ecc48c656b94e5184519f698cd5386c5a2bf
+  derived_from: https://github.com/facebookresearch/EdgeTAM/tree/7711e012a30a2402c4eaab637bdb00a521302c91
+
+resources:
+  license:
+    # The checkpoint repository omits LICENSE. The EdgeTAM code repository carries the Apache-2.0 text.
+    source:
+      uri: https://raw.githubusercontent.com/facebookresearch/EdgeTAM/7711e012a30a2402c4eaab637bdb00a521302c91/LICENSE
+      sha256: c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4
+      size_bytes: 11357
+    install_path: licenses/LICENSE
+
+# convert.py exports the image encoder, whose RepViT backbone needs timm, and republishes the renamed checkpoint, from
+# which surgery.py builds the other three components at compile time.
+conversion:
+  source:
+    uri: hf://models/facebook/EdgeTAM@14d7ecc48c656b94e5184519f698cd5386c5a2bf/edgetam.pt
+    sha256: ed2d4850b8792c239689b043c47046ec239b6e808a3d9b6ae676c803fd8780df
+    size_bytes: 56116523
+  outputs: [image_encoder.onnx, weights.pth]
+
+compilation:
+  format: onnx
+  source: conversion
+  # Each frame runs the image encoder, then the memory attention on a tracked frame, then the mask decoder, then the
+  # memory encoder on the chosen mask.
+  components: [image_encoder, memory_attention, mask_decoder, memory_encoder]
+
+# calibration.py tracks one annotated object through each cal sequence with the FP32 graphs.
+calibrations:
+- id: davis-2017-cal
+  dataset: {id: davis-2017, variant: cal, sha256: cf0d9d6d24e218adcc95980e6526bda94e52668a0710200e704014357ec80f8a, size_bytes: 61547807}
+
+build_profiles:
+  # The image encoder runs BF16: at INT8 every RepViT stage adds error. Its GELUs run as INT8 lookup tables, which
+  # are faster and closer to FP32 than the erf the compiler builds for a BF16 GELU (surgery.py). The memory attention
+  # runs INT8 weights with BF16 activations, where the -1e4 scores of empty memory slots stay exact. The decoder runs
+  # BF16, because INT8 cannot represent its object pointer gate; its Sin and Cos still use INT8 lookup tables, so it
+  # calibrates. The memory encoder runs INT8.
+  w16a16_w8a16_w16a16_w8a8:
+    calibration_dataset: davis-2017-cal
+    components:
+      image_encoder:
+        parameters: {precision: w16a16, calibration_bins: 2048, calibration_samples: 32}
+      memory_attention:
+        parameters: {precision: w8a16, calibration_bins: 2048, calibration_samples: 32}
+      mask_decoder:
+        parameters: {precision: w16a16, calibration_bins: 2048, calibration_samples: 32}
+      memory_encoder:
+        parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 32}
+  # The same build with an INT8 image encoder: faster, at a lower J&F.
+  w8a8_w8a16_w16a16_w8a8:
+    calibration_dataset: davis-2017-cal
+    components:
+      image_encoder:
+        parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 32}
+      memory_attention:
+        parameters: {precision: w8a16, calibration_bins: 2048, calibration_samples: 32}
+      mask_decoder:
+        parameters: {precision: w16a16, calibration_bins: 2048, calibration_samples: 32}
+      memory_encoder:
+        parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 32}
+  # Every component with INT8 weights and BF16 activations. Not built yet: the image encoder fails the compiler's
+  # simulator check.
+  # w8a16:
+  #   calibration_dataset: davis-2017-cal
+  #   components:
+  #     image_encoder:
+  #       parameters: {precision: w8a16, calibration_bins: 2048, calibration_samples: 32}
+  #     memory_attention:
+  #       parameters: {precision: w8a16, calibration_bins: 2048, calibration_samples: 32}
+  #     mask_decoder:
+  #       parameters: {precision: w8a16, calibration_bins: 2048, calibration_samples: 32}
+  #     memory_encoder:
+  #       parameters: {precision: w8a16, calibration_bins: 2048, calibration_samples: 32}
+  # Every component INT8. Not built yet: the INT8 memory attention keeps a cosine of only 0.51 with FP32, because
+  # the -1e4 scores of empty memory slots set its softmax's scale, and a memory attention with INT8 query-key
+  # products stopped the DevKit's MLA while tracking.
+  # w8a8:
+  #   calibration_dataset: davis-2017-cal
+  #   components:
+  #     image_encoder:
+  #       parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 32}
+  #     memory_attention:
+  #       parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 32}
+  #     mask_decoder:
+  #       parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 32}
+  #     memory_encoder:
+  #       parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 32}
+
+# performance.py tracks one clicked object through a fixed frame: every component and the CPU steps between them.
+performance: {}
+
+# accuracy.py tracks every annotated object of each val sequence from its first-frame mask.
+accuracy:
+  datasets:
+  - {id: davis-2017, variant: val, sha256: e2c69e60ef67227a62ddcd7fa5a78dde3f5ba8223c06f0468a38db12da561a0e, size_bytes: 263954226}
+
+reference_metrics:
+- source: https://github.com/facebookresearch/EdgeTAM/blob/7711e012a30a2402c4eaab637bdb00a521302c91/README.md
+  dataset: {id: davis-2017, split: val}
+  conditions: FP32, semi-supervised, 480p
+  metrics: {jf_mean: 0.877}
+
+pipeline:
+- {cpu: "Stretch each frame to 1024x1024 and normalize it"}
+- {component: image_encoder}
+- {cpu: "Skip on the prompted frame; otherwise fill the memory bank"}
+- {component: memory_attention}
+- {cpu: "Prompt points as normalized coordinates and one-hot point types"}
+- {component: mask_decoder}
+- {cpu: "Choose a mask, upsample it to 1024x1024 and turn it into probabilities"}
+- {component: memory_encoder}

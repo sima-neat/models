@@ -21,6 +21,14 @@ upstream:
   revision: fdb01d151cb91509adcfc7020ab7fb2d492077b5
   derived_from: https://github.com/QVPR/Patch-NetVLAD/tree/d7fc6e874e54f18a71e19eaa01f92313177060a3
 
+resources:
+  license:
+    source:
+      uri: https://raw.githubusercontent.com/QVPR/Patch-NetVLAD/d7fc6e874e54f18a71e19eaa01f92313177060a3/LICENSE
+      sha256: 3df73bbe7dec87510d0962c404558b1a810bbe3209e745835f1b4cf2bff84cc4
+      size_bytes: 1130
+    install_path: licenses/LICENSE
+
 conversion:
   source:
     uri: hf://models/TobiasRobotics/Patch-NetVLAD@fdb01d151cb91509adcfc7020ab7fb2d492077b5/pitts_WPCA4096.pth.tar

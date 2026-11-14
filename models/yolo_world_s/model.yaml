@@ -20,6 +20,20 @@ upstream:
   repository: https://huggingface.co/wondervictor/YOLO-World
   revision: 4340b03f4f59f46279a6581bbb818e0f77765d4d
   derived_from: https://github.com/AILab-CVC/YOLO-World/tree/b1b09f2f0340ca7dede69e10b7e909c469677fd9
+resources:
+  license:
+    source:
+      uri: https://raw.githubusercontent.com/AILab-CVC/YOLO-World/b1b09f2f0340ca7dede69e10b7e909c469677fd9/LICENSE
+      sha256: e1d283b7a07b0964e38ddd080e69f95b52ecb40f594254168994f1816c7d7829
+      size_bytes: 70296
+    install_path: licenses/LICENSE
+  license_clip:
+    # The text encoder is OpenAI's CLIP, distributed under MIT.
+    source:
+      uri: https://raw.githubusercontent.com/openai/CLIP/d05afc436d78f1c48dc0dbf8e5980a9d471f35f6/LICENSE
+      sha256: 987e63b32f6c89ff5160e429458a872ff048e6860b590a3912e938f9da8f14db
+      size_bytes: 1064
+    install_path: licenses/LICENSE-CLIP
 conversion:
   outputs:
   - weights.pth

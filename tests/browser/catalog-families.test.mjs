@@ -114,6 +114,18 @@ test('empty filtered results never produce a family card', () => {
   assert.match(elements.get('result-list').innerHTML, /No matching models/);
 });
 
+test('an empty catalog reads as loading until the registry has answered', () => {
+  elements.get('branch-filter').value = 'main';
+  state.catalogLoaded = false;
+  renderRuns();
+  assert.match(elements.get('result-list').innerHTML, /class="spinner"/);
+  assert.doesNotMatch(elements.get('result-list').innerHTML, /No models on this branch yet/);
+  assert.equal(elements.get('result-count').textContent, '');
+  state.catalogLoaded = true;
+  renderRuns();
+  assert.match(elements.get('result-list').innerHTML, /No models on this branch yet/);
+});
+
 test('a failed taxonomy request keeps models usable without a nonfunctional family selection', () => {
   state.models = [model('one', 'z_family', 'One'), model('two', 'z_family', 'Two')];
   elements.get('architecture-filter').disabled = true;

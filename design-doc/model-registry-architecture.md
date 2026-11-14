@@ -1,6 +1,6 @@
-# Model Registry architecture
+# Model Browser architecture
 
-The Model Registry repository owns small, reviewable lifecycle inputs:
+The Models repository owns small, reviewable lifecycle inputs:
 
 - versioned JSON Schemas and policy;
 - `models/<model-id>/model.yaml` definitions, model-local documentation, and
@@ -56,8 +56,10 @@ scripts. ONNX recipes produce one directly consumable `*_mpk.tar.gz` per
 component. LLiMa recipes produce compiler output that the shared runner
 deploys into a complete model folder.
 
-The canonical product name is **Model Registry**. Code and paths use
-`model-registry` or `model_registry`. The word `modelzoo` is used only when
+The product name is **Model Browser**: the site where people find, compare and
+download models. Its developer tooling keeps the names `model-registry` and
+`model_registry` in commands, code and paths, and "registry" names the Vulcan
+service that stores runs and artifacts. The word `modelzoo` is used only when
 documenting compatibility with an existing external CLI or legacy service.
 
 Model authors install the non-publishing `model-registry` command through
@@ -197,7 +199,7 @@ create the protected backend request and issue summary → mention model owners 
 a Slack approval reminder → protected `<VULCAN_ENV>-promote-<target_branch>`
 review → approve the exact request → report backend state and notify Slack of the outcome. Only trusted Develop workflow code
 runs; a separate approver role decides requests. Status/cancel use publisher credentials; explicit
-reject uses the matching target's protected gate. Main is production-only, keeps
+reject and withdraw use the matching target's protected gate. Main is production-only, keeps
 S3 storage, and uses a separate Main-only approver identity. It pins a completed
 Develop approval for the exact candidate and digest before its own review. The target branch,
 environment, endpoints and canonical snapshot are pinned in the immutable plan;

@@ -1,6 +1,6 @@
 # Model browser
 
-The model browser is the public catalog of the Model Registry. People use it to
+The Model Browser is the public catalog of SiMa Neat models. People use it to
 find a model, check how its builds perform, compare builds, and download a
 package. This page explains where each part of the browser gets its content, so
 you can check how your model will appear before you submit it.
@@ -18,8 +18,13 @@ CI builds the customer UI from `main` and the developer UI from `develop` and
 feature branches. Both currently use the staging registry and share the staging
 publication URL; the most recently published build determines its UI. The customer
 view uses the main catalog and hides branch/compiler filters, build history,
-the Details section and contributor navigation. The developer view keeps those
-controls. Selecting a branch in the developer UI changes the catalog, not the UI.
+the Details section and contributor navigation. It also leaves out SoM power,
+energy per inference, the board's Linux memory, MLA Utilization, the **Raw
+result** download, and the commit and workflow links of each result. The
+developer view keeps all of them. Selecting a branch in the developer UI changes the catalog, not the UI.
+
+While the catalog loads, the list shows a spinner. A message that a branch has
+no models appears only after the registry has answered.
 
 The catalog opens as a grid of cards, one per available **Model family**, sorted
 by its existing architecture ID. Selecting a family applies its sidebar filter
@@ -94,7 +99,7 @@ the chart title. Accuracy is grouped by dataset and metric; when more than one
 group is available, choose it with **Dataset & metric**. The axis title gives the
 metric's unit and says "lower is better" for an error metric such as EPE.
 A multi-component model shows its [whole-model result](benchmarking.md#multi-component-models), with all its components running as one pipeline. Select up to three points or use the compact
-**Add model** selector to show detailed measurements, including power and memory.
+**Add model** selector to show detailed measurements, including memory and, in the developer UI, SoM power.
 Remove a selected variant using the × in its table heading or its chart label.
 The chart labels only selected variants plotted against its current dataset and metric.
 Selections without matching accuracy or throughput appear only in the comparison table.
@@ -112,9 +117,9 @@ On a phone, the section navigation shortens **Developer docs** to **Docs**.
 Selecting an individual model opens its page. The page is built to be read at a glance:
 each section shows its key facts directly, and longer detail sits in a row
 marked with › that opens in place. The header places the model image beside its
-name, description and download action in both UI modes; narrow screens stack them.
-The validation and source-link icons form a separate group beside Download, with
-space between the groups. The download dialog offers an outlined **Copy CLI command**
+name, tags, description, and the validation and source-link icons in both UI
+modes; narrow screens stack them. The tags name what holds for every variant:
+tasks, model family, model type and license. The download dialog offers an outlined **Copy CLI command**
 button with a copy icon alongside browser downloads where available. Customer
 package dialogs name the model, summarize the variant and size, and show a quiet
 filename block and license line with a **Download model** action. Developer dialogs
@@ -122,13 +127,15 @@ use the same layout with extra fields for package identifiers, component counts,
 format, checksums and attribution. Dialogs and action buttons use softly rounded corners.
 The model's License section retains attribution in both views. Dialog actions
 place Cancel on the left, Copy CLI command in the middle and Download on the right.
-A model whose license does not permit redistribution has no download action. Its
-header shows **Not available for download** in that place, and its Details section
-has no package card.
 A model with several build profiles shows
 one tab per profile, labelled with its variant ID in uppercase, such as
 **W8A8**. Profiles with a W8A8 component come first and the page opens on the
-first tab, whatever order `model.yaml` declares. The GitHub link in the header opens
+first tab, whatever order `model.yaml` declares. **Download** sits at the end of
+the variant row, because it downloads the selected variant, and the Performance
+and Accuracy titles name that variant.
+A model whose license does not permit redistribution has no download action. Its
+variant row shows **Not available for download** in that place, and its Details section
+has no package card. The GitHub link in the header opens
 the model's folder at the commit the README comes from. The original-model link
 beside it opens the page `upstream.model_card` names. It shows the Hugging Face
 logo for a Hugging Face page and an external-link icon for any other host, such
@@ -149,10 +156,11 @@ in this order:
 2. **Performance.** One whole-model result for the selected build profile,
    read from the profile's [model report](benchmarking.md#workload-and-measurements).
    Core models show four tiles: throughput, average latency, average SoM
-   power, and energy per inference. The line below them names the workload the
+   power, and energy per inference. The customer UI shows the first two. The
+   line below them names the workload the
    report records, such as **YoloV26 box decoder, top 100**, and when it was
-   measured. Its commit and GitHub workflow are those of the run that measured
-   the profile. A benchmark run is reused until its
+   measured. In the developer UI it also links the commit and GitHub workflow
+   of the run that measured the profile. A benchmark run is reused until its
    [benchmark fingerprint](benchmarking.md#ci-and-registry-publication) changes, so that
    commit can be later than the build's. A profile with no result shows **Not measured at
    this revision.**
@@ -228,7 +236,9 @@ in this order:
    SoC). Rails peak at different moments, so the SoC peak is the sum of the
    two peaks, an upper bound. The other SoM rails follow at the SoC's level,
    each coloured like its part of the bar. **Memory** has MLA and
-   EV74 memory, which add up, and the board's Linux memory. Readings other than latency and throughput cover
+   EV74 memory, which add up, and the board's Linux memory. The customer UI
+   keeps MLA power and MLA and EV74 memory, and leaves out SoM power, the
+   rail bar, the other rails, and Linux memory, here and in the CSV. Readings other than latency and throughput cover
    the throughput pass. The (i) mark beside a reading or
    rail explains what it measures. The footer lists the telemetry (the
    Sentinel version and the samples behind the board readings, or why they
@@ -258,12 +268,14 @@ in this order:
 3. **Accuracy.** For each dataset the run evaluated, in `model.yaml` order:
    the coverage (full when the run evaluated every sample of its split,
    sampled otherwise), the first four metrics in their units (ratios as
-   percentages, EPE in pixels, D1-all in percent), the evaluated sample count, and
-   the commit and GitHub workflow of the run that measured them. With more than
+   percentages, EPE in pixels, D1-all in percent), the dataset, such as
+   **coco-2017 val**, the evaluated sample count when coverage is sampled, and,
+   in the developer UI, the commit and GitHub workflow of the run that measured them. With more than
    one dataset, each result is titled by its dataset name. The catalog table
    and **Compare** use the first dataset. Under each of the four metrics, both
    views show its published score and its FP32 baseline when `reference_metrics`
-   records them for the measured dataset.
+   records them for the measured dataset. A published score links to the
+   source `reference_metrics` names.
    In the developer UI, each dataset's **Evaluation details** explains the coverage and lists
    the remaining metrics, each with its published score and its FP32 baseline
    when `reference_metrics` in `model.yaml` records them for the measured

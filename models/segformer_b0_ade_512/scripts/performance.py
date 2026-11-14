@@ -1,4 +1,8 @@
-"""Benchmark one compiled SegFormer-B0 MPK with Neat Core on an ADE20K image and save its report."""
+"""Benchmark one compiled SegFormer-B0 MPK with Neat Core on an ADE20K image and save its report.
+
+The measured pipeline is what an application runs: Neat preprocessing, the MLA, and Neat's semantic-segmentation
+decode, which resizes the class scores bilinearly to the 1280x720 frame and returns one class index per pixel.
+"""
 
 import argparse
 import random
@@ -62,6 +66,11 @@ options.preprocess.resize.mode = pyneat.ResizeMode.Stretch
 options.preprocess.normalize.enable = pyneat.AutoFlag.On
 # Without a preset Neat only scales pixels to [0, 1]; the model expects ImageNet mean and std.
 options.preprocess.preset = pyneat.NormalizePreset.ImageNet
+# Neat replaces the logits' dequantize or cast with the class-map decode: it reads the 128x128 scores in place,
+# resizes them bilinearly to the frame and returns a 1x720x1280 UINT8 map with one ADE20K class index per pixel.
+options.semantic_segmentation.enable = True
+options.semantic_segmentation.output_width = FRAME_WIDTH
+options.semantic_segmentation.output_height = FRAME_HEIGHT
 model = pyneat.Model(args.mpk, options)
 # Request 1000 samples and a 60 s minimum measurement duration.
 benchmark_options = pyneat.BenchmarkOptions()
@@ -71,12 +80,13 @@ benchmark_options.include_mla_layer_stats = True
 benchmark_options.include_mla_stage_stats = True
 frame = letterbox_to_720p(read_rgb(image))
 benchmark_options.inputs = [pyneat.Tensor.from_numpy(frame, copy=True, image_format=pyneat.PixelFormat.RGB)]
+postprocess = model.info().selection.selected_post_kind
 report = model_report.from_performance(
     model.benchmark(benchmark_options),
     {"model": model},
     workload=(
         f"{dataset_id} {image.name} in a {FRAME_WIDTH}x{FRAME_HEIGHT} RGB frame, Neat preprocessing stretched to "
-        "512x512, raw 128x128 logits"
+        f"512x512, {postprocess} post-processing to a {FRAME_WIDTH}x{FRAME_HEIGHT} class map"
     ),
 )
 report.save(args.output)

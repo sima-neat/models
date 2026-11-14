@@ -100,6 +100,11 @@ architectures:
     description: Classifies images by combining features across layers and resolutions.
     paradigm: cnn
     allowed_model_types: [vision]
+  edgetam:
+    display_name: EdgeTAM
+    description: Segments an object through a video from a click or a box on one frame, with a memory of earlier frames.
+    paradigm: transformer
+    allowed_model_types: [vision]
   gemma4:
     display_name: Gemma4
     description: Generates text and supports conversational tasks with text and multimodal inputs.
@@ -372,6 +377,9 @@ tasks:
     allowed_model_types: [vision]
   semantic_segmentation:
     display_name: Semantic Segmentation
+    allowed_model_types: [vision]
+  video_object_segmentation:
+    display_name: Video Object Segmentation
     allowed_model_types: [vision]
   conversational_ai:
     display_name: Conversational AI

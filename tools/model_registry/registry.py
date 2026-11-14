@@ -414,13 +414,16 @@ def _catalog_outputs(model: JsonObject) -> tuple[list[JsonObject], list[JsonObje
 
 def _refresh_approved_benchmarks(
     root: Path, document: JsonObject, source: JsonObject, read_api_url: str, read: ReadRequest,
-    *, model_id: str | None = None, profile_id: str | None = None,
+    *, model_id: str | None = None, profile_id: str | None = None, digests: dict[str, str] | None = None,
 ) -> None:
-    """Point at the approved producing runs, without changing approval-owned outputs or fingerprint formats."""
+    """Point at the approved producing runs, without changing approval-owned outputs or fingerprint formats.
+
+    A caller that refreshes repeatedly passes `digests`, so each run's immutable MPK checksum is read once.
+    """
     if document.get("git_ref") not in {"refs/heads/develop", "refs/heads/main"}:
         return
     previous = {model["id"]: model for model in source.get("models", [])}
-    digests = {}
+    digests = {} if digests is None else digests
     for entry in document.get("models", []):
         if model_id is not None and entry["id"] != model_id:
             continue
@@ -472,18 +475,22 @@ def build_catalog_snapshot(
     previous: JsonObject | None = None,
     incremental: bool = False,
     documentation_receipts: dict[str, JsonObject] | None = None,
+    all_models: dict[str, Any] | None = None,
+    matrix: list[JsonObject] | None = None,
 ) -> JsonObject:
+    """Build the catalog document. `all_models` and `matrix` are `load_models` and `_head_matrix` of this
+    checkout, for a caller that already has them."""
     root = Path(repository).expanduser().resolve()
     if len(git_sha) != 40 or any(character not in "0123456789abcdef" for character in git_sha.lower()):
         raise ValidationError("git SHA must contain exactly 40 hexadecimal characters")
     if not branch.strip():
         raise ValidationError("branch must not be empty")
-    all_models = load_models(root)
+    all_models = load_models(root) if all_models is None else all_models
     models = _catalog_models(all_models)
     deferred = set(all_models) - set(models)
     taxonomy = canonical_taxonomy_document(load_taxonomy(root / TAXONOMY_RELATIVE_PATH))
     taxonomy_digest = taxonomy_sha256(taxonomy)
-    matrix = _head_matrix(root, models)
+    matrix = _head_matrix(root, models) if matrix is None else matrix
     receipts = _publication_receipts(Path(compiled_dir).expanduser().resolve() if compiled_dir else None)
     package_receipts = _package_publication_receipts(
         Path(package_dir).expanduser().resolve() if package_dir else None
@@ -1026,6 +1033,10 @@ def _remaining_pending_builds(prior: JsonObject, document: JsonObject) -> list[J
     return remaining
 
 
+# How long publish_catalog keeps retrying a compare-and-swap that other publishers win.
+CATALOG_CONFLICT_RETRY_SECONDS = 180
+
+
 def publish_catalog(
     *,
     repository: str | Path,
@@ -1080,93 +1091,112 @@ def publish_catalog(
                 read_request=read,
                 previous_receipts=previous_receipts,
             )
-    # Read the catalog last so another publisher has the least time to replace it
-    # before the compare-and-swap POST below.
+    # Everything the checkout alone decides is computed once, before the catalog is read.
     root = Path(repository).expanduser().resolve()
-    target_catalog, sources = read_catalog_sources(read, read_api_url, branch, base_branches)
-    target_revision = target_catalog.get("catalog_revision") if isinstance(target_catalog, dict) else None
-    continuing_revision = target_revision == git_sha.lower()
-    if continuing_revision and documentation_receipts is not None and sources:
-        # A concurrent publisher may have initialized this revision while we were preparing it.
-        documentation_receipts.update({
-            model["id"]: model["documentation"]
-            for model in sources[0].get("models", [])
-            if isinstance(model.get("documentation"), dict)
-        })
-    if continuing_revision and force_rebuild_all:
-        selected = _selected_invocation_keys(
-            Path(selected_matrix).expanduser().resolve() if selected_matrix else None
-        )
-        selected_profiles = {(model_id, profile_id) for model_id, profile_id, _ in selected}
-        published_profiles = {
-            (model["id"], package["build_profile_id"])
-            for model in target_catalog["document"].get("models", [])
-            for package in model.get("packages", [])
-            if not model.get("build_on_demand", False)
-        }
-        conflicts = sorted(selected_profiles & published_profiles)
-        if conflicts:
-            profiles = ", ".join(f"{model}/{profile}" for model, profile in conflicts)
-            raise ValidationError(
-                f"cannot force rebuild published packages in current catalog revision {git_sha}: {profiles}. "
-                "Publish the forced rebuild from a new Git revision; packages are immutable within a revision. "
-                "For an initialization retry, omit --force-rebuild-all."
-            )
-    # Base branches seed a new revision only. During progress publication they
-    # could restore a deliberately withheld package, or replace a published one
-    # when a base branch finishes rebuilding before this branch does.
     models = load_models(root)
-    # Apply the same revision boundary when carrying deferred conversion entries.
-    sources = sources[:1] if continuing_revision else sources
-    previous = merge_catalog_sources(sources, _head_matrix(root, models))
-    deferred = set(models) - set(_catalog_models(models))
-    if deferred:
-        previous = previous or {"models": []}
-        for source in sources:
-            for model in source.get("models", []):
-                if model["id"] in deferred:
-                    # The registry fills in this ref's own approved and branch deployments and rejects a
-                    # snapshot that carries another ref's, such as a base branch's promoted builds.
-                    previous["models"].append(
-                        {key: value for key, value in model.items() if key not in SERVER_OWNED_SELECTIONS}
-                    )
-                    previous.setdefault("pending_builds", []).extend(
-                        item for item in source.get("pending_builds", []) if item["model_id"] == model["id"]
-                    )
-                    deferred.remove(model["id"])
-    document = build_catalog_snapshot(
-        repository=repository,
-        branch=branch,
-        git_sha=git_sha,
-        compiled_dir=compiled_dir,
-        package_dir=package_dir,
-        selected_matrix=None if continuing_revision else selected_matrix,
-        previous=previous,
-        incremental=True,
-        documentation_receipts=documentation_receipts,
-    )
-    _refresh_approved_benchmarks(
-        root, document, target_catalog.get("document", {}) if target_catalog else {}, read_api_url, read,
-    )
-    if continuing_revision and isinstance(target_catalog, dict) and "pending_builds" in target_catalog["document"]:
-        document["pending_builds"] = _remaining_pending_builds(target_catalog["document"], document)
-    previous_snapshot = target_catalog.get("canonical_sha256") if isinstance(target_catalog, dict) else None
-    snapshot = {
-        "initialize": target_revision != git_sha.lower(),
-        "previous_snapshot": previous_snapshot,
-        "catalog": document,
-    }
-    snapshot_identity = canonical_sha256(snapshot)[:16]
-    result = client.request(
-        "POST",
-        f"/v1/repositories/sima-neat/models/catalogs/{git_sha.lower()}/snapshots",
-        snapshot,
-        # Bind the key to the complete compare-and-swap request. Documentation
-        # receipt run IDs and incrementally published packages can differ across
-        # workflow dispatches even for the same branch and Git revision.
-        f"models-catalog-{branch}-{git_sha.lower()}-{(previous_snapshot or 'initial')[:16]}-{snapshot_identity}",
-    )
-    return {"catalog": document, "registry": result}
+    matrix = _head_matrix(root, models)
+    deferred_models = set(models) - set(_catalog_models(models))
+    digests: dict[str, str] = {}
+    deadline = time.monotonic() + CATALOG_CONFLICT_RETRY_SECONDS
+    # The registry accepts a snapshot only if the catalog it replaces is the one read here. Each pass keeps
+    # the time from this read to the POST short, and a publisher that loses reads the winner's catalog and
+    # adds its build to it. Everything below the read is derived from that catalog, so it is recomputed.
+    while True:
+        target_catalog, sources = read_catalog_sources(read, read_api_url, branch, base_branches)
+        target_revision = target_catalog.get("catalog_revision") if isinstance(target_catalog, dict) else None
+        continuing_revision = target_revision == git_sha.lower()
+        if continuing_revision and documentation_receipts is not None and sources:
+            # A concurrent publisher may have initialized this revision while we were preparing it.
+            documentation_receipts.update({
+                model["id"]: model["documentation"]
+                for model in sources[0].get("models", [])
+                if isinstance(model.get("documentation"), dict)
+            })
+        if continuing_revision and force_rebuild_all:
+            selected = _selected_invocation_keys(
+                Path(selected_matrix).expanduser().resolve() if selected_matrix else None
+            )
+            selected_profiles = {(model_id, profile_id) for model_id, profile_id, _ in selected}
+            published_profiles = {
+                (model["id"], package["build_profile_id"])
+                for model in target_catalog["document"].get("models", [])
+                for package in model.get("packages", [])
+                if not model.get("build_on_demand", False)
+            }
+            conflicts = sorted(selected_profiles & published_profiles)
+            if conflicts:
+                profiles = ", ".join(f"{model}/{profile}" for model, profile in conflicts)
+                raise ValidationError(
+                    f"cannot force rebuild published packages in current catalog revision {git_sha}: {profiles}. "
+                    "Publish the forced rebuild from a new Git revision; packages are immutable within a revision. "
+                    "For an initialization retry, omit --force-rebuild-all."
+                )
+        # Base branches seed a new revision only. During progress publication they
+        # could restore a deliberately withheld package, or replace a published one
+        # when a base branch finishes rebuilding before this branch does.
+        # Apply the same revision boundary when carrying deferred conversion entries.
+        sources = sources[:1] if continuing_revision else sources
+        previous = merge_catalog_sources(sources, matrix)
+        deferred = set(deferred_models)
+        if deferred:
+            previous = previous or {"models": []}
+            for source in sources:
+                for model in source.get("models", []):
+                    if model["id"] in deferred:
+                        # The registry fills in this ref's own approved and branch deployments and rejects a
+                        # snapshot that carries another ref's, such as a base branch's promoted builds.
+                        previous["models"].append(
+                            {key: value for key, value in model.items() if key not in SERVER_OWNED_SELECTIONS}
+                        )
+                        previous.setdefault("pending_builds", []).extend(
+                            item for item in source.get("pending_builds", []) if item["model_id"] == model["id"]
+                        )
+                        deferred.remove(model["id"])
+        document = build_catalog_snapshot(
+            repository=repository,
+            branch=branch,
+            git_sha=git_sha,
+            compiled_dir=compiled_dir,
+            package_dir=package_dir,
+            selected_matrix=None if continuing_revision else selected_matrix,
+            previous=previous,
+            incremental=True,
+            documentation_receipts=documentation_receipts,
+            all_models=models,
+            matrix=matrix,
+        )
+        _refresh_approved_benchmarks(
+            root, document, target_catalog.get("document", {}) if target_catalog else {}, read_api_url, read,
+            digests=digests,
+        )
+        if continuing_revision and isinstance(target_catalog, dict) and "pending_builds" in target_catalog["document"]:
+            document["pending_builds"] = _remaining_pending_builds(target_catalog["document"], document)
+        previous_snapshot = target_catalog.get("canonical_sha256") if isinstance(target_catalog, dict) else None
+        snapshot = {
+            "initialize": target_revision != git_sha.lower(),
+            "previous_snapshot": previous_snapshot,
+            "catalog": document,
+        }
+        snapshot_identity = canonical_sha256(snapshot)[:16]
+        try:
+            result = client.request(
+                "POST",
+                f"/v1/repositories/sima-neat/models/catalogs/{git_sha.lower()}/snapshots",
+                snapshot,
+                # Bind the key to the complete compare-and-swap request. Documentation
+                # receipt run IDs and incrementally published packages can differ across
+                # workflow dispatches even for the same branch and Git revision.
+                f"models-catalog-{branch}-{git_sha.lower()}-"
+                f"{(previous_snapshot or 'initial')[:16]}-{snapshot_identity}",
+            )
+        except RegistryPublicationError as exc:
+            if "catalog_snapshot_conflict" not in str(exc) or time.monotonic() >= deadline:
+                raise
+            logging.warning("another publisher replaced the %s catalog; reading it again", branch)
+            # A short random wait keeps the publishers that lost together from colliding again.
+            time.sleep(random.uniform(0.2, 2))
+            continue
+        return {"catalog": document, "registry": result}
 
 
 def _download_registry_file(url: str, destination: Path, artifact: JsonObject,

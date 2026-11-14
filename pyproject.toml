@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "sima-neat-model-registry"
 version = "0.1.0"
-description = "Shared lifecycle tooling for the SiMa Neat Model Registry"
+description = "Shared lifecycle tooling for the SiMa Neat Model Browser"
 requires-python = ">=3.10"
 dependencies = [
   "boto3>=1.36,<2",

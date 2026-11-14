@@ -2,7 +2,7 @@ import ContributionPath from '@site/src/components/ContributionPath';
 
 # Contribute a model
 
-The Model Registry makes models discoverable, reproducible, and deployable on
+The Model Browser makes models discoverable, reproducible, and deployable on
 SiMa.ai platforms. A contribution is a versioned contract, not a model binary:
 it records the exact source, ownership, component interfaces, compile recipe,
 build profiles, packages, datasets, and the evidence each build must produce.

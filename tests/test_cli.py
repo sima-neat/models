@@ -25,7 +25,7 @@ def test_author_parser_exposes_only_supported_model_contributor_commands() -> No
 
 @pytest.mark.parametrize("model,profile,stages,backend,baseline,timeout", [
     ("resnet_50", "w8a8", "performance,accuracy", "core", "false", "45"),
-    ("qwen3_5_0_8b", "w4a16", "performance", "llima", "false", "45"),
+    ("qwen3_5_0_8b", "w4a16", "performance", "llima", "false", "90"),
     ("gemma_4_e2b_it_mtp", "w4a16", "performance", "llima", "true", "4320"),
     ("gemma_4_e2b_it_mtp", "w4a16", "accuracy", "llima", "false", "45"),
 ])
@@ -324,7 +324,7 @@ def test_validation_rejects_a_resource_outside_the_source_policy(command: str, m
 
 
 def test_fetch_resources_prints_nothing_for_a_model_without_resources(capsys, tmp_path: Path) -> None:
-    assert main(["fetch-resources", str(ROOT / "models" / "resnet_50"), "--output-dir", str(tmp_path / "out")]) == 0
+    assert main(["fetch-resources", str(ROOT / "models" / "whisper_small"), "--output-dir", str(tmp_path / "out")]) == 0
     assert capsys.readouterr().out == ""
 
 
@@ -531,7 +531,7 @@ def test_tooling_supports_python_module_entrypoint() -> None:
         check=False,
     )
     assert result.returncode == 0, result.stderr
-    assert "Model Registry lifecycle tooling" in result.stdout
+    assert "Model Browser lifecycle tooling" in result.stdout
 
 
 def publish_report(monkeypatch, stage: str, *extra: str) -> list[dict]:

@@ -19,6 +19,16 @@ upstream:
   revision: b6ef686fe842388c9449c7acb7269d02c69bacfb
   derived_from: https://huggingface.co/microsoft/resnet-50/tree/34c2154c194f829b11125337b98c8f5f9965ff19
 
+resources:
+  license:
+    # microsoft/resnet-50 omits LICENSE. Google's BERT repository carries the standard Apache-2.0 text.
+    source:
+      repository: google-bert/bert-base-uncased
+      revision: 86b5e0934494bd15c9632b12f734a8a67f723594
+      files:
+        LICENSE: {sha256: 43070e2d4e532684de521b885f385d0841030efa2b1a20bafb76133a5e1379c1, size_bytes: 11356}
+    install_path: licenses
+
 compilation:
   format: onnx
   source:

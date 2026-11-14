@@ -5,13 +5,17 @@ import argparse
 import copy
 import json
 import os
+import random
+import time
 from pathlib import Path
 from urllib.parse import urlsplit
 from uuid import UUID
 
 from .errors import ValidationError
 from .registry import (
+    CATALOG_CONFLICT_RETRY_SECONDS,
     ReadRequest,
+    RegistryPublicationError,
     SigV4RegistryClient,
     _public_registry_json,
     _refresh_approved_benchmarks,
@@ -166,6 +170,18 @@ def decide(client, record: dict, *, operation: str, reason: str, identity: str,
     return receipt
 
 
+def withdraw(client, record: dict, *, reason: str, identity: str) -> dict:
+    """Take a promoted build out of its target catalog. Vulcan keeps the request `promoted`."""
+    promotion_id = identifier(record["promotion_id"])
+    body = {"reason": reason}
+    # A retry sends the same key and body, so Vulcan replays the first receipt.
+    key = "promotion-withdrawal-" + canonical_sha256([identity, promotion_id, body])
+    receipt = client.request("POST", f"{ROOT}/promotions/{promotion_id}/withdraw", body, key)
+    if not receipt.get("result_snapshot"):
+        raise ValidationError("Vulcan did not confirm the withdrawal")
+    return receipt
+
+
 def benchmark_catalog(record: dict, *, read_api_url: str, read_request: ReadRequest | None = None) -> dict | None:
     """Return the target source revision only while this deployment is still selected."""
     if record.get("state") != "promoted" or not record.get("result_snapshot"):
@@ -187,26 +203,37 @@ def refresh_benchmarks(
 ) -> dict:
     """Publish current benchmark identities after approval, using the target revision's source files."""
     read = read_request or _public_registry_json
-    catalog = benchmark_catalog(record, read_api_url=read_api_url, read_request=read)
-    if catalog is None:
-        return {"updated": False}
-    if catalog["catalog_revision"] != revision:
-        raise ValidationError("Promotion target revision changed; rerun the report job to refresh benchmark references")
-    document = copy.deepcopy(catalog["document"])
-    document["schema_version"] = 2
-    document.setdefault("pending_builds", [])
-    _refresh_approved_benchmarks(
-        repository, document, catalog["document"], read_api_url, read,
-        model_id=record["source"]["model_id"], profile_id=record["source"]["profile_id"],
-    )
-    if document == catalog["document"]:
-        return {"updated": False}
-    body = {"initialize": False, "previous_snapshot": catalog["canonical_sha256"], "catalog": document}
-    result = client.request(
-        "POST", f"{ROOT}/catalogs/{revision}/snapshots", body,
-        "promotion-benchmarks-" + canonical_sha256([record["promotion_id"], body]),
-    )
-    return {"updated": True, "registry": result}
+    deadline = time.monotonic() + CATALOG_CONFLICT_RETRY_SECONDS
+    while True:
+        catalog = benchmark_catalog(record, read_api_url=read_api_url, read_request=read)
+        if catalog is None:
+            return {"updated": False}
+        if catalog["catalog_revision"] != revision:
+            raise ValidationError(
+                "Promotion target revision changed; rerun the report job to refresh benchmark references"
+            )
+        document = copy.deepcopy(catalog["document"])
+        document["schema_version"] = 2
+        document.setdefault("pending_builds", [])
+        _refresh_approved_benchmarks(
+            repository, document, catalog["document"], read_api_url, read,
+            model_id=record["source"]["model_id"], profile_id=record["source"]["profile_id"],
+        )
+        if document == catalog["document"]:
+            return {"updated": False}
+        body = {"initialize": False, "previous_snapshot": catalog["canonical_sha256"], "catalog": document}
+        try:
+            result = client.request(
+                "POST", f"{ROOT}/catalogs/{revision}/snapshots", body,
+                "promotion-benchmarks-" + canonical_sha256([record["promotion_id"], body]),
+            )
+        except RegistryPublicationError as exc:
+            # Another promotion replaced the catalog between the read and this write.
+            if "catalog_snapshot_conflict" not in str(exc) or time.monotonic() >= deadline:
+                raise
+            time.sleep(random.uniform(0.2, 2))
+            continue
+        return {"updated": True, "registry": result}
 
 
 def summary(record: dict) -> str:

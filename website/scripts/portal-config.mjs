@@ -1,6 +1,6 @@
-// CI supplies GITHUB_REF. Local previews can select either audience explicitly.
+// Every branch builds the developer view. A deployment or local preview names the customer audience explicitly.
 export function portalConfig(env = process.env) {
-  const uiMode = env.MODEL_BROWSER_UI_MODE || (env.GITHUB_REF === 'refs/heads/main' ? 'customer' : 'developer');
+  const uiMode = env.MODEL_BROWSER_UI_MODE || 'developer';
   if (!['customer', 'developer'].includes(uiMode)) throw new Error(`Unsupported model browser UI mode: ${uiMode}`);
   const customer = uiMode === 'customer';
   const environment = env.MODEL_BROWSER_ENVIRONMENT || 'staging';

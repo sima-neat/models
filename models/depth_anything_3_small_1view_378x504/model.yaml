@@ -19,6 +19,14 @@ upstream:
   revision: e08cab65ca0ec38e7826075418411ab90cab4da3
   derived_from: https://github.com/ByteDance-Seed/Depth-Anything-3/tree/41736238f5bced4debf3f2a12375d2466874866d
 
+resources:
+  license:
+    source:
+      uri: https://raw.githubusercontent.com/ByteDance-Seed/Depth-Anything-3/41736238f5bced4debf3f2a12375d2466874866d/LICENSE
+      sha256: 78446e29c48900cda82620a8df183cca61f0a595e05a49d0401a5fd604dd1870
+      size_bytes: 11355
+    install_path: licenses/LICENSE
+
 conversion:
   source:
     repository: depth-anything/DA3-SMALL

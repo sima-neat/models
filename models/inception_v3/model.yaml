@@ -19,6 +19,21 @@ upstream:
   revision: 393d84cc85c467d8fbc0dc81a65c04e87a32572c
   derived_from: https://github.com/pytorch/vision/blob/134f6382956071833f05f072763c03f9858453f2/torchvision/models/inception.py
 
+resources:
+  license:
+    # timm publishes the checkpoint under Apache-2.0; the weights come from torchvision under BSD-3-Clause.
+    source:
+      uri: https://raw.githubusercontent.com/huggingface/pytorch-image-models/c709c9a4a26af45d01221caadfdc6b00a9622630/LICENSE
+      sha256: 71b111620fa32c17a80ccd6db2da759d31a591e497d8b5f382174f59d1b59d49
+      size_bytes: 11343
+    install_path: licenses/LICENSE
+  license_torchvision:
+    source:
+      uri: https://raw.githubusercontent.com/pytorch/vision/134f6382956071833f05f072763c03f9858453f2/LICENSE
+      sha256: 6502f676851cfe25f8af75531dfb32375b7325b73c37e7b43741fa422893e71d
+      size_bytes: 1517
+    install_path: licenses/LICENSE-torchvision
+
 conversion:
   source:
     repository: timm/inception_v3.tv_in1k

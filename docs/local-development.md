@@ -318,7 +318,7 @@ Keep the report and log outside Git.
 `scripts/run_model_performance.sh <model-dir> <profile-id> <output-root>
 <result-directory>` runs the stage the way CI does against a local compile
 output: it also resolves and extracts the dataset, sets the MLA and CPU
-clocks, and runs `model-registry check-report`. It needs a full Model Registry
+clocks, and runs `model-registry check-report`. It needs a full `model-registry`
 install from this checkout (`python -m pip install .`) with Dataset Registry,
 named by `REGISTRY_PYTHON`, a mounted NVMe at `/media/nvme`, and passwordless
 `sudo` for the clocks.
@@ -335,7 +335,7 @@ local compile output:
 scripts/run_model_accuracy.sh models/<model-id> <profile-id> <output-root> <result-directory>
 ```
 
-It needs a full Model Registry install from this checkout (`python -m pip
+It needs a full `model-registry` install from this checkout (`python -m pip
 install .`) with Dataset Registry, named by `REGISTRY_PYTHON`, and PyNeat,
 named by `PYNEAT_PYTHON`. It writes `model-report.json`, `accuracy.log`, and
 `environment.json`. For a short smoke test, run `accuracy.py` directly with

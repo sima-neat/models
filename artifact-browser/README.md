@@ -1,6 +1,6 @@
-# Model Artifact Browser
+# Model Browser
 
-A client-only web interface for the public SiMa.ai Model Registry read APIs.
+A client-only web interface for the public read APIs of the SiMa.ai model registry.
 The browser calls the registry directly; there is no application backend,
 credential handling, or proxy middleware. Archive downloads use the temporary URL
 returned by the registry directly. Folder deployments show CLI retrieval
@@ -111,13 +111,18 @@ and CloudFront distribution from the shared staging Vulcan configuration.
 Production frontend deployment remains a manual, owner-gated
 **Deploy Model Browser & Docs** dispatch.
 
-`website/scripts/portal-config.mjs` selects the UI at build time from `GITHUB_REF`:
-Main builds the customer view of the main catalog; Develop, feature branches and
-pull requests build the developer view. Both use the same staging API and
+`website/scripts/portal-config.mjs` selects the UI at build time from
+`MODEL_BROWSER_UI_MODE`. Every push and pull request builds the developer view,
+so staging always shows it after a push to Main or Develop. Only a manual
+**Deploy Model Browser & Docs** dispatch with the `customer` audience builds the
+customer view of the main catalog. Both use the same staging API and
 publication URL. The last publication wins; the catalog branch selector does not
 change the site's UI. Customer view hides contributor navigation, branch/compiler
 filters, build history and the Details section while retaining browsing, comparison,
-measurements and downloads.
+measurements and downloads. `customerPerformanceReport` in `model-report.js` also
+removes SoM power, energy per inference and the board's Linux memory from each
+performance report as it is loaded, so no view of the customer page shows them.
+The registry still serves those readings; the customer page only leaves them out.
 
 For a local customer build, use `MODEL_BROWSER_UI_MODE=customer` with
 `npm run build:portal --prefix website`; pass the same variable to
@@ -211,8 +216,8 @@ everything longer sits in one expandable row.
   MLA and Non-MLA rails; and each other power rail) and memory cards beside
   them,
   then any other measurements and a footer with the telemetry source and
-  runtime beside **Raw result** (the run's model report) and **Download CSV**
-  (every reading of the model in one table).
+  runtime beside **Raw result** (the run's model report, developer view only)
+  and **Download CSV** (every reading of the model in one table).
 - **Accuracy** shows the coverage, the first four metrics, and the dataset,
   from the build profile's accuracy run. In the developer UI, **Evaluation
   details** explains the coverage and lists the context and remaining metrics.

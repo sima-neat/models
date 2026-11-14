@@ -27,7 +27,7 @@ Artifactory host at `artifacts.eng.sima.ai`. Before starting model work:
 3. Configure one supported authentication method without committing the
    credential or placing it in documentation, metadata, or shell scripts.
 4. Install Dataset Registry into the same pinned Model Compiler environment as
-   Model Registry.
+   `model-registry`.
 
 ```bash
 sima-cli neat install --stg dataset/dataset-registry@main:latest

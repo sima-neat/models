@@ -9,7 +9,7 @@ const basePath = process.env.DOCS_BASE_URL?.trim().replace(/^\/+|\/+$/g, '') ?? 
 const baseUrl = basePath ? `/${basePath}/` : '/';
 
 const config: Config = {
-  title: 'SiMa Neat Model Registry',
+  title: 'SiMa Neat Model Browser',
   tagline: 'Introduce, validate, and qualify models with reproducible evidence.',
   favicon: 'img/favicon.svg',
 
@@ -64,13 +64,13 @@ const config: Config = {
     metadata: [
       {
         name: 'description',
-        content: 'Developer documentation for contributing models to the SiMa Neat Model Registry.',
+        content: 'Developer documentation for contributing models to the SiMa Neat Model Browser.',
       },
     ],
     navbar: {
-      title: 'Model Registry',
+      title: 'Model Browser',
       logo: {
-        alt: 'SiMa Neat Model Registry mark',
+        alt: 'SiMa Neat Model Browser mark',
         src: 'img/mark.svg',
       },
       items: [
@@ -127,7 +127,7 @@ const config: Config = {
           ],
         },
       ],
-      copyright: `SiMa Neat Model Registry · ${new Date().getFullYear()}`,
+      copyright: `SiMa Neat Model Browser · ${new Date().getFullYear()}`,
     },
     prism: {
       theme: prismThemes.github,

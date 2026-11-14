@@ -45,6 +45,9 @@ export const ACCURACY_METRIC_LABELS = {
   dota_obb_map: "DOTA mAP 50–95",
   keypoint_repeatability: "Repeatability",
   homography_accuracy: "Homography accuracy",
+  jf_mean: "J&F",
+  j_mean: "J (region overlap)",
+  f_mean: "F (boundary)",
   pose_auc_5: "Pose AUC@5°",
   pose_auc_10: "Pose AUC@10°",
   pose_auc_20: "Pose AUC@20°",
@@ -124,4 +127,9 @@ export function referenceNotes(name, scoresByOrigin) {
     const score = formatAccuracy(name, scoresByOrigin[origin]?.[name], { blank: true });
     return score ? [`${label} ${score}`] : [];
   });
+}
+
+// A Dataset Registry archive as readers know it: its ID and variant, such as "coco-2017 val".
+export function datasetName(dataset) {
+  return [dataset.id, dataset.variant].filter(Boolean).join(" ");
 }

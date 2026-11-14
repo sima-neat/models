@@ -21,6 +21,15 @@ upstream:
   revision: cbd8c61cf91321b8dc986b5cbf84af9db7eac1a7
   derived_from: https://huggingface.co/google/vit-base-patch16-224/tree/3f49326eb077187dfe1c2a2bb15fbd74e6ab91e3
 
+resources:
+  license:
+    # The checkpoint repository omits LICENSE. Google's Vision Transformer repository carries the Apache-2.0 text.
+    source:
+      uri: https://raw.githubusercontent.com/google-research/vision_transformer/64801f1b3b367b3611cc27a3d45cc22870a36fb3/LICENSE
+      sha256: 4bebd04f269afe8437d003b4254204bd841dcb8106b96cb72158803ff9d711c2
+      size_bytes: 11357
+    install_path: licenses/LICENSE
+
 compilation:
   format: onnx
   source:

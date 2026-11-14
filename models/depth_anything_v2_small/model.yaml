@@ -19,6 +19,15 @@ upstream:
   revision: 4472b7362082ad9968fee890ca0f1e5aca36b93d
   derived_from: https://huggingface.co/depth-anything/Depth-Anything-V2-Small-hf/tree/5426e4f0f36572d16453bbda7a8389317b1bef99
 
+resources:
+  license:
+    # The checkpoint repository omits LICENSE. The Depth Anything V2 repository carries the Apache-2.0 text.
+    source:
+      uri: https://raw.githubusercontent.com/DepthAnything/Depth-Anything-V2/a561b849ebae10a6f5ef49e26c83cbbcd36c71bf/LICENSE
+      sha256: c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4
+      size_bytes: 11357
+    install_path: licenses/LICENSE
+
 # The ONNX export has dynamic shapes; compile.py folds it (surgery.py) to 1x3x518x686, the authors' input size for
 # a 640x480 frame: 518 on the short side, both sides multiples of 14.
 compilation:

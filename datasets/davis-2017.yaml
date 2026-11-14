@@ -1,0 +1,3 @@
+# What every model evaluating its accuracy on DAVIS 2017 must report, by the model's task.
+required_metrics:
+  video_object_segmentation: [jf_mean, j_mean, f_mean]

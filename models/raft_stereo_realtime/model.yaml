@@ -20,6 +20,14 @@ upstream:
   repository: https://github.com/princeton-vl/RAFT-Stereo
   revision: 6e93ed2169bd858dbb43033988563f3b0bb49506
 
+resources:
+  license:
+    source:
+      uri: https://raw.githubusercontent.com/princeton-vl/RAFT-Stereo/6e93ed2169bd858dbb43033988563f3b0bb49506/LICENSE
+      sha256: f134ad9e8937e5b9571867acea371a53d1f3d4ff6babdbcddd8f6e554ad467aa
+      size_bytes: 1088
+    install_path: licenses/LICENSE
+
 conversion:
   # princeton-vl releases its checkpoints in one Dropbox archive (download_models.sh), which no approved host serves;
   # this Hugging Face mirror holds raftstereo-realtime.pth with the same bytes as the archive's copy, SHA-256

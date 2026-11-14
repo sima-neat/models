@@ -19,6 +19,14 @@ upstream:
   revision: f9ff14eefc43f8ddd8064d09648bfdee690b0690
   derived_from: https://github.com/ucbdrive/dla/tree/d477ceb8036ae402f3c7b59ead54963cf864903b
 
+resources:
+  license:
+    source:
+      uri: https://raw.githubusercontent.com/ucbdrive/dla/d477ceb8036ae402f3c7b59ead54963cf864903b/LICENSE
+      sha256: 2d291571ec72c942271cfc0e0195f20ae60a545accf13afdb0bdb1738434399f
+      size_bytes: 1509
+    install_path: licenses/LICENSE
+
 conversion:
   source:
     repository: timm/dla34.in1k

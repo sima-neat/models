@@ -1,7 +1,8 @@
 // Explore all variants of one task; inspect up to three measured builds side by side.
-import { readPerformance } from "./model-report.js";
-import { state, elements, catalogMode, showView, taxonomyLabel } from "./state.js";
+import { CUSTOMER_HIDDEN_METRICS, readPerformance } from "./model-report.js";
+import { customerView, state, elements, catalogMode, showView, taxonomyLabel } from "./state.js";
 import { escapeHtml, variantLabel } from "./ui.js";
+import { datasetName } from "./accuracy-metrics.js";
 import { metricDefinition, metricDisplay } from "./metrics.js";
 import { anchorBuild, compilerFilteredBuilds, loadRunDetail, loadVariant, profileGroups, mapWithConcurrency } from "./api.js";
 import { compareModels } from "./catalog-view.js";
@@ -38,7 +39,7 @@ const PERFORMANCE_ROWS = [
   ["energy_per_inference_joules", "Energy per inference"],
   ["mla_memory_peak_mib", "Peak MLA memory"],
   ["ev74_memory_peak_mib", "Peak EV74 memory"],
-];
+].filter(([key]) => !customerView || !CUSTOMER_HIDDEN_METRICS.includes(key));
 
 function catalogVariants() {
   return [...state.models].sort(compareModels).flatMap((model) => (
@@ -125,10 +126,6 @@ function selectionColor(key) {
   return state.comparePicks.filter(Boolean).indexOf(key);
 }
 
-function datasetLabel(dataset) {
-  return [dataset.id, dataset.variant, dataset.split].filter(Boolean).join(" / ");
-}
-
 function parameterText(model) {
   const count = model.parameter_count_billion;
   return Number.isFinite(count) && count > 0 ? `${count} B` : "";
@@ -181,7 +178,7 @@ function comparisonPlot(columns) {
   for (const {column} of points) {
     const accuracy = column.accuracy;
     if (accuracy?.comparisonKey && Number.isFinite(accuracy.numericValue)) {
-      groups.set(accuracy.comparisonKey, `${datasetLabel(accuracy.dataset)} · ${accuracy.label}`);
+      groups.set(accuracy.comparisonKey, `${datasetName(accuracy.dataset)} · ${accuracy.label}`);
     }
   }
   const axes = [...groups];
@@ -196,7 +193,7 @@ function comparisonPlot(columns) {
     label: `${point.column.option.model.display_name || point.column.option.model.model_id} · ${variantLabel(point.column.option.profile)}: ${point.x} inferences/s, accuracy ${point.column.accuracy.value}`,
   })), {
     title: "Accuracy & speed", xLabel: "Throughput (inferences/s)", yLabel,
-    subtitle: accuracy?.dataset ? `Dataset: ${datasetLabel(accuracy.dataset)}` : "",
+    subtitle: accuracy?.dataset ? `Dataset: ${datasetName(accuracy.dataset)}` : "",
     controls: axes.length > 1 ? selectControl("Dataset & metric", "axis", axes, state.compareAxis) : "",
     note: "Accuracy points share a dataset and metric. Use Add model for variants without matching measurements.",
     empty: "No matching measurements yet. Use Add model to inspect a variant.",

@@ -1,4 +1,4 @@
-"""Shared tooling for the SiMa Neat Model Registry."""
+"""Shared tooling for the SiMa Neat Model Browser."""
 
 from .errors import FetchError, ModelRegistryError, SourcePolicyError, ValidationError
 from .fetch import Fetcher

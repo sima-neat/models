@@ -20,6 +20,15 @@ upstream:
   repository: https://huggingface.co/Roboflow/rf-detr-medium
   revision: 1b5b672408f86dd38e05dd3cf3f2e0834e545a59
 
+resources:
+  license:
+    # The checkpoint repository omits LICENSE. Roboflow's RF-DETR repository carries the Apache-2.0 text.
+    source:
+      uri: https://raw.githubusercontent.com/roboflow/rf-detr/b49df291cdd6b8d19fb722ab402e9a018d2edcd4/LICENSE
+      sha256: 8cabf52c61130fc97a7e5da5e3685ccf44841c0c53d6f881189369b136603cca
+      size_bytes: 11345
+    install_path: licenses/LICENSE
+
 conversion:
   source:
     repository: Roboflow/rf-detr-medium

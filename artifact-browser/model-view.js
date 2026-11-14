@@ -1,7 +1,7 @@
 // Model page: performance, accuracy, model card, build details, and license.
 import {
-  REFERENCE_ORIGINS, accuracyDisplay, accuracyMetricLabel, formatAccuracy, orderedMetricNames, referenceNotes, referenceOrigin,
-  referenceScores,
+  REFERENCE_ORIGINS, accuracyDisplay, accuracyMetricLabel, datasetName, formatAccuracy, orderedMetricNames, referenceNotes,
+  referenceOrigin, referenceScores,
 } from "./accuracy-metrics.js";
 import { selectLayers, layerTimeScale, layerFamily, LAYER_FAMILIES } from "./mla-layer-stats.js";
 import { MLA_PEAK_INT8_TOPS, matchMlaStages, mlaPeakTops, mlaStageSimulation, mlaUtilizationMetrics, sustainedEffectiveTops } from "./mla-utilization.js";
@@ -33,11 +33,11 @@ function githubModelUrl(run, modelId, sourceCommit = run.commit_sha) {
   return `https://github.com/${encodeURIComponent(organization)}/${encodeURIComponent(repository)}/tree/${commit}/models/${encodeURIComponent(modelId)}`;
 }
 
-// A reused build is measured by later runs, so each result names the commit and workflow that measured
-// it, appended to the result's context line.
+// A reused build is measured by later runs, so the developer view names the commit and workflow that
+// measured each result, appended to the result's context line.
 function measurementSource(run, modelId) {
   const commit = String(run?.commit_sha || "");
-  if (!/^[a-f0-9]{40}$/i.test(commit)) return "";
+  if (customerView || !/^[a-f0-9]{40}$/i.test(commit)) return "";
   const sourceUrl = githubModelUrl(run, modelId);
   const commitMarkup = sourceUrl
     ? `<a class="measurement-link" href="${escapeHtml(sourceUrl)}" target="_blank" rel="noreferrer" aria-label="View the ${escapeHtml(modelId)} source that measured this result, at commit ${escapeHtml(shortSha(commit))}">${escapeHtml(commit.slice(0, 7))}${icons.external}</a>`
@@ -314,7 +314,8 @@ function performanceDetails(performance, run) {
     ["Telemetry", telemetryText(performance.telemetry)],
     ["Runtime", performance.tool],
   ].filter(([, text]) => text).map(([term, text]) => `<div><dt>${term}</dt><dd>${escapeHtml(text)}</dd></div>`).join("");
-  const raw = `<button class="performance-action" type="button" data-download="model-report" data-run-id="${escapeHtml(run.id)}">${icons.download}Raw result</button>`;
+  // The raw result is the report as the registry stores it, with the readings the customer view leaves out.
+  const raw = customerView ? "" : `<button class="performance-action" type="button" data-download="model-report" data-run-id="${escapeHtml(run.id)}">${icons.download}Raw result</button>`;
   const csv = `<a class="performance-action" href="${escapeHtml(csvDataUrl(performanceCsv(performance)))}" download="${escapeHtml(csvFileName(performance))}">${icons.download}Download CSV</a>`;
   return {
     titles: cards.map((card) => card.title),
@@ -597,7 +598,7 @@ function performanceSummary(performance, run, modelId, componentId = "") {
 function generativeBenchmark(performance, run, method) {
   const benchmark = {...performance.generation, workloads: performance.workloads};
   const methodLabel = {gemma4_mtp: "MTP", dflash: "DFlash", eagle3: "EAGLE3"}[method] || "Speculative";
-  const ttftHeading = `TTFT (ms)${infoMark("Time to first token: time from submitting a prompt until the first output token. Includes image processing for image prompts.")}`;
+  const ttftHeading = `TTFT (ms)${infoMark("Time to first token: language prefill through the first output token. Image timings also include image preprocessing and vision encoding. Text timings exclude tokenization and input preparation.")}`;
   const label = workload => workload.label;
   const cells = (workload, keys) => keys.map(key => {
     const value = workload.metrics?.[key]?.value;
@@ -815,10 +816,10 @@ function accuracyPanel(variant, modelId) {
   const reference = variant.reference || [];
   const referenceMarkup = customerView ? "" : referenceDisclosures(reference);
   const result = readAccuracy(variant.accuracy);
-  if (result.kind === "missing") return referenceAccuracySection(reference);
+  if (result.kind === "missing") return referenceAccuracySection(reference, variant);
   if (result.kind === "unsupported") {
     return `<section id="accuracy-section" class="accuracy-section" tabindex="-1">
-      <div class="detail-section-title"><h3>Accuracy</h3></div>
+      ${variantSectionTitle("Accuracy", variant)}
       <p class="muted-message">This result format is not supported by this browser.</p>
       ${referenceMarkup}
     </section>`;
@@ -828,10 +829,10 @@ function accuracyPanel(variant, modelId) {
   // One dataset keeps its coverage beside the section title; several each title their own result.
   const badge = datasets.length === 1 ? coverageBadge(datasets[0].dataset) : "";
   const results = datasets.map((entry) => accuracyResult(
-    entry, tool, scoresByOrigin(reference, entry.dataset.id), sourceMarkup, datasets.length > 1,
+    entry, tool, datasetReferences(reference, entry.dataset.id), sourceMarkup, datasets.length > 1,
   )).join("");
   return `<section id="accuracy-section" class="accuracy-section" tabindex="-1">
-    <div class="detail-section-title"><h3>Accuracy</h3>${badge}</div>
+    ${variantSectionTitle("Accuracy", variant, badge)}
     ${results}
     ${referenceMarkup}
   </section>`;
@@ -842,9 +843,32 @@ function scoresByOrigin(reference, datasetId) {
   return Object.fromEntries(Object.keys(REFERENCE_ORIGINS).map((origin) => [origin, referenceScores(reference, datasetId, origin)]));
 }
 
-function accuracyMetricTiles(metrics, scores) {
+// Where each origin's reference scores on a dataset come from, for the origins that name an https source.
+function referenceSources(reference, datasetId) {
+  return Object.fromEntries(Object.keys(REFERENCE_ORIGINS).map((origin) => {
+    const entry = reference.find((item) => item.dataset?.id === datasetId && referenceOrigin(item) === origin);
+    return [origin, trustedHttpsUrl(entry?.source)?.href];
+  }));
+}
+
+// What a dataset's result is compared with: each origin's reference scores and their sources.
+function datasetReferences(reference, datasetId) {
+  return { scores: scoresByOrigin(reference, datasetId), sources: referenceSources(reference, datasetId) };
+}
+
+// One origin's note under an accuracy tile, such as "Published 39.50%", linked to its source when it has one.
+function referenceNote(name, origin, scores, sources) {
+  const [note] = referenceNotes(name, { [origin]: scores[origin] });
+  if (!note) return "";
+  const text = escapeHtml(note);
+  return `<small>${sources[origin]
+    ? `<a class="measurement-link" href="${escapeHtml(sources[origin])}" target="_blank" rel="noreferrer">${text}${icons.external}</a>`
+    : text}</small>`;
+}
+
+function accuracyMetricTiles(metrics, scores, sources) {
   return orderedAccuracyMetrics(metrics).slice(0, ACCURACY_SUMMARY_TILES).map(([name, value], index) => {
-    const notes = referenceNotes(name, scores).map((note) => `<small>${escapeHtml(note)}</small>`).join("");
+    const notes = Object.keys(REFERENCE_ORIGINS).map((origin) => referenceNote(name, origin, scores, sources)).join("");
     return `<div class="accuracy-metric${index === 0 ? " primary" : ""}"><span>${escapeHtml(accuracyMetricLabel(name))}</span><strong>${escapeHtml(formatAccuracy(name, value))}</strong>${notes || "<small></small>"}</div>`;
   }).join("");
 }
@@ -898,14 +922,14 @@ const REFERENCE_SCOPES = {
   fp32_baseline: "The FP32 source model scores these on the package's own inputs.",
 };
 
-function referenceAccuracySection(reference) {
+function referenceAccuracySection(reference, variant) {
   if (!reference.length) return "";
   const groups = Object.keys(REFERENCE_ORIGINS).map((origin) => {
     const entries = reference.filter((entry) => referenceOrigin(entry) === origin);
     return entries.length ? `<p class="accuracy-scope">${escapeHtml(REFERENCE_SCOPES[origin])}</p>${referenceTables(entries)}` : "";
   }).join("");
   return `<section id="accuracy-section" class="accuracy-section" tabindex="-1">
-    <div class="detail-section-title"><h3>Accuracy</h3></div>
+    ${variantSectionTitle("Accuracy", variant)}
     <p class="accuracy-scope">No accuracy result for this build yet.</p>
     ${groups}
   </section>`;
@@ -922,7 +946,7 @@ function coverageBadge(dataset) {
 }
 
 // One dataset's result. With several, each is titled by its model.yaml name and shows its own coverage.
-function accuracyResult({ name, metrics, dataset, details }, tool, scores, sourceMarkup, titled) {
+function accuracyResult({ name, metrics, dataset, details }, tool, { scores, sources }, sourceMarkup, titled) {
   const full = fullCoverage(dataset);
   const coverageLabel = full ? "Full coverage" : "Sampled coverage";
   const coverageExplanation = full
@@ -938,8 +962,8 @@ function accuracyResult({ name, metrics, dataset, details }, tool, scores, sourc
       ${accuracyMetricTable(metrics, scores)}`;
   return `<div class="accuracy-dataset" data-accuracy-dataset="${escapeHtml(name)}">
     ${titled ? `<div class="accuracy-dataset-title"><h4>${escapeHtml(name)}</h4>${coverageBadge(dataset)}</div>` : ""}
-    <p class="accuracy-scope"><strong>${escapeHtml(sampleText)}</strong> · ${escapeHtml(dataset.id || "Dataset unavailable")} ${escapeHtml(dataset.variant || "")} / ${escapeHtml(dataset.split || "")}${sourceMarkup}</p>
-    <div class="accuracy-summary">${accuracyMetricTiles(metrics, scores)}</div>
+    <p class="accuracy-scope">${full ? "" : `<strong>${escapeHtml(sampleText)}</strong> · `}${escapeHtml(datasetName(dataset) || "Dataset unavailable")}${sourceMarkup}</p>
+    <div class="accuracy-summary">${accuracyMetricTiles(metrics, scores, sources)}</div>
     ${customerView ? "" : disclosure(`accuracy:${name}`, "Evaluation details", evaluation, coverageLabel)}
   </div>`;
 }
@@ -1058,7 +1082,8 @@ function catalogModelOfVariant(variant) {
   return model?.builds.some((build) => variant.runs.some((run) => run.id === build.run_id)) ? model : null;
 }
 
-function detailBuildSwitcher(variant) {
+// The selected variant's download sits beside the tabs that select it.
+function detailBuildSwitcher(variant, downloadAction) {
   const model = catalogModelOfVariant(variant);
   const inCatalog = Boolean(model);
   const profiles = inCatalog ? profileGroups({ ...model, builds: compilerFilteredBuilds(model) }) : [];
@@ -1069,7 +1094,13 @@ function detailBuildSwitcher(variant) {
   return `<section class="detail-build-switcher" aria-label="Variant selection">
     <strong>${profiles.length > 1 ? "Variants" : "Variant"}</strong>
     ${profiles.length ? `<div class="detail-variant-tabs" role="tablist" aria-label="${escapeHtml(model.display_name || model.model_id)} variants">${tabs}</div>` : `<span class="detail-variant-single">${escapeHtml(profileLabel(variant.anchor))}</span>`}
+    ${downloadAction}
   </section>`;
+}
+
+// Performance and Accuracy describe the selected variant, so each title names it.
+function variantSectionTitle(title, variant, badge = "") {
+  return `<div class="detail-section-title"><h3>${escapeHtml(title)} <span class="section-variant">${escapeHtml(variantLabel(variant.profile))}</span></h3>${badge}</div>`;
 }
 
 function uniqueBy(items, key) {
@@ -1109,8 +1140,6 @@ export function renderDetail(variant) {
   const model = variant.modelId || run.run_type;
   const catalogModel = catalogModelForRun(run);
   const displayName = catalogModel?.display_name || model;
-  const precisions = uniqueBy(details.map((detail) => detail.provenance.parameters?.parameters?.compile_parameters?.precision)
-    .filter(Boolean), (precision) => precision);
   // A reused build keeps the categories it was compiled with; the catalog has the current ones.
   const categories = catalogModel?.categories || run.model_categories || {};
   const compilation = details[0]?.provenance.parameters?.parameters || {};
@@ -1162,22 +1191,21 @@ export function renderDetail(variant) {
     <header class="detail-title">
       <div class="detail-title-copy">
         <h2>${escapeHtml(displayName)}</h2>
-        <div class="detail-tags">${(categories.tasks || []).map((task) => detailTag(icons.task, taxonomyLabel("tasks", task), "task")).join("")}${categories.architecture?.id ? detailTag(icons.architecture, taxonomyLabel("architectures", categories.architecture.id), "architecture") : ""}${categories.model_type ? detailTag(icons.modelType, taxonomyLabel("model_types", categories.model_type), "model-type") : ""}${precisions.length ? detailTag(icons.precision, precisions.map(precisionLabel).join(" + "), "precision") : ""}${detailTag(icons.compiler, `${run.toolchain_name || "compiler"} ${run.toolchain_version || ""}`.trim(), "compiler")}${detailTag(icons.branch, branchName(run.git_ref), "branch")}${license?.spdx ? detailTag(icons.license, license.spdx, "license") : ""}</div>
+        <div class="detail-tags">${(categories.tasks || []).map((task) => detailTag(icons.task, taxonomyLabel("tasks", task), "task")).join("")}${categories.architecture?.id ? detailTag(icons.architecture, taxonomyLabel("architectures", categories.architecture.id), "architecture") : ""}${categories.model_type ? detailTag(icons.modelType, taxonomyLabel("model_types", categories.model_type), "model-type") : ""}${detailTag(icons.compiler, `${run.toolchain_name || "compiler"} ${run.toolchain_version || ""}`.trim(), "compiler")}${detailTag(icons.branch, branchName(run.git_ref), "branch")}${license?.spdx ? detailTag(icons.license, license.spdx, "license") : ""}</div>
         ${catalogModel?.description ? `<p class="lede">${escapeHtml(catalogModel.description)}</p>` : ""}
         <div class="detail-title-actions">
-          ${downloadAction}
           <div class="detail-links">${validated ? artifactValidationMark(allTests) : ""}${originalModel ? `<a class="original-model-link${originalModel.huggingFace ? "" : " external-model-link"}" href="${escapeHtml(originalModel.href)}" target="_blank" rel="noreferrer" aria-label="${escapeHtml(originalModel.label)}" data-tooltip="${escapeHtml(originalModel.label)}">${originalModel.huggingFace ? icons.huggingFace : icons.external}</a>` : ""}${sourceUrl ? `<a class="model-source-link" href="${escapeHtml(sourceUrl)}" target="_blank" rel="noreferrer" aria-label="${escapeHtml(sourceLabel)}" data-tooltip="${escapeHtml(sourceLabel)}">${icons.github}</a>` : ""}</div>
         </div>
       </div>
       ${modelHero(catalogModel)}
     </header>
-    ${detailBuildSwitcher(variant)}
+    ${detailBuildSwitcher(variant, downloadAction)}
     ${compiledLimits ? `<dl class="key-grid">${compiledLimits}</dl>` : ""}
     ${sectionNavigation(sections)}
 
     ${overviewMarkup}
 
-    <section id="components-section" class="component-section" tabindex="-1"><div class="detail-section-title"><h3>Performance on ${escapeHtml(targetName(run))}</h3></div>
+    <section id="components-section" class="component-section" tabindex="-1">${variantSectionTitle(`Performance on ${targetName(run)}`, variant)}
       ${singleComponent ? "" : `<p class="section-lede">${variant.performance?.report?.scope === "components"
         ? "Each component is benchmarked independently. Select a component to view its measurements."
         : `This model runs as ${details.length} components, measured running together.`}</p>`}

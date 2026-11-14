@@ -17,7 +17,7 @@ import {
 } from "./api.js";
 import {
   populateCategoryFilters, setCategoryFiltersDisabled, loadTaxonomy, activeFilterCount,
-  setFilterDrawer, updateFilterIndicators, applyCatalog, loadBranches, renderRuns,
+  setFilterDrawer, updateFilterIndicators, applyCatalog, loadBranches, renderRuns, renderCatalogLoading,
 } from "./catalog-view.js";
 import { renderComparison, picksFromUrl, writePicksToUrl, pickKey, toggleComparison, updateComparisonChart, showComparisonTooltip, hideComparisonTooltip } from "./compare-view.js";
 import {
@@ -401,6 +401,7 @@ async function loadRuns({ append = false, branch = elements["branch-filter"].val
       };
     }
     if (requestId !== state.runsRequestId) return;
+    state.catalogLoaded = true;
     applyCatalog(payload, { append });
   } catch (error) {
     if (requestId === state.runsRequestId) throw error;
@@ -413,6 +414,7 @@ async function loadRuns({ append = false, branch = elements["branch-filter"].val
 async function initialize() {
   const navigationId = ++state.navigationId;
   state.runsRequestId += 1;
+  state.catalogLoaded = false;
   setTheme(document.documentElement.dataset.theme || "light");
   const link = new URLSearchParams(location.search);
   elements.search.value = link.get("q") || "";
@@ -449,9 +451,7 @@ async function initialize() {
   }
   elements["environment-name"].textContent = `${config.environment || "Public"} registry`;
   // Returning to the catalog keeps the cards on screen while they reload, so the restored scroll position holds.
-  if (!elements["result-list"].querySelector(".model-card, .run-entry")) {
-    elements["result-list"].innerHTML = Array.from({ length: 5 }, () => `<div class="row-skeleton"><span></span><span></span><span></span></div>`).join("");
-  }
+  if (!elements["result-list"].querySelector(".model-card, .run-entry")) renderCatalogLoading();
 
   const validApiOrigin = /^https:\/\/[^/]+$/.test(state.apiBase)
     || /^http:\/\/(?:127\.0\.0\.1|localhost)(?::[0-9]+)?$/.test(state.apiBase);
@@ -520,8 +520,12 @@ async function initialize() {
       await loadRuns({ branch: "", limit: 200 });
     }
   } catch (error) {
-    if (cached) showToast(error.message, true);
-    else {
+    // The registry did answer, with an error: show the snapshot it could not refresh, or the error itself.
+    state.catalogLoaded = true;
+    if (cached) {
+      renderRuns();
+      showToast(error.message, true);
+    } else {
       elements["result-list"].innerHTML = errorPanel(error.message);
       elements["result-list"].setAttribute("aria-busy", "false");
     }
@@ -610,7 +614,8 @@ elements["branch-filter"].addEventListener("change", async () => {
   state.compileRuns = [];
   state.packageRuns = [];
   state.catalogDefinitions = [];
-  elements["result-list"].innerHTML = Array.from({ length: 5 }, () => `<div class="row-skeleton"><span></span><span></span><span></span></div>`).join("");
+  state.catalogLoaded = false;
+  renderCatalogLoading();
   showEmptyDetail();
   const url = new URL(location.href);
   url.searchParams.set("branch", state.preferredBranch);
@@ -628,7 +633,8 @@ elements["branch-filter"].addEventListener("change", async () => {
   try {
     await loadRuns({ branch: state.preferredBranch });
   } catch (error) {
-    showToast(error.message, true);
+    elements["result-list"].innerHTML = errorPanel(error.message);
+    elements["result-list"].setAttribute("aria-busy", "false");
   }
 });
 elements["compiler-filter"].addEventListener("change", async () => {

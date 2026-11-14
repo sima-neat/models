@@ -3,7 +3,7 @@
 `taxonomies/model-taxonomy.yaml` is the canonical source of searchable model
 categories. It owns stable machine IDs, display labels, architecture paradigms,
 and model-type compatibility rules. JSON Schema validates the shape of category
-references; the Model Registry semantic validator resolves those references
+references; the `model-registry` semantic validator resolves those references
 against this file.
 
 Do not copy sanctioned lists into model definitions, browser code, API code, or

@@ -145,7 +145,7 @@ and the MPKs it lists. The script:
    and writes the board's installation to
    `environment.json`.
 
-`REGISTRY_PYTHON` needs the full Model Registry tooling from this checkout
+`REGISTRY_PYTHON` needs the full `model-registry` tooling from this checkout
 (`python -m pip install .`) and Dataset Registry, because the dataset
 resolution and report checks are not in the author-only `model-registry`
 package. It exits without running anything when the build profile is not

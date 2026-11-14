@@ -138,7 +138,7 @@ inputs are not images benchmarks one `random.Random(0)` validation sample as ten
 tensor route, and each timed sample runs the CPU steps that produce the model's result.
 `run_model_performance.sh` passes only the first dataset, and only for a profile
 accuracy measures. A model with `resources` also takes `--resources <directory>`,
-laid out as its package installs them. A model without an accuracy dataset builds a fixed input in its script;
+laid out as its package installs them, even when it reads none of them, as with a license. A model without an accuracy dataset builds a fixed input in its script;
 do not benchmark Core's synthetic inputs ([Benchmark
 input](docs/benchmarking.md#benchmark-input)). `performance.py`
 and `accuracy.py` write `model-report.json` with `model_report.from_performance()`
@@ -288,6 +288,7 @@ in the same commit.
 | a field of the model report | `schemas/model-report.schema.json`, `tools/model_report/__init__.py`, the checks in `report_publication.py`, and the browser code that reads the report |
 | a model's category: `model_type`, `tasks`, `modalities`, or the family in `architecture.id` | pick existing IDs from `taxonomies/model-taxonomy.yaml`; when none fits, add the entry there and follow [Model categorization taxonomy](docs/model-taxonomy.md) |
 | a model's `license` | set `spdx` to an ID in `artifact-browser/licenses.json`. When the upstream license is not listed, add it there, with `downloadable: false` if it forbids redistribution. No fingerprint includes the license, so the change reruns nothing ([license](docs/metadata-schema.md#license)) |
+| a downloadable ONNX model, its `upstream` pin, or its license | its `license` resource: the upstream license file pinned by commit and installed under `licenses/`, one resource per license the weights carry, and `--resources` in its `performance.py`. A resource is a compile input, so the pin recompiles the model ([license files in the package](docs/metadata-schema.md#license-files-in-the-package)) |
 | the model folder layout | `MODEL_FOLDER_ENTRIES` in `model.py` and [the directory step](docs/adding-a-model.md#2-create-the-directory) |
 | a model script | the model's test of that behavior under `tests/build/` or `tests/benchmark/` |
 | what a model converts, compiles, or measures on a DevKit | its `tests/tests.yaml` entries, their `expected` values, and the stage test files they run |
@@ -339,7 +340,7 @@ in the same commit.
   Runner/Scheduler versions match
   `neat --json`. Unverifiable state installs;
   an unresolved floating target fails. Both paths report PyNeat and packages.
-  Core's production artifact source is independent of the Model Registry environment.
+  Core's production artifact source is independent of the model registry environment.
 - Workflow YAML only orchestrates: triggers, jobs, permissions, inputs, and
   the order of steps. A step that needs more than one command calls a named,
   executable script with a usage header: under `scripts/`, or beside the code

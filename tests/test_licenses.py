@@ -25,3 +25,22 @@ def test_every_model_declares_a_listed_license() -> None:
             unlisted[manifest.parent.name] = license_id
 
     assert not unlisted, f"add these licenses to {LICENSES_FILE}: {unlisted}"
+
+
+def _license_files(resource: dict) -> list[str]:
+    """The license files one resource installs: the file it pins, or those in its file set."""
+    names = [resource["install_path"], *resource["source"].get("files", {})]
+    return [name for name in names if Path(name).name.startswith("LICENSE")]
+
+
+def test_every_downloadable_onnx_package_ships_its_license() -> None:
+    # LLiMa packages ship their deployment folder and take no resources (docs/metadata-schema.md).
+    missing = []
+    for manifest in sorted((ROOT / "models").glob("*/model.yaml")):
+        model = yaml.safe_load(manifest.read_text(encoding="utf-8"))
+        if model["compilation"]["format"] != "onnx" or not LICENSES[model["license"]["spdx"]]["downloadable"]:
+            continue
+        if not any(_license_files(resource) for resource in model.get("resources", {}).values()):
+            missing.append(manifest.parent.name)
+
+    assert not missing, f"pin the upstream license as a `license` resource in model.yaml: {missing}"

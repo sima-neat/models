@@ -2,7 +2,7 @@
   <img src="docs/assets/readme/hero.png" width="100%" alt="The four steps every model takes: declare it in model.yaml, compile it with the Model Compiler, benchmark it on a Modalix DevKit, and publish it for sima-cli models download">
 </p>
 
-<h1 align="center">SiMa Neat Model Registry</h1>
+<h1 align="center">SiMa Neat Model Browser</h1>
 
 <p align="center">
   The models that run on SiMa.ai Modalix, each one declared in a <code>model.yaml</code>,<br>
@@ -94,6 +94,6 @@ describes every directory.
 
 - [Developer documentation](docs/README.md): the contribution path from
   `model.yaml` to review.
-- [Model Registry architecture](design-doc/model-registry-architecture.md):
+- [Model Browser architecture](design-doc/model-registry-architecture.md):
   components, the CI workflows, and the registry release state.
 - [Model taxonomy](docs/model-taxonomy.md): sanctioned category IDs.

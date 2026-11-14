@@ -19,6 +19,14 @@ upstream:
   revision: 7d14702e444d98d0b1764824567fc2b45e1eb218
   derived_from: https://github.com/facebookresearch/detr/tree/29901c51d7fe8712168b8d0d64351170bc0f83e0
 
+resources:
+  license:
+    source:
+      uri: https://raw.githubusercontent.com/facebookresearch/detr/29901c51d7fe8712168b8d0d64351170bc0f83e0/LICENSE
+      sha256: b208c52b00a2df2c8f4c3298c34407bf2bfe409968213372251c91fcc737a1a5
+      size_bytes: 11354
+    install_path: licenses/LICENSE
+
 conversion:
   source:
     repository: facebook/detr-resnet-101

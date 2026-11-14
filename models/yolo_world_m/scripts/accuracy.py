@@ -144,8 +144,9 @@ def prompt_assets(archive, resources=None):
 
     # Compile staging nests each component; the installed package puts MPKs at its root.
     archive = Path(archive)
-    root = Path(resources) if resources is not None else (
-        archive.parent.parent if archive.parent.name == "text_encoder" else archive.parent)
+    beside_mpks = archive.parent.parent if archive.parent.name == "text_encoder" else archive.parent
+    # The benchmark runner passes the pinned resources, which hold only the licenses; the assets are then beside the MPKs.
+    root = Path(resources) if resources is not None and (Path(resources) / "prompt_assets").is_dir() else beside_mpks
     assets = root / "prompt_assets"
     table = np.load(assets / "token_embedding_table.npy", allow_pickle=False)
     tokenizer = Tokenizer.from_file(str(assets / "tokenizer.json"))
@@ -290,7 +291,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--mpk", action="append", required=True, help="component=<path>; text_encoder and detector")
     parser.add_argument("--dataset", required=True, help="coco-2017-val=<extracted directory>")
     parser.add_argument("--output", type=Path, required=True, help="directory for model-report.json")
-    parser.add_argument("--resources", type=Path, help="package root containing prompt_assets; defaults to the MPK location")
+    parser.add_argument("--resources", type=Path, help="package root; prompt_assets default to the MPK location")
     parser.add_argument("--limit", type=int, help="measure a seeded sample of images (local runs only)")
     args = parser.parse_args(argv)
     dataset_id, dataset_dir = args.dataset.split("=", 1)

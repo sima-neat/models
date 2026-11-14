@@ -17,7 +17,7 @@ from PIL import Image
 MODEL_DIR = Path(__file__).resolve().parents[2]
 # The least cosine with reference.onnx a build keeps on the 50 fidelity images, per output. Model Compiler
 # 3.0.0.dev0+develop.2291 measured the least output on 8 of them at w16a16 0.99966, w8a16 0.99587;
-# CI compiles with Model Compiler 3.0.0.1. A floor allows twice the measured loss, 1 - cosine, when measured on all 50
+# CI compiles with Model Compiler 3.0.0.2. A floor allows twice the measured loss, 1 - cosine, when measured on all 50
 # images and three times when measured on fewer, rounded down to three decimals.
 FIDELITY_FLOORS = {"w16a16": 0.998, "w8a16": 0.987}
 

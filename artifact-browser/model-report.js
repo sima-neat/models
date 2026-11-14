@@ -31,6 +31,46 @@ const TELEMETRY_METRICS = {
   peak_linux_memory_mib: ["linux_memory_used_mib", "maximum"],
 };
 
+// The customer view leaves these out of a performance report: whole-SoM power, the energy computed from
+// it, and the memory every process on the board uses. They describe the board, not the model.
+export const CUSTOMER_HIDDEN_METRICS = [
+  "avg_power_watts", "peak_power_watts", "energy_per_inference_joules", "avg_linux_memory_mib", "peak_linux_memory_mib",
+];
+// The Sentinel readings behind those metrics, with the SoM rails that add up to SoM power.
+const CUSTOMER_HIDDEN_TELEMETRY = CUSTOMER_HIDDEN_METRICS.flatMap((key) => {
+  const [field, , breakdown] = TELEMETRY_METRICS[key] || [];
+  return [field, breakdown].filter(Boolean);
+});
+
+function withoutKeys(record, keys) {
+  return Object.fromEntries(Object.entries(record).filter(([key]) => !keys.includes(key)));
+}
+
+// One set of readings: a whole-model report, a component measured on its own, or a generation workload.
+function customerReadings(readings) {
+  return {
+    ...readings,
+    ...(readings.metrics ? { metrics: withoutKeys(readings.metrics, CUSTOMER_HIDDEN_METRICS) } : {}),
+    ...(readings.telemetry ? { telemetry: withoutKeys(readings.telemetry, CUSTOMER_HIDDEN_TELEMETRY) } : {}),
+  };
+}
+
+function customerWorkload(workload) {
+  return { ...customerReadings(workload), ...(workload.baseline ? { baseline: customerWorkload(workload.baseline) } : {}) };
+}
+
+// A performance report as the customer view may show it. Every reader of the page receives this report, so
+// the tiles, cards, CSV, and Compare page leave the same readings out.
+export function customerPerformanceReport(report) {
+  const components = Object.entries(report.components || {}).map(([id, component]) => [id, customerReadings(component)]);
+  return {
+    ...customerReadings(report),
+    ...(report.components ? { components: Object.fromEntries(components) } : {}),
+    ...(report.generation?.workloads
+      ? { generation: { ...report.generation, workloads: report.generation.workloads.map(customerWorkload) } } : {}),
+  };
+}
+
 function finite(value) {
   return Number.isFinite(value) ? value : null;
 }

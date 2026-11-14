@@ -116,6 +116,11 @@ def test_post_promotion_refresh_uses_target_settings_and_retries_without_reappro
                                     {'model': {'run_id': CANDIDATE, 'artifact_sha256': 'd' * 64}}, 'performance')
     assert body['catalog']['models'][0]['benchmark_fingerprints']['w8a8']['performance'] == expected
     assert 'benchmark_fingerprints' not in document['models'][0]
+    conflicts = [RegistryPublicationError('artifact registry HTTP 409 catalog_snapshot_conflict: retry')]
+    retried = SimpleNamespace(request=lambda *call: (_ for _ in ()).throw(conflicts.pop()) if conflicts
+                              else writes.append(call) or {'stored': True})
+    assert p.refresh_benchmarks(retried, record, **args)['updated'] and len(writes) == 2
+    del writes[1:]
     catalog['document'] = body['catalog']
     assert p.refresh_benchmarks(client, record, **args) == {'updated': False}
     assert len(writes) == 1
@@ -200,6 +205,23 @@ def test_cancellation_cannot_undo_promotion():
     p.decide(backend, record, operation='approve', reason='Reviewed', identity='123')
     with pytest.raises(ValidationError, match='promoted'):
         p.decide(backend, record, operation='cancel', reason='Stop', identity='124')
+
+
+def test_withdrawal_posts_the_reason_once_per_identity_and_needs_a_snapshot():
+    calls = []
+
+    class Client:
+        def request(self, method, path, body, key):
+            calls.append((method, path, body, key))
+            return {'promotion_id': PROMOTION, 'result_snapshot': 'e' * 64 if body['reason'] == 'Broken' else None}
+
+    receipt = p.withdraw(Client(), {'promotion_id': PROMOTION}, reason='Broken', identity='200')
+    assert receipt['result_snapshot'] == 'e' * 64
+    assert calls[0][:3] == ('POST', f'{p.ROOT}/promotions/{PROMOTION}/withdraw', {'reason': 'Broken'})
+    p.withdraw(Client(), {'promotion_id': PROMOTION}, reason='Broken', identity='200')
+    assert calls[0][3] == calls[1][3]
+    with pytest.raises(ValidationError, match='did not confirm'):
+        p.withdraw(Client(), {'promotion_id': PROMOTION}, reason='Other', identity='200')
 
 
 def test_request_checks_current_state_not_historical_receipt():

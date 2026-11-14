@@ -95,6 +95,44 @@ is not listed, add an entry, validated by
 when a model declares an unlisted license. No fingerprint includes the license
 or the license list, so a correction reruns nothing.
 
+### License files in the package
+
+A license that allows redistribution asks that its text, and for MIT and BSD
+the authors' copyright line, travel with every copy. A downloadable ONNX model
+therefore ships its upstream license inside every package, as a `license`
+[resource](#packages-and-pipeline) installed under `licenses/`:
+
+```yaml
+resources:
+  license:
+    source:
+      uri: https://raw.githubusercontent.com/ultralytics/ultralytics/f2d3aed634a5b0e4828024718d4a61ab2f83fb19/LICENSE
+      sha256: 0d96a4ff68ad6d4b6f1f30f713b18d5184912ba8dd389f86aa7710db079abcb0
+      size_bytes: 34523
+    install_path: licenses/LICENSE
+```
+
+- Pin the license file of the source model itself, at the commit `upstream`
+  names: the checkpoint's Hugging Face repository when it holds the file, or
+  the authors' code repository as a GitHub raw file.
+- When neither holds the file and the license is standard text with no
+  authors' copyright line, such as Apache-2.0, pin that text from another
+  repository and say so in a comment, as `resnet_50` does. Never borrow
+  another project's MIT or BSD file: it names that project's authors.
+- When the weights carry a second license, add one resource per license. The
+  torchvision weights that timm republishes under Apache-2.0 ship
+  `licenses/LICENSE` and `licenses/LICENSE-torchvision`.
+- When the upstream has a `NOTICE` file, pin it the same way as
+  `licenses/NOTICE`.
+- A model whose license is `downloadable: false` offers no package and
+  declares no license resource.
+- The model's `performance.py` takes `--resources`, because the performance
+  runner passes every model's resources, and reads nothing from it.
+
+A resource is a compile input, so adding or changing a license pin recompiles
+the model and remeasures it. LLiMa packages ship their deployment folder and
+take no resources.
+
 Optional top-level `build-on-demand` is a boolean, default `false`, for any
 model requiring explicit build selection. When `true`, pushes validate the
 model and publish its metadata but never compile or measure it. Manual

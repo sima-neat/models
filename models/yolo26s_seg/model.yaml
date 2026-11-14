@@ -19,6 +19,14 @@ upstream:
   revision: 070ac3c51435984d992ba92eb3f234daf4e4500d
   derived_from: https://github.com/ultralytics/ultralytics/tree/f2d3aed634a5b0e4828024718d4a61ab2f83fb19
 
+resources:
+  license:
+    source:
+      uri: https://raw.githubusercontent.com/ultralytics/ultralytics/f2d3aed634a5b0e4828024718d4a61ab2f83fb19/LICENSE
+      sha256: 0d96a4ff68ad6d4b6f1f30f713b18d5184912ba8dd389f86aa7710db079abcb0
+      size_bytes: 34523
+    install_path: licenses/LICENSE
+
 conversion:
   source:
     uri: hf://models/Ultralytics/YOLO26@070ac3c51435984d992ba92eb3f234daf4e4500d/yolo26s-seg.pt

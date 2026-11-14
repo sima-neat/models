@@ -95,7 +95,7 @@ for (const asset of modules) {
   writeFileSync(path, source);
 }
 
-console.log(`Assembled Model Registry portal at ${output}`);
+console.log(`Assembled Model Browser portal at ${output}`);
 console.log(`Catalog: ${routeBase}/`);
 console.log(`Developer docs: ${routeBase}/docs`);
 console.log(`Asset revision: ${revision}`);

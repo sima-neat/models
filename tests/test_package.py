@@ -25,6 +25,23 @@ SOURCE_SHA = "de5d34d98e29c8f436264685f0b0e6a83b0d023516e40df0f96e02d5dd8e4c50"
 MPK_NAME = "resnet_50_w16a16_mpk.tar.gz"
 
 
+@pytest.fixture(autouse=True)
+def _resnet_50_without_its_license_resource(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Package resnet_50 as its components alone: its license resource would be fetched from the network."""
+    load = package_module.load_and_validate_model
+
+    def load_without_license(*args: object) -> dict:
+        model = load(*args)
+        if model["id"] == "resnet_50":
+            resources = {name: item for name, item in model.get("resources", {}).items() if name != "license"}
+            model.pop("resources", None)
+            if resources:
+                model["resources"] = resources
+        return model
+
+    monkeypatch.setattr(package_module, "load_and_validate_model", load_without_license)
+
+
 def _compiled_component(tmp_path: Path, component_id: str = "model", archive_name: str = MPK_NAME) -> Path:
     output = tmp_path / "compiled" / "resnet_50" / "w16a16" / component_id
     output.mkdir(parents=True)

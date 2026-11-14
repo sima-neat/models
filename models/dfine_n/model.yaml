@@ -18,6 +18,14 @@ license:
 upstream:
   repository: https://huggingface.co/ustc-community/dfine-nano-coco
   revision: 066438d3d8f0da137a37b38fdf3368fd4afceced
+resources:
+  license:
+    # The checkpoint repository omits LICENSE. The D-FINE authors' repository carries the Apache-2.0 text.
+    source:
+      uri: https://raw.githubusercontent.com/Peterande/D-FINE/956d1709314c2c6a4df6f34de232054578a7449f/LICENSE
+      sha256: c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4
+      size_bytes: 11357
+    install_path: licenses/LICENSE
 conversion:
   source:
     repository: ustc-community/dfine-nano-coco

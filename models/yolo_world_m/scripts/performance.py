@@ -93,8 +93,9 @@ def prompt_assets(archive, resources=None):
 
     # Compile staging nests each component; the installed package puts MPKs at its root.
     archive = Path(archive)
-    root = Path(resources) if resources is not None else (
-        archive.parent.parent if archive.parent.name == "text_encoder" else archive.parent)
+    beside_mpks = archive.parent.parent if archive.parent.name == "text_encoder" else archive.parent
+    # The benchmark runner passes the pinned resources, which hold only the licenses; the assets are then beside the MPKs.
+    root = Path(resources) if resources is not None and (Path(resources) / "prompt_assets").is_dir() else beside_mpks
     assets = root / "prompt_assets"
     table = np.load(assets / "token_embedding_table.npy", allow_pickle=False)
     tokenizer = Tokenizer.from_file(str(assets / "tokenizer.json"))
@@ -181,7 +182,7 @@ def main():
     parser.add_argument("--mpk", action="append", required=True)
     parser.add_argument("--dataset", required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--resources", type=Path, help="package root containing prompt_assets; defaults to the MPK location")
+    parser.add_argument("--resources", type=Path, help="package root; prompt_assets default to the MPK location")
     args = parser.parse_args()
     dataset_id, directory = args.dataset.split("=", 1)
     if dataset_id != "coco-2017-val":

@@ -177,7 +177,8 @@ Develop execution guards keep the implementation on trusted Develop code.
 
 Dispatch the same workflow from Develop with `status`, `cancel`, or `reject`, an
 existing promotion UUID, and a reason. `status` and `cancel` use publisher
-credentials; `reject` requires the protected approver gate. Cancellation cannot
+credentials; `reject` requires the protected approver gate. `withdraw` uses the
+same gate to remove a promoted build from its target catalog. Cancellation cannot
 undo a completed promotion. Management dispatches produce their own summaries;
 they do not edit the original request issue. Use its request UUID to check state.
 

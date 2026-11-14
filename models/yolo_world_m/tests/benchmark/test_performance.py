@@ -28,7 +28,7 @@ def test_component_arguments_are_complete_and_unique(load_script, script_name):
 
 
 @pytest.mark.parametrize("script_name", ["performance", "accuracy"])
-@pytest.mark.parametrize("layout", ["compiled", "installed", "explicit"])
+@pytest.mark.parametrize("layout", ["compiled", "installed", "explicit", "license_only"])
 def test_prompt_assets_load_from_files_beside_unchanged_components(
     tmp_path, load_script, monkeypatch, layout, script_name
 ):
@@ -55,14 +55,16 @@ def test_prompt_assets_load_from_files_beside_unchanged_components(
         return tokenizer
 
     monkeypatch.setitem(sys.modules, "tokenizers", SimpleNamespace(Tokenizer=SimpleNamespace(from_file=from_file)))
-    archive = (tmp_path / "package/text_encoder/encoder_mpk.tar.gz" if layout == "compiled" else
+    archive = (tmp_path / "package/text_encoder/encoder_mpk.tar.gz" if layout in ("compiled", "license_only") else
                tmp_path / "package/encoder_mpk.tar.gz" if layout == "installed" else tmp_path / "elsewhere/encoder.tgz")
     archive.parent.mkdir(parents=True, exist_ok=True)
     archive.write_bytes(b"not opened: compiler archive is independent of CPU resources")
-    resources = tmp_path / "package" if layout == "explicit" else None
+    # The benchmark runner's resources hold only the pinned licenses; the prompt assets stay beside the MPKs.
+    (tmp_path / "fetched/licenses").mkdir(parents=True)
+    resources = {"explicit": tmp_path / "package", "license_only": tmp_path / "fetched"}.get(layout)
     actual_tokenizer, actual_table = script.prompt_assets(archive, resources)
     assert actual_tokenizer is tokenizer
     assert actual_table[49407, 0] == 3.5
     (assets / "tokenizer.json").unlink()
     with pytest.raises(FileNotFoundError):
-        script.prompt_assets(archive, tmp_path / "package" if layout == "explicit" else None)
+        script.prompt_assets(archive, resources)

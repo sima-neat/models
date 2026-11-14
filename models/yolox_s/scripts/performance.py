@@ -44,6 +44,7 @@ def main(argv=None):
     parser.add_argument("--mpk", required=True, help="compiled model archive")
     parser.add_argument("--dataset", required=True, help="coco-2017-val=<extracted directory>")
     parser.add_argument("--output", required=True, help="directory for model-report.json")
+    parser.add_argument("--resources", help="directory holding the package's licenses folder (unused)")
     args = parser.parse_args(argv)
     dataset_id, dataset_dir = args.dataset.split("=", 1)
     image = sample_image(Path(dataset_dir))

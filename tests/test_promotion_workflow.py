@@ -15,7 +15,6 @@ def test_workflow_is_manual_and_uses_trusted_code_with_separate_credentials():
     assert set(config.get('on', config.get(True))) == {'workflow_dispatch'}
     jobs = config['jobs']
     assert "github.ref == 'refs/heads/develop'" in jobs['configure']['if']
-    assert jobs['configure']['environment'] == '${{ vars.VULCAN_ENV }}'
     assert 'needs.configure.outputs.vulcan_environment' in jobs['approve']['environment']['name']
     assert 'issues' not in jobs['approve']['permissions']
     for name, job in jobs.items():
@@ -41,6 +40,12 @@ def test_request_plan_is_durable_before_mutation_and_gate_waits_for_summary():
     assert upload['with']['name'] == 'promotion-plan'
     assert 'overwrite' not in upload['with']
     assert jobs['report']['if'] == "always() && needs.request.result == 'success'"
+
+
+def test_withdrawal_runs_behind_the_approval_gate():
+    config = workflow()
+    assert 'withdraw' in config.get('on', config.get(True))['workflow_dispatch']['inputs']['operation']['options']
+    assert "operation == 'withdraw'" in config['jobs']['approve']['if']
 
 
 def test_workflow_inputs_are_environment_data_not_shell_code():
@@ -98,6 +103,45 @@ def test_issue_recovery_uses_rest_marker_and_does_not_duplicate(monkeypatch, tmp
     monkeypatch.setattr(module, 'gh', gh)
     assert module.issue('Preparing') == 'https://github.com/sima-neat/models/issues/999'
     assert len(calls) == 1 and '--method' not in calls[0]
+
+
+def test_issue_closes_only_for_confirmed_terminal_backend_states(monkeypatch, tmp_path):
+    module = orchestration(monkeypatch, tmp_path)
+    calls = []
+    monkeypatch.setattr(module, 'gh', lambda *args, **kwargs: calls.append((args, kwargs['body'])))
+    plan = {'issue_url': 'https://github.com/sima-neat/models/issues/330', 'identity': '123'}
+    for state, snapshot, reason in [
+        ('pending', None, None),
+        ('promoted', None, None),
+        ('promoted', 'abc123', 'completed'),
+        ('rejected', None, 'not_planned'),
+        ('cancelled', None, 'not_planned'),
+        ('expired', None, 'not_planned'),
+        ('unknown', None, None),
+    ]:
+        module.update_issue(plan, {'state': state, 'result_snapshot': snapshot})
+        args, body = calls[-1]
+        assert args == ('api', '--method', 'PATCH', 'repos/sima-neat/models/issues/330')
+        assert body['body'].startswith('<!-- models-promotion-run:123 -->')
+        assert f'"state": "{state}"' in body['body']
+        assert body.get('state') == ('closed' if reason else None)
+        assert body.get('state_reason') == reason
+
+
+def test_recovery_updates_original_issue_and_preserves_retry_marker(monkeypatch, tmp_path):
+    module = orchestration(monkeypatch, tmp_path)
+    calls = []
+    monkeypatch.setattr(module, 'gh', lambda *args, **kwargs: calls.append((args, kwargs['body'])))
+    record = {'state': 'cancelled', 'workflow': {
+        'run_id': '123', 'issue_url': 'https://github.com/sima-neat/models/issues/330',
+    }}
+    module.update_issue({'issue_url': '', 'identity': '456'}, record)
+    args, body = calls[0]
+    assert args[-1] == 'repos/sima-neat/models/issues/330'
+    assert body['body'].startswith('<!-- models-promotion-run:123 -->')
+    assert body['state'] == 'closed' and body['state_reason'] == 'not_planned'
+    module.update_issue({'issue_url': '', 'identity': '456'}, {'state': 'cancelled'})
+    assert len(calls) == 1
 
 
 def test_request_receipt_survives_issue_update_failure(monkeypatch, tmp_path):
@@ -309,6 +353,7 @@ def test_report_failure_still_prepares_unknown_outcome_notice(monkeypatch, tmp_p
                                'identity': '123', 'issue_url': ''})
     module.p.save(module.RECORD, {'promotion_id': 'pinned', 'state': 'pending'})
     monkeypatch.setattr(module.sys, 'argv', ['model_promotion.py', 'report'])
+    monkeypatch.setattr(module, 'gh', lambda *args, **kwargs: pytest.fail('Backend state is unconfirmed'))
 
     def fail(*args):
         raise module.p.ValidationError('backend unavailable')
@@ -321,6 +366,30 @@ def test_report_failure_still_prepares_unknown_outcome_notice(monkeypatch, tmp_p
     assert 'completion_ready=true' in (tmp_path / 'outputs').read_text()
 
 
+def test_promoted_issue_closes_even_when_benchmark_refresh_fails(monkeypatch, tmp_path):
+    import pytest
+    module = orchestration(monkeypatch, tmp_path)
+    module.p.save(module.PLAN, {**module.p.configuration(), 'operation': 'promote',
+                               'identity': '123', 'issue_url': 'https://github.com/sima-neat/models/issues/330'})
+    module.p.save(module.RECORD, {'promotion_id': 'pinned', 'state': 'pending'})
+    monkeypatch.setattr(module.sys, 'argv', ['model_promotion.py', 'report'])
+    monkeypatch.setenv('BENCHMARK_CATALOG_REVISION', 'revision')
+    monkeypatch.setattr(module.p, 'inspect', lambda *args: {
+        'promotion_id': 'pinned', 'state': 'promoted', 'result_snapshot': 'abc123',
+    })
+    calls = []
+    monkeypatch.setattr(module, 'gh', lambda *args, **kwargs: calls.append(kwargs['body']))
+
+    def fail(*args, **kwargs):
+        raise module.p.ValidationError('refresh failed')
+
+    monkeypatch.setattr(module.p, 'refresh_benchmarks', fail)
+    with pytest.raises(module.p.ValidationError, match='refresh failed'):
+        module.main()
+    assert calls[0]['state'] == 'closed'
+    assert calls[0]['state_reason'] == 'completed'
+
+
 def test_outcome_slack_step_runs_even_if_issue_reporting_fails():
     steps = workflow()['jobs']['report']['steps']
     report = next(s for s in steps if s.get('id') == 'report')
@@ -329,6 +398,20 @@ def test_outcome_slack_step_runs_even_if_issue_reporting_fails():
     assert notice['if'] == "always() && steps.report.outputs.completion_ready == 'true'"
     assert notice['with']['payload-file-path'] == '_promotion/slack-completion.json'
 
+
+
+def test_environment_input_selects_registry_and_preserves_configured_default():
+    config = workflow()
+    inputs = config.get('on', config.get(True))['workflow_dispatch']['inputs']
+    assert inputs['environment']['options'] == ['default', 'staging', 'production']
+    assert inputs['environment']['default'] == 'default'
+    jobs = config['jobs']
+    selection = "${{ inputs.environment != 'default' && inputs.environment || vars.VULCAN_ENV }}"
+    assert jobs['configure']['environment'] == selection
+    step = next(s for s in jobs['configure']['steps'] if s.get('id') == 'config')
+    assert step['env']['VULCAN_ENV'] == selection
+    for name in ('prepare', 'request', 'report'):
+        assert jobs[name]['environment'] == '${{ needs.configure.outputs.vulcan_environment }}'
 
 
 def test_target_is_validated_before_gate_and_propagated_to_every_job():

@@ -11,8 +11,9 @@ test('staging is unchanged by default or unrecognized environment values', () =>
 });
 
 test('production preview changes the whole backend without changing audience or repository', () => {
-  for (const ref of ['refs/heads/main', 'refs/heads/develop']) {
-    const base = portalConfig({GITHUB_REF: ref});
+  for (const uiMode of ['customer', 'developer']) {
+    const base = portalConfig({MODEL_BROWSER_UI_MODE: uiMode});
+    assert.equal(base.uiMode, uiMode);
     const config = resolveEnvironment(base, '?env=prod&branch=develop');
     assert.equal(config.apiBase, 'https://models-registry.neat.sima.ai');
     assert.equal(config.environment, 'Production');

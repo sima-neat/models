@@ -235,7 +235,16 @@ function componentList(runs) {
   return components.length > 1 || components[0] !== "model" ? components.join(" · ") : "";
 }
 
+// The catalog before the registry has answered and with nothing to list: the first paint has no snapshot, and
+// a cached one may be empty, so neither may claim that the branch has no models.
+export function renderCatalogLoading() {
+  elements["result-count"].textContent = "";
+  elements["result-list"].setAttribute("aria-busy", "true");
+  elements["result-list"].innerHTML = `<div class="catalog-loading" role="status"><span class="spinner" aria-hidden="true"></span>Loading models…</div>`;
+}
+
 function renderHistory() {
+  if (!state.runs.length && !state.catalogLoaded) return renderCatalogLoading();
   const builds = variantBuilds(filteredRuns());
   elements["result-count"].textContent = `${builds.length}${state.hasMore ? "+" : ""} build${builds.length === 1 ? "" : "s"}`;
   if (!builds.length) {
@@ -451,6 +460,7 @@ export function familyOverview() {
 }
 
 function renderModels() {
+  if (!state.models.length && !state.catalogLoaded) return renderCatalogLoading();
   const models = filteredModels();
   const families = familyOverview() ? groupModelFamilies(models) : null;
   elements["result-count"].textContent = families

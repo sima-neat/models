@@ -1,6 +1,6 @@
 # Define the model contract
 
-A Model Registry contribution describes a product that developers can find,
+A Model Browser contribution describes a product that developers can find,
 build, test, and download reproducibly. For a simple model, that product is one
 ONNX input and one compiled MPK. A larger product compiles its source into
 several components, which one download package holds. `model.yaml` declares
@@ -28,7 +28,9 @@ Do not add a product whose source, ownership, or license is ambiguous. Record
 ownership in `CODEOWNERS`; do not add owner or maturity boilerplate to YAML.
 Declare the source model's [license](metadata-schema.md#license) with an ID
 from `artifact-browser/licenses.json`, which also decides whether the model page offers a
-download.
+download. A downloadable ONNX model also pins its upstream license file as a
+`license` resource, so every package carries it
+([license files in the package](metadata-schema.md#license-files-in-the-package)).
 
 ## 2. Create the directory
 

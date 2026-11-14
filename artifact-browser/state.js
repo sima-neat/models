@@ -24,6 +24,8 @@ export const state = {
   packageRuns: [],
   catalogDefinitions: [],
   catalogMode: "runs",
+  // Whether the registry has answered for the selected branch. Until then an empty catalog is still loading.
+  catalogLoaded: false,
   catalogLayout: "cards",
   cursor: null,
   hasMore: false,
