@@ -1129,9 +1129,10 @@ def test_candidates_join_every_invocation_and_never_promote_catalog() -> None:
 def test_concurrent_builds_retry_catalog_snapshot_conflicts() -> None:
     catalog = step(load(BUILD_WORKFLOW)["jobs"]["publish"], "Publish this build in the catalog")["run"]
 
-    assert "for attempt in 1 2 3 4 5 6 7 8; do" in catalog
+    # publish-catalog retries the conflict in process; the shell loop only gives it a second run.
+    assert "for attempt in 1 2; do" in catalog
     assert "grep -q 'catalog_snapshot_conflict'" in catalog
-    assert "(( attempt == 8 ))" in catalog
+    assert "(( attempt == 2 ))" in catalog
     assert "ceiling=$(( 2 ** attempt > 30 ? 30 : 2 ** attempt ))" in catalog
     assert 'sleep "$(( 1 + RANDOM % ceiling ))"' in catalog
 

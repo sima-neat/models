@@ -485,7 +485,9 @@ jobs:
             package_args=(--package-dir _packages)
           fi
           failure="$RUNNER_TEMP/catalog-publication-error"
-          for attempt in 1 2 3 4 5 6 7 8; do
+          # publish-catalog itself retries a conflict for about three minutes, re-reading only the catalog.
+          # One more run covers a publisher that was still losing when that time ended.
+          for attempt in 1 2; do
             if model-registry publish-catalog --repository . --compiled-dir _compiled "${package_args[@]}" \
               --api-url "$REGISTRY_API_URL" --read-api-url "$REGISTRY_READ_API_URL" \
               --aws-region "$AWS_REGION" --branch "$GITHUB_REF_NAME" \
@@ -495,7 +497,7 @@ jobs:
               --base-branches "$BASE_BRANCHES" --git-sha "$GITHUB_SHA" 2>"$failure"; then
               exit 0
             fi
-            if ! grep -q 'catalog_snapshot_conflict' "$failure" || (( attempt == 8 )); then
+            if ! grep -q 'catalog_snapshot_conflict' "$failure" || (( attempt == 2 )); then
               cat "$failure" >&2
               exit 1
             fi

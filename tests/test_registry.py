@@ -6,6 +6,7 @@ import json
 import tarfile
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import boto3
@@ -1684,6 +1685,122 @@ def test_progress_publication_leaves_a_catalog_without_a_pending_list_alone(monk
         read_request=lambda url: {"catalog": {"document": {"models": []}} if url.endswith("develop") else target},
     )["catalog"]
     assert result["pending_builds"] == built["pending_builds"]
+
+
+def _conflicting_publishers(monkeypatch, conflicts: int, error: str = "HTTP 409 catalog_snapshot_conflict"):
+    """Publish dfine_n while other publishers replace the catalog before each of the first `conflicts` POSTs."""
+
+    def build(model_id):
+        return {"build_profile_id": "w16a16", "component_id": "model", "compile_fingerprint": model_id[0] * 64}
+
+    def pending(model_id):
+        return {"model_id": model_id, "build_profile_id": "w16a16", "component_ids": ["model"],
+                "compile_fingerprint": model_id[0] * 64}
+
+    catalog = {"catalog_revision": "a" * 40, "canonical_sha256": "0" * 64,
+               "document": {"models": [], "pending_builds": [pending("dfine_n"), pending("yolo26n"), pending("vit")]}}
+    calls = {"load_models": 0, "_head_matrix": 0, "reads": 0, "posts": [], "sleeps": []}
+
+    def read(url):
+        calls["reads"] += 1
+        return {"catalog": json.loads(json.dumps(catalog))}
+
+    def request(method, path, body, key):
+        calls["posts"].append((body, key))
+        if len(calls["posts"]) <= conflicts:
+            # Another build publishes between this publisher's read and its POST.
+            other = "yolo26n" if len(calls["posts"]) == 1 else f"other_{len(calls['posts'])}"
+            catalog["document"]["models"].append({"id": other, "builds": [build(other)]})
+            catalog["document"]["pending_builds"] = [
+                item for item in catalog["document"]["pending_builds"] if item["model_id"] != other
+            ]
+            catalog["canonical_sha256"] = str(len(calls["posts"])) * 64
+            raise RegistryPublicationError(f"{method} {path}: artifact registry {error}: catalog changed")
+        return {"stored": True}
+
+    def snapshot(**kwargs):
+        # The real builder keeps the prior catalog's builds and adds this job's receipt.
+        models = [*kwargs["previous"]["models"], {"id": "dfine_n", "builds": [build("dfine_n")]}]
+        return {"models": sorted(models, key=lambda model: model["id"]), "pending_builds": []}
+
+    def merge(sources, matrix):
+        return {"models": list(sources[0]["models"])}
+
+    monkeypatch.setattr("model_registry.registry.load_models",
+                        lambda root: calls.__setitem__("load_models", calls["load_models"] + 1) or {})
+    monkeypatch.setattr("model_registry.registry._head_matrix",
+                        lambda *args: calls.__setitem__("_head_matrix", calls["_head_matrix"] + 1) or [])
+    monkeypatch.setattr("model_registry.registry.merge_catalog_sources", merge)
+    monkeypatch.setattr("model_registry.registry.build_catalog_snapshot", snapshot)
+    monkeypatch.setattr("model_registry.registry.time",
+                        SimpleNamespace(sleep=calls["sleeps"].append, monotonic=lambda: 0))
+
+    def publish():
+        return publish_catalog(
+            repository=ROOT, api_url="https://registry.example.invalid",
+            read_api_url="https://registry.example.invalid", aws_region="us-west-2",
+            branch="develop", git_sha="a" * 40, request=request, read_request=read,
+        )
+
+    return publish, calls, pending
+
+
+def test_catalog_conflict_rereads_the_catalog_and_publishes_both_builds(monkeypatch) -> None:
+    publish, calls, pending = _conflicting_publishers(monkeypatch, conflicts=1)
+
+    result = publish()
+
+    assert result["registry"] == {"stored": True}
+    assert calls["reads"] == 2
+    first, second = calls["posts"]
+    assert first[0]["previous_snapshot"] == "0" * 64
+    assert [model["id"] for model in first[0]["catalog"]["models"]] == ["dfine_n"]
+    # The second snapshot replaces the other publisher's catalog and keeps its build beside this one.
+    assert second[0]["previous_snapshot"] == "1" * 64
+    assert second[0]["initialize"] is False
+    assert [model["id"] for model in second[0]["catalog"]["models"]] == ["dfine_n", "yolo26n"]
+    assert second[0]["catalog"]["pending_builds"] == [pending("vit")]
+    assert second[1] == "models-catalog-develop-" + "a" * 40 + "-" + "1" * 16 + "-" + canonical_sha256(second[0])[:16]
+    assert result["catalog"] == second[0]["catalog"]
+    # The checkout is loaded once, however often the catalog is read.
+    assert (calls["load_models"], calls["_head_matrix"]) == (1, 1)
+    assert len(calls["sleeps"]) == 1 and 0.2 <= calls["sleeps"][0] <= 2
+
+
+def test_catalog_conflict_reads_each_approved_checksum_once(monkeypatch) -> None:
+    publish, calls, _ = _conflicting_publishers(monkeypatch, conflicts=2)
+    caches = []
+    monkeypatch.setattr("model_registry.registry._refresh_approved_benchmarks",
+                        lambda *args, digests: caches.append(digests))
+
+    publish()
+
+    assert len(caches) == 3
+    assert all(cache is caches[0] for cache in caches)
+
+
+def test_other_publication_errors_are_not_retried(monkeypatch) -> None:
+    publish, calls, _ = _conflicting_publishers(monkeypatch, conflicts=1, error="HTTP 409 catalog_revision_conflict")
+
+    with pytest.raises(RegistryPublicationError, match="catalog_revision_conflict"):
+        publish()
+
+    assert (calls["reads"], len(calls["posts"]), calls["sleeps"]) == (1, 1, [])
+
+
+def test_catalog_conflict_retries_stop_at_the_time_limit(monkeypatch) -> None:
+    from model_registry.registry import CATALOG_CONFLICT_RETRY_SECONDS
+
+    publish, calls, _ = _conflicting_publishers(monkeypatch, conflicts=100)
+    clock = iter([0, 60, CATALOG_CONFLICT_RETRY_SECONDS - 1, CATALOG_CONFLICT_RETRY_SECONDS])
+    monkeypatch.setattr("model_registry.registry.time.monotonic", lambda: next(clock))  # the helper's stand-in
+
+    with pytest.raises(RegistryPublicationError, match="catalog_snapshot_conflict"):
+        publish()
+
+    # The clock is read once to set the limit and once after each conflict; the third conflict is past it.
+    assert (calls["reads"], len(calls["posts"]), len(calls["sleeps"])) == (3, 3, 2)
+    assert calls["load_models"] == 1
 
 
 @pytest.mark.parametrize("same_revision", [False, True])
