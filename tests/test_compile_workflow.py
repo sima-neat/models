@@ -986,8 +986,9 @@ def test_build_publication_runner_and_steps(runner_script: str, runner_environme
             "Publish the complete component set",
             "Assemble the packages this build completes",
             "Publish the finalized packages",
-            "Retain the published model output for the benchmarks",
             "Publish this build in the catalog",
+            # Last, so a rerun of a Publish job that failed in the catalog step uploads the artifact once.
+            "Retain the published model output for the benchmarks",
         )
     ]
     assert order == sorted(order)
