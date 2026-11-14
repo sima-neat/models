@@ -116,6 +116,11 @@ def test_post_promotion_refresh_uses_target_settings_and_retries_without_reappro
                                     {'model': {'run_id': CANDIDATE, 'artifact_sha256': 'd' * 64}}, 'performance')
     assert body['catalog']['models'][0]['benchmark_fingerprints']['w8a8']['performance'] == expected
     assert 'benchmark_fingerprints' not in document['models'][0]
+    conflicts = [RegistryPublicationError('artifact registry HTTP 409 catalog_snapshot_conflict: retry')]
+    retried = SimpleNamespace(request=lambda *call: (_ for _ in ()).throw(conflicts.pop()) if conflicts
+                              else writes.append(call) or {'stored': True})
+    assert p.refresh_benchmarks(retried, record, **args)['updated'] and len(writes) == 2
+    del writes[1:]
     catalog['document'] = body['catalog']
     assert p.refresh_benchmarks(client, record, **args) == {'updated': False}
     assert len(writes) == 1
