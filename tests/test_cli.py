@@ -25,7 +25,7 @@ def test_author_parser_exposes_only_supported_model_contributor_commands() -> No
 
 @pytest.mark.parametrize("model,profile,stages,backend,baseline,timeout", [
     ("resnet_50", "w8a8", "performance,accuracy", "core", "false", "45"),
-    ("qwen3_5_0_8b", "w4a16", "performance", "llima", "false", "45"),
+    ("qwen3_5_0_8b", "w4a16", "performance", "llima", "false", "90"),
     ("gemma_4_e2b_it_mtp", "w4a16", "performance", "llima", "true", "4320"),
     ("gemma_4_e2b_it_mtp", "w4a16", "accuracy", "llima", "false", "45"),
 ])

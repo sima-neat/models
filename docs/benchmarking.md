@@ -536,8 +536,9 @@ per workload and deployment. Failed requests prevent publication.
 Run **Vulcan Model Benchmarking** with `stages=performance`, `model_id`,
 `build_profile_id`, `compile_invocation_id` and the current catalog revision as
 `source_sha`. The workflow branch must match `source_branch`; leave `source_run_id`
-empty. Deployments and packages must already be registered. Full dataset runs
-allow 72 hours. For feature-branch testing against Develop deployments, set
+empty. Deployments and packages must already be registered. Ordinary performance
+jobs allow 90 minutes, including deployment download and runtime setup; full
+speculative dataset runs allow 72 hours. For feature-branch testing against Develop deployments, set
 `deployment_branch=develop` and use the feature branch's source SHA.
 
 For local runs, use MoLE with `PYTHONPATH=tools` and the model's `performance.py`

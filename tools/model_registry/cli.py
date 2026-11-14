@@ -713,7 +713,7 @@ def _benchmark_job(args: argparse.Namespace) -> int:
     baseline = performance and bool(profile.get("benchmark_baseline"))
     print(f"backend={'llima' if native else 'core'}")
     print(f"needs_baseline={str(baseline).lower()}")
-    print(f"timeout_minutes={4320 if native and baseline else 45}")
+    print(f"timeout_minutes={4320 if native and baseline else 90 if native and performance else 45}")
     return 0
 
 
