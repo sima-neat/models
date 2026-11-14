@@ -59,3 +59,40 @@ test('comparison does not turn independent component rates into whole-model thro
   const whole = {...base, metrics: {throughput_fps: 100}, workload: 'one image', telemetry: {}, components: {model: stats}};
   assert.equal(measurements({performance: {report: whole}}).throughput_fps.value, 100);
 });
+
+test('generation exports keep the deployment identity, workload and decoding role', () => {
+  const fixture = JSON.parse(readFileSync(new URL('../../artifact-browser/fixtures/genai-model-report.json', import.meta.url), 'utf8'));
+  const run = {id: 'run', metadata: {model_id: 'gemma_4_e2b_it_textonly_mtp', build_profile_id: 'w4a16'}};
+  const baseline = {model_id: 'gemma_4_e2b_it_textonly', build_profile_id: 'w8a16'};
+  const report = {...fixture, generation: {...fixture.generation,
+    settings: {...fixture.generation.settings, decoding: 'speculative'}, baseline,
+    workloads: fixture.preview_speculative_workloads}};
+  const performance = readPerformance({run, report}).value;
+  const exports = [];
+  const begin = source.indexOf('function generativeBenchmark(');
+  const finish = source.indexOf('\nfunction humanize(', begin);
+  const renderGeneration = new Function('performanceDetails', 'infoMark', 'escapeHtml', 'disclosure',
+    `return (${source.slice(begin, finish)}\n);`)(
+    reading => {exports.push(reading); return {markup: ''};}, () => '', String, () => '');
+  const fileBegin = source.indexOf('function csvFileName(');
+  const fileEnd = source.indexOf('\nfunction performanceContext(', fileBegin);
+  const filename = new Function(`return (${source.slice(fileBegin, fileEnd)});`)();
+  renderGeneration(performance, run, 'gemma4_mtp');
+  for (const [index, workload] of performance.workloads.entries()) {
+    const [target, ordinary] = exports.slice(index * 2, index * 2 + 2);
+    assert.equal(target.modelId, run.metadata.model_id);
+    assert.equal(target.buildProfileId, 'w4a16');
+    assert.equal(ordinary.modelId, baseline.model_id);
+    assert.equal(ordinary.buildProfileId, 'w8a16');
+    assert.equal(target.decodingRole, 'mtp');
+    assert.equal(ordinary.decodingRole, 'baseline');
+    assert.equal(target.workloadId, workload.id);
+    assert.equal(ordinary.workloadId, workload.id);
+    assert.deepEqual(target.measurements, workload.measurements);
+    assert.deepEqual(ordinary.measurements, workload.baseline.measurements);
+    assert.equal(filename(target), `${run.metadata.model_id}-w4a16-${workload.id}-mtp-performance.csv`);
+    assert.equal(filename(ordinary), `${baseline.model_id}-w8a16-${workload.id}-baseline-performance.csv`);
+  }
+  assert.equal(new Set(exports.map(filename)).size, exports.length);
+  assert.equal(filename({modelId: 'resnet_50', buildProfileId: 'w8a8'}), 'resnet_50-w8a8-performance.csv');
+});

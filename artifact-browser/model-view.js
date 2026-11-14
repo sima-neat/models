@@ -336,6 +336,7 @@ function performanceCsv(performance) {
   [
     ["Model", performance.modelId], ["Build", performance.buildProfileId],
     ...(performance.componentId ? [["Component", performance.componentId]] : []), ["Workload", performance.workload],
+    ["Decoding", performance.decodingRole],
     ["CPU cores", performance.cpuCores.length], ["Measured", performance.timestamp], ["Board telemetry", telemetry?.status],
     ["Sentinel", telemetry?.sentinelVersion], ["Telemetry samples", telemetry?.samples],
     ["Telemetry interval", seconds(telemetry?.intervalMs), "s"], ["Runtime", performance.tool],
@@ -375,7 +376,8 @@ function csvDataUrl(csv) {
 }
 
 function csvFileName(performance) {
-  const name = [performance.modelId, performance.buildProfileId, performance.componentId].filter(Boolean).join("-") || "model";
+  const name = [performance.modelId, performance.buildProfileId, performance.componentId,
+    performance.workloadId, performance.decodingRole].filter(Boolean).join("-") || "model";
   return `${name.replace(/[^A-Za-z0-9._-]+/g, "_")}-performance.csv`;
 }
 
@@ -597,6 +599,7 @@ function performanceSummary(performance, run, modelId, componentId = "") {
 
 function generativeBenchmark(performance, run, method) {
   const benchmark = {...performance.generation, workloads: performance.workloads};
+  const speculative = benchmark.settings?.decoding === "speculative";
   const methodLabel = {gemma4_mtp: "MTP", dflash: "DFlash", eagle3: "EAGLE3"}[method] || "Speculative";
   const ttftHeading = `TTFT (ms)${infoMark("Time to first token: language prefill through the first output token. Image timings also include image preprocessing and vision encoding. Text timings exclude tokenization and input preparation.")}`;
   const label = workload => workload.label;
@@ -628,16 +631,18 @@ function generativeBenchmark(performance, run, method) {
   const options = benchmark.workloads.map(workload =>
     `<option value="${escapeHtml(workload.id)}">${escapeHtml(label(workload))}</option>`).join("");
   const panels = benchmark.workloads.map((workload, index) => {
-    const details = reading => performanceDetails({...performance, ...reading, components: [],
-      workload: label(workload), samples: reading.metrics.decode_tps.sample_count}, run).markup;
+    const details = (reading, baseline = false) => performanceDetails({...performance, ...reading, components: [],
+      ...(baseline ? {modelId: benchmark.baseline?.model_id, buildProfileId: benchmark.baseline?.build_profile_id} : {}),
+      workload: label(workload), workloadId: workload.id,
+      decodingRole: baseline ? "baseline" : speculative ? methodLabel.toLowerCase() : "ordinary",
+      samples: reading.metrics.decode_tps.sample_count}, run).markup;
     return `<div data-genai-details="${escapeHtml(workload.id)}"${index ? " hidden" : ""}>${workload.baseline ? `<h4>${methodLabel}</h4>` : ""}${details(workload)}
-      ${workload.baseline ? `<h4>Baseline</h4>${details(workload.baseline)}` : ""}</div>`;
+      ${workload.baseline ? `<h4>Baseline</h4>${details(workload.baseline, true)}` : ""}</div>`;
   }).join("");
   const details = `<p>Board telemetry covers measured requests, excluding warmup and model loading.</p>
     <label class="workload-picker">Workload <select data-genai-workload>${options}</select></label>${panels}
     <p>Generation rates exclude the first token. Image TTFT includes image preprocessing and vision encoding.
     Draft contribution is the percentage of generated tokens accepted from the draft model. Generation speedup compares aggregate generation rates on the same dataset and output budget, excluding prompt processing and the first token.</p>`;
-  const speculative = benchmark.settings?.decoding === "speculative";
   return `<div data-generative-benchmark>${benchmark.synthetic ? '<p class="benchmark-context">Synthetic preview data — for visualization only.</p>' : ""}${rows ? `<div class="benchmark-measurements"><h4>Text</h4>
     <div class="benchmark-measurements-wrap"><table aria-label="Text performance"><thead><tr>
     <th scope="col">Workload</th><th scope="col">${ttftHeading}</th><th scope="col">Prefill (tokens/s)</th><th scope="col">Generation (tokens/s)</th>

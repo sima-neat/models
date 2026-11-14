@@ -171,7 +171,9 @@ in this order:
    model without speculative decoding. Generation speedup excludes prompt
    processing and the first token; draft contribution is the percentage of
    generated tokens accepted from the draft model. Measurement details show
-   each workload's telemetry for both deployments.
+   each workload's telemetry for both deployments. Each CSV identifies its own
+   model, build profile and decoding role; filenames include the workload and
+   role to distinguish the exports.
    When the report includes MLA layer stats, **Runtime Layer Analysis**
    shows one full-width table with **Compiled layer / Execution time (µs) / Share (%)**
    headings. Each execution-time cell shows its exact value above a thin bar,
