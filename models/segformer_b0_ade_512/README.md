@@ -25,8 +25,9 @@ can do this with its stretch resize and the ImageNet normalization preset.
 
 Class index i is class i of the standard 150-class ADE20K scene-parsing order,
 from 0 wall, 1 building, 2 sky and 3 floor to 149 flag, which is the `id2label`
-order of the upstream `config.json`. No Neat decoder handles this output; run
-the steps on the CPU.
+order of the upstream `config.json`. Neat's semantic-segmentation decode can also
+run both steps: set `semantic_segmentation.enable` and the output size in the
+model options, and the model returns one class index per pixel.
 
 ## Building applications
 
