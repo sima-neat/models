@@ -1059,7 +1059,7 @@ def test_browser_uses_refined_search_first_layout() -> None:
     assert 'class="page-header"' not in html
     assert "Trace every" not in html
     assert '<header class="catalog-intro">' in html
-    assert "Pick a model, check its speed and accuracy, and download it for Neat." in html
+    assert "Pick a model, check its speed and accuracy, and download it for Palette Neat." in html
     assert "--font-display" not in styles
     assert "font-family: var(--font-body)" in styles
 
@@ -1291,7 +1291,8 @@ def test_package_download_dialog_uses_one_consistent_label_value_grid() -> None:
     assert 'id="download-kicker"' not in html
     assert '"download-kicker"' not in browser
     assert '<dt>File name</dt>' in script
-    assert '<dt>Attribution</dt>' in script
+    assert '<dt>Attribution</dt>' not in script
+    assert '<dt>SHA-256</dt>' not in script
     assert 'Attribution: ${license.attribution}' not in browser
     assert ".download-package-info dt, .download-package-info dd" in styles
     assert ".download-package-info dt { border-right: 1px solid var(--line)" in styles

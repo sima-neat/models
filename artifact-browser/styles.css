@@ -733,8 +733,6 @@ main { width: min(1240px, 100%); margin: 0 auto; padding: 0 clamp(16px, 4vw, 48p
 .download-package-summary dt, .download-package-summary dd { padding: 0; border: 0; background: transparent; }
 .download-filename { display: grid; gap: 8px; padding: 16px; border-radius: 8px; background: var(--surface); }
 .download-filename dt { color: var(--ink-soft); font-size: 12px; }
-.download-technical-fact { display: grid; gap: 6px; }
-.download-technical-fact dt { color: var(--ink-soft); font-size: 12px; }
 .download-license { display: flex; flex-wrap: wrap; gap: 6px; color: var(--ink-soft); }
 .download-list { list-style: none; margin: 24px 0; padding: 0; }
 .download-list li { display: flex; justify-content: space-between; gap: 20px; padding: 16px 0; border-top: 1px solid var(--line); }

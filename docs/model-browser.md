@@ -120,11 +120,11 @@ marked with › that opens in place. The header places the model image beside it
 name, tags, description, download action, and the validation and source-link
 icons in both UI modes; narrow screens stack them. The tags name what holds for every variant:
 tasks, model family, model type and license. The download dialog offers an outlined **Copy CLI command**
-button with a copy icon alongside browser downloads where available. Customer
-package dialogs name the model, summarize the variant and size, and show a quiet
-filename block and license line with a **Download** action. Developer dialogs
-use the same layout with extra fields for package identifiers, component counts,
-format, checksums and attribution. Dialogs and action buttons use softly rounded corners.
+button with a copy icon alongside browser downloads where available. The copied
+command names the branch only when it is not `main`, because `sima-cli` downloads
+from `main` by default. A package dialog names the model, summarizes the variant
+and size, and shows a quiet filename block and license line with a **Download**
+action, in both views. Dialogs and action buttons use softly rounded corners.
 The model's License section retains attribution in both views. Dialog actions
 place Cancel on the left, Copy CLI command in the middle and Download on the right.
 A model with several build profiles shows

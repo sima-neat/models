@@ -2,7 +2,7 @@
   <img src="docs/assets/readme/hero.png" width="100%" alt="The four steps every model takes: declare it in model.yaml, compile it with the Model Compiler, benchmark it on a Modalix DevKit, and publish it for sima-cli models download">
 </p>
 
-<h1 align="center">SiMa Neat Model Browser</h1>
+<h1 align="center">Palette Model Browser by SiMa.ai</h1>
 
 <p align="center">
   The models that run on SiMa.ai Modalix, each one declared in a <code>model.yaml</code>,<br>
@@ -37,8 +37,8 @@ live in object storage.
 List the published models and download one:
 
 ```bash
-sima-cli models list --branch develop
-sima-cli models download --id resnet_50 --variant w8a8 --branch develop
+sima-cli models list
+sima-cli models download --id resnet_50 --variant w8a8
 ```
 
 The [Model Browser](https://developer.sima.ai/models/) shows each model with

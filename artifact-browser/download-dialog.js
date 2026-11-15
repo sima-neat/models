@@ -1,10 +1,10 @@
-// The download dialog: what a package holds, its CLI command, and the browser downloads it starts.
+// The download dialog: a package's file name and license, its CLI command, and the browser downloads it starts.
 import {
-  variantDownloads, prepareDownloads, startDownloads, packageFormat, artifactDelivery, deploymentSize,
+  variantDownloads, prepareDownloads, startDownloads, artifactDelivery, deploymentSize,
   huggingFaceLocation, modelDownloadCommand,
 } from "./downloads.js";
 import { runProfile } from "./branch-builds.js";
-import { config, shows, state, elements } from "./state.js";
+import { config, state, elements } from "./state.js";
 import { icons, escapeHtml, branchName, showToast, profileLabel, variantLabel } from "./ui.js";
 import { formatBytes } from "./metrics.js";
 import { api } from "./api.js";
@@ -116,9 +116,7 @@ export async function downloadPackage(runId) {
     const artifact = (summary.artifacts || []).find((item) => item.artifact_type === "model-package");
     if (!run || !artifact) throw new Error("No complete package is available for this build.");
     const metadata = run.metadata || {};
-    const packageId = metadata.package_id;
     const profile = variantLabel(metadata.build_profile_id);
-    const components = Object.keys(metadata.component_run_ids);
     // The registry serves the package under its published filename: a ZIP, or the MPK of a build published before ZIPs.
     const downloads = await prepareDownloads([{
       runId: run.id,
@@ -127,7 +125,6 @@ export async function downloadPackage(runId) {
       size: deploymentSize(artifact), artifact, delivery: artifactDelivery(artifact),
     }], api);
     const filename = downloads[0].filename;
-    const format = packageFormat(artifact, filename);
     if (request !== downloadRequest || !dialog.open) return;
     if (downloads.some((item) => item.delivery !== "archive" && item.delivery)) {
       showFolderDownload(run, downloads);
@@ -140,7 +137,6 @@ export async function downloadPackage(runId) {
     const redistribution = license.redistribution
       ? `${license.spdx || "License"} · redistribution ${license.redistribution}`
       : license.spdx || "Not recorded";
-    const componentLabel = `${components.length} ${components.length === 1 ? "component" : "components"}`;
     const modelName = state.models.find((model) => model.model_id === metadata.model_id)?.display_name
       || metadata.model_id || "model";
     elements["download-title"].textContent = `Download ${modelName}`;
@@ -149,10 +145,7 @@ export async function downloadPackage(runId) {
     elements["download-package-info"].classList.add("download-package-summary");
     elements["download-package-info"].innerHTML = `
       <div class="download-filename"><dt>File name</dt><dd><code>${escapeHtml(filename)}</code></dd></div>
-      ${!shows.packageFacts ? "" : `<div class="download-technical-fact"><dt>Package</dt><dd>${escapeHtml(packageId)} · ${escapeHtml(componentLabel)} · ${escapeHtml(format)}</dd></div>
-        <div class="download-technical-fact"><dt>SHA-256</dt><dd><code>${escapeHtml(artifact.sha256 || "Not recorded")}</code></dd></div>`}
-      <div class="download-license"><dt>License</dt><dd>${escapeHtml(redistribution)}</dd></div>
-      ${shows.packageFacts && license.attribution ? `<div class="download-technical-fact"><dt>Attribution</dt><dd>${escapeHtml(license.attribution)}</dd></div>` : ""}`;
+      <div class="download-license"><dt>License</dt><dd>${escapeHtml(redistribution)}</dd></div>`;
     const note = elements["download-dialog"].querySelector(".download-note");
     note.hidden = true;
     note.textContent = "";

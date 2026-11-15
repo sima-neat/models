@@ -85,7 +85,6 @@ customers see would be a line such as `customerNotice: !developer`.
 | `mlaUtilization` | MLA Utilization under Performance |
 | `evaluationDetails` | how an accuracy run was evaluated |
 | `referenceTables` | the tables of published and FP32 baseline scores |
-| `packageFacts` | the package ID, format, and attribution in the download dialog |
 
 Three customer-view rules live outside this list, and the header of `audience.js` names
 them. `styles.css` hides `.developer-only` markup, and the branch and compiler tags.
