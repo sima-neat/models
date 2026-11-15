@@ -15,7 +15,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-from .board_telemetry import BoardTelemetry
+from .board_telemetry import BoardTelemetry, stop_active_recording
 
 NEW_TOKENS = 256
 REPETITIONS = 5
@@ -363,6 +363,7 @@ def run_benchmark(deployment: Path, output: Path, baseline: Path | None = None) 
     names, skipped = _speculative_datasets(deployment, baseline_deployment, bool(vision)) if speculative else ((), {})
     for name, reason in skipped.items():
         print(f"Skipping {name} for both deployments: {reason}", flush=True)
+    stop_active_recording()
     threads = torch.get_num_threads()
     try:
         torch.set_num_threads(1)

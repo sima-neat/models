@@ -36,6 +36,14 @@ def request(method: str, path: str, payload=None):
         connection.close()
 
 
+def stop_active_recording() -> None:
+    """Stop any existing capture before an exclusive benchmark run."""
+    trace = request("GET", "/v1/traces/active")["trace"]
+    if trace is not None:
+        print(f"Stopping existing Sentinel recording {trace['id']}", flush=True)
+        request("POST", f"/v1/traces/{quote(trace['id'], safe='')}/stop")
+
+
 def summarize(run: dict) -> dict:
     """Use the same sensor selection, units and statistics as Core's BenchmarkTelemetry."""
     samples = run.get("samples", [])
