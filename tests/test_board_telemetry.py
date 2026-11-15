@@ -91,6 +91,16 @@ def test_trace_excludes_warmup_and_stops_only_its_id_even_if_generation_raises()
     assert sampler.report()["telemetry"]["samples"] == 2
 
 
+@pytest.mark.parametrize("trace", [None, {"id": "previous/id"}])
+def test_benchmark_start_stops_an_existing_recording_if_present(trace):
+    with patch.object(board, "request", side_effect=[{"trace": trace}, {}]) as request:
+        board.stop_active_recording()
+    assert [call.args[:2] for call in request.call_args_list] == [
+        ("GET", "/v1/traces/active"),
+        *([("POST", "/v1/traces/previous%2Fid/stop")] if trace else []),
+    ]
+
+
 def test_busy_sentinel_fails_before_generation_without_stopping_another_trace():
     sampler = board.BoardTelemetry("image")
     with patch.object(board, "request", side_effect=RuntimeError("another trace is active")) as request:

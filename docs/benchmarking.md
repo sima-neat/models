@@ -477,6 +477,8 @@ speculative/baseline decode TPS, excluding prompt processing and the first token
 labels decode TPS as generation speed and the non-speculative comparison as Baseline.
 Power, temperature, CPU and memory are recorded
 per workload and deployment. Failed requests prevent publication.
+The benchmark assumes exclusive use of the DevKit and stops any existing
+Sentinel recording once at startup.
 
 For local runs, use MoLE with `PYTHONPATH=tools` and the model's `performance.py`
 with `--deployment`, `--output` and, for speculative models, `--baseline` pointing
