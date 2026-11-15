@@ -7,10 +7,9 @@
 RF-DETR Seg Medium finds everyday objects in an image and returns a box, a
 class, a score, and a pixel mask for each. Use it to cut objects out of a scene
 or measure their shape and area. It knows the COCO classes and predicts each
-object once, so no overlapping boxes need removing. It is the Medium size of
-Roboflow's RF-DETR instance segmenter. The larger sizes are more accurate and
-slower. Your application picks the 200 best candidate boxes on the CPU between
-the model's two parts.
+object once, so no overlapping boxes need removing. It comes from Roboflow. Your
+application picks the 200 best candidate boxes on the CPU between the model's
+two parts.
 
 ## Inputs
 

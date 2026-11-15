@@ -8,7 +8,7 @@ LFM2.5-VL-1.6B answers questions about an image, describes what it shows, and
 holds a text conversation. Use it to caption images, answer questions about a
 camera frame, or chat about a picture. Your application sends a prompt, with or
 without an image, and gets the answer back as text, complete or streamed as it
-is generated. It is the 1.6B size of the LFM2.5-VL family from Liquid AI.
+is generated. It comes from Liquid AI.
 
 *Image resolution and maximum context length can be changed when recompiling the model.*
 

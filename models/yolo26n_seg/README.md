@@ -7,10 +7,8 @@
 YOLO26n-seg finds everyday objects in an image and returns a box, a class, a
 score, and a pixel mask that traces the outline of each one. Use it to cut
 objects out, measure their area, or blur them. It knows only the 80 object
-classes of the COCO dataset. It is the smallest of the five YOLO26 segmentation
-sizes from Ultralytics; the larger sizes are more accurate and slower. Each
-object is predicted once, so your application does not need to remove
-overlapping boxes.
+classes of the COCO dataset. It comes from Ultralytics. Each object is predicted
+once, so your application does not need to remove overlapping boxes.
 
 ## Inputs
 

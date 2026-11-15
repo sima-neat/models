@@ -8,7 +8,7 @@ Qwen3-VL-2B Instruct answers questions about an image, describes what it shows,
 and holds a text conversation. Use it to caption images, answer questions about
 a camera frame, or chat about a picture. Your application sends a prompt, with
 or without an image, and gets the answer back as text, complete or streamed as
-it is generated. It is the 2B size of the Qwen3-VL family from Alibaba Cloud.
+it is generated. It comes from Alibaba Cloud.
 
 *Image resolution and maximum context length can be changed when recompiling the model.*
 

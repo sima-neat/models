@@ -8,7 +8,7 @@ Gemma 4 E4B Text answers questions, summarizes documents, rewrites text, and
 holds a conversation. Use it for a chat assistant, document summaries, or
 pulling facts out of text. Your application sends a prompt and gets the answer
 back as text, complete or streamed as it is generated. This variant accepts no
-images. It is the E4B size of the Gemma 4 family from Google.
+images. It comes from Google.
 
 *Maximum context length can be changed when recompiling the model.*
 

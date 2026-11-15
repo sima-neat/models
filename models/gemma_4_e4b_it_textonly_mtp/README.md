@@ -9,8 +9,7 @@ holds a conversation. Use it for a chat assistant, document summaries, or
 pulling facts out of text. Your application sends a prompt and gets the answer
 back as text, complete or streamed as it is generated. This variant accepts no
 images and speeds up generation: a small MTP assistant model in the package
-proposes tokens and the main model checks each one. It is the E4B size of the
-Gemma 4 family from Google.
+proposes tokens and the main model checks each one. It comes from Google.
 
 *Maximum context length can be changed when recompiling the model.*
 

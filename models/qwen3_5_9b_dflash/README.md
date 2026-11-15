@@ -9,8 +9,8 @@ holds a text conversation. Use it to caption images, answer questions about a
 camera frame, or chat about a picture. Your application sends a prompt, with or
 without an image, and gets the answer back as text, complete or streamed as it
 is generated. This variant speeds up generation: a small DFlash assistant model
-in the package proposes tokens and the main model checks each one. It is the 9B
-size of the Qwen3.5 family from Alibaba Cloud.
+in the package proposes tokens and the main model checks each one. It comes from
+Alibaba Cloud.
 
 *Image resolution and maximum context length can be changed when recompiling the model.*
 

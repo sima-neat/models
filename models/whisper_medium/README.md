@@ -8,8 +8,8 @@ Whisper Medium turns speech into text. Use it for voice interfaces, dictation,
 and transcripts of short recordings in many languages. Your application supplies
 an audio recording and gets its transcription back as text. You can select the
 spoken language or let the model detect it. It handles at most 30 seconds of
-audio at a time, and it returns no speaker labels or word timestamps. It is the
-Medium size of the Whisper family from OpenAI.
+audio at a time, and it returns no speaker labels or word timestamps. It comes
+from OpenAI.
 
 ## Inputs
 

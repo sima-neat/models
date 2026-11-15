@@ -5,14 +5,13 @@
 ## Overview
 
 LightStereo-S uses the two images of a stereo camera to estimate how far away
-each pixel is. Use it for obstacle avoidance, 3D measurement, and navigation.
-It returns a disparity map for the left image: for each pixel, how many pixels
-to the left the same point appears in the right image. Nearer surfaces have
-larger disparity, and your application turns disparity into distance with the
-camera's focal length and baseline. The pair must be rectified and passed side
-by side in one frame. It covers disparities up to 188 pixels and was trained on
-the synthetic Scene Flow dataset. It is the smallest of the three LightStereo
-sizes from OpenStereo.
+each pixel is. Use it for obstacle avoidance, 3D measurement, and navigation. It
+returns a disparity map for the left image: for each pixel, how many pixels to
+the left the same point appears in the right image. Nearer surfaces have larger
+disparity, and your application turns disparity into distance with the camera's
+focal length and baseline. The pair must be rectified and passed side by side in
+one frame. It covers disparities up to 188 pixels and was trained on the
+synthetic Scene Flow dataset. It comes from OpenStereo.
 
 ## Inputs
 

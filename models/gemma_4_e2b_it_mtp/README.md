@@ -9,8 +9,8 @@ holds a text conversation. Use it to caption images, answer questions about a
 camera frame, or chat about a picture. Your application sends a prompt, with or
 without an image, and gets the answer back as text, complete or streamed as it
 is generated. This variant speeds up generation: a small MTP assistant model in
-the package proposes tokens and the main model checks each one. It is the E2B
-size of the Gemma 4 family from Google.
+the package proposes tokens and the main model checks each one. It comes from
+Google.
 
 *Image resolution and maximum context length can be changed when recompiling the model.*
 

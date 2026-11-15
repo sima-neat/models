@@ -8,8 +8,7 @@ ResNet-50 sorts an image into one of the 1,000 ImageNet classes, such as
 animals, vehicles, and household objects. Use it to tag or sort photos, or to
 check what a camera is looking at. It returns one score for each class, and your
 application reports the most likely ones. It names the main subject of the image
-and does not locate it. It is the 50-layer size of the ResNet family. The
-package uses Microsoft's ImageNet weights.
+and does not locate it. The package uses Microsoft's ImageNet weights.
 
 ## Inputs
 

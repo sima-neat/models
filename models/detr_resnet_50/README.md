@@ -8,8 +8,8 @@ DETR ResNet-50 finds everyday objects in an image and returns a box, a class,
 and a score for each. Use it to count, track, or monitor objects in camera
 streams. It knows the COCO classes and returns at most 100 detections per image.
 It is the smaller of the two original DETR detectors from Facebook AI Research,
-with a ResNet-50 backbone. The ResNet-101 one is more accurate and slower. Each
-object is predicted once, so there are no overlapping boxes to remove.
+with a ResNet-50 backbone. Each object is predicted once, so there are no
+overlapping boxes to remove.
 
 ## Inputs
 

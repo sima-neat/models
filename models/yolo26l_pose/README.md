@@ -8,9 +8,8 @@ YOLO26l-pose finds each person in an image and adds 17 body keypoints to the
 box, such as the eyes, shoulders, and knees. Use it for activity analysis,
 fitness coaching, or fall detection. It returns a box, a score, and the
 keypoints for each person, each keypoint with a position and a visibility score.
-It detects people only. It is the second largest of the five YOLO26 pose sizes
-from Ultralytics; the larger sizes are more accurate and slower. Each person is
-predicted once, so your application does not need to remove overlapping boxes.
+It detects people only. It comes from Ultralytics. Each person is predicted
+once, so your application does not need to remove overlapping boxes.
 
 ## Inputs
 

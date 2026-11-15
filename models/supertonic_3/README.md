@@ -7,9 +7,9 @@
 Supertonic 3, from Supertone, speaks text, for voice interfaces, spoken alerts,
 and narration. It turns a sentence of up to about 180 characters, in one of 31
 languages and ten voices, into up to 13.4 seconds of 44.1 kHz audio. Your
-application runs two text models on the CPU. A vector estimator turns
-noise into speech features over eight steps, with a CPU update after each, and
-a vocoder turns them into sound.
+application runs two text models on the CPU. A vector estimator turns noise into
+speech features over eight steps, with a CPU update after each, and a vocoder
+turns them into sound.
 
 ## Inputs
 

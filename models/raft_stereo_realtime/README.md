@@ -9,10 +9,10 @@ far away each pixel is. Use it for obstacle avoidance, 3D measurement, and
 navigation. It returns a disparity map for the left image: for each pixel, how
 many pixels to the left the same point appears in the right image. Nearer
 surfaces have larger disparity, and your application turns disparity into
-distance with the camera's focal length and baseline. The pair must be
-rectified and passed side by side in one frame. It is the realtime
-configuration of RAFT-Stereo from Princeton University's Vision & Learning Lab,
-the fastest one the authors release.
+distance with the camera's focal length and baseline. The pair must be rectified
+and passed side by side in one frame. It is the realtime configuration of
+RAFT-Stereo from Princeton University's Vision & Learning Lab, the fastest one
+the authors release.
 
 ## Inputs
 

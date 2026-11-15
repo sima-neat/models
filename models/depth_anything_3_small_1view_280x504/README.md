@@ -4,13 +4,13 @@
 
 ## Overview
 
-Depth Anything 3 Small estimates how far away every pixel of an image is, from
-a single camera view. Use it for obstacle avoidance, scene understanding, or
+Depth Anything 3 Small estimates how far away every pixel of an image is, from a
+single camera view. Use it for obstacle avoidance, scene understanding, or
 separating near surfaces from far ones. It returns a depth map and a matching
 confidence map that marks uncertain regions. The depth is relative: the values
 are not meters. This package takes one 280×504 image at a time, which suits a
-16:9 camera, and needs no camera pose, focal length, or second view. It does
-not return the camera pose or the rays of the original model.
+16:9 camera, and needs no camera pose, focal length, or second view. It does not
+return the camera pose or the rays of the original model.
 
 ## Inputs
 

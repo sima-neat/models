@@ -69,10 +69,12 @@ Open with the task in words a non-specialist uses. Then name two or three applic
 Rules for the rest of the overview:
 
 - Give the result as the application sees it, not as tensors.
-- Give the origin and the place in the family in one clause each. Write the family clause the same way for every size, so the sizes differ only in the word that places them.
+- Give the origin in one short sentence, such as "It comes from Ultralytics." Do not restate what the name already says: the size, the family, or the version.
+- Do not compare sizes. "The larger sizes are more accurate and slower" is true of every family, so it tells the reader nothing, and it reads wrongly on the largest size.
+- Before keeping a sentence, ask what the reader would lose without it. Remove it when the answer is nothing.
 - Name a surprise when there is one: the model needs another model first, its result is relative and not metric, it knows a fixed class list, it handles a fixed number of items.
 - Leave out the architecture, the training method, and the number of components, unless the application has to act on them. A model with a CPU step between two components says so, because the application writes that step.
-- Do not make a speed or accuracy claim with a number. "The larger sizes are more accurate and slower" is the limit.
+- Do not make a speed or accuracy claim. The model page shows the measured values.
 
 ## Inputs and Outputs sections
 
@@ -91,7 +93,7 @@ returns, and how to decode it. They are brief, precise, and the same shape on ev
 ## Keeping a family consistent
 
 Write one README of a family first, check it, then derive the other sizes from it by
-changing values only: the name, the size word, the input size, the grid sizes, the counts.
+changing values only: the name, the input size, the grid sizes, the counts.
 Compare two sizes with `diff` before a pull request. Any difference that is not a value is
 a mistake in one of them.
 

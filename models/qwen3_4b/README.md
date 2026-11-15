@@ -7,8 +7,7 @@
 Qwen3-4B answers questions, summarizes documents, rewrites text, and holds a
 conversation. Use it for a chat assistant, document summaries, or pulling facts
 out of text. Your application sends a prompt and gets the answer back as text,
-complete or streamed as it is generated. It is the 4B size of the Qwen3 family
-from Alibaba Cloud.
+complete or streamed as it is generated. It comes from Alibaba Cloud.
 
 *Maximum context length can be changed when recompiling the model.*
 

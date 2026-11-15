@@ -9,8 +9,7 @@ text, and holds a conversation. Use it for a chat assistant, document summaries,
 or pulling facts out of text. Your application sends a prompt and gets the
 answer back as text, complete or streamed as it is generated. This variant
 speeds up generation: a small DFlash assistant model in the package proposes
-tokens and the main model checks each one. It is the 8B size of the Llama 3.1
-family from Meta.
+tokens and the main model checks each one. It comes from Meta.
 
 *Maximum context length can be changed when recompiling the model.*
 

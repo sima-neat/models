@@ -7,8 +7,7 @@
 Llama 3.1 8B Instruct answers questions, summarizes documents, rewrites text,
 and holds a conversation. Use it for a chat assistant, document summaries, or
 pulling facts out of text. Your application sends a prompt and gets the answer
-back as text, complete or streamed as it is generated. It is the 8B size of the
-Llama 3.1 family from Meta.
+back as text, complete or streamed as it is generated. It comes from Meta.
 
 *Maximum context length can be changed when recompiling the model.*
 

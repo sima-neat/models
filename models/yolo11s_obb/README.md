@@ -7,9 +7,8 @@
 YOLO11s-obb finds objects in aerial images, such as planes and ships, and
 returns a rotated box, a class, and a score for each one. Use it for aerial
 surveys or port monitoring. It knows only the 15 DOTA aerial classes. Your
-application cuts large images into overlapping windows first. It is the second
-smallest of the five YOLO11 oriented-box sizes from Ultralytics; the larger
-sizes are more accurate and slower.
+application cuts large images into overlapping windows first. It comes from
+Ultralytics.
 
 ## Inputs
 

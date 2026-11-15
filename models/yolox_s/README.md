@@ -7,8 +7,7 @@
 YOLOX-s finds everyday objects in an image, such as people, vehicles, and
 animals, and returns a box, a class, and a score for each one. Use it to count,
 track, or monitor objects in live camera streams. It knows the 80 COCO classes.
-It is the S size of the YOLOX detector from Megvii. The larger sizes are more
-accurate and slower. It expects blue, green, red color order and unscaled pixel
+It comes from Megvii. It expects blue, green, red color order and unscaled pixel
 values.
 
 ## Inputs

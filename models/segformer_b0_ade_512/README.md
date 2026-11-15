@@ -7,10 +7,10 @@
 SegFormer-B0 labels every pixel of a scene with one of 150 classes, such as
 wall, sky, floor, tree, person, and car. Use it to find free floor for a robot,
 to separate road, sky, and buildings in outdoor scenes, or to replace a
-background. It returns one class per pixel and does not tell objects of the
-same class apart. It is the smallest size of NVIDIA's SegFormer, fine-tuned on
-ADE20K. It predicts at a quarter of the input resolution, and the result
-is resized to the image.
+background. It returns one class per pixel and does not tell objects of the same
+class apart. It is the smallest size of NVIDIA's SegFormer, fine-tuned on
+ADE20K. It predicts at a quarter of the input resolution, and the result is
+resized to the image.
 
 ## Inputs
 

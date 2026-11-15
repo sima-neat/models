@@ -6,10 +6,10 @@
 
 Depth Anything V2 Small estimates how far away every pixel of an image is, from
 a single camera and without a depth sensor. Use it for obstacle avoidance, for
-separating foreground from background, or for 3D effects. It returns a depth
-map where larger values are closer. The depth is relative: the values have an
-unknown scale and offset, so your application aligns them to real distances
-when it needs them. It is the Small size of the Depth Anything V2 family.
+separating foreground from background, or for 3D effects. It returns a depth map
+where larger values are closer. The depth is relative: the values have an
+unknown scale and offset, so your application aligns them to real distances when
+it needs them.
 
 ## Inputs
 

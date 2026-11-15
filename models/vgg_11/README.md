@@ -9,8 +9,8 @@ vehicles, and household objects. Use it to tag or sort photos, or to check what
 a camera is looking at. It returns one score for each class, and your
 application reports the most likely ones. It names the main subject of the image
 and does not locate it. It is the 11-layer depth of the VGG family, in the
-variant without batch normalization. Deeper sizes are more accurate and slower.
-The package uses torchvision's ImageNet weights (IMAGENET1K_V1).
+variant without batch normalization. The package uses torchvision's ImageNet
+weights (IMAGENET1K_V1).
 
 ## Inputs
 

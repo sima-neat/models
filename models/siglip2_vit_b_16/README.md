@@ -6,11 +6,11 @@
 
 SigLIP 2 ViT-B/16 matches images with text. Use it to search images with a
 written query, or to sort images into classes that you describe in words,
-without training. Its two encoders from Google, one for images and one for
-text, each return an embedding, a list of numbers. A matching image and
-description have a high cosine similarity. Your application tokenizes the text
-on the CPU and compares the embeddings itself. Encode class descriptions once
-and reuse their embeddings for every image.
+without training. Its two encoders from Google, one for images and one for text,
+each return an embedding, a list of numbers. A matching image and description
+have a high cosine similarity. Your application tokenizes the text on the CPU
+and compares the embeddings itself. Encode class descriptions once and reuse
+their embeddings for every image.
 
 ## Inputs
 
