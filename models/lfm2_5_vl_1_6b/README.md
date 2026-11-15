@@ -12,9 +12,7 @@ is generated. It is the 1.6B size of the LFM2.5-VL family from Liquid AI.
 
 *Image resolution and maximum context length can be changed when recompiling the model.*
 
-## Inputs and outputs
-
-### Inputs
+## Inputs
 
 One text prompt, an optional image, and the earlier messages when you continue a conversation.
 
@@ -22,7 +20,7 @@ One text prompt, an optional image, and the earlier messages when you continue a
 - `image`: for an image request, an image decoded as RGB. The GenAI API applies the bundled processor settings for the 512×512 input. Do not normalize the pixels yourself.
 - Earlier messages: pass them to continue a conversation. Start a new conversation when they should no longer influence the answer.
 
-### Outputs
+## Outputs
 
 The answer as text.
 

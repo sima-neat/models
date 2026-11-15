@@ -12,9 +12,7 @@ one embedding for the whole image and one for each cell of a 14×14 grid. It
 names no objects on its own; your application compares the embeddings. It is the
 Small size of Meta's DINOv3 ViT family.
 
-## Inputs and outputs
-
-### Inputs
+## Inputs
 
 One 224×224 RGB image, normalized with the ImageNet mean and standard deviation.
 
@@ -25,7 +23,7 @@ Neat's resize does not antialias, so shrinking a large frame changes the
 embeddings noticeably. For search and grouping, downscale the frame to 224×224
 on the CPU with an antialiased filter and pass that image.
 
-### Outputs
+## Outputs
 
 Two embedding tensors. Neat has no decoder for them; your application uses them directly.
 

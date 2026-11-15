@@ -16,15 +16,17 @@ from model_registry.documentation import (
 from model_registry.errors import ValidationError
 from model_registry.model import load_model
 
-# The fixture's Inputs and outputs text, which tests replace to inject content.
+# The second paragraph of the fixture's Inputs section, which tests replace to inject content.
 _CONTENT = "Content for inputs and outputs."
-_INPUTS_AND_OUTPUTS = f"### Inputs\n\nOne image.\n\n{_CONTENT}\n\n### Outputs\n\nOne score."
 
 
 def _readme(overview: str, *, title: str = "Fixture Model") -> str:
     sections = []
     for heading in REQUIRED_SECTIONS:
-        body = {"Overview": overview, "Building applications": BUILDING_APPLICATIONS}.get(heading, _INPUTS_AND_OUTPUTS)
+        body = {
+            "Overview": overview, "Inputs": f"One image.\n\n{_CONTENT}", "Outputs": "One score.",
+            "Building applications": BUILDING_APPLICATIONS,
+        }[heading]
         sections.append(f"## {heading}\n\n{body}")
     return f"# {title}\n\n![{title} model hero](hero.png)\n\n" + "\n\n".join(sections) + "\n"
 
@@ -133,7 +135,7 @@ def test_repository_model_readme_shell_blocks_do_not_use_redirection_shaped_plac
     [
         (_readme(_overview(), title="Wrong title"), "H1 must exactly match"),
         (_readme(_overview()).replace("(hero.png)", "(https://example.invalid/hero.png)"), "must begin with H1"),
-        (_readme(_overview()).replace("## Inputs and outputs", "## Using the model"), "H2 sections must be"),
+        (_readme(_overview()).replace("## Inputs", "## Using the model"), "H2 sections must be"),
         (
             _readme(_overview()).replace(_CONTENT, f"{_CONTENT} <h2>Unexpected</h2>"),
             "H2 sections must be",
@@ -165,20 +167,26 @@ def test_repository_model_readme_shell_blocks_do_not_use_redirection_shaped_plac
             f"at most {MAX_README_WORDS} words",
         ),
         (_readme(_overview()).replace(_CONTENT, "Run the MPKs on the board."), "uses 'MPKs'"),
-        (_readme(_overview()).replace(_CONTENT, "Gather boxes on the A65."), "line 15 uses 'A65'"),
+        (_readme(_overview()).replace(_CONTENT, "Gather boxes on the A65."), "line 13 uses 'A65'"),
         (_readme(_overview()).replace(_CONTENT, "Benchmarked at 30 FPS."), "uses 'Benchmark'"),
         (_readme(_overview()).replace(_CONTENT, "Reports COCO mAP."), "uses 'mAP'"),
         (_readme(_overview()).replace(_CONTENT, "Install with sima-cli."), "uses 'sima-cli'"),
-        (_readme(_overview()).replace("### Inputs\n\n", ""), "must hold the H3 headings Inputs and Outputs"),
-        (_readme(_overview()).replace("### Outputs\n\n", ""), "must hold the H3 headings Inputs and Outputs"),
-        (_readme(_overview()).replace("### Outputs", "### Inputs"), "must hold the H3 headings Inputs and Outputs"),
-        (_readme(_overview()).replace("### Inputs", "### Outputs", 1), "must hold the H3 headings Inputs and Outputs"),
+        (_readme(_overview()).replace("## Outputs\n\n", ""), "H2 sections must be"),
+        (_readme(_overview()).replace("## Inputs\n\n", ""), "H2 sections must be"),
+        (_readme(_overview()).replace("## Outputs", "## Output"), "H2 sections must be"),
         (
-            _readme(_overview()).replace(_CONTENT, "### Between the components\n\nText.\n\n### Inputs"),
-            "must hold the H3 headings Inputs and Outputs",
+            _readme(_overview()).replace("## Inputs", "## Results").replace("## Outputs", "## Inputs"),
+            "H2 sections must be",
         ),
-        (_readme(_overview()).replace("### Inputs", "### Input"), "H2 sections must be"),
-        (_readme(_overview(46) + "\n\n### Inputs"), "H2 sections must be"),
+        (
+            _readme(_overview()).replace("## Inputs", "## Between the components\n\nText.\n\n## Inputs"),
+            "H2 sections must be",
+        ),
+        (
+            _readme(_overview()).replace("## Building", "## Between the components\n\nText.\n\n## Building"),
+            "H2 sections must be",
+        ),
+        (_readme(_overview()).replace(_CONTENT, "### Inputs"), "H2 sections must be"),
     ],
 )
 def test_model_readme_contract_rejects_invalid_content(tmp_path: Path, markdown: str, message: str) -> None:
@@ -206,7 +214,7 @@ def test_model_readme_contract_accepts_plain_words_near_banned_terms(tmp_path: P
 def test_model_readme_contract_accepts_a_step_between_the_components(tmp_path: Path) -> None:
     model_dir = tmp_path / "models" / "fixture"
     model_dir.mkdir(parents=True)
-    markdown = _readme(_overview()).replace(_CONTENT, "### Between the components\n\nSelect the proposals.")
+    markdown = _readme(_overview()).replace(_CONTENT, "Text.\n\n## Between the components\n\nSelect the proposals.")
     (model_dir / "README.md").write_text(markdown, encoding="utf-8")
     (model_dir / "hero.png").write_bytes(_png())
 
@@ -217,8 +225,8 @@ def test_model_readme_word_limit_ignores_table_layout(tmp_path: Path) -> None:
     model_dir = tmp_path / "models" / "fixture"
     model_dir.mkdir(parents=True)
     # The limit counts from "## Overview", after the three words of the H1 and the four of the hero line, and
-    # skips the marks of the five H2 and H3 headings.
-    fixed_words = len(_readme(_overview()).replace(_CONTENT, "").split()) - 7 - 5
+    # skips the marks of the four H2 headings.
+    fixed_words = len(_readme(_overview()).replace(_CONTENT, "").split()) - 7 - 4
     cells = MAX_README_WORDS - fixed_words - 2
     table = "| Tensor | Holds |\n| --- | :-- |\n" + "\n".join(f"| `t{index}` |" for index in range(cells))
     (model_dir / "README.md").write_text(_readme(_overview()).replace(_CONTENT, table), encoding="utf-8")

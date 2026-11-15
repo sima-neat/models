@@ -12,9 +12,7 @@ are not meters. This package takes one 378×504 image at a time, which suits a
 4:3 camera, and needs no camera pose, focal length, or second view. It does
 not return the camera pose or the rays of the original model.
 
-## Inputs and outputs
-
-### Inputs
+## Inputs
 
 One 378×504 (height × width) RGB image, normalized with the ImageNet mean and standard deviation.
 
@@ -24,7 +22,7 @@ One 378×504 (height × width) RGB image, normalized with the ImageNet mean and 
 Neat's letterbox pads the frame, where the manual path crops it. With Neat, the
 two maps therefore also cover the padded border.
 
-### Outputs
+## Outputs
 
 A depth map and a confidence map, one value per input pixel. Neat has no decoder for them.
 

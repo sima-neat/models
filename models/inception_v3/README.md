@@ -11,9 +11,7 @@ application reports the most likely ones. It names the main subject of the image
 and does not locate it. It is the third version of Google's Inception
 classifier. The package uses torchvision's ImageNet weights (IMAGENET1K_V1).
 
-## Inputs and outputs
-
-### Inputs
+## Inputs
 
 One 299×299 RGB image, normalized to values from −1 to 1.
 
@@ -25,7 +23,7 @@ The center crop keeps the proportions and drops the edges. The original model
 expects the resize and center crop, so prepare the image yourself for results
 closest to it.
 
-### Outputs
+## Outputs
 
 One score for each of the 1,000 classes, in `logits`. Neat has no decoder for this model, so your application ranks the scores.
 

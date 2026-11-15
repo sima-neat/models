@@ -12,9 +12,7 @@ description have a high cosine similarity. Your application tokenizes the text
 on the CPU and compares the embeddings itself. Encode class descriptions once
 and reuse their embeddings for every image.
 
-## Inputs and outputs
-
-### Inputs
+## Inputs
 
 **Image:** One 224×224 RGB image for the image encoder, normalized with the mean (0.5, 0.5, 0.5) and standard deviation (0.5, 0.5, 0.5).
 
@@ -26,7 +24,7 @@ and reuse their embeddings for every image.
 1. Lowercase the prompt and tokenize it with the packaged Gemma tokenizer `text_encoder/tokenizer.json`, which appends the end-of-sequence token. Cut longer prompts to 64 tokens and pad shorter ones to 64 with the padding token (ID 0).
 2. Replace each token ID with its 768-value row from `text_encoder/token_embeddings.npy`.
 
-### Outputs
+## Outputs
 
 One tensor per encoder. Neat has no decoder for them.
 

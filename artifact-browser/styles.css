@@ -449,6 +449,8 @@ main { width: min(1240px, 100%); margin: 0 auto; padding: 0 clamp(16px, 4vw, 48p
 .run-identity small.run-components { color: var(--ink-faint); font: 12px var(--font-mono); }
 .model-documentation-body { color: var(--ink-soft); font-size: 15px; line-height: 1.7; }
 .model-documentation-body > :first-child { margin-top: 0; }
+/* The README's first section follows the overview text, so its heading keeps the space above it. */
+[data-model-card-body] .model-documentation-body > h3:first-child { margin-top: 30px; }
 .model-documentation-body > :last-child { margin-bottom: 0; }
 .model-documentation-body h3, .model-documentation-body h4, .model-documentation-body h5 { margin: 30px 0 10px; color: var(--ink); font-weight: 650; line-height: 1.25; }
 .model-documentation-body h3 { font-size: 20px; }

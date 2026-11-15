@@ -12,9 +12,7 @@ matches on the CPU. It does not detect keypoints: run SuperPoint on each image
 first and pass its keypoints, scores, and descriptors. It takes exactly 512
 keypoints per image, so skip a pair when an image yields fewer.
 
-## Inputs and outputs
-
-### Inputs
+## Inputs
 
 Six float tensors: the positions, scores, and descriptors of 512 SuperPoint keypoints for each of two images (0 and 1).
 
@@ -28,7 +26,7 @@ Six float tensors: the positions, scores, and descriptors of 512 SuperPoint keyp
 | `scores0`, `scores1` | 512×1 | keypoint scores |
 | `descriptors0`, `descriptors1` | 512×256 | SuperPoint descriptors |
 
-### Outputs
+## Outputs
 
 Matches between the two images' keypoints, each with a score. Neat has no decoder for them.
 

@@ -10,9 +10,7 @@ without training. Encode each of up to 80 names once and reuse its vector for
 every image. Changing the list can change the other names' detections. It is the L size of Tencent AI
 Lab's YOLO-Worldv2. The larger sizes are more accurate and slower.
 
-## Inputs and outputs
-
-### Inputs
+## Inputs
 
 **Text:** Up to 80 names, each encoded once with the package's `prompt_assets` files.
 
@@ -22,11 +20,11 @@ Lab's YOLO-Worldv2. The larger sizes are more accurate and slower.
 
 **Image:** `images`, one 640×640×3 (height, width, channel) RGB image with values from 0 to 1. Letterbox with bilinear resampling and centered (114, 114, 114) padding, and divide by 255.
 
-### Between the components
+## Between the components
 
 Fill the detector's `text_embeddings`, 1×80×512, with the cached vectors, and set `prompt_mask`, 1×80, to one for used slots, else zero. At least one slot must be used: with no names, skip the detector.
 
-### Outputs
+## Outputs
 
 Detections, each a box, a score, and the slot index of its name.
 

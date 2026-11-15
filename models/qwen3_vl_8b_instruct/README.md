@@ -12,9 +12,7 @@ it is generated. It is the 8B size of the Qwen3-VL family from Alibaba Cloud.
 
 *Image resolution and maximum context length can be changed when recompiling the model.*
 
-## Inputs and outputs
-
-### Inputs
+## Inputs
 
 One text prompt, an optional image, and the earlier messages when you continue a conversation.
 
@@ -22,7 +20,7 @@ One text prompt, an optional image, and the earlier messages when you continue a
 - `image`: for an image request, an image decoded as RGB. The GenAI API applies the bundled processor settings for the 448×448 input. Do not normalize the pixels yourself.
 - Earlier messages: pass them to continue a conversation. Start a new conversation when they should no longer influence the answer.
 
-### Outputs
+## Outputs
 
 The answer as text.
 

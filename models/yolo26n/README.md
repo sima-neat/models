@@ -12,16 +12,14 @@ sizes from Ultralytics; the larger sizes are more accurate and slower. Each
 object is predicted once, so your application does not need to remove
 overlapping boxes.
 
-## Inputs and outputs
-
-### Inputs
+## Inputs
 
 One 640×640 RGB image with values from 0 to 1.
 
 - With Neat: pass your frame as an image, with letterbox resizing and normalization on.
 - Yourself: letterbox the image, that is, resize it with bilinear resampling so its longer side is 640 and center it on a 640×640 gray (114, 114, 114) frame. Divide by 255 and pass a 640×640×3 (height, width, channel) float32 tensor with Neat's preprocessing off.
 
-### Outputs
+## Outputs
 
 Detections, each a box, a class index, and a score.
 

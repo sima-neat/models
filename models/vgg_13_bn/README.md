@@ -12,9 +12,7 @@ and does not locate it. It is the 13-layer depth of the VGG family, in the
 variant with batch normalization. Deeper sizes are more accurate and slower. The
 package uses torchvision's ImageNet weights (IMAGENET1K_V1).
 
-## Inputs and outputs
-
-### Inputs
+## Inputs
 
 One 224×224 RGB image, normalized with the ImageNet mean and standard deviation.
 
@@ -26,7 +24,7 @@ The center crop keeps the proportions and drops the edges. The original model
 expects the resize and center crop, so prepare the image yourself for results
 closest to it.
 
-### Outputs
+## Outputs
 
 One score for each of the 1,000 classes, in `logits`. Neat has no decoder for this model, so your application ranks the scores.
 

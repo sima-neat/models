@@ -11,16 +11,14 @@ application cuts large images into overlapping windows first. It is the smallest
 of the five YOLO11 oriented-box sizes from Ultralytics; the larger sizes are
 more accurate and slower.
 
-## Inputs and outputs
-
-### Inputs
+## Inputs
 
 1024×1024 RGB windows of the image that overlap by 200 pixels, with values from 0 to 1.
 
 - With Neat: pass each window as an image, with letterbox resizing and normalization on.
 - Yourself: letterbox each window to 1024×1024 with bilinear resampling and centered gray (114, 114, 114) padding, divide by 255, and pass a 1024×1024×3 (height, width, channel) float32 tensor with Neat's preprocessing off.
 
-### Outputs
+## Outputs
 
 Detections, each a rotated box, a class index, and a score.
 

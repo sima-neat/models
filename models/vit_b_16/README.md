@@ -12,9 +12,7 @@ and does not locate it. It is the base size of Google's Vision Transformer,
 which reads the image as 16×16 patches. Google pretrained it on ImageNet-21k and
 fine-tuned it on the 1,000 classes of ImageNet-1k.
 
-## Inputs and outputs
-
-### Inputs
+## Inputs
 
 One 224×224 RGB image, normalized to values from −1 to 1.
 
@@ -24,7 +22,7 @@ One 224×224 RGB image, normalized to values from −1 to 1.
 Both paths fit the whole frame into the square without cropping, which is what
 the original model expects.
 
-### Outputs
+## Outputs
 
 One score for each of the 1,000 classes, in `logits`. Neat has no decoder for this model, so your application ranks the scores.
 

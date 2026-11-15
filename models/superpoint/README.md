@@ -11,9 +11,7 @@ drone frames, to link the same scene points for visual odometry, mapping, and
 image alignment. SuperPoint does not match them itself: compare the descriptors
 in your application, or use a matcher such as SuperGlue or LightGlue.
 
-## Inputs and outputs
-
-### Inputs
+## Inputs
 
 One 640×480 (width × height) grayscale image, `image`, with values from 0 to 1.
 
@@ -22,7 +20,7 @@ One 640×480 (width × height) grayscale image, `image`, with values from 0 to 1
 
 Neat's grayscale conversion keeps only the red channel. For the trained color mix, use the manual path.
 
-### Outputs
+## Outputs
 
 Keypoints, each with a position, a score, and a unit-length descriptor.
 

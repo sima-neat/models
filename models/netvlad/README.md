@@ -13,16 +13,14 @@ revisits. It confirms each one by matching local features between the two images
 before it corrects its map. The weights come from Patch-NetVLAD and were trained
 on Pittsburgh street-view images.
 
-## Inputs and outputs
-
-### Inputs
+## Inputs
 
 One RGB image 640 wide by 480 high, normalized with the ImageNet mean and standard deviation.
 
 - With Neat: pass your frame as an image, with stretch resizing and the ImageNet normalization preset.
 - Yourself: resize to 640 wide by 480 high with bilinear resampling, without cropping or padding. Scale to 0–1, subtract (0.485, 0.456, 0.406), divide by (0.229, 0.224, 0.225), and pass a 480×640×3 (height, width, channel) float tensor with Neat's resize, color conversion, and normalization off.
 
-### Outputs
+## Outputs
 
 One place descriptor. Neat has no decoder for it; your application compares descriptors itself.
 

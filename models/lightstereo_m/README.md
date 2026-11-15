@@ -14,9 +14,7 @@ by side in one frame. It covers disparities up to 188 pixels and was trained on
 the synthetic Scene Flow dataset. It is the middle one of the three LightStereo
 sizes from OpenStereo.
 
-## Inputs and outputs
-
-### Inputs
+## Inputs
 
 One 1920×540 RGB frame, `stereo`, normalized with the ImageNet mean and standard deviation. It holds a rectified pair side by side: the left image in the left half, the right image in the right half, and each scene point on the same row in both.
 
@@ -25,7 +23,7 @@ One 1920×540 RGB frame, `stereo`, normalized with the ImageNet mean and standar
 
 The model pads each image to 960×544 itself.
 
-### Outputs
+## Outputs
 
 A disparity map for the left image. Neat has no decoder for it. `disparity` holds one value per pixel of the 960×540 left image, in pixels, from 0 to 188.
 

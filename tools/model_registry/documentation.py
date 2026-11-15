@@ -15,9 +15,9 @@ MAX_HERO_BYTES = 2 * 1024 * 1024
 HERO_FILENAME = "hero.png"
 HERO_WIDTH = 1200
 HERO_HEIGHT = 480
-REQUIRED_SECTIONS = ("Overview", "Inputs and outputs", "Building applications")
-# The H3 headings of Inputs and outputs, in order. A model with one component has no middle one.
-IO_SUBSECTIONS = ("Inputs", "Between the components", "Outputs")
+REQUIRED_SECTIONS = ("Overview", "Inputs", "Outputs", "Building applications")
+# A model with several components describes the CPU step between them in this section, after Inputs.
+OPTIONAL_SECTION = "Between the components"
 # The model page shows the rest: metrics, benchmarks, variants, versions, license, and source links.
 MAX_README_WORDS = 400
 BANNED_TERMS = (
@@ -369,10 +369,9 @@ def _strip_columns(line: str, columns: int) -> str:
     return " " * max(0, column - columns) + line[offset:]
 
 
-def _markdown_h2_sections(lines: list[str]) -> tuple[list[tuple[int, str]], bool, list[str]]:
+def _markdown_h2_sections(lines: list[str]) -> tuple[list[tuple[int, str]], bool]:
     sections = []
     has_invalid_heading = False
-    subsections: list[str] = []
     fence_character = None
     fence_length = 0
     fence_outer_indent = 0
@@ -455,12 +454,7 @@ def _markdown_h2_sections(lines: list[str]) -> tuple[list[tuple[int, str]], bool
             previous_paragraph_context = None
             continue
         if heading := _ATX_HEADING_RE.fullmatch(container_line):
-            if (
-                len(heading.group(1)) == 3 and current_section == "Inputs and outputs" and not list_indents
-                and heading.group(2) in IO_SUBSECTIONS
-            ):
-                subsections.append(heading.group(2))
-            elif not (index == 0 and len(heading.group(1)) == 1):
+            if not (index == 0 and len(heading.group(1)) == 1):
                 has_invalid_heading = True
             previous_paragraph_context = None
             continue
@@ -471,7 +465,7 @@ def _markdown_h2_sections(lines: list[str]) -> tuple[list[tuple[int, str]], bool
             or _THEMATIC_BREAK_RE.fullmatch(paragraph_line)
         )
         previous_paragraph_context = paragraph_context if is_paragraph_text else None
-    return sections, has_invalid_heading, subsections
+    return sections, has_invalid_heading
 
 
 def _repository_regular_file(path: Path, repository: Path, description: str) -> str:
@@ -552,11 +546,13 @@ def load_model_documentation(
             f"model README must begin with H1, blank line, {expected_hero}, blank line, and ## Overview: {readme}"
         )
 
-    sections, has_invalid_heading, subsections = _markdown_h2_sections(lines)
+    sections, has_invalid_heading = _markdown_h2_sections(lines)
     names = tuple(name for _, name in sections)
-    if names != REQUIRED_SECTIONS or has_invalid_heading:
+    with_optional = (*REQUIRED_SECTIONS[:2], OPTIONAL_SECTION, *REQUIRED_SECTIONS[2:])
+    if names not in (REQUIRED_SECTIONS, with_optional) or has_invalid_heading:
         raise ValidationError(
-            f"model README H2 sections must be {', '.join(REQUIRED_SECTIONS)} in order: {readme}"
+            f"model README H2 sections must be {', '.join(REQUIRED_SECTIONS)} in order, "
+            f"with {OPTIONAL_SECTION} allowed after Inputs: {readme}"
         )
     overview_start = sections[0][0] + 1
     overview_end = sections[1][0]
@@ -597,11 +593,6 @@ def load_model_documentation(
             raise ValidationError(
                 f"model README line {number} uses {term.group(0)!r}; write it in plain words: {readme}"
             )
-    if subsections not in (["Inputs", "Outputs"], list(IO_SUBSECTIONS)):
-        raise ValidationError(
-            "model README Inputs and outputs must hold the H3 headings Inputs and Outputs, "
-            f"with Between the components allowed between them: {readme}"
-        )
     # Heading marks, a table's pipes and its divider row are layout, not words.
     readme_words = len([
         word for word in re.findall(r"\S+", "\n".join(lines[4:])) if not _LAYOUT_RE.fullmatch(word)

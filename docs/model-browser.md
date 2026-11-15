@@ -147,7 +147,7 @@ in this order:
 
 1. **Overview.** The `## Overview` section of the README, including
    any model-specific note about changing context length or image resolution
-   during compilation. The **Inputs and outputs** and **Building applications**
+   during compilation. The **Inputs**, **Outputs**, and **Building applications**
    sections appear inline from the
    rest of the README after its checksum is verified, so the title, hero, and
    overview are never shown twice. The README follows the

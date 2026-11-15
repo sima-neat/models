@@ -11,9 +11,7 @@ map where larger values are closer. The depth is relative: the values have an
 unknown scale and offset, so your application aligns them to real distances
 when it needs them. It is the Small size of the Depth Anything V2 family.
 
-## Inputs and outputs
-
-### Inputs
+## Inputs
 
 One 518×686 (height × width) RGB image, normalized with the ImageNet mean and standard deviation.
 
@@ -22,7 +20,7 @@ One 518×686 (height × width) RGB image, normalized with the ImageNet mean and 
 
 The input size fits a 640×480 frame. A frame of another shape is stretched.
 
-### Outputs
+## Outputs
 
 One map of relative inverse depth, where larger is closer. Neat has no decoder for it. `predicted_depth` holds 518×686 values.
 

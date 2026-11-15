@@ -11,16 +11,14 @@ item. Your application runs four components on each frame: an image encoder, a
 memory attention that recalls earlier frames, a mask decoder that returns four
 candidate masks, and a memory encoder that stores the chosen one.
 
-## Inputs and outputs
-
-### Inputs
+## Inputs
 
 One 1024×1024 RGB frame with ImageNet normalization.
 
 - With Neat: pass each frame as an image, with stretch resizing and the ImageNet normalization preset.
 - Yourself: stretch to 1024×1024 (bicubic), scale to 0–1, subtract (0.485, 0.456, 0.406), divide by (0.229, 0.224, 0.225).
 
-### Between the components
+## Between the components
 
 On each frame:
 
@@ -33,7 +31,7 @@ On each frame:
 
 **Memory bank:** `memories` holds seven `memory_encoder` `memory` outputs: the prompted frame's, then the latest six, newest first. `object_pointers` holds sixteen chosen pointers in that order. `memory_mask` and `object_pointer_mask` are 1 for a filled slot, else 0.
 
-### Outputs
+## Outputs
 
 The chosen mask, above 0 on the object. Neat has no decoder for it.
 

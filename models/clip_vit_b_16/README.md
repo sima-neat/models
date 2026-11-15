@@ -12,9 +12,7 @@ high cosine similarity. Your application tokenizes the text on the CPU and
 compares the embeddings itself. Encode class descriptions once and reuse their
 embeddings for every image.
 
-## Inputs and outputs
-
-### Inputs
+## Inputs
 
 **Image:** One 224×224 RGB image for the image encoder, normalized with the mean (0.48145466, 0.4578275, 0.40821073) and standard deviation (0.26862954, 0.26130258, 0.27577711).
 
@@ -29,7 +27,7 @@ frames.
 1. Tokenize the prompt with the packaged `text_encoder/tokenizer.json`. Cut longer prompts to 77 tokens and pad shorter ones to 77 with the end-of-text token (ID 49407).
 2. Replace each token ID with its 512-value row from `text_encoder/token_embeddings.npy`.
 
-### Outputs
+## Outputs
 
 One tensor per encoder. Neat has no decoder for them.
 

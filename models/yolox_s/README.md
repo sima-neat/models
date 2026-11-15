@@ -11,16 +11,14 @@ It is the S size of the YOLOX detector from Megvii. The larger sizes are more
 accurate and slower. It expects blue, green, red color order and unscaled pixel
 values.
 
-## Inputs and outputs
-
-### Inputs
+## Inputs
 
 One 640×640 BGR image with values from 0 to 255.
 
 - With Neat: pass your frame as an image, with letterbox resizing, a pad value of 114, color conversion to BGR, and normalization with mean 0 and standard deviation 1/255.
 - Yourself: letterbox to 640×640 with bilinear resampling and centered (114, 114, 114) padding, and pass a 640×640×3 (height, width, channel) float tensor with Neat's preprocessing off.
 
-### Outputs
+## Outputs
 
 Detections, each a box, a class index, and a score.
 

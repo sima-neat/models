@@ -12,16 +12,14 @@ same class apart. It is the smallest size of NVIDIA's SegFormer, fine-tuned on
 ADE20K. It predicts at a quarter of the input resolution, and the result
 is resized to the image.
 
-## Inputs and outputs
-
-### Inputs
+## Inputs
 
 One 512×512 RGB image, normalized with the ImageNet mean and standard deviation.
 
 - With Neat: pass your frame as an image, with stretch resizing and the ImageNet normalization preset.
 - Yourself: stretch to 512×512 with bilinear resampling, with no crop or padding. Scale to 0–1, subtract (0.485, 0.456, 0.406), and divide by (0.229, 0.224, 0.225). Pass a 512×512×3 (height, width, channel) float tensor.
 
-### Outputs
+## Outputs
 
 One class index for each pixel.
 

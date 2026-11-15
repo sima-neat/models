@@ -11,9 +11,7 @@ probability that the two match, and your application picks the matches on the
 CPU. It does not detect keypoints: run SuperPoint on each image first. It takes
 exactly 512 keypoints per image. It is a feature matcher from ETH Zurich.
 
-## Inputs and outputs
-
-### Inputs
+## Inputs
 
 Four tensors: a position encoding and the descriptors of 512 SuperPoint keypoints for each of two images.
 
@@ -30,7 +28,7 @@ Four tensors: a position encoding and the descriptors of 512 SuperPoint keypoint
 
 For the encoding, normalize the pixel coordinates as (x − 320) / 320 and (y − 240) / 320. Multiply by LightGlue's 32×2 keypoint projection, the checkpoint's `positional_encoder.projector.weight`, to get 32 phases. Repeat each phase twice, and pass the 64 cosines followed by the 64 sines.
 
-### Outputs
+## Outputs
 
 Matches between the two images' keypoints. Neat has no decoder for them.
 

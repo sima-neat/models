@@ -41,17 +41,17 @@ Each part answers one question, in the order the reader asks them.
 | Overview, next | Where would I use it? |
 | Overview, next | What do I get back? |
 | Overview, last | What would surprise me? |
-| `### Inputs`, first sentence | What does the model expect? |
+| `## Inputs`, first sentence | What does the model expect? |
 | With Neat | What does Neat prepare for me? |
 | Yourself | What are the exact steps if I prepare it myself? |
-| `### Outputs`, first sentence | What do I end up with? |
+| `## Outputs`, first sentence | What do I end up with? |
 | With Neat | Does Neat produce that result, and which options do I set? |
 | Tensor table and numbered steps | What are the raw tensors, and how do I decode them myself? |
 
-The two headings are the same on every model page, also for a model with one input, so a
+The two section names are the same on every model page, also for a model with one input, so a
 reader finds the same structure everywhere. A model with several inputs starts each one
 with a bold lead, such as `**Image:**`. A part that has nothing to say is left out, except
-the Neat statement under `### Outputs`. When Neat has no decoder for the model, the README says so, because the
+the Neat statement under `## Outputs`. When Neat has no decoder for the model, the README says so, because the
 reader otherwise searches for one.
 
 ## Overview
@@ -77,7 +77,7 @@ Rules for the rest of the overview:
 - Leave out the architecture, the training method, and the number of components, unless the application has to act on them. A model with a CPU step between two components says so, because the application writes that step.
 - Do not make a speed or accuracy claim with a number. "The larger sizes are more accurate and slower" is the limit.
 
-## Inputs and outputs
+## Inputs and Outputs sections
 
 Put the shortest path first. A reader who uses Neat's preprocessing and decoder should be
 able to stop after the two "With Neat" lines.

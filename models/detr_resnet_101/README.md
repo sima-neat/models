@@ -11,9 +11,7 @@ It is the larger of the two original DETR detectors from Facebook AI Research,
 with a ResNet-101 backbone. The ResNet-101 one is more accurate and slower. Each
 object is predicted once, so there are no overlapping boxes to remove.
 
-## Inputs and outputs
-
-### Inputs
+## Inputs
 
 One 640×640 RGB image, normalized with the ImageNet mean and standard deviation.
 
@@ -23,7 +21,7 @@ One 640×640 RGB image, normalized with the ImageNet mean and standard deviation
 Do not pad the image. The model reads padding as part of the scene, which
 lowers accuracy.
 
-### Outputs
+## Outputs
 
 Up to 100 detections, each a box, a class index, and a score.
 

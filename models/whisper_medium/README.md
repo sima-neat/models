@@ -11,9 +11,7 @@ spoken language or let the model detect it. It handles at most 30 seconds of
 audio at a time, and it returns no speaker labels or word timestamps. It is the
 Medium size of the Whisper family from OpenAI.
 
-## Inputs and outputs
-
-### Inputs
+## Inputs
 
 One audio recording of at most 30 seconds.
 
@@ -21,7 +19,7 @@ One audio recording of at most 30 seconds.
 - Longer recordings: split them into windows of at most 30 seconds.
 - Padding and audio features: the bundled processor supplies them.
 
-### Outputs
+## Outputs
 
 The transcription as text.
 

@@ -11,23 +11,21 @@ The larger sizes are more accurate and slower. The model runs in two parts, and
 your application picks the 300 best candidate boxes on the CPU between them.
 Each object is predicted once, so there are no overlapping boxes to remove.
 
-## Inputs and outputs
-
-### Inputs
+## Inputs
 
 One 512×512 RGB image, normalized with the ImageNet mean and standard deviation.
 
 - With Neat: pass your frame as an image, with stretch resizing and the ImageNet normalization preset.
 - Yourself: stretch to 512×512 with bilinear resampling. Scale to 0–1, subtract (0.485, 0.456, 0.406), divide by (0.229, 0.224, 0.225), and pass a 512×512×3 (height, width, channel) float tensor with Neat's preprocessing off.
 
-### Between the components
+## Between the components
 
 The backbone returns `backbone_features`, `proposal_scores`, and `proposal_boxes`, with 1,024 proposals.
 
 1. Take the 300 highest scores, breaking ties by the lower proposal index.
 2. Gather their boxes in that order and pass them as `proposals`, with `backbone_features`, to the decoder. Keep the order, because the decoder treats each position differently.
 
-### Outputs
+## Outputs
 
 Up to 300 detections, each a box, a class index, and a score. Neat has no decoder for this model, so decode these tensors.
 

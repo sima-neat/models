@@ -12,16 +12,14 @@ Llama 3.1 family from Meta.
 
 *Maximum context length can be changed when recompiling the model.*
 
-## Inputs and outputs
-
-### Inputs
+## Inputs
 
 One text prompt, with the earlier messages when you continue a conversation.
 
 - `prompt`: the question or instruction, with any source text it refers to. Let the GenAI API apply the bundled chat template.
 - Earlier messages: pass them to continue a conversation. Start a new conversation when they should no longer influence the answer.
 
-### Outputs
+## Outputs
 
 The answer as text.
 
