@@ -14,7 +14,9 @@ keypoints per image, so skip a pair when an image yields fewer.
 
 ## Inputs and outputs
 
-**Input.** Six float tensors: the positions, scores, and descriptors of 512 SuperPoint keypoints for each of two images (0 and 1).
+### Inputs
+
+Six float tensors: the positions, scores, and descriptors of 512 SuperPoint keypoints for each of two images (0 and 1).
 
 1. Run SuperPoint on each grayscale image resized to 640×480, with a score threshold of 0.0005 (not SuperPoint's usual 0.005), suppression within 4 pixels, and no keypoints within 4 pixels of an edge.
 2. Keep the 512 highest-scoring keypoints. If an image yields fewer, skip the pair: padded keypoints would take part in the matching.
@@ -26,7 +28,9 @@ keypoints per image, so skip a pair when an image yields fewer.
 | `scores0`, `scores1` | 512×1 | keypoint scores |
 | `descriptors0`, `descriptors1` | 512×256 | SuperPoint descriptors |
 
-**Outputs.** Matches between the two images' keypoints, each with a score. Neat has no decoder for them.
+### Outputs
+
+Matches between the two images' keypoints, each with a score. Neat has no decoder for them.
 
 `couplings` is 1×1×513×513. As a 513×513 matrix, entry (i, j) scores image-0 keypoint i against image-1 keypoint j. Index 512 is each image's unmatched option.
 

@@ -14,12 +14,16 @@ is resized to the image.
 
 ## Inputs and outputs
 
-**Input.** One 512×512 RGB image, normalized with the ImageNet mean and standard deviation.
+### Inputs
+
+One 512×512 RGB image, normalized with the ImageNet mean and standard deviation.
 
 - With Neat: pass your frame as an image, with stretch resizing and the ImageNet normalization preset.
 - Yourself: stretch to 512×512 with bilinear resampling, with no crop or padding. Scale to 0–1, subtract (0.485, 0.456, 0.406), and divide by (0.229, 0.224, 0.225). Pass a 512×512×3 (height, width, channel) float tensor.
 
-**Outputs.** One class index for each pixel.
+### Outputs
+
+One class index for each pixel.
 
 - With Neat: the semantic-segmentation decode returns one class index per pixel. Set `semantic_segmentation.enable` and the output width and height in the model options.
 - Yourself: decode `logits`, which holds 150 class scores for each cell of a 128×128 grid.

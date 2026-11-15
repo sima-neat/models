@@ -14,17 +14,21 @@ and reuse their embeddings for every image.
 
 ## Inputs and outputs
 
-**Image input.** One 224×224 RGB image for the image encoder, normalized with the mean (0.5, 0.5, 0.5) and standard deviation (0.5, 0.5, 0.5).
+### Inputs
+
+**Image:** One 224×224 RGB image for the image encoder, normalized with the mean (0.5, 0.5, 0.5) and standard deviation (0.5, 0.5, 0.5).
 
 - With Neat: pass your frame as an image, with stretch resizing and this mean and standard deviation.
 - Yourself: resize straight to 224×224 with bilinear resampling, without cropping or keeping the aspect ratio. Scale to 0–1, normalize, and pass a 224×224×3 (height, width, channel) float tensor with Neat's resize, color conversion, and normalization off.
 
-**Text input.** One prompt for the text encoder, prepared on the CPU as the float tensor `token_embeds` of 1×64×768 (height, width, channel).
+**Text:** One prompt for the text encoder, prepared on the CPU as the float tensor `token_embeds` of 1×64×768 (height, width, channel).
 
 1. Lowercase the prompt and tokenize it with the packaged Gemma tokenizer `text_encoder/tokenizer.json`, which appends the end-of-sequence token. Cut longer prompts to 64 tokens and pad shorter ones to 64 with the padding token (ID 0).
 2. Replace each token ID with its 768-value row from `text_encoder/token_embeddings.npy`.
 
-**Outputs.** One tensor per encoder. Neat has no decoder for them.
+### Outputs
+
+One tensor per encoder. Neat has no decoder for them.
 
 | Tensor | Size | Holds |
 |---|---|---|

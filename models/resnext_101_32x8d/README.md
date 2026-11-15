@@ -14,7 +14,9 @@ groups of 8 channels. The package uses torchvision's ImageNet weights
 
 ## Inputs and outputs
 
-**Input.** One 224×224 RGB image, normalized with the ImageNet mean and standard deviation.
+### Inputs
+
+One 224×224 RGB image, normalized with the ImageNet mean and standard deviation.
 
 - With Neat: pass your frame as an image, with stretch resizing and the ImageNet normalization preset.
 - Yourself: resize with bilinear resampling so the shorter side is 256, then crop the center 224×224. Scale to 0–1, subtract (0.485, 0.456, 0.406), divide by (0.229, 0.224, 0.225), and pass a 224×224×3 (height, width, channel) float tensor with Neat's resize, color conversion, and normalization off.
@@ -24,7 +26,9 @@ The center crop keeps the proportions and drops the edges. The original model
 expects the resize and center crop, so prepare the image yourself for results
 closest to it.
 
-**Outputs.** One score for each of the 1,000 classes, in `logits`. Neat has no decoder for this model, so your application ranks the scores.
+### Outputs
+
+One score for each of the 1,000 classes, in `logits`. Neat has no decoder for this model, so your application ranks the scores.
 
 1. Apply a softmax to `logits` to get class probabilities.
 2. Take the highest probability as the class, or the five highest as the top-5 classes.

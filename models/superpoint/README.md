@@ -13,14 +13,18 @@ in your application, or use a matcher such as SuperGlue or LightGlue.
 
 ## Inputs and outputs
 
-**Input.** One 640×480 (width × height) grayscale image, `image`, with values from 0 to 1.
+### Inputs
+
+One 640×480 (width × height) grayscale image, `image`, with values from 0 to 1.
 
 - With Neat: pass your frame as an RGB image, with stretch resizing, RGB-to-grayscale conversion, and normalization on.
 - Yourself: resize to 640×480 with area interpolation, mix red, green, and blue as 0.2989, 0.5870, and 0.1140, scale to 0–1, and pass a 480×640×1 (height, width, channel) float tensor with Neat's preprocessing off.
 
 Neat's grayscale conversion keeps only the red channel. For the trained color mix, use the manual path.
 
-**Outputs.** Keypoints, each with a position, a score, and a unit-length descriptor.
+### Outputs
+
+Keypoints, each with a position, a score, and a unit-length descriptor.
 
 - With Neat: the SuperPoint decoder returns the keypoints. Its `LightGlueV1` profile runs the steps below, but its default score threshold is 0.0005, the value the SuperGlue and LightGlue packages expect. Set the threshold to 0.005 to match step 3. Its `MagicLeapDemoV1` profile runs Magic Leap's demo decode instead, which keeps pixels scoring at least 0.015 before suppression. `top_k` limits the count.
 - Yourself: decode these tensors, both on an 80×60 grid, one cell per 8×8 pixels.

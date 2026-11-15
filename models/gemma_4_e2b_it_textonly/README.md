@@ -14,12 +14,16 @@ images. It is the E2B size of the Gemma 4 family from Google.
 
 ## Inputs and outputs
 
-**Input.** One text prompt, with the earlier messages when you continue a conversation.
+### Inputs
+
+One text prompt, with the earlier messages when you continue a conversation.
 
 - `prompt`: the question or instruction, with any source text it refers to. Let the GenAI API apply the bundled chat template.
 - Earlier messages: pass them to continue a conversation. Start a new conversation when they should no longer influence the answer.
 
-**Outputs.** The answer as text.
+### Outputs
+
+The answer as text.
 
 - `text`: the generated answer, as one complete response.
 - Streaming: read incremental tokens as they arrive instead of waiting for the complete response.

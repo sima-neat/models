@@ -13,12 +13,16 @@ candidate masks, and a memory encoder that stores the chosen one.
 
 ## Inputs and outputs
 
-**Input.** One 1024×1024 RGB frame with ImageNet normalization.
+### Inputs
+
+One 1024×1024 RGB frame with ImageNet normalization.
 
 - With Neat: pass each frame as an image, with stretch resizing and the ImageNet normalization preset.
 - Yourself: stretch to 1024×1024 (bicubic), scale to 0–1, subtract (0.485, 0.456, 0.406), divide by (0.229, 0.224, 0.225).
 
-**Between the components.** On each frame:
+### Between the components
+
+On each frame:
 
 1. Run `image_encoder` for `image_embeddings`, `high_res_features_0`, and `high_res_features_1`.
 2. After the prompted frame, run `memory_attention` on `image_embeddings` and the memory bank. Its `conditioned_embeddings` replace the embeddings in step 3.
@@ -27,9 +31,11 @@ candidate masks, and a memory encoder that stores the chosen one.
 5. If `object_score_logits` is 0 or below, set the mask to −1024.
 6. Resize the mask bilinearly to 1024×1024. Threshold it at 0 on the prompted frame, else apply a sigmoid. Run `memory_encoder` on it and the frame's `image_embeddings`.
 
-**Memory bank.** `memories` holds seven `memory_encoder` `memory` outputs: the prompted frame's, then the latest six, newest first. `object_pointers` holds sixteen chosen pointers in that order. `memory_mask` and `object_pointer_mask` are 1 for a filled slot, else 0.
+**Memory bank:** `memories` holds seven `memory_encoder` `memory` outputs: the prompted frame's, then the latest six, newest first. `object_pointers` holds sixteen chosen pointers in that order. `memory_mask` and `object_pointer_mask` are 1 for a filled slot, else 0.
 
-**Outputs.** The chosen mask, above 0 on the object. Neat has no decoder for it.
+### Outputs
+
+The chosen mask, above 0 on the object. Neat has no decoder for it.
 
 ## Building applications
 

@@ -13,7 +13,9 @@ object is predicted once, so there are no overlapping boxes to remove.
 
 ## Inputs and outputs
 
-**Input.** One 640×640 RGB image, normalized with the ImageNet mean and standard deviation.
+### Inputs
+
+One 640×640 RGB image, normalized with the ImageNet mean and standard deviation.
 
 - With Neat: pass your frame as an image, with stretch resizing and the ImageNet normalization preset.
 - Yourself: stretch to exactly 640×640 with bilinear resampling. Scale to 0–1, subtract (0.485, 0.456, 0.406), divide by (0.229, 0.224, 0.225), and pass a 640×640×3 (height, width, channel) float tensor.
@@ -21,7 +23,9 @@ object is predicted once, so there are no overlapping boxes to remove.
 Do not pad the image. The model reads padding as part of the scene, which
 lowers accuracy.
 
-**Outputs.** Up to 100 detections, each a box, a class index, and a score.
+### Outputs
+
+Up to 100 detections, each a box, a class index, and a score.
 
 - With Neat: the DETR box decoder (`BoxDecodeType.Detr`) returns the detections, with boxes in the original frame. Set `top_k` and `score_threshold`.
 - Yourself: decode these tensors.

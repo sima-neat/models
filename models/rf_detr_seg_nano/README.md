@@ -14,17 +14,23 @@ two parts.
 
 ## Inputs and outputs
 
-**Input.** One 312×312 RGB image, normalized with the ImageNet mean and standard deviation.
+### Inputs
+
+One 312×312 RGB image, normalized with the ImageNet mean and standard deviation.
 
 - With Neat: pass your frame as an image, with stretch resizing and the ImageNet normalization preset.
 - Yourself: stretch to 312×312 with bilinear resampling. Scale to 0–1, subtract (0.485, 0.456, 0.406), divide by (0.229, 0.224, 0.225), and pass a 312×312×3 (height, width, channel) float tensor with Neat's preprocessing off.
 
-**Between the components.** The backbone returns `backbone_features`, `proposal_scores`, and `proposal_boxes`, with 676 proposals.
+### Between the components
+
+The backbone returns `backbone_features`, `proposal_scores`, and `proposal_boxes`, with 676 proposals.
 
 1. Take the 100 highest scores, breaking ties by the lower proposal index.
 2. Gather their boxes in that order and pass them as `proposals`, with `backbone_features`, to the decoder. Keep the order, because the decoder treats each position differently.
 
-**Outputs.** Up to 100 detections, each a box, a class index, a score, and a mask. Neat has no decoder for this model, so decode these tensors.
+### Outputs
+
+Up to 100 detections, each a box, a class index, a score, and a mask. Neat has no decoder for this model, so decode these tensors.
 
 | Tensor | Size | Holds |
 |---|---|---|

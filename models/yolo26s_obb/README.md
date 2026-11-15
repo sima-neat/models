@@ -13,12 +13,16 @@ sizes are more accurate and slower.
 
 ## Inputs and outputs
 
-**Input.** 1024×1024 RGB windows of the image that overlap by 200 pixels, with values from 0 to 1.
+### Inputs
+
+1024×1024 RGB windows of the image that overlap by 200 pixels, with values from 0 to 1.
 
 - With Neat: pass each window as an image, with letterbox resizing and normalization on.
 - Yourself: letterbox each window to 1024×1024 with bilinear resampling and centered gray (114, 114, 114) padding, divide by 255, and pass a 1024×1024×3 (height, width, channel) float32 tensor with Neat's preprocessing off.
 
-**Outputs.** Detections, each a rotated box, a class index, and a score.
+### Outputs
+
+Detections, each a rotated box, a class index, and a score.
 
 - With Neat: the `YoloV26Obb` box decoder runs steps 1 to 3. Set `top_k` and `score_threshold`.
 - Yourself: decode these height, width, channel tensors.

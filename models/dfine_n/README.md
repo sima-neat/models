@@ -13,18 +13,24 @@ is predicted once, so there are no overlapping boxes to remove.
 
 ## Inputs and outputs
 
-**Input.** One 640×640 RGB image with values from 0 to 1.
+### Inputs
+
+One 640×640 RGB image with values from 0 to 1.
 
 - With Neat: pass your frame as an image, with stretch resizing and normalization with mean 0 and standard deviation 1, which only scales the values to 0–1.
 - Yourself: stretch to 640×640 with bilinear resampling and divide by 255. Do not apply the ImageNet mean and standard deviation. Pass a 640×640×3 (height, width, channel) float tensor with Neat's preprocessing off.
 
-**Between the components.** The backbone returns `attention_memory` and `query_content`, 2,000 rows of 128 values each, `proposal_scores`, 2,000 values, and `reference_logits`, 2,000 rows of 4 values.
+### Between the components
+
+The backbone returns `attention_memory` and `query_content`, 2,000 rows of 128 values each, `proposal_scores`, 2,000 values, and `reference_logits`, 2,000 rows of 4 values.
 
 1. Take the 300 highest `proposal_scores`, breaking ties by the lower index.
 2. Gather those rows of `query_content` and `reference_logits` in that order, without changing their values.
 3. Pass both, with the whole `attention_memory`, to the decoder.
 
-**Outputs.** Up to 300 detections, each a box, a class index, and a score. Neat has no decoder for this model, so decode these tensors.
+### Outputs
+
+Up to 300 detections, each a box, a class index, and a score. Neat has no decoder for this model, so decode these tensors.
 
 | Tensor | Size | Holds |
 |---|---|---|

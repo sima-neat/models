@@ -13,7 +13,9 @@ exactly 512 keypoints per image. It is a feature matcher from ETH Zurich.
 
 ## Inputs and outputs
 
-**Input.** Four tensors: a position encoding and the descriptors of 512 SuperPoint keypoints for each of two images.
+### Inputs
+
+Four tensors: a position encoding and the descriptors of 512 SuperPoint keypoints for each of two images.
 
 1. Run SuperPoint on each image stretched to 640×480, with a score threshold of 0.0005 (not SuperPoint's usual 0.005), suppression within 4 pixels, and no keypoints within 4 pixels of an edge. The `LightGlueV1` profile of Neat's SuperPoint decoder uses these settings.
 2. Keep the 512 highest-scoring keypoints. With that decoder, set `top_k` to 512: the profile keeps 600.
@@ -28,7 +30,9 @@ exactly 512 keypoints per image. It is a feature matcher from ETH Zurich.
 
 For the encoding, normalize the pixel coordinates as (x − 320) / 320 and (y − 240) / 320. Multiply by LightGlue's 32×2 keypoint projection, the checkpoint's `positional_encoder.projector.weight`, to get 32 phases. Repeat each phase twice, and pass the 64 cosines followed by the 64 sines.
 
-**Outputs.** Matches between the two images' keypoints. Neat has no decoder for them.
+### Outputs
+
+Matches between the two images' keypoints. Neat has no decoder for them.
 
 `assignment` is 1×1×512×512. As a 512×512 matrix, entry (i, j) is the probability that keypoint i of the first image matches keypoint j of the second.
 

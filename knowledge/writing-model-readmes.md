@@ -41,15 +41,17 @@ Each part answers one question, in the order the reader asks them.
 | Overview, next | Where would I use it? |
 | Overview, next | What do I get back? |
 | Overview, last | What would surprise me? |
-| `**Input.**`, first sentence | What does the model expect? |
+| `### Inputs`, first sentence | What does the model expect? |
 | With Neat | What does Neat prepare for me? |
 | Yourself | What are the exact steps if I prepare it myself? |
-| `**Outputs.**`, first sentence | What do I end up with? |
+| `### Outputs`, first sentence | What do I end up with? |
 | With Neat | Does Neat produce that result, and which options do I set? |
 | Tensor table and numbered steps | What are the raw tensors, and how do I decode them myself? |
 
-A part that has nothing to say is left out, except the Neat statement under
-`**Outputs.**`. When Neat has no decoder for the model, the README says so, because the
+The two headings are the same on every model page, also for a model with one input, so a
+reader finds the same structure everywhere. A model with several inputs starts each one
+with a bold lead, such as `**Image:**`. A part that has nothing to say is left out, except
+the Neat statement under `### Outputs`. When Neat has no decoder for the model, the README says so, because the
 reader otherwise searches for one.
 
 ## Overview
@@ -85,7 +87,7 @@ able to stop after the two "With Neat" lines.
 - Never mention the scripts, how a result was measured, or how the model was converted or compiled. Say what the application does.
 - Keep the exact values: sizes, means, thresholds, counts. Clarity comes from order and layout, never from dropping a value the application needs.
 - Write sizes one way: `640×640×3 (height, width, channel)` for an input and plain counts in the tensor table, such as "196 rows of 768 values".
-- A language or speech model has no tensors to show. It keeps the two labels and gives one short list under each: what to supply, and what comes back.
+- A language or speech model has no tensors to show. It keeps the two headings and gives one short list under each: what to supply, and what comes back.
 
 ## Keeping a family consistent
 

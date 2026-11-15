@@ -14,7 +14,9 @@ not return the camera pose or the rays of the original model.
 
 ## Inputs and outputs
 
-**Input.** One 378×504 (height × width) RGB image, normalized with the ImageNet mean and standard deviation.
+### Inputs
+
+One 378×504 (height × width) RGB image, normalized with the ImageNet mean and standard deviation.
 
 - With Neat: pass your frame as an image, with letterbox resizing and the ImageNet normalization preset.
 - Yourself: resize, keeping the aspect ratio, until the image covers 378×504, with area interpolation when shrinking and bicubic when enlarging. Center-crop to 378×504, divide by 255, subtract (0.485, 0.456, 0.406), divide by (0.229, 0.224, 0.225), and pass a 378×504×3 (height, width, channel) float32 tensor with Neat's preprocessing off.
@@ -22,7 +24,9 @@ not return the camera pose or the rays of the original model.
 Neat's letterbox pads the frame, where the manual path crops it. With Neat, the
 two maps therefore also cover the padded border.
 
-**Outputs.** A depth map and a confidence map, one value per input pixel. Neat has no decoder for them.
+### Outputs
+
+A depth map and a confidence map, one value per input pixel. Neat has no decoder for them.
 
 | Tensor | Size | Holds |
 |---|---|---|

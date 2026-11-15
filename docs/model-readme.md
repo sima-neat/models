@@ -40,15 +40,21 @@ it, what the application gets back, and anything that would surprise a user.>
 
 ## Inputs and outputs
 
-**Input.** <What the model expects, in one sentence.>
+### Inputs
+
+<What the model expects, in one sentence.>
 
 - With Neat: <the Neat preprocessing options that prepare a frame for the model.>
 - Yourself: <each preparation step with its exact values: resize, padding, color order, scaling, and normalization.>
 
-**Between the components.** <Only for a model with several components: what
-the application computes on the CPU and which tensors it passes on.>
+### Between the components
 
-**Outputs.** <What the application ends up with, in one sentence.>
+<Only for a model with several components: what the application computes on the
+CPU and which tensors it passes on. Leave the heading out otherwise.>
+
+### Outputs
+
+<What the application ends up with, in one sentence.>
 
 - With Neat: <the Neat decoder and the options to set, or that Neat has no decoder for this model.>
 - Yourself: <decode the tensors below.>
@@ -85,7 +91,7 @@ The validator checks the frame of the file:
 - Line 3 is the hero line, `![YOLO11m-det model hero](hero.png)` for this model, with a blank line before and after it.
 - Line 5 is `## Overview`.
 - The H2 headings are `Overview`, `Inputs and outputs`, and `Building applications`, in this order.
-- The file has no other heading of any level and no HTML block.
+- The file has no other heading and no HTML block, except the H3 headings that step 3 names.
 - The file is UTF-8 text, ends with a newline, and is no larger than 128 KiB.
 - `README.md` is a regular file, and no part of its path is a symbolic link.
 
@@ -117,15 +123,17 @@ The validator checks its form:
 Describe what the application does with the model. Put the shortest path first: a reader
 must see at once what Neat does for them and what they have to write themselves.
 
-The validator checks that the section has a paragraph that starts with a bold input
-label, such as `**Input.**` or `**Image input.**`, and a later one that starts with
-`**Outputs.**` or `**Output.**`. A reviewer checks each point:
+The validator checks that the section holds the H3 headings `### Inputs` and
+`### Outputs`, in this order and with these exact names, also for a model with one input
+or one output. A model with several components puts `### Between the components` between
+them. The section takes no other heading. A reviewer checks each point:
 
-- Open `**Input.**` with one sentence that says what the model expects, such as "One 640×640 RGB image with values from 0 to 1."
+- Open `### Inputs` with one sentence that says what the model expects, such as "One 640×640 RGB image with values from 0 to 1."
+- A model with several inputs starts each one with a bold lead, such as `**Image:**` and `**Text:**`.
 - Under it, give a "With Neat" item with the Neat preprocessing options that prepare a frame, when the model's scripts use them, and a "Yourself" item with each preparation step and its exact values.
 - When the two paths give different results, say so in one or two sentences and say which one to prefer.
-- For a model with several components, give each step the application runs between them under `**Between the components.**`.
-- Open `**Outputs.**` with one sentence that says what the application ends up with, such as "Detections, each a box, a class index, and a score."
+- For a model with several components, give each step the application runs between them under `### Between the components`.
+- Open `### Outputs` with one sentence that says what the application ends up with, such as "Detections, each a box, a class index, and a score."
 - Under it, name the Neat decoder that produces that result and the options to set, or say that Neat has no decoder for the model.
 - List each actual output tensor by name, with its size and what it holds. Use a table for two or more tensors.
 - Write the decode steps as a numbered list, in the order the application performs them.
@@ -134,7 +142,7 @@ label, such as `**Input.**` or `**Image input.**`, and a later one that starts w
 - Take each value and each Neat option from `model.yaml` and the current scripts. State a Neat option only when a script of the model sets it.
 
 A language or speech model, whose application calls the GenAI API and never sees tensors,
-keeps the two labels and writes one short list under each instead of the two paths and
+keeps the two headings and writes one short list under each instead of the two paths and
 the table.
 
 `python -m pytest tests/test_documentation.py` checks one more rule. A `bash`, `sh`, or
@@ -163,7 +171,7 @@ For complete applications, start from the [Neat example apps](https://developer.
 
 The validator checks two limits on the whole file:
 
-- The README has at most 400 words from `## Overview` to its end. The `|` characters and the divider row of a table do not count.
+- The README has at most 400 words from `## Overview` to its end. Heading marks, the `|` characters of a table, and its divider row do not count.
 - No line uses one of the terms in this table.
 
 | Kind of term | Rejected terms |
@@ -247,14 +255,14 @@ Each error ends with the path of the file that failed.
 | --- | --- | --- |
 | `model README H1 must exactly match display_name` | Line 1 differs from `display_name` in `model.yaml`. | Copy the display name into the H1. |
 | `model README must begin with H1, blank line, ...` | The hero line or `## Overview` is missing, changed, or on another line. | Restore lines 1 to 5 of the template. |
-| `model README H2 sections must be Overview, Inputs and outputs, Building applications in order` | A section is missing or renamed, or the file has another heading or an HTML block. | Keep the three H2 headings and replace other headings with bold lead-ins. |
+| `model README H2 sections must be Overview, Inputs and outputs, Building applications in order` | A section is missing or renamed, or the file has another heading or an HTML block. | Keep the three H2 headings and the H3 headings of step 3, and replace other headings with bold lead-ins. |
 | `model README Overview must contain 50 to 120 words, found ...` | The overview is too short or too long. | Shorten or extend the overview. |
 | `model README Overview must contain one or two prose paragraphs` | The overview has more than two paragraphs. | Merge the paragraphs into one or two. |
 | `model README Overview must contain prose paragraphs only` | The overview holds a list, table, code, image, quote, or HTML. | Move that content to `Inputs and outputs`. |
 | `model README Building applications must be exactly ...` | The last section differs from the fixed text. | Paste the text from step 4. |
 | `model README line ... uses 'MPKs'; write it in plain words` | The line holds a rejected term. | Use plain words, such as "the package". |
 | `model README must contain at most 400 words after the hero, found ...` | The README is too long. | Cut what the model page already shows. |
-| `model README Inputs and outputs must have a bold input label, then **Outputs.** or **Output.**` | A label is missing, renamed, or not at the start of a paragraph. | Start one paragraph with `**Input.**` and a later one with `**Outputs.**`. |
+| `model README Inputs and outputs must hold the H3 headings Inputs and Outputs, ...` | A heading is missing, renamed, repeated, or out of order. | Use `### Inputs`, then `### Outputs`, with `### Between the components` between them only for several components. |
 | `model README must end with a newline` | The last line has no line ending. | Add a newline at the end of the file. |
 | `model hero image is required` | The model folder has no `hero.png`. | Add the hero. |
 | `model hero image must be 1200x480, found ...` | The PNG has another size. | Export the hero at 1200x480. |

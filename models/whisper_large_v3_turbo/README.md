@@ -13,13 +13,17 @@ timestamps. It is the Large v3 Turbo size of the Whisper family from OpenAI.
 
 ## Inputs and outputs
 
-**Input.** One audio recording of at most 30 seconds.
+### Inputs
+
+One audio recording of at most 30 seconds.
 
 - `audio`: mono samples at 16,000 samples per second, as floating-point values from -1 to 1.
 - Longer recordings: split them into windows of at most 30 seconds.
 - Padding and audio features: the bundled processor supplies them.
 
-**Outputs.** The transcription as text.
+### Outputs
+
+The transcription as text.
 
 - `text`: the transcription of the recording.
 - Not included: speaker labels and word timestamps.

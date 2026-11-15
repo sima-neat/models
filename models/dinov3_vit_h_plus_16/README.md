@@ -14,7 +14,9 @@ Huge+ size of Meta's DINOv3 ViT family.
 
 ## Inputs and outputs
 
-**Input.** One 224×224 RGB image, normalized with the ImageNet mean and standard deviation.
+### Inputs
+
+One 224×224 RGB image, normalized with the ImageNet mean and standard deviation.
 
 - With Neat: pass your frame as an image, with stretch resizing and the ImageNet normalization preset.
 - Yourself: resize straight to 224×224 with an antialiased bilinear filter, without cropping or keeping the aspect ratio. Scale to 0–1, subtract (0.485, 0.456, 0.406), divide by (0.229, 0.224, 0.225), and pass a 224×224×3 (height, width, channel) float tensor.
@@ -23,7 +25,9 @@ Neat's resize does not antialias, so shrinking a large frame changes the
 embeddings noticeably. For search and grouping, downscale the frame to 224×224
 on the CPU with an antialiased filter and pass that image.
 
-**Outputs.** Two embedding tensors. Neat has no decoder for them; your application uses them directly.
+### Outputs
+
+Two embedding tensors. Neat has no decoder for them; your application uses them directly.
 
 | Tensor | Size | Describes |
 |---|---|---|

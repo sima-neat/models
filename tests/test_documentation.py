@@ -18,7 +18,7 @@ from model_registry.model import load_model
 
 # The fixture's Inputs and outputs text, which tests replace to inject content.
 _CONTENT = "Content for inputs and outputs."
-_INPUTS_AND_OUTPUTS = f"**Input.** One image.\n\n{_CONTENT}\n\n**Outputs.** One score."
+_INPUTS_AND_OUTPUTS = f"### Inputs\n\nOne image.\n\n{_CONTENT}\n\n### Outputs\n\nOne score."
 
 
 def _readme(overview: str, *, title: str = "Fixture Model") -> str:
@@ -165,18 +165,20 @@ def test_repository_model_readme_shell_blocks_do_not_use_redirection_shaped_plac
             f"at most {MAX_README_WORDS} words",
         ),
         (_readme(_overview()).replace(_CONTENT, "Run the MPKs on the board."), "uses 'MPKs'"),
-        (_readme(_overview()).replace(_CONTENT, "Gather boxes on the A65."), "line 13 uses 'A65'"),
+        (_readme(_overview()).replace(_CONTENT, "Gather boxes on the A65."), "line 15 uses 'A65'"),
         (_readme(_overview()).replace(_CONTENT, "Benchmarked at 30 FPS."), "uses 'Benchmark'"),
         (_readme(_overview()).replace(_CONTENT, "Reports COCO mAP."), "uses 'mAP'"),
         (_readme(_overview()).replace(_CONTENT, "Install with sima-cli."), "uses 'sima-cli'"),
-        (_readme(_overview()).replace("**Input.** ", ""), "must have a bold input label"),
-        (_readme(_overview()).replace("**Outputs.** ", ""), "must have a bold input label"),
-        (_readme(_overview()).replace("**Outputs.**", "**Results.**"), "must have a bold input label"),
+        (_readme(_overview()).replace("### Inputs\n\n", ""), "must hold the H3 headings Inputs and Outputs"),
+        (_readme(_overview()).replace("### Outputs\n\n", ""), "must hold the H3 headings Inputs and Outputs"),
+        (_readme(_overview()).replace("### Outputs", "### Inputs"), "must hold the H3 headings Inputs and Outputs"),
+        (_readme(_overview()).replace("### Inputs", "### Outputs", 1), "must hold the H3 headings Inputs and Outputs"),
         (
-            _readme(_overview()).replace("**Input.**", "**Output.**").replace("**Outputs.**", "**Input.**"),
-            "must have a bold input label",
+            _readme(_overview()).replace(_CONTENT, "### Between the components\n\nText.\n\n### Inputs"),
+            "must hold the H3 headings Inputs and Outputs",
         ),
-        (_readme(_overview()).replace("**Input.**", "Text. **Input.**"), "must have a bold input label"),
+        (_readme(_overview()).replace("### Inputs", "### Input"), "H2 sections must be"),
+        (_readme(_overview(46) + "\n\n### Inputs"), "H2 sections must be"),
     ],
 )
 def test_model_readme_contract_rejects_invalid_content(tmp_path: Path, markdown: str, message: str) -> None:
@@ -201,11 +203,10 @@ def test_model_readme_contract_accepts_plain_words_near_banned_terms(tmp_path: P
     load_model_documentation(model_dir, "Fixture Model", repository=tmp_path)
 
 
-@pytest.mark.parametrize("label", ("**Inputs.**", "**Image input.**", "**Text input.**"))
-def test_model_readme_contract_accepts_named_input_labels(tmp_path: Path, label: str) -> None:
+def test_model_readme_contract_accepts_a_step_between_the_components(tmp_path: Path) -> None:
     model_dir = tmp_path / "models" / "fixture"
     model_dir.mkdir(parents=True)
-    markdown = _readme(_overview()).replace("**Input.**", label).replace("**Outputs.**", "**Output.**")
+    markdown = _readme(_overview()).replace(_CONTENT, "### Between the components\n\nSelect the proposals.")
     (model_dir / "README.md").write_text(markdown, encoding="utf-8")
     (model_dir / "hero.png").write_bytes(_png())
 
@@ -215,8 +216,9 @@ def test_model_readme_contract_accepts_named_input_labels(tmp_path: Path, label:
 def test_model_readme_word_limit_ignores_table_layout(tmp_path: Path) -> None:
     model_dir = tmp_path / "models" / "fixture"
     model_dir.mkdir(parents=True)
-    # The limit counts from "## Overview", after the three words of the H1 and the four of the hero line.
-    fixed_words = len(_readme(_overview()).replace(_CONTENT, "").split()) - 7
+    # The limit counts from "## Overview", after the three words of the H1 and the four of the hero line, and
+    # skips the marks of the five H2 and H3 headings.
+    fixed_words = len(_readme(_overview()).replace(_CONTENT, "").split()) - 7 - 5
     cells = MAX_README_WORDS - fixed_words - 2
     table = "| Tensor | Holds |\n| --- | :-- |\n" + "\n".join(f"| `t{index}` |" for index in range(cells))
     (model_dir / "README.md").write_text(_readme(_overview()).replace(_CONTENT, table), encoding="utf-8")

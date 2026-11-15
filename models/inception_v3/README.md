@@ -13,7 +13,9 @@ classifier. The package uses torchvision's ImageNet weights (IMAGENET1K_V1).
 
 ## Inputs and outputs
 
-**Input.** One 299×299 RGB image, normalized to values from −1 to 1.
+### Inputs
+
+One 299×299 RGB image, normalized to values from −1 to 1.
 
 - With Neat: pass your frame as an image, with stretch resizing and normalization with mean (0.5, 0.5, 0.5) and standard deviation (0.5, 0.5, 0.5).
 - Yourself: resize with bicubic resampling so the shorter side is 341, then crop the center 299×299. Scale to 0–1, subtract (0.5, 0.5, 0.5), divide by (0.5, 0.5, 0.5), and pass a 299×299×3 (height, width, channel) float tensor with Neat's resize, color conversion, and normalization off.
@@ -23,7 +25,9 @@ The center crop keeps the proportions and drops the edges. The original model
 expects the resize and center crop, so prepare the image yourself for results
 closest to it.
 
-**Outputs.** One score for each of the 1,000 classes, in `logits`. Neat has no decoder for this model, so your application ranks the scores.
+### Outputs
+
+One score for each of the 1,000 classes, in `logits`. Neat has no decoder for this model, so your application ranks the scores.
 
 1. Apply a softmax to `logits` to get class probabilities.
 2. Take the highest probability as the class, or the five highest as the top-5 classes.
