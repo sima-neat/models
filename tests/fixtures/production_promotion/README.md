@@ -41,7 +41,8 @@ export a valid production `saml2aws` session, and save the candidate JSON from a
 signed production candidate-inspection request. From the repository root:
 
 ```sh
-AWS_REGION=us-west-2 ARTIFACT_BUCKET=sima-neat-artifacts-production PYTHONPATH=tools \
+AWS_REGION=us-west-2 ARTIFACT_BUCKET=<production artifact bucket> \
+  PRODUCTION_AWS_ACCOUNT_ID=<account> PYTHONPATH=tools \
   python tests/fixtures/production_promotion/verify_mpk.py \
   --candidate /absolute/path/candidate.json --output-dir /absolute/path/verification
 ```

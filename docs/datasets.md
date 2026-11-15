@@ -22,7 +22,8 @@ contain only the contract needed to resolve and verify those bytes.
 ## Set up Artifactory access first
 
 Local calibration, fidelity, and accuracy work requires read access to the SiMa
-Artifactory host at `artifacts.eng.sima.ai`. Before starting model work:
+Artifactory host. Each dataset's `artifactory_url` in the Dataset Registry
+catalog names it. Before starting model work:
 
 1. Connect to the SiMa private network or VPN.
 2. Obtain read access to the dataset repository through the normal SiMa
@@ -43,7 +44,7 @@ Dataset Registry checks Artifactory credentials in this order:
 1. `JFROG_TOKEN` or `ARTIFACTORY_TOKEN` bearer token;
 2. `ARTIFACTORY_API_KEY`;
 3. `ARTIFACTORY_USER` and `ARTIFACTORY_PASSWORD`;
-4. a host-specific entry for `artifacts.eng.sima.ai` in `~/.netrc`; or
+4. a host-specific entry for the Artifactory host in `~/.netrc`; or
 5. anonymous access when the artifact permits it.
 
 Prefer a credential supplied by the approved local secret-management flow.
@@ -180,7 +181,7 @@ Open a change in `sima-neat/dataset`. Add the dataset inventory fields and an
   artifactory_sources:
     - id: example-dataset-mini
       variant: mini
-      artifactory_url: https://artifacts.eng.sima.ai/artifactory/<approved-repository>/<archive>.tgz
+      artifactory_url: https://<artifactory-host>/artifactory/<approved-repository>/<archive>.tgz
       vulcan_key: datasets/artifactory/example-dataset/mini/<archive>.tgz
 ```
 
@@ -221,7 +222,7 @@ accuracy stages on a compatible Modalix DevKit.
 
 | Symptom | What to fix |
 | --- | --- |
-| DNS failure or connection timeout | Connect to the SiMa private network or VPN and confirm `artifacts.eng.sima.ai` is reachable. |
+| DNS failure or connection timeout | Connect to the SiMa private network or VPN and confirm the Artifactory host is reachable. |
 | HTTP 401 or 403 | Refresh the supported credential and confirm it has read permission for the registered Artifactory repository. |
 | Unknown dataset or variant | Update/install the current Dataset Registry package and check the authoritative catalog. If the identity is still absent, introduce it through the Dataset Registry workflow above. |
 | Artifactory fails and S3 also fails | Fix local Artifactory access first; do not borrow CI credentials. The resolver reports both provider failures. |

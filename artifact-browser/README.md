@@ -560,8 +560,13 @@ From a clean committed checkout, with AWS production operator credentials,
 Node dependencies, Chromium and the Python registry dependencies available:
 
 ```bash
-AWS_PROFILE=<production operator profile> scripts/deploy-production-model-browser.sh developer
+AWS_PROFILE=<production operator profile> PRODUCTION_AWS_ACCOUNT_ID=<account> \
+  PRODUCTION_DOCS_BUCKET=<bucket> PRODUCTION_CLOUDFRONT_DISTRIBUTION_ID=<distribution> \
+  scripts/deploy-production-model-browser.sh developer
 ```
+
+The script refuses to publish unless the active credentials belong to that
+account and the bucket is encrypted with one of its keys.
 
 Use `customer` for Main-only presentation. The script builds and smoke-tests the
 portal, publishes only the production docs bucket's `models/` prefix, and

@@ -11,6 +11,7 @@ import base64
 import hashlib
 import io
 import json
+import os
 import ssl
 import sys
 import tarfile
@@ -34,7 +35,7 @@ def main() -> None:
     assert candidate['deployment_id'] == fixture['deployment_id']
     assert candidate['manifest_digest'] == fixture['manifest_digest']
     assert candidate['state'] == 'finalized'
-    assert boto3.client('sts').get_caller_identity()['Account'] == '069171140053'
+    assert boto3.client('sts').get_caller_identity()['Account'] == os.environ['PRODUCTION_AWS_ACCOUNT_ID']
     requirements = fixture['temporary_target_patch']['build_requirements'][fixture['profile_id']]
     candidate['id'] = candidate['deployment_id']
     context = ssl.create_default_context(cafile=get_cert_path(True))
