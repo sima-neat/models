@@ -45,11 +45,18 @@ jobs:
         run: scripts/cancel_branch_runs.sh "$BRANCH" >> "$GITHUB_STEP_SUMMARY"
 
   update-registry:
-    name: ${{ github.event_name == 'delete' && 'Purge deleted branch' || 'Restore branch' }}
+    name: >-
+      ${{ github.event_name == 'delete' && 'Purge deleted branch' || 'Restore branch' }}
+      (${{ matrix.environment }})
     if: >-
       github.event_name == 'workflow_dispatch' ||
       github.event.ref_type == 'branch'
-    environment: staging
+    # Each registry keeps its own branches, so one that fails must not stop the other.
+    strategy:
+      fail-fast: false
+      matrix:
+        environment: [staging, production]
+    environment: ${{ matrix.environment }}
     runs-on: ubuntu-latest
     steps:
       - name: Resolve and validate lifecycle request

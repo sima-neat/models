@@ -28,7 +28,9 @@ def test_lifecycle_uses_repository_scoped_oidc_publisher() -> None:
     credentials = next(step for step in job["steps"] if step.get("uses", "").startswith("aws-actions/"))
 
     assert workflow["permissions"] == {"contents": "read", "id-token": "write"}
-    assert job["environment"] == "staging"
+    assert job["strategy"]["matrix"]["environment"] == ["staging", "production"]
+    assert job["strategy"]["fail-fast"] == "false"
+    assert job["environment"] == "${{ matrix.environment }}"
     assert credentials["uses"] == "aws-actions/configure-aws-credentials@v6"
     assert credentials["with"]["role-to-assume"] == "${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLISHER_ROLE_ARN }}"
     assert "s3:" not in WORKFLOW.read_text(encoding="utf-8")

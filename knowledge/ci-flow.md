@@ -331,8 +331,9 @@ reuse an approval. The manual publish keeps files that the new site no longer ha
 `update-registry` calls the registry's `purge` endpoint for a deleted branch and `restore`
 for a created one, then waits up to five minutes for a purge to complete. It refuses
 `main`, `develop`, and `release-*`. It does not refuse `integration/*`, although
-`is_long_lived` treats those branches as long-lived. The job uses the `staging` GitHub
-environment.
+`is_long_lived` treats those branches as long-lived. The job runs once for the staging
+registry and once for the production registry, each in its own GitHub environment. A
+failure in one registry does not stop the other.
 
 ### Registry release state
 
@@ -355,7 +356,7 @@ its two fields and its no-store policy when you change the script.
 | Registry package | `vars.VULCAN_ENV`, or staging when unset | |
 | Portal build and automatic publication | staging | |
 | Registry release state, Main metadata | production | |
-| Branch lifecycle | the `staging` GitHub environment | |
+| Branch lifecycle | staging and production, one job each | A branch can hold runs in either registry. |
 
 Every benchmark runs on a DevKit with the `vulcan-staging` label, for either registry
 environment. Routing does not enter any fingerprint.

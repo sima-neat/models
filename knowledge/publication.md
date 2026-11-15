@@ -329,7 +329,8 @@ The rebuilt package must link the new compile runs.
 
 ### Branch deletion
 
-Deleting a branch calls the registry's purge endpoint, and creating one calls restore
-([branch lifecycle](ci-flow.md#branch-lifecycle)). The purge reports how many runs and
+Deleting a branch calls the purge endpoint of the staging and the production registry,
+and creating one calls restore in both
+([branch lifecycle](ci-flow.md#branch-lifecycle)). Each purge reports how many runs and
 registered object versions it removed. Vulcan decides what a purge keeps, such as a
 conversion that a compile input retains or a protected candidate.
