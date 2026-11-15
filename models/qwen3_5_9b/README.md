@@ -16,8 +16,8 @@ generated. It is the 9B size of the Qwen3.5 family from Alibaba Cloud.
 
 One text prompt, an optional image, and the earlier messages when you continue a conversation.
 
-- `prompt`: the question or instruction, with any source text it refers to. Let the GenAI API apply the bundled chat template.
-- `image`: for an image request, an image decoded as RGB. The GenAI API applies the bundled processor settings for the 448×448 input. Do not normalize the pixels yourself.
+- `prompt`: the question or instruction, with any source text it refers to. The package applies its bundled chat template to the prompt.
+- `image`: for an image request, an image decoded as RGB. The package prepares it for the 448×448 input with its bundled processor. Do not normalize the pixels yourself.
 - Earlier messages: pass them to continue a conversation. Start a new conversation when they should no longer influence the answer.
 
 ## Outputs

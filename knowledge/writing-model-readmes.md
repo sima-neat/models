@@ -27,7 +27,7 @@ pages found them hard to understand, for these reasons:
 | The overview opened with who made the model and which size it is. | "YOLO26n-det is the Nano size of the Ultralytics YOLO26 object detector" |
 | Most overviews named no use. | Every classifier and detector said what it returns, and not what to build with it. |
 | The overview repeated the next section. | "returns raw box and class outputs at three scales" |
-| The shortest path was hidden. | The input paragraph described a hand-built tensor, and the Neat decoder came in the last sentence. |
+| Inputs and outputs mixed several things. | One paragraph held the input, its preparation, script details, and Neat options. |
 | Tensors came before the result. | The reader met `bbox_0` and strides before "a box, a class, and a score". |
 | Maintainer notes leaked in. | "The reference scripts pass this image", how a speed was measured, internal precision. |
 
@@ -41,18 +41,15 @@ Each part answers one question, in the order the reader asks them.
 | Overview, next | Where would I use it? |
 | Overview, next | What do I get back? |
 | Overview, last | What would surprise me? |
-| `## Inputs`, first sentence | What does the model expect? |
-| With Neat | What does Neat prepare for me? |
-| Yourself | What are the exact steps if I prepare it myself? |
-| `## Outputs`, first sentence | What do I end up with? |
-| With Neat | Does Neat produce that result, and which options do I set? |
-| Tensor table and numbered steps | What are the raw tensors, and how do I decode them myself? |
+| `## Inputs`, first sentence or table | What does the model take? |
+| `Preprocessing:` steps | How do I prepare it? |
+| `## Outputs`, table | What does the model return? |
+| `Postprocessing:` steps | How do I turn that into a result? |
 
-The two section names are the same on every model page, also for a model with one input, so a
-reader finds the same structure everywhere. A model with several inputs starts each one
-with a bold lead, such as `**Image:**`. A part that has nothing to say is left out, except
-the Neat statement under `## Outputs`. When Neat has no decoder for the model, the README says so, because the
-reader otherwise searches for one.
+The section names and these four parts are the same on every model page, also for a model
+with one input, so a reader finds the same structure everywhere. A part that has nothing
+to say is left out: an embedding model whose output needs no decoding has no
+postprocessing list.
 
 ## Overview
 
@@ -79,15 +76,17 @@ Rules for the rest of the overview:
 
 ## Inputs and Outputs sections
 
-Put the shortest path first. A reader who uses Neat's preprocessing and decoder should be
-able to stop after the two "With Neat" lines.
+These two sections describe the model alone: what it takes, how to prepare it, what it
+returns, and how to decode it. They are brief, precise, and the same shape on every model.
 
-- State a Neat option only when one of the model's scripts sets it. `performance.py` shows the Neat image path and the decoder, and `accuracy.py` shows the path the published accuracy uses. Name the option in words and the decoder by its name, such as "letterbox resizing" and the `YoloV26` box decoder.
-- When the two input paths differ, say what changes and which path to prefer. `dinov3_vit_b_16` does this for Neat's resize, which does not antialias.
-- Never mention the scripts, how a result was measured, or how the model was converted or compiled. Say what the application does.
+- Do not name Neat, its options, or its decoders here. `Building applications` links the Neat API, and the first version of this standard was rejected for mixing a "With Neat" path and a "Yourself" path into every section.
+- Describe one path: the preprocessing of the original model, which `calibration.py` and `accuracy.py` implement and the published accuracy uses.
+- State steps, not advice. Leave out which path to prefer, why a step exists, and what happens otherwise, unless the application must act on it.
+- Never mention the scripts, how a result was measured, or how the model was converted or compiled.
 - Keep the exact values: sizes, means, thresholds, counts. Clarity comes from order and layout, never from dropping a value the application needs.
-- Write sizes one way: `640×640×3 (height, width, channel)` for an input and plain counts in the tensor table, such as "196 rows of 768 values".
-- A language or speech model has no tensors to show. It keeps the two headings and gives one short list under each: what to supply, and what comes back.
+- Write sizes one way: `640×640×3 (height, width, channel)` for an input and plain counts in a table, such as "196 rows of 768 values".
+- One step per line, in the order the application performs it. A step that needs a formula gives the formula.
+- A language or speech model has no tensors to show. It keeps the two sections and gives one short list under each: what to supply, and what comes back.
 
 ## Keeping a family consistent
 
@@ -98,17 +97,18 @@ a mistake in one of them.
 
 ## Checks before a README merges
 
-1. Check every value and every Neat option against `model.yaml` and the current scripts.
+1. Check every value against `model.yaml` and the current scripts.
 2. Read only the overview and answer: what does it do, where would I use it, what do I get? If one answer is missing, rewrite it.
-3. Read only the two "With Neat" lines and confirm that a Neat user could start from them.
-4. Search the README for "script", "reference", and "measured", and remove what you find.
-5. Run `model-registry validate-models --repository .` and `python -m pytest tests/test_documentation.py`.
+3. Follow the preprocessing and postprocessing lists as if implementing them. Fix each step where you would have to guess.
+4. Search the README for "Neat", "script", "reference", and "measured". Only `Building applications` may hold one of them.
+5. Look at the model page in the local preview, `artifact-browser/preview.py`, before changing the format of many READMEs.
+6. Run `model-registry validate-models --repository .` and `python -m pytest tests/test_documentation.py`.
 
 ## Examples
 
 | Kind | README |
 |---|---|
-| Detector with a Neat decoder | [`yolo26n`](../models/yolo26n/README.md) |
+| Detector | [`yolo26n`](../models/yolo26n/README.md) |
 | Classifier | [`resnet_50`](../models/resnet_50/README.md) |
 | CPU step between two components | [`rf_detr_nano`](../models/rf_detr_nano/README.md) |
 | Outputs that need no decoding | [`dinov3_vit_b_16`](../models/dinov3_vit_b_16/README.md) |

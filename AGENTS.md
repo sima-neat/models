@@ -210,7 +210,7 @@ the code and workflows do.
 | change `convert.py`, `surgery.py`, or `conversion.outputs` | [docs/conversion-artifacts.md](docs/conversion-artifacts.md) | what `convert.py` exports and what belongs in `surgery.py`, checkpoint outputs, what reruns a conversion |
 | pin a dataset or edit `datasets/<id>.yaml` | [docs/datasets.md](docs/datasets.md) | Dataset Registry access and pins, registering a dataset, per-task required metrics |
 | write a model README or hero | [docs/model-readme.md](docs/model-readme.md), [docs/illustration-guide.md](docs/illustration-guide.md) | required sections, word limits, banned terms, the template, hero format, styles, palette, and prompts |
-| write or review the text of a model README | [knowledge/writing-model-readmes.md](knowledge/writing-model-readmes.md) | who reads a README, the question each part answers, the opening and uses for each kind of model, the Neat-first rule, family consistency, the checks before merge |
+| write or review the text of a model README | [knowledge/writing-model-readmes.md](knowledge/writing-model-readmes.md) | who reads a README, the question each part answers, the opening and uses for each kind of model, the four parts of Inputs and Outputs, family consistency, the checks before merge |
 | set a model's type, task, or family | [docs/model-taxonomy.md](docs/model-taxonomy.md) | existing category IDs and how to add one |
 | need a different CI runner for a model | [docs/runner-class-requests.md](docs/runner-class-requests.md) | runner classes and how to request one |
 | prepare a pull request | [docs/contributing.md](docs/contributing.md) | what to submit, what a pull request runs, what the author sees after merge |

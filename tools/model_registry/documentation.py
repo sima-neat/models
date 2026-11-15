@@ -60,6 +60,7 @@ _INLINE_HTML_RE = re.compile(
 _INLINE_HTML_HEADING_RE = re.compile(r"(?<!\\)(?:\\\\)*</?h[1-6](?:[ \t]|/?>)", re.IGNORECASE)
 # A lowercase term also matches its capitalized and inflected forms; an acronym matches only itself or its plural.
 _LAYOUT_RE = re.compile(r"[|:-]+|#+")
+_NEAT_RE = re.compile(r"\bNeat\b")
 _BANNED_TERM_RE = re.compile("|".join(
     rf"(?<![\w-])(?i:{re.escape(term)})" if term.islower() else rf"(?<![\w-]){re.escape(term)}s?(?![\w-])"
     for term in BANNED_TERMS
@@ -588,6 +589,12 @@ def load_model_documentation(
         raise ValidationError(
             f"model README Building applications must be exactly {expected_applications!r}: {readme}"
         )
+    for number, line in enumerate(lines[:sections[-1][0]], start=1):
+        if _NEAT_RE.search(line):
+            raise ValidationError(
+                f"model README line {number} names Neat outside Building applications; "
+                f"describe the model's input, output, and steps only: {readme}"
+            )
     for number, line in enumerate(lines, start=1):
         if term := _BANNED_TERM_RE.search(line):
             raise ValidationError(

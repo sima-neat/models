@@ -13,25 +13,26 @@ classifier. The package uses torchvision's ImageNet weights (IMAGENET1K_V1).
 
 ## Inputs
 
-One 299×299 RGB image, normalized to values from −1 to 1.
+One 299×299×3 (height, width, channel) RGB image, with values from −1 to 1.
 
-- With Neat: pass your frame as an image, with stretch resizing and normalization with mean (0.5, 0.5, 0.5) and standard deviation (0.5, 0.5, 0.5).
-- Yourself: resize with bicubic resampling so the shorter side is 341, then crop the center 299×299. Scale to 0–1, subtract (0.5, 0.5, 0.5), divide by (0.5, 0.5, 0.5), and pass a 299×299×3 (height, width, channel) float tensor with Neat's resize, color conversion, and normalization off.
+Preprocessing:
 
-Neat's stretch fits the whole frame into the square and changes its proportions.
-The center crop keeps the proportions and drops the edges. The original model
-expects the resize and center crop, so prepare the image yourself for results
-closest to it.
+1. Resize with bicubic resampling so the shorter side is 341.
+2. Crop the center 299×299.
+3. Divide by 255.
+4. Subtract (0.5, 0.5, 0.5) from the red, green, and blue channels.
+5. Divide them by (0.5, 0.5, 0.5).
 
 ## Outputs
 
-One score for each of the 1,000 classes, in `logits`. Neat has no decoder for this model, so your application ranks the scores.
+One output, `logits`, with one score for each of the 1,000 classes.
+
+Postprocessing:
 
 1. Apply a softmax to `logits` to get class probabilities.
 2. Take the highest probability as the class, or the five highest as the top-5 classes.
 
-Class index i is the i-th ImageNet-1k WordNet ID in sorted order, which is the
-standard ImageNet-1k class order.
+Class index i is the i-th ImageNet-1k WordNet ID in sorted order, which is the standard ImageNet-1k class order.
 
 ## Building applications
 

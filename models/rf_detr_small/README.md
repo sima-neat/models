@@ -13,30 +13,36 @@ Each object is predicted once, so there are no overlapping boxes to remove.
 
 ## Inputs
 
-One 512×512 RGB image, normalized with the ImageNet mean and standard deviation.
+One 512×512×3 (height, width, channel) RGB image, normalized with the ImageNet mean and standard deviation.
 
-- With Neat: pass your frame as an image, with stretch resizing and the ImageNet normalization preset.
-- Yourself: stretch to 512×512 with bilinear resampling. Scale to 0–1, subtract (0.485, 0.456, 0.406), divide by (0.229, 0.224, 0.225), and pass a 512×512×3 (height, width, channel) float tensor with Neat's preprocessing off.
+Preprocessing:
+
+1. Stretch to 512×512 with bilinear resampling, without padding or cropping.
+2. Divide by 255.
+3. Subtract (0.485, 0.456, 0.406) and divide by (0.229, 0.224, 0.225), per channel.
 
 ## Between the components
 
-The backbone returns `backbone_features`, `proposal_scores`, and `proposal_boxes`, with 1,024 proposals.
+The backbone returns `backbone_features`, `proposal_scores` (1,024 values), and `proposal_boxes` (1,024 rows of 4 values).
 
-1. Take the 300 highest scores, breaking ties by the lower proposal index.
-2. Gather their boxes in that order and pass them as `proposals`, with `backbone_features`, to the decoder. Keep the order, because the decoder treats each position differently.
+1. Take the 300 highest `proposal_scores`. Break ties by the lower index.
+2. Gather those rows of `proposal_boxes` in that order as `proposals`, 300 rows of 4 values.
+3. Run the decoder on `backbone_features` and `proposals`.
 
 ## Outputs
 
-Up to 300 detections, each a box, a class index, and a score. Neat has no decoder for this model, so decode these tensors.
-
-| Tensor | Size | Holds |
+| Output | Size | Holds |
 |---|---|---|
 | `dets` | 300 rows of 4 values | boxes as (cx, cy, w, h), fractions of the image |
 | `labels` | 300 rows of 91 values | class logits per box |
 
-1. Apply a sigmoid to `labels` and rank all 300×91 box-class pairs by score.
-2. Keep the 300 best pairs, then drop those with an unused class index.
-3. The corners are (cx - w/2, cy - h/2) and (cx + w/2, cy + h/2). Multiply x by the image width and y by the image height, and clip to the image.
+Postprocessing:
+
+1. Apply a sigmoid to `labels`.
+2. Rank all 300×91 box-class pairs by that score and keep the 300 best.
+3. Drop the pairs with an unused class index or a score below your threshold.
+4. The box corners are (cx - w/2, cy - h/2) and (cx + w/2, cy + h/2).
+5. Multiply x by the image width and y by the image height, clip to the image, and drop boxes left empty.
 
 Class index i is COCO category ID i. Eleven of the 91 indexes are unused.
 

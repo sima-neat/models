@@ -13,31 +13,39 @@ is predicted once, so there are no overlapping boxes to remove.
 
 ## Inputs
 
-One 640×640 RGB image with values from 0 to 1.
+One 640×640×3 (height, width, channel) RGB image with values from 0 to 1.
 
-- With Neat: pass your frame as an image, with stretch resizing and normalization with mean 0 and standard deviation 1, which only scales the values to 0–1.
-- Yourself: stretch to 640×640 with bilinear resampling and divide by 255. Do not apply the ImageNet mean and standard deviation. Pass a 640×640×3 (height, width, channel) float tensor with Neat's preprocessing off.
+Preprocessing:
+
+1. Stretch to 640×640 with bilinear resampling, without padding or cropping.
+2. Divide by 255.
 
 ## Between the components
 
-The backbone returns `attention_memory` and `query_content`, 2,000 rows of 128 values each, `proposal_scores`, 2,000 values, and `reference_logits`, 2,000 rows of 4 values.
+| Backbone output | Size |
+|---|---|
+| `attention_memory` | 2,000 rows of 128 values |
+| `query_content` | 2,000 rows of 128 values |
+| `proposal_scores` | 2,000 values |
+| `reference_logits` | 2,000 rows of 4 values |
 
-1. Take the 300 highest `proposal_scores`, breaking ties by the lower index.
+1. Take the 300 highest `proposal_scores`. Break ties by the lower index.
 2. Gather those rows of `query_content` and `reference_logits` in that order, without changing their values.
-3. Pass both, with the whole `attention_memory`, to the decoder.
+3. Run the decoder on both and the whole `attention_memory`.
 
 ## Outputs
 
-Up to 300 detections, each a box, a class index, and a score. Neat has no decoder for this model, so decode these tensors.
-
-| Tensor | Size | Holds |
+| Output | Size | Holds |
 |---|---|---|
-| `pred_boxes` | 300 rows of 4 values | boxes as (cx, cy, width, height), fractions of the image |
+| `pred_boxes` | 300 rows of 4 values | boxes as (cx, cy, w, h), fractions of the image |
 | `pred_logits` | 300 rows of 80 values | class logits per box |
 
-1. Apply a sigmoid to `pred_logits` and rank all 300×80 box-class pairs by score.
-2. Keep the 300 best pairs. One box can appear with several classes.
-3. The corners are (cx - width/2, cy - height/2) and (cx + width/2, cy + height/2). Multiply x by the image width and y by the image height, clip to the image, and drop boxes left empty.
+Postprocessing:
+
+1. Apply a sigmoid to `pred_logits` to get class scores.
+2. Rank all 300×80 box-class pairs by score and keep the 300 best. One box can appear with several classes.
+3. The box corners are (cx - w/2, cy - h/2) and (cx + w/2, cy + h/2).
+4. Multiply x by the image width and y by the image height, clip to the image, and drop boxes left empty.
 
 Class index i is the i-th COCO category ID in ascending order.
 

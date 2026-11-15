@@ -14,22 +14,23 @@ not return the camera pose or the rays of the original model.
 
 ## Inputs
 
-One 280×504 (height × width) RGB image, normalized with the ImageNet mean and standard deviation.
+One 280×504×3 (height, width, channel) RGB image, normalized with the ImageNet mean and standard deviation.
 
-- With Neat: pass your frame as an image, with letterbox resizing and the ImageNet normalization preset.
-- Yourself: resize, keeping the aspect ratio, until the image covers 280×504, with area interpolation when shrinking and bicubic when enlarging. Center-crop to 280×504, divide by 255, subtract (0.485, 0.456, 0.406), divide by (0.229, 0.224, 0.225), and pass a 280×504×3 (height, width, channel) float32 tensor with Neat's preprocessing off.
+Preprocessing:
 
-Neat's letterbox pads the frame, where the manual path crops it. With Neat, the
-two maps therefore also cover the padded border.
+1. Resize, keeping the aspect ratio, until the image covers 280×504. Use area interpolation when shrinking and bicubic when enlarging.
+2. Crop the center 280×504.
+3. Divide by 255.
+4. Subtract (0.485, 0.456, 0.406) and divide by (0.229, 0.224, 0.225).
 
 ## Outputs
 
-A depth map and a confidence map, one value per input pixel. Neat has no decoder for them.
-
-| Tensor | Size | Holds |
+| Output | Size | Holds |
 |---|---|---|
 | `depth` | 280×504 values | relative depth: larger is farther, with an unknown scale and shift in inverse depth |
 | `depth_conf` | 280×504 values | confidence: larger is more certain |
+
+Postprocessing:
 
 1. Read the two outputs in this order and reshape each to 280×504.
 

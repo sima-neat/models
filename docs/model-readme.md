@@ -40,26 +40,25 @@ it, what the application gets back, and anything that would surprise a user.>
 
 ## Inputs
 
-<What the model expects, in one sentence.>
+<The input in one sentence: its size, layout, and value range. Use a table for
+several inputs.>
 
-- With Neat: <the Neat preprocessing options that prepare a frame for the model.>
-- Yourself: <each preparation step with its exact values: resize, padding, color order, scaling, and normalization.>
+Preprocessing:
+
+1. <Each step with its exact values, one line per step: resize, padding, color order, scaling, normalization.>
 
 ## Between the components
 
-<Only for a model with several components: what the application computes on the
-CPU and which tensors it passes on. Leave the heading out otherwise.>
+<Only for a model with several components: the numbered steps the application
+runs on the CPU and the tensors it passes on. Leave the section out otherwise.>
 
 ## Outputs
 
-<What the application ends up with, in one sentence.>
-
-- With Neat: <the Neat decoder and the options to set, or that Neat has no decoder for this model.>
-- Yourself: <decode the tensors below.>
-
-| Tensor | Size | Holds |
+| Output | Size | Holds |
 | --- | --- | --- |
 | `<name>` | <size> | <what it holds> |
+
+Postprocessing:
 
 1. <Each decode step, in order, one line per step.>
 
@@ -119,29 +118,27 @@ The validator checks its form:
 
 ### 3. Write the inputs and outputs
 
-Describe what the application does with the model. Put the shortest path first: a reader
-must see at once what Neat does for them and what they have to write themselves.
+Say what the model takes and how to prepare it, then what it returns and how to decode it.
+Both sections have the same four parts on every model, in this order: the input, the
+preprocessing steps, the output tensors, and the postprocessing steps.
 
-The two sections are named `Inputs` and `Outputs` on every model, also for a model with
-one input or one output, so every model page has the same structure. A reviewer checks
-each point:
+The validator rejects the word "Neat" before `Building applications`. How to run the model with Neat
+belongs to `Building applications`, which links the Neat API, so these sections describe
+the model alone. A reviewer checks each point:
 
-- Open `## Inputs` with one sentence that says what the model expects, such as "One 640×640 RGB image with values from 0 to 1."
-- A model with several inputs starts each one with a bold lead, such as `**Image:**` and `**Text:**`.
-- Under it, give a "With Neat" item with the Neat preprocessing options that prepare a frame, when the model's scripts use them, and a "Yourself" item with each preparation step and its exact values.
-- When the two paths give different results, say so in one or two sentences and say which one to prefer.
+- Open `## Inputs` with one sentence that gives the input's size, layout, and value range, such as "One 640×640×3 (height, width, channel) RGB image with values from 0 to 1." A model with several inputs lists them in a table.
+- Under `Preprocessing:`, give each step with its exact values as a numbered list. A model with several inputs names each list, such as `Image preprocessing:` and `Text preprocessing:`.
+- Describe the preprocessing of the original model, which is the one its published accuracy uses.
 - For a model with several components, give each step the application runs between them under `## Between the components`.
-- Open `## Outputs` with one sentence that says what the application ends up with, such as "Detections, each a box, a class index, and a score."
-- Under it, name the Neat decoder that produces that result and the options to set, or say that Neat has no decoder for the model.
-- List each actual output tensor by name, with its size and what it holds. Use a table for two or more tensors.
-- Write the decode steps as a numbered list, in the order the application performs them.
+- Open `## Outputs` with a table that names each actual output tensor, with its size and what it holds. A model with one output may state it in a sentence.
+- Under `Postprocessing:`, write the decode steps as a numbered list, in the order the application performs them. Leave the list out when the output needs no decoding.
 - Give the class-index mapping.
+- State what to do, not what to prefer: no advice, no comparison of paths, no reasons that the steps do not need.
 - Write each list item and each table row on one line, because the model page ends a list item at its line break.
-- Take each value and each Neat option from `model.yaml` and the current scripts. State a Neat option only when a script of the model sets it.
+- Take each value from `model.yaml` and the current scripts.
 
-A language or speech model, whose application calls the GenAI API and never sees tensors,
-keeps the two headings and writes one short list under each instead of the two paths and
-the table.
+A language or speech model has no tensors. It keeps the two sections and writes one short
+list under each: what to supply, and what comes back.
 
 `python -m pytest tests/test_documentation.py` checks one more rule. A `bash`, `sh`, or
 `shell` code block holds no placeholder such as `<path>`, because a shell reads it as a
@@ -260,6 +257,7 @@ Each error ends with the path of the file that failed.
 | `model README Building applications must be exactly ...` | The last section differs from the fixed text. | Paste the text from step 4. |
 | `model README line ... uses 'MPKs'; write it in plain words` | The line holds a rejected term. | Use plain words, such as "the package". |
 | `model README must contain at most 400 words after the hero, found ...` | The README is too long. | Cut what the model page already shows. |
+| `model README line ... names Neat outside Building applications` | `Overview`, `Inputs`, `Outputs`, or `Between the components` mentions Neat. | Describe the model's input, output, and steps only. |
 | `model README must end with a newline` | The last line has no line ending. | Add a newline at the end of the file. |
 | `model hero image is required` | The model folder has no `hero.png`. | Add the hero. |
 | `model hero image must be 1200x480, found ...` | The PNG has another size. | Export the hero at 1200x480. |

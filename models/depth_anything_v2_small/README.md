@@ -13,16 +13,19 @@ when it needs them. It is the Small size of the Depth Anything V2 family.
 
 ## Inputs
 
-One 518×686 (height × width) RGB image, normalized with the ImageNet mean and standard deviation.
+One 518×686×3 (height, width, channel) RGB image, normalized with the ImageNet mean and standard deviation.
 
-- With Neat: pass your frame as an image, with stretch resizing and the ImageNet normalization preset.
-- Yourself: scale RGB to 0–1, resize to 518×686 with bicubic resampling, subtract (0.485, 0.456, 0.406), divide by (0.229, 0.224, 0.225), and pass a 518×686×3 (height, width, channel) float tensor with Neat's preprocessing off.
+Preprocessing:
 
-The input size fits a 640×480 frame. A frame of another shape is stretched.
+1. Divide by 255.
+2. Resize to 518×686 with bicubic resampling, without keeping the aspect ratio.
+3. Subtract (0.485, 0.456, 0.406) and divide by (0.229, 0.224, 0.225).
 
 ## Outputs
 
-One map of relative inverse depth, where larger is closer. Neat has no decoder for it. `predicted_depth` holds 518×686 values.
+`predicted_depth` holds 518×686 values of relative inverse depth, where larger is closer.
+
+Postprocessing:
 
 1. Resize `predicted_depth` to your image's resolution with bilinear interpolation, keeping the corner pixels aligned.
 2. For a relative depth view, use the values directly.

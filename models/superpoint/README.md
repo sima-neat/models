@@ -13,29 +13,31 @@ in your application, or use a matcher such as SuperGlue or LightGlue.
 
 ## Inputs
 
-One 640×480 (width × height) grayscale image, `image`, with values from 0 to 1.
+One 480×640×1 (height, width, channel) grayscale image, `image`, with values from 0 to 1.
 
-- With Neat: pass your frame as an RGB image, with stretch resizing, RGB-to-grayscale conversion, and normalization on.
-- Yourself: resize to 640×480 with area interpolation, mix red, green, and blue as 0.2989, 0.5870, and 0.1140, scale to 0–1, and pass a 480×640×1 (height, width, channel) float tensor with Neat's preprocessing off.
+Preprocessing:
 
-Neat's grayscale conversion keeps only the red channel. For the trained color mix, use the manual path.
+1. Resize the RGB image to 640×480 (width × height) with area interpolation, without keeping the aspect ratio.
+2. Divide by 255.
+3. Mix the channels as 0.2989 × red + 0.5870 × green + 0.1140 × blue.
 
 ## Outputs
 
-Keypoints, each with a position, a score, and a unit-length descriptor.
+Both outputs are on an 80×60 grid, one cell per 8×8 pixels.
 
-- With Neat: the SuperPoint decoder returns the keypoints. Its `LightGlueV1` profile runs the steps below, but its default score threshold is 0.0005, the value the SuperGlue and LightGlue packages expect. Set the threshold to 0.005 to match step 3. Its `MagicLeapDemoV1` profile runs Magic Leap's demo decode instead, which keeps pixels scoring at least 0.015 before suppression. `top_k` limits the count.
-- Yourself: decode these tensors, both on an 80×60 grid, one cell per 8×8 pixels.
-
-| Tensor | Per cell |
+| Output | Per cell |
 |---|---|
 | `logits` | 65 values: one per pixel of the cell plus a "no keypoint" value |
 | `descriptors` | 256 values, not yet scaled to unit length |
 
-1. Apply softmax over each cell's 65 values, drop the last, and place the other 64 on the cell's pixels, row by row.
-2. Keep a pixel only if it has the highest score within 4 pixels after suppression.
-3. Keep pixels scoring above 0.005, at least 4 pixels from every edge, and the best ones if you need fewer.
-4. Scale each cell's descriptor to unit length, interpolate it at each keypoint, and scale again.
+Postprocessing:
+
+1. Apply softmax over each cell's 65 values, drop the last, and place the other 64 on the cell's pixels, row by row. This gives a 640×480 score map.
+2. Keep the pixels scoring at least 0.015.
+3. Go through the kept pixels from the highest score down. Keep each one as a keypoint and remove every other pixel within 4 pixels of it.
+4. Drop keypoints within 4 pixels of an image edge.
+5. Keep the 1,000 highest-scoring keypoints.
+6. Scale each cell's descriptor to unit length, interpolate it bilinearly at each keypoint, and scale the result to unit length.
 
 ## Building applications
 

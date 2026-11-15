@@ -15,25 +15,24 @@ on Pittsburgh street-view images.
 
 ## Inputs
 
-One RGB image 640 wide by 480 high, normalized with the ImageNet mean and standard deviation.
+One 480×640×3 (height, width, channel) RGB image, normalized with the ImageNet mean and standard deviation.
 
-- With Neat: pass your frame as an image, with stretch resizing and the ImageNet normalization preset.
-- Yourself: resize to 640 wide by 480 high with bilinear resampling, without cropping or padding. Scale to 0–1, subtract (0.485, 0.456, 0.406), divide by (0.229, 0.224, 0.225), and pass a 480×640×3 (height, width, channel) float tensor with Neat's resize, color conversion, and normalization off.
+Preprocessing:
+
+1. Resize to 640 wide by 480 high with an antialiased bilinear filter, without cropping or padding.
+2. Divide by 255.
+3. Subtract the mean (0.485, 0.456, 0.406).
+4. Divide by the standard deviation (0.229, 0.224, 0.225).
 
 ## Outputs
 
-One place descriptor. Neat has no decoder for it; your application compares descriptors itself.
-
-| Tensor | Size | Holds |
+| Output | Size | Holds |
 |---|---|---|
 | `descriptor` | 4,096 values | the place descriptor, with a length (L2 norm) of 1 |
 
-1. Store the descriptor of each keyframe in a nearest-neighbor index.
-2. For a new frame, take the dot product with each stored descriptor. For unit vectors it equals the cosine similarity, and a larger value means a more similar place.
-3. Skip the most recent keyframes, which always look alike, and keep the best matches above a similarity threshold tuned on your own route.
-4. Confirm each candidate with local feature matching and geometric verification before adding a loop-closure constraint.
+Postprocessing:
 
-The descriptor needs no further normalization, and the output has no classes.
+1. To compare two images, take the dot product of their descriptors, which equals their cosine similarity. A higher value means a more similar place.
 
 ## Building applications
 

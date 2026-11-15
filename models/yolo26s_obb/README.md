@@ -13,29 +13,35 @@ sizes are more accurate and slower.
 
 ## Inputs
 
-1024×1024 RGB windows of the image that overlap by 200 pixels, with values from 0 to 1.
+One 1024×1024×3 (height, width, channel) RGB window with values from 0 to 1.
 
-- With Neat: pass each window as an image, with letterbox resizing and normalization on.
-- Yourself: letterbox each window to 1024×1024 with bilinear resampling and centered gray (114, 114, 114) padding, divide by 255, and pass a 1024×1024×3 (height, width, channel) float32 tensor with Neat's preprocessing off.
+Preprocessing:
+
+1. Cut 1024×1024 windows every 824 pixels along each side, so neighbors overlap by 200.
+2. Move a side's last window back to end at the image edge.
+3. A side up to 1024 gets one window.
+4. Resize each window with bilinear resampling so the longer side is 1024.
+5. Center it on a 1024×1024 gray (114, 114, 114) frame.
+6. Divide by 255.
 
 ## Outputs
 
-Detections, each a rotated box, a class index, and a score.
-
-- With Neat: the `YoloV26Obb` box decoder runs steps 1 to 3. Set `top_k` and `score_threshold`.
-- Yourself: decode these height, width, channel tensors.
-
-| Tensor | Grid | Per cell |
+| Output | Grid | Per cell |
 |---|---|---|
-| `bbox_0` to `bbox_2` | 128×128, 64×64, 32×32 (stride 8, 16, 32) | distances to the left, top, right, and bottom box sides in its rotated frame, in cells |
+| `bbox_0` to `bbox_2` | 128×128, 64×64, 32×32 (stride 8, 16, 32) | distances from the cell center to the left, top, right, and bottom edges of the unrotated box, in cells |
 | `class_logit_0` to `class_logit_2` | same | 15 class logits |
-| `angle_0` to `angle_2` | same | the box angle in radians |
+| `angle_0` to `angle_2` | same | box angle in radians |
+
+Postprocessing:
 
 1. The cell in column c and row r has its center at (c + 0.5, r + 0.5).
-2. Apply a sigmoid to the class logits to get class scores. Keep the 300 cells with the highest class score, then the 300 best cell-class pairs among them.
-3. The box is left plus right wide and top plus bottom high. Its center is the cell center plus half of (right − left, bottom − top), rotated by the angle. Multiply by the stride.
-4. Remove the letterbox padding and scale, and add the window's offset.
-5. Per class, drop every box whose probabilistic IoU with a higher-scoring box from any window is 0.3 or more.
+2. The box is left + right wide and top + bottom high.
+3. Its center is the cell center plus half of (right − left, bottom − top), rotated by the angle.
+4. Multiply center, width, and height by the stride.
+5. Apply a sigmoid to the class logits to get class scores.
+6. Keep the 300 cells with the highest class score, then the 300 best cell-class pairs among them.
+7. Remove the padding, divide by the resize scale, and add the window's offset.
+8. Per class, drop every box whose probabilistic IoU with a higher-scoring box from any window is at least 0.3.
 
 Classes 0 to 14: plane, ship, storage-tank, baseball-diamond, tennis-court, basketball-court, ground-track-field, harbor, bridge, large-vehicle, small-vehicle, helicopter, roundabout, soccer-ball-field, swimming-pool.
 

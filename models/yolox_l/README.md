@@ -13,29 +13,31 @@ values.
 
 ## Inputs
 
-One 640×640 BGR image with values from 0 to 255.
+One 640×640×3 (height, width, channel) BGR image with values from 0 to 255.
 
-- With Neat: pass your frame as an image, with letterbox resizing, a pad value of 114, color conversion to BGR, and normalization with mean 0 and standard deviation 1/255.
-- Yourself: letterbox to 640×640 with bilinear resampling and centered (114, 114, 114) padding, and pass a 640×640×3 (height, width, channel) float tensor with Neat's preprocessing off.
+Preprocessing:
+
+1. Resize with bilinear resampling so the longer side is 640.
+2. Center it on a 640×640 gray (114, 114, 114) frame.
+3. Keep the blue, green, red channel order and the 0 to 255 values.
 
 ## Outputs
 
-Detections, each a box, a class index, and a score.
-
-- With Neat: the `YoloX` box decoder returns the detections. Set 80 classes, the `Split3Interleaved` output layout, an overlap threshold of 0.65, `top_k`, and `score_threshold`, such as 0.25.
-- Yourself: decode these height, width, channel tensors.
-
-| Tensor | Grid | Per cell |
+| Output | Grid | Per cell |
 |---|---|---|
 | `bbox_0` to `bbox_2` | 80×80, 40×40, 20×20 (stride 8, 16, 32) | dx, dy, log width, and log height |
 | `objectness_logit_0` to `objectness_logit_2` | same | one objectness logit |
 | `class_logit_0` to `class_logit_2` | same | 80 class logits |
 
+Postprocessing:
+
 1. For column c, row r, and stride s, the box center is ((dx + c) × s, (dy + r) × s).
-2. The width and height are exp(log width) × s and exp(log height) × s. Subtract or add half of each to get the corners.
-3. Apply a sigmoid to all logits. The score is the objectness times the highest class probability.
-4. Filter by score and apply non-maximum suppression within each class at an overlap threshold of 0.65.
-5. Remove the centered padding, divide by the letterbox scale, and clip to the image.
+2. The width and height are exp(log width) × s and exp(log height) × s.
+3. The box corners are the center minus and plus half the width and height.
+4. Apply a sigmoid to all logits. The score is the objectness times the highest class probability.
+5. Keep the cells whose score passes your threshold.
+6. Within each class, remove each box that overlaps a higher-scoring box by more than 0.65.
+7. Remove the padding, divide by the resize scale, and clip to the image.
 
 Class index i is the i-th COCO category ID in ascending order.
 

@@ -14,24 +14,24 @@ is resized to the image.
 
 ## Inputs
 
-One 512×512 RGB image, normalized with the ImageNet mean and standard deviation.
+One 512×512×3 (height, width, channel) RGB image, normalized with the ImageNet mean and standard deviation.
 
-- With Neat: pass your frame as an image, with stretch resizing and the ImageNet normalization preset.
-- Yourself: stretch to 512×512 with bilinear resampling, with no crop or padding. Scale to 0–1, subtract (0.485, 0.456, 0.406), and divide by (0.229, 0.224, 0.225). Pass a 512×512×3 (height, width, channel) float tensor.
+Preprocessing:
+
+1. Stretch to 512×512 with bilinear resampling, without padding or cropping.
+2. Divide by 255.
+3. Subtract (0.485, 0.456, 0.406) and divide by (0.229, 0.224, 0.225), per channel.
 
 ## Outputs
 
-One class index for each pixel.
+`logits` holds 150 class scores for each cell of a 128×128 grid.
 
-- With Neat: the semantic-segmentation decode returns one class index per pixel. Set `semantic_segmentation.enable` and the output width and height in the model options.
-- Yourself: decode `logits`, which holds 150 class scores for each cell of a 128×128 grid.
+Postprocessing:
 
 1. Resize `logits` bilinearly to the image's height and width.
 2. At each pixel, take the class with the highest score.
 
-Class index i is class i of the standard 150-class ADE20K scene-parsing order,
-from 0 wall, 1 building, 2 sky, and 3 floor to 149 flag. This is the `id2label`
-order in the original model's `config.json`.
+Class index i is class i of the standard 150-class ADE20K scene-parsing order, from 0 wall, 1 building, 2 sky, and 3 floor to 149 flag.
 
 ## Building applications
 

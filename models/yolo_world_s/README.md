@@ -12,35 +12,48 @@ Lab's YOLO-Worldv2. The larger sizes are more accurate and slower.
 
 ## Inputs
 
-**Text:** Up to 80 names, each encoded once with the package's `prompt_assets` files.
+| Input | Size | Holds |
+|---|---|---|
+| `token_embeddings` | 1×1×77×512 | one name's token vectors |
+| `eos_selector` | 1×1×96×1 | zeros, with a one at the end-of-text position |
+| `images` | 640×640×3 (height, width, channel) | one RGB image with values from 0 to 1 |
 
-1. Tokenize with `tokenizer.json`, right-pad to 77 tokens with end-of-text ID 49407, and look each token up in `token_embedding_table.npy` to fill `token_embeddings`, 1×1×77×512.
-2. Set `eos_selector`, 1×1×96×1, to one at the first end-of-text position. Only its first 77 entries are used.
-3. Run the text encoder, divide the 512-value `text_embeddings` by its length, and cache it.
+Text preprocessing, once per name, with the package's `prompt_assets` files:
 
-**Image:** `images`, one 640×640×3 (height, width, channel) RGB image with values from 0 to 1. Letterbox with bilinear resampling and centered (114, 114, 114) padding, and divide by 255.
+1. Tokenize with `tokenizer.json` and right-pad to 77 tokens with end-of-text ID 49407.
+2. Look each token up in `token_embedding_table.npy` to fill `token_embeddings`.
+3. Set `eos_selector` to one at the first end-of-text position. Only its first 77 entries are used.
+
+Image preprocessing:
+
+1. Resize with bilinear resampling so the longer side is 640.
+2. Center it on a 640×640 gray (114, 114, 114) frame.
+3. Divide by 255.
 
 ## Between the components
 
-Fill the detector's `text_embeddings`, 1×80×512, with the cached vectors, and set `prompt_mask`, 1×80, to one for used slots, else zero. At least one slot must be used: with no names, skip the detector.
+1. Run the text encoder on each name, divide its 512-value `text_embeddings` by its length, and cache it.
+2. Fill the detector's `text_embeddings`, 1×80×512, with the cached vectors, one per slot.
+3. Set `prompt_mask`, 1×80, to one for used slots, else zero.
+4. With no names, skip the detector.
 
 ## Outputs
 
-Detections, each a box, a score, and the slot index of its name.
-
-- With Neat: the `YoloV8` box decoder with the `GroupedByRoleProbability` option returns the detections. Set 80 classes, an overlap threshold of 0.7, `top_k`, `score_threshold`, the original image size, and letterbox resize mode.
-- Yourself: decode these height, width, channel tensors.
-
-| Tensor | Grid | Per cell |
+| Output | Grid | Per cell |
 |---|---|---|
 | `bbox_dfl_s8`, `bbox_dfl_s16`, `bbox_dfl_s32` | 80×80, 40×40, 20×20 (stride 8, 16, 32) | 16 bin logits per box edge: left, top, right, bottom |
 | `class_prob_s8`, `class_prob_s16`, `class_prob_s32` | same | 80 class probabilities |
 
-1. Softmax each edge's 16 bins and sum bin index (0 to 15) times probability. This is the edge's distance in cells from the cell center (c + 0.5, r + 0.5).
-2. The corners are the center minus (left, top) and the center plus (right, bottom), times the stride.
-3. Keep the cell and class pairs that score above your threshold.
-4. Within each class, remove boxes that overlap above 0.7.
-5. Undo the letterbox and clip to the image.
+Postprocessing:
+
+1. Softmax each edge's 16 bins and sum bin index (0 to 15) times probability. This is the edge's distance in cells.
+2. The corners are the cell center (c + 0.5, r + 0.5) minus (left, top) and plus (right, bottom), times the stride.
+3. Keep the cell-class pairs that score above your threshold.
+4. Within each class, remove boxes that overlap a higher-scoring box by more than 0.7.
+5. Keep at most 300 boxes.
+6. Remove the padding, divide by the resize scale, and clip to the image.
+
+Class index i is the name in slot i.
 
 ## Building applications
 

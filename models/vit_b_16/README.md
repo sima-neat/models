@@ -14,23 +14,25 @@ fine-tuned it on the 1,000 classes of ImageNet-1k.
 
 ## Inputs
 
-One 224×224 RGB image, normalized to values from −1 to 1.
+One 224×224×3 (height, width, channel) RGB image, with values from −1 to 1.
 
-- With Neat: pass your frame as an image, with stretch resizing and normalization with mean (0.5, 0.5, 0.5) and standard deviation (0.5, 0.5, 0.5).
-- Yourself: resize straight to 224×224 with bilinear resampling, without cropping or keeping the aspect ratio. Scale to 0–1, subtract (0.5, 0.5, 0.5), divide by (0.5, 0.5, 0.5), and pass a 224×224×3 (height, width, channel) float tensor with Neat's resize, color conversion, and normalization off.
+Preprocessing:
 
-Both paths fit the whole frame into the square without cropping, which is what
-the original model expects.
+1. Resize to 224×224 with bilinear resampling, without keeping the aspect ratio.
+2. Divide by 255.
+3. Subtract (0.5, 0.5, 0.5) from the red, green, and blue channels.
+4. Divide them by (0.5, 0.5, 0.5).
 
 ## Outputs
 
-One score for each of the 1,000 classes, in `logits`. Neat has no decoder for this model, so your application ranks the scores.
+One output, `logits`, with one score for each of the 1,000 classes.
+
+Postprocessing:
 
 1. Apply a softmax to `logits` to get class probabilities.
 2. Take the highest probability as the class, or the five highest as the top-5 classes.
 
-Class index i is the i-th ImageNet-1k WordNet ID in sorted order, which is the
-standard ImageNet-1k class order.
+Class index i is the i-th ImageNet-1k WordNet ID in sorted order, which is the standard ImageNet-1k class order.
 
 ## Building applications
 

@@ -16,7 +16,7 @@ Llama 3.2 family from Meta.
 
 One text prompt, with the earlier messages when you continue a conversation.
 
-- `prompt`: the question or instruction, with any source text it refers to. Let the GenAI API apply the bundled chat template.
+- `prompt`: the question or instruction, with any source text it refers to. The package applies its bundled chat template to the prompt.
 - Earlier messages: pass them to continue a conversation. Start a new conversation when they should no longer influence the answer.
 
 ## Outputs
