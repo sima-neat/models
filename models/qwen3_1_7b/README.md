@@ -4,15 +4,25 @@
 
 ## Overview
 
-Qwen3-1.7B is a conversational language model from Alibaba Cloud for answering questions, summarizing documents, rewriting text, and continuing conversations. This language-only package runs locally on SiMa.ai Modalix and accepts a text prompt with optional conversation history. It generates a text response that applications can display as a complete answer or stream incrementally as tokens arrive.
+Qwen3-1.7B answers questions, summarizes documents, rewrites text, and holds a
+conversation. Use it for a chat assistant, document summaries, or pulling facts
+out of text. Your application sends a prompt and gets the answer back as text,
+complete or streamed as it is generated. It is the 1.7B size of the Qwen3 family
+from Alibaba Cloud.
 
 *Maximum context length can be changed when recompiling the model.*
 
 ## Inputs and outputs
 
-1. Supply the question or instruction as `prompt`, including relevant source text and prior messages when continuing a conversation. Let the GenAI API apply the bundled chat template.
-2. Read the generated `text` as a complete response or incremental tokens.
-3. Start a new conversation when previous messages should no longer influence the answer.
+**Input.** One text prompt, with the earlier messages when you continue a conversation.
+
+- `prompt`: the question or instruction, with any source text it refers to. Let the GenAI API apply the bundled chat template.
+- Earlier messages: pass them to continue a conversation. Start a new conversation when they should no longer influence the answer.
+
+**Outputs.** The answer as text.
+
+- `text`: the generated answer, as one complete response.
+- Streaming: read incremental tokens as they arrive instead of waiting for the complete response.
 
 ## Building applications
 

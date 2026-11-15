@@ -17,7 +17,7 @@ HERO_WIDTH = 1200
 HERO_HEIGHT = 480
 REQUIRED_SECTIONS = ("Overview", "Inputs and outputs", "Building applications")
 # The model page shows the rest: metrics, benchmarks, variants, versions, license, and source links.
-MAX_README_WORDS = 350
+MAX_README_WORDS = 400
 BANNED_TERMS = (
     "MPK", "A65", "MLA", "AFE", "ELF", "tessellation", "mAP", "AP50", "FPS",
     "latency", "benchmark", "sima-cli", "model-registry", "Vulcan",
@@ -57,6 +57,8 @@ _INLINE_HTML_RE = re.compile(
 )
 _INLINE_HTML_HEADING_RE = re.compile(r"(?<!\\)(?:\\\\)*</?h[1-6](?:[ \t]|/?>)", re.IGNORECASE)
 # A lowercase term also matches its capitalized and inflected forms; an acronym matches only itself or its plural.
+_IO_LABEL_RE = re.compile(r"^\*\*([A-Za-z][A-Za-z ]*)\.\*\*(?:\s|$)")
+_TABLE_LAYOUT_RE = re.compile(r"[|:-]+")
 _BANNED_TERM_RE = re.compile("|".join(
     rf"(?<![\w-])(?i:{re.escape(term)})" if term.islower() else rf"(?<![\w-]){re.escape(term)}s?(?![\w-])"
     for term in BANNED_TERMS
@@ -588,7 +590,18 @@ def load_model_documentation(
             raise ValidationError(
                 f"model README line {number} uses {term.group(0)!r}; write it in plain words: {readme}"
             )
-    readme_words = len(re.findall(r"\S+", "\n".join(lines[4:])))
+    io_lines = lines[sections[1][0] + 1:sections[2][0]]
+    labels = [match.group(1) for line in io_lines if (match := _IO_LABEL_RE.match(line))]
+    inputs = [index for index, label in enumerate(labels) if label.lower().endswith(("input", "inputs"))]
+    outputs = [index for index, label in enumerate(labels) if label in ("Outputs", "Output")]
+    if not inputs or not outputs or inputs[0] > outputs[-1]:
+        raise ValidationError(
+            f"model README Inputs and outputs must have a bold input label, then **Outputs.** or **Output.**: {readme}"
+        )
+    # A table's pipes and divider row are layout, not words.
+    readme_words = len([
+        word for word in re.findall(r"\S+", "\n".join(lines[4:])) if not _TABLE_LAYOUT_RE.fullmatch(word)
+    ])
     if readme_words > MAX_README_WORDS:
         raise ValidationError(
             f"model README must contain at most {MAX_README_WORDS} words after the hero, found {readme_words}: {readme}"

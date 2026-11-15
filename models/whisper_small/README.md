@@ -4,13 +4,25 @@
 
 ## Overview
 
-Whisper Small is a multilingual speech recognition model from OpenAI that converts spoken audio into text. It supports voice interfaces, dictation, and transcription of short recordings across many languages. The package runs the audio encoder and text decoder together on SiMa.ai Modalix. Applications provide an audio recording and receive its transcription, with optional language selection or automatic language detection.
+Whisper Small turns speech into text. Use it for voice interfaces, dictation,
+and transcripts of short recordings in many languages. Your application supplies
+an audio recording and gets its transcription back as text. You can select the
+spoken language or let the model detect it. It handles at most 30 seconds of
+audio at a time, and it returns no speaker labels or word timestamps. It is the
+Small size of the Whisper family from OpenAI.
 
 ## Inputs and outputs
 
-1. Decode the recording to mono audio at 16,000 samples per second, represented as floating-point samples in the range from -1 to 1.
-2. Supply the samples as `audio`. Split longer recordings into windows of at most 30 seconds; the bundled processor supplies the padding and audio features needed by the model.
-3. Read the generated `text` as the transcription. This package does not provide speaker labels or word timestamps.
+**Input.** One audio recording of at most 30 seconds.
+
+- `audio`: mono samples at 16,000 samples per second, as floating-point values from -1 to 1.
+- Longer recordings: split them into windows of at most 30 seconds.
+- Padding and audio features: the bundled processor supplies them.
+
+**Outputs.** The transcription as text.
+
+- `text`: the transcription of the recording.
+- Not included: speaker labels and word timestamps.
 
 ## Building applications
 

@@ -35,22 +35,31 @@ Create `README.md` in the model folder from this template:
 
 ## Overview
 
-<50 to 120 words of prose: what the model finds, the input it takes, what it
-returns, and the components it runs as.>
+<50 to 120 words of prose, in this order: what the model does, where to use
+it, what the application gets back, and anything that would surprise a user.>
 
 ## Inputs and outputs
 
-**Input.** <Each preparation step with its exact values: resize, padding,
-color order, scaling, and normalization.>
+**Input.** <What the model expects, in one sentence.>
+
+- With Neat: <the Neat preprocessing options that prepare a frame for the model.>
+- Yourself: <each preparation step with its exact values: resize, padding, color order, scaling, and normalization.>
 
 **Between the components.** <Only for a model with several components: what
 the application computes on the CPU and which tensors it passes on.>
 
-**Outputs.** <Each actual output tensor by name, and what it holds.>
+**Outputs.** <What the application ends up with, in one sentence.>
+
+- With Neat: <the Neat decoder and the options to set, or that Neat has no decoder for this model.>
+- Yourself: <decode the tensors below.>
+
+| Tensor | Size | Holds |
+| --- | --- | --- |
+| `<name>` | <size> | <what it holds> |
 
 1. <Each decode step, in order, one line per step.>
 
-<The class-index mapping, and the Neat decoder for these outputs, if one exists.>
+<The class-index mapping.>
 
 ## Building applications
 
@@ -62,9 +71,13 @@ A README of the same kind is the fastest start:
 [`yolo26n`](https://github.com/sima-neat/models/blob/develop/models/yolo26n/README.md)
 for a detector with one component,
 [`rf_detr_nano`](https://github.com/sima-neat/models/blob/develop/models/rf_detr_nano/README.md)
-for a CPU step between two components, and
+for a CPU step between two components,
 [`resnet_50`](https://github.com/sima-neat/models/blob/develop/models/resnet_50/README.md)
-for a classifier.
+for a classifier,
+[`dinov3_vit_b_16`](https://github.com/sima-neat/models/blob/develop/models/dinov3_vit_b_16/README.md)
+for a model whose outputs need no decoding, and
+[`qwen3_4b`](https://github.com/sima-neat/models/blob/develop/models/qwen3_4b/README.md)
+for a language model.
 
 The validator checks the frame of the file:
 
@@ -78,9 +91,21 @@ The validator checks the frame of the file:
 
 ### 2. Write the overview
 
-Say what the model finds, what input it takes, what it returns, and which components it
-runs as. A reviewer checks that the section answers these four points. The Model Browser
-shows this section as the model's summary and searches its text.
+Write for a developer who has never heard of the model and wants to know whether it
+fits their application. A reviewer checks that the section answers these points, in this
+order:
+
+1. What the model does, in plain words. Open with the task, such as "finds everyday objects in an image", and not with who made the model or which size it is.
+2. Where to use it: two or three concrete applications.
+3. What the application gets back, as the final result and not as tensors, such as "a box, a class, and a score for each object".
+4. What would surprise a user: a model it depends on, a result that is only relative, or an input it cannot handle.
+
+Give the origin and the place in the model family in one clause each, such as "the
+smallest of the five YOLO26 detector sizes from Ultralytics". Leave the architecture, the
+training method, and the number of components to the original model page, which the model
+page links, unless the application has to act on them. Do not repeat tensor names, sizes,
+or decode steps from the next section. The Model Browser shows this section as the
+model's summary and searches its text.
 
 The validator checks its form:
 
@@ -89,16 +114,28 @@ The validator checks its form:
 
 ### 3. Write the inputs and outputs
 
-Describe what the application does with the model. A reviewer checks each point:
+Describe what the application does with the model. Put the shortest path first: a reader
+must see at once what Neat does for them and what they have to write themselves.
 
-- Give each input preparation step with its exact values, such as the resize, the padding, and the scaling.
-- For a model with several components, give each step the application runs between them.
-- Name each actual output tensor and say what it holds.
+The validator checks that the section has a paragraph that starts with a bold input
+label, such as `**Input.**` or `**Image input.**`, and a later one that starts with
+`**Outputs.**` or `**Output.**`. A reviewer checks each point:
+
+- Open `**Input.**` with one sentence that says what the model expects, such as "One 640×640 RGB image with values from 0 to 1."
+- Under it, give a "With Neat" item with the Neat preprocessing options that prepare a frame, when the model's scripts use them, and a "Yourself" item with each preparation step and its exact values.
+- When the two paths give different results, say so in one or two sentences and say which one to prefer.
+- For a model with several components, give each step the application runs between them under `**Between the components.**`.
+- Open `**Outputs.**` with one sentence that says what the application ends up with, such as "Detections, each a box, a class index, and a score."
+- Under it, name the Neat decoder that produces that result and the options to set, or say that Neat has no decoder for the model.
+- List each actual output tensor by name, with its size and what it holds. Use a table for two or more tensors.
 - Write the decode steps as a numbered list, in the order the application performs them.
 - Give the class-index mapping.
-- Name the Neat decoder that handles the outputs when one exists, as the `yolo11m` README names `YoloV8`.
-- Write each list item on one line, because the model page ends a list item at its line break.
-- Take each value from `model.yaml` and the current scripts.
+- Write each list item and each table row on one line, because the model page ends a list item at its line break.
+- Take each value and each Neat option from `model.yaml` and the current scripts. State a Neat option only when a script of the model sets it.
+
+A language or speech model, whose application calls the GenAI API and never sees tensors,
+keeps the two labels and writes one short list under each instead of the two paths and
+the table.
 
 `python -m pytest tests/test_documentation.py` checks one more rule. A `bash`, `sh`, or
 `shell` code block holds no placeholder such as `<path>`, because a shell reads it as a
@@ -126,7 +163,7 @@ For complete applications, start from the [Neat example apps](https://developer.
 
 The validator checks two limits on the whole file:
 
-- The README has at most 350 words from `## Overview` to its end.
+- The README has at most 400 words from `## Overview` to its end. The `|` characters and the divider row of a table do not count.
 - No line uses one of the terms in this table.
 
 | Kind of term | Rejected terms |
@@ -145,7 +182,7 @@ A reviewer checks the rest:
 - Leave out the license and redistribution terms, checksums, and download commands.
 - Leave out links to the original model or its source repository.
 - Use the same wording for every size in a model family, so the READMEs differ only in values.
-- Keep explanations for maintainers out of the README.
+- Keep explanations for maintainers out of the README: what the model's scripts do, how a result was measured, and how the model was converted or compiled.
 
 Put an explanation for maintainers in a `model.yaml` comment, or in the docstring of
 `convert.py`, `performance.py`, or `accuracy.py`. For an ONNX model, every other `.py`
@@ -216,7 +253,8 @@ Each error ends with the path of the file that failed.
 | `model README Overview must contain prose paragraphs only` | The overview holds a list, table, code, image, quote, or HTML. | Move that content to `Inputs and outputs`. |
 | `model README Building applications must be exactly ...` | The last section differs from the fixed text. | Paste the text from step 4. |
 | `model README line ... uses 'MPKs'; write it in plain words` | The line holds a rejected term. | Use plain words, such as "the package". |
-| `model README must contain at most 350 words after the hero, found ...` | The README is too long. | Cut what the model page already shows. |
+| `model README must contain at most 400 words after the hero, found ...` | The README is too long. | Cut what the model page already shows. |
+| `model README Inputs and outputs must have a bold input label, then **Outputs.** or **Output.**` | A label is missing, renamed, or not at the start of a paragraph. | Start one paragraph with `**Input.**` and a later one with `**Outputs.**`. |
 | `model README must end with a newline` | The last line has no line ending. | Add a newline at the end of the file. |
 | `model hero image is required` | The model folder has no `hero.png`. | Add the hero. |
 | `model hero image must be 1200x480, found ...` | The PNG has another size. | Export the hero at 1200x480. |

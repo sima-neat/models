@@ -4,16 +4,29 @@
 
 ## Overview
 
-Qwen3.5-4B DFlash combines an instruction-tuned vision-language model from Alibaba Cloud with a small DFlash draft for answering questions about images, describing visual content, and holding text-based conversations. The package runs locally on SiMa.ai Modalix and accepts text prompts with optional images and conversation history. The assistant proposes tokens that the target model checks before returning a text response. Applications can display a complete answer or stream accepted tokens as they arrive.
+Qwen3.5-4B DFlash answers questions about an image, describes what it shows, and
+holds a text conversation. Use it to caption images, answer questions about a
+camera frame, or chat about a picture. Your application sends a prompt, with or
+without an image, and gets the answer back as text, complete or streamed as it
+is generated. This variant speeds up generation: a small DFlash assistant model
+in the package proposes tokens and the main model checks each one. It is the 4B
+size of the Qwen3.5 family from Alibaba Cloud.
 
 *Image resolution and maximum context length can be changed when recompiling the model.*
 
 ## Inputs and outputs
 
-1. Keep the target and assistant folders together when loading the package; the GenAI API manages their speculative decoding.
-2. Supply the question or instruction as `prompt`, with prior messages when continuing a conversation. Let the GenAI API apply the bundled chat template.
-3. For an image request, decode `image` as RGB. Let the GenAI API apply the bundled processor settings for the 448 × 448 input; do not manually normalize pixels.
-4. Read the generated `text` as a complete response or incremental tokens. Start a new conversation when previous messages should no longer influence the answer.
+**Input.** One text prompt, an optional image, and the earlier messages when you continue a conversation.
+
+- Package: keep the target (main model) and assistant folders together when you load it. The GenAI API manages their speculative decoding.
+- `prompt`: the question or instruction, with any source text it refers to. Let the GenAI API apply the bundled chat template.
+- `image`: for an image request, an image decoded as RGB. The GenAI API applies the bundled processor settings for the 448×448 input. Do not normalize the pixels yourself.
+- Earlier messages: pass them to continue a conversation. Start a new conversation when they should no longer influence the answer.
+
+**Outputs.** The answer as text.
+
+- `text`: the generated answer, as one complete response.
+- Streaming: read incremental tokens as the main model accepts them instead of waiting for the complete response.
 
 ## Building applications
 

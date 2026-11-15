@@ -4,36 +4,35 @@
 
 ## Overview
 
-RF-DETR Small is the Small size of Roboflow's RF-DETR transformer object
-detector, trained on COCO. It runs as two components: a backbone that proposes
-candidate boxes, and a decoder that turns the best 300 candidates into 300
-detections. Your application selects those candidates on the CPU between the two
-components. RF-DETR predicts each object once, so the application does not need
-to remove overlapping boxes.
+RF-DETR Small finds everyday objects in an image and returns a box, a class, and
+a score for each. Use it to count, track, or monitor objects in camera streams.
+It knows the COCO classes. It is the Small size of Roboflow's RF-DETR detector.
+The larger sizes are more accurate and slower. The model runs in two parts, and
+your application picks the 300 best candidate boxes on the CPU between them.
+Each object is predicted once, so there are no overlapping boxes to remove.
 
 ## Inputs and outputs
 
-**Input.** Resize the image to 512×512 with bilinear resampling, without keeping
-the aspect ratio. Scale the RGB values to 0–1, subtract the ImageNet mean
-(0.485, 0.456, 0.406), and divide by the standard deviation (0.229, 0.224,
-0.225). The reference scripts pass this image as a 512×512×3 (height, width,
-channel) float tensor, with Neat's resize, color conversion, and normalization
-turned off.
+**Input.** One 512×512 RGB image, normalized with the ImageNet mean and standard deviation.
 
-**Between the components.** The backbone returns `backbone_features`,
-`proposal_scores`, and `proposal_boxes`, with 1,024 proposals. Take the 300
-highest scores, breaking ties by the lower proposal index, and gather their
-boxes in that order. Pass the gathered boxes as `proposals`, with
-`backbone_features`, to the decoder. Keep this order, because the
-decoder treats each of the 300 positions differently.
+- With Neat: pass your frame as an image, with stretch resizing and the ImageNet normalization preset.
+- Yourself: stretch to 512×512 with bilinear resampling. Scale to 0–1, subtract (0.485, 0.456, 0.406), divide by (0.229, 0.224, 0.225), and pass a 512×512×3 (height, width, channel) float tensor with Neat's preprocessing off.
 
-**Outputs.** The decoder returns `dets`, 300 boxes as normalized (cx, cy, w,
-h), and `labels`, 91 class logits for each box.
+**Between the components.** The backbone returns `backbone_features`, `proposal_scores`, and `proposal_boxes`, with 1,024 proposals.
 
-1. Apply a sigmoid to `labels` and rank all 300 × 91 box-class pairs by score.
+1. Take the 300 highest scores, breaking ties by the lower proposal index.
+2. Gather their boxes in that order and pass them as `proposals`, with `backbone_features`, to the decoder. Keep the order, because the decoder treats each position differently.
+
+**Outputs.** Up to 300 detections, each a box, a class index, and a score. Neat has no decoder for this model, so decode these tensors.
+
+| Tensor | Size | Holds |
+|---|---|---|
+| `dets` | 300 rows of 4 values | boxes as (cx, cy, w, h), fractions of the image |
+| `labels` | 300 rows of 91 values | class logits per box |
+
+1. Apply a sigmoid to `labels` and rank all 300×91 box-class pairs by score.
 2. Keep the 300 best pairs, then drop those with an unused class index.
-3. Convert each box to corners: (cx - w/2, cy - h/2) and (cx + w/2, cy + h/2).
-4. Multiply x by the image width and y by the image height, and clip to the image.
+3. The corners are (cx - w/2, cy - h/2) and (cx + w/2, cy + h/2). Multiply x by the image width and y by the image height, and clip to the image.
 
 Class index i is COCO category ID i. Eleven of the 91 indexes are unused.
 

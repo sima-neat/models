@@ -18,12 +18,13 @@ from model_registry.model import load_model
 
 # The fixture's Inputs and outputs text, which tests replace to inject content.
 _CONTENT = "Content for inputs and outputs."
+_INPUTS_AND_OUTPUTS = f"**Input.** One image.\n\n{_CONTENT}\n\n**Outputs.** One score."
 
 
 def _readme(overview: str, *, title: str = "Fixture Model") -> str:
     sections = []
     for heading in REQUIRED_SECTIONS:
-        body = {"Overview": overview, "Building applications": BUILDING_APPLICATIONS}.get(heading, _CONTENT)
+        body = {"Overview": overview, "Building applications": BUILDING_APPLICATIONS}.get(heading, _INPUTS_AND_OUTPUTS)
         sections.append(f"## {heading}\n\n{body}")
     return f"# {title}\n\n![{title} model hero](hero.png)\n\n" + "\n\n".join(sections) + "\n"
 
@@ -164,10 +165,18 @@ def test_repository_model_readme_shell_blocks_do_not_use_redirection_shaped_plac
             f"at most {MAX_README_WORDS} words",
         ),
         (_readme(_overview()).replace(_CONTENT, "Run the MPKs on the board."), "uses 'MPKs'"),
-        (_readme(_overview()).replace(_CONTENT, "Gather boxes on the A65."), "line 11 uses 'A65'"),
+        (_readme(_overview()).replace(_CONTENT, "Gather boxes on the A65."), "line 13 uses 'A65'"),
         (_readme(_overview()).replace(_CONTENT, "Benchmarked at 30 FPS."), "uses 'Benchmark'"),
         (_readme(_overview()).replace(_CONTENT, "Reports COCO mAP."), "uses 'mAP'"),
         (_readme(_overview()).replace(_CONTENT, "Install with sima-cli."), "uses 'sima-cli'"),
+        (_readme(_overview()).replace("**Input.** ", ""), "must have a bold input label"),
+        (_readme(_overview()).replace("**Outputs.** ", ""), "must have a bold input label"),
+        (_readme(_overview()).replace("**Outputs.**", "**Results.**"), "must have a bold input label"),
+        (
+            _readme(_overview()).replace("**Input.**", "**Output.**").replace("**Outputs.**", "**Input.**"),
+            "must have a bold input label",
+        ),
+        (_readme(_overview()).replace("**Input.**", "Text. **Input.**"), "must have a bold input label"),
     ],
 )
 def test_model_readme_contract_rejects_invalid_content(tmp_path: Path, markdown: str, message: str) -> None:
@@ -190,6 +199,35 @@ def test_model_readme_contract_accepts_plain_words_near_banned_terms(tmp_path: P
     (model_dir / "hero.png").write_bytes(_png())
 
     load_model_documentation(model_dir, "Fixture Model", repository=tmp_path)
+
+
+@pytest.mark.parametrize("label", ("**Inputs.**", "**Image input.**", "**Text input.**"))
+def test_model_readme_contract_accepts_named_input_labels(tmp_path: Path, label: str) -> None:
+    model_dir = tmp_path / "models" / "fixture"
+    model_dir.mkdir(parents=True)
+    markdown = _readme(_overview()).replace("**Input.**", label).replace("**Outputs.**", "**Output.**")
+    (model_dir / "README.md").write_text(markdown, encoding="utf-8")
+    (model_dir / "hero.png").write_bytes(_png())
+
+    load_model_documentation(model_dir, "Fixture Model", repository=tmp_path)
+
+
+def test_model_readme_word_limit_ignores_table_layout(tmp_path: Path) -> None:
+    model_dir = tmp_path / "models" / "fixture"
+    model_dir.mkdir(parents=True)
+    # The limit counts from "## Overview", after the three words of the H1 and the four of the hero line.
+    fixed_words = len(_readme(_overview()).replace(_CONTENT, "").split()) - 7
+    cells = MAX_README_WORDS - fixed_words - 2
+    table = "| Tensor | Holds |\n| --- | :-- |\n" + "\n".join(f"| `t{index}` |" for index in range(cells))
+    (model_dir / "README.md").write_text(_readme(_overview()).replace(_CONTENT, table), encoding="utf-8")
+    (model_dir / "hero.png").write_bytes(_png())
+
+    load_model_documentation(model_dir, "Fixture Model", repository=tmp_path)
+    (model_dir / "README.md").write_text(
+        _readme(_overview()).replace(_CONTENT, table + "\n| `extra` |"), encoding="utf-8",
+    )
+    with pytest.raises(ValidationError, match=f"at most {MAX_README_WORDS} words"):
+        load_model_documentation(model_dir, "Fixture Model", repository=tmp_path)
 
 
 def test_model_readme_contract_accepts_escaped_image_syntax_in_overview(tmp_path: Path) -> None:

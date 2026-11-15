@@ -4,37 +4,38 @@
 
 ## Overview
 
-D-FINE Nano detects 80 COCO object classes using a backbone and decoder.
-The backbone extracts features and proposes candidate locations; the decoder
-refines the best 300 into boxes and class scores. Select candidates on the
-CPU, retaining the original feature tensor. Native preprocessing accepts
-original-size RGB images; the decoder's boxes and scores are decoded on the
-CPU into image coordinates.
+D-FINE Nano finds everyday objects in an image, such as people, vehicles, and
+animals, and returns a box, a class, and a score for each one. Use it to count,
+track, or monitor objects in camera streams. It knows the 80 COCO classes. It is
+the Nano size of the D-FINE detector. The model runs in two parts, and your
+application picks the 300 best candidates on the CPU between them. Each object
+is predicted once, so there are no overlapping boxes to remove.
 
 ## Inputs and outputs
 
-**Input.** Stretch RGB images to 640×640 with bilinear resampling. Scale pixels
-to 0–1 without ImageNet normalization; retain original dimensions for decoding.
+**Input.** One 640×640 RGB image with values from 0 to 1.
 
-**Between components.** The backbone returns `attention_memory` and
-`query_content`, each shaped (1, 2000, 128), `proposal_scores` (1, 2000), and
-`reference_logits` (1, 2000, 4). Select the 300 highest proposal scores, breaking
-ties by lower proposal index. Gather the corresponding content and raw reference
-rows. Pass these and the original attention tensor to the decoder; retain
-their storage until execution completes.
+- With Neat: pass your frame as an image, with stretch resizing and normalization with mean 0 and standard deviation 1, which only scales the values to 0–1.
+- Yourself: stretch to 640×640 with bilinear resampling and divide by 255. Do not apply the ImageNet mean and standard deviation. Pass a 640×640×3 (height, width, channel) float tensor with Neat's preprocessing off.
 
-**Outputs.** The decoder returns `pred_boxes` (1, 300, 4), normalized
-(cx, cy, width, height), and `pred_logits` (1, 300, 80).
+**Between the components.** The backbone returns `attention_memory` and `query_content`, 2,000 rows of 128 values each, `proposal_scores`, 2,000 values, and `reference_logits`, 2,000 rows of 4 values.
 
-Decode them on the CPU, as `scripts/accuracy.py` does:
+1. Take the 300 highest `proposal_scores`, breaking ties by the lower index.
+2. Gather those rows of `query_content` and `reference_logits` in that order, without changing their values.
+3. Pass both, with the whole `attention_memory`, to the decoder.
 
-1. Apply sigmoid; rank all 300×80 query/class pairs.
-2. Keep 300 pairs, including different classes per box; do not suppress overlaps.
-3. Convert to corners, scale to original dimensions, clip to the image, and drop boxes left empty.
-4. Map class indices through sorted COCO category IDs, including their gaps.
+**Outputs.** Up to 300 detections, each a box, a class index, and a score. Neat has no decoder for this model, so decode these tensors.
 
-Public tensor boundaries remain FP32. Choose a package that balances accuracy
-and throughput for your application.
+| Tensor | Size | Holds |
+|---|---|---|
+| `pred_boxes` | 300 rows of 4 values | boxes as (cx, cy, width, height), fractions of the image |
+| `pred_logits` | 300 rows of 80 values | class logits per box |
+
+1. Apply a sigmoid to `pred_logits` and rank all 300×80 box-class pairs by score.
+2. Keep the 300 best pairs. One box can appear with several classes.
+3. The corners are (cx - width/2, cy - height/2) and (cx + width/2, cy + height/2). Multiply x by the image width and y by the image height, clip to the image, and drop boxes left empty.
+
+Class index i is the i-th COCO category ID in ascending order.
 
 ## Building applications
 

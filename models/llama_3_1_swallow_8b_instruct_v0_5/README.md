@@ -4,15 +4,26 @@
 
 ## Overview
 
-Llama 3.1 Swallow 8B Instruct v0.5 is an instruction-tuned language model from the Swallow team, built on Meta’s Llama 3.1 with additional training for Japanese and English. It answers questions, rewrites text, and continues conversations. This language-only package runs locally on SiMa.ai Modalix, accepts a text prompt with optional conversation history, and generates a complete response or incremental tokens for the application.
+Llama 3.1 Swallow 8B Instruct v0.5 answers questions, rewrites text, extracts
+information, and holds a conversation. Use it for a chat assistant, a writing
+aid, or pulling facts out of text, in Japanese or English. Your application
+sends a prompt and gets the answer back as text, complete or streamed as it is
+generated. It comes from the Swallow team, which built it on Meta's Llama 3.1
+with additional training for Japanese and English.
 
 *Maximum context length can be changed when recompiling the model.*
 
 ## Inputs and outputs
 
-1. Supply the question or instruction as `prompt`, including relevant source text and prior messages when continuing a conversation. Let the GenAI API apply the bundled chat template.
-2. Read the generated `text` as a complete response or incremental tokens.
-3. Start a new conversation when previous messages should no longer influence the answer.
+**Input.** One text prompt, with the earlier messages when you continue a conversation.
+
+- `prompt`: the question or instruction, with any source text it refers to. Let the GenAI API apply the bundled chat template.
+- Earlier messages: pass them to continue a conversation. Start a new conversation when they should no longer influence the answer.
+
+**Outputs.** The answer as text.
+
+- `text`: the generated answer, as one complete response.
+- Streaming: read incremental tokens as they arrive instead of waiting for the complete response.
 
 ## Building applications
 

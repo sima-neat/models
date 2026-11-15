@@ -4,15 +4,26 @@
 
 ## Overview
 
-Qwen3-VL-4B Instruct is a vision-language model from Alibaba Cloud with approximately 4 billion parameters. It combines text and image understanding to answer questions about pictures, describe visual content, and hold text-based conversations. This package runs locally on SiMa.ai Modalix and contains the language model and image encoder together. It accepts text-only or image-plus-text requests and generates responses that can be displayed as complete answers or streamed to the application.
+Qwen3-VL-4B Instruct answers questions about an image, describes what it shows,
+and holds a text conversation. Use it to caption images, answer questions about
+a camera frame, or chat about a picture. Your application sends a prompt, with
+or without an image, and gets the answer back as text, complete or streamed as
+it is generated. It is the 4B size of the Qwen3-VL family from Alibaba Cloud.
 
 *Image resolution and maximum context length can be changed when recompiling the model.*
 
 ## Inputs and outputs
 
-1. Supply the question as `prompt`, with prior messages when continuing a conversation.
-2. For an image request, decode `image` as RGB. Let the GenAI API apply the bundled processor settings for the 448 × 448 input; do not manually normalize pixels.
-3. Read the generated `text` as a complete response or incremental tokens. Start a new conversation when previous messages should no longer influence the answer.
+**Input.** One text prompt, an optional image, and the earlier messages when you continue a conversation.
+
+- `prompt`: the question or instruction, with any source text it refers to. Let the GenAI API apply the bundled chat template.
+- `image`: for an image request, an image decoded as RGB. The GenAI API applies the bundled processor settings for the 448×448 input. Do not normalize the pixels yourself.
+- Earlier messages: pass them to continue a conversation. Start a new conversation when they should no longer influence the answer.
+
+**Outputs.** The answer as text.
+
+- `text`: the generated answer, as one complete response.
+- Streaming: read incremental tokens as they arrive instead of waiting for the complete response.
 
 ## Building applications
 

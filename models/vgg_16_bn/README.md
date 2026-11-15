@@ -4,25 +4,30 @@
 
 ## Overview
 
-VGG-16-BN is a 16-layer convolutional network for image classification that stacks 3×3 convolutions with batch normalization in five blocks, each ending in max pooling, and finishes with three fully connected layers, trained on the 1,000 classes of ImageNet-1k. The package uses
-torchvision's ImageNet weights (IMAGENET1K_V1). It takes a 224×224 RGB image and
-returns one score for each class. Your application turns the scores into
-probabilities with a softmax and reports the most likely classes. The model runs
-as one component.
+VGG-16-BN sorts an image into one of the 1,000 ImageNet classes, such as
+animals, vehicles, and household objects. Use it to tag or sort photos, or to
+check what a camera is looking at. It returns one score for each class, and your
+application reports the most likely ones. It names the main subject of the image
+and does not locate it. It is the 16-layer depth of the VGG family, in the
+variant with batch normalization. Deeper sizes are more accurate and slower. The
+package uses torchvision's ImageNet weights (IMAGENET1K_V1).
 
 ## Inputs and outputs
 
-**Input.** Resize the image with bilinear resampling so its shorter side is 256,
-then crop the center 224×224. Scale the RGB values to 0–1, subtract the ImageNet
-mean (0.485, 0.456, 0.406), and divide by the standard deviation (0.229, 0.224,
-0.225). The accuracy script passes this image as a 224×224×3 (height, width,
-channel) float tensor, with Neat's resize, color conversion, and normalization
-turned off.
+**Input.** One 224×224 RGB image, normalized with the ImageNet mean and standard deviation.
 
-**Outputs.** `logits` holds 1,000 class scores.
+- With Neat: pass your frame as an image, with stretch resizing and the ImageNet normalization preset.
+- Yourself: resize with bilinear resampling so the shorter side is 256, then crop the center 224×224. Scale to 0–1, subtract (0.485, 0.456, 0.406), divide by (0.229, 0.224, 0.225), and pass a 224×224×3 (height, width, channel) float tensor with Neat's resize, color conversion, and normalization off.
+
+Neat's stretch fits the whole frame into the square and changes its proportions.
+The center crop keeps the proportions and drops the edges. The original model
+expects the resize and center crop, so prepare the image yourself for results
+closest to it.
+
+**Outputs.** One score for each of the 1,000 classes, in `logits`. Neat has no decoder for this model, so your application ranks the scores.
 
 1. Apply a softmax to `logits` to get class probabilities.
-2. Take the five highest probabilities as the top-5 classes.
+2. Take the highest probability as the class, or the five highest as the top-5 classes.
 
 Class index i is the i-th ImageNet-1k WordNet ID in sorted order, which is the
 standard ImageNet-1k class order.
