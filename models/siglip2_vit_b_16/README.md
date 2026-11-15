@@ -21,10 +21,11 @@ and reuse their embeddings for every image.
 
 Image preprocessing:
 
-1. Resize straight to 224×224 with bilinear resampling, without cropping or keeping the aspect ratio.
-2. Divide by 255.
-3. Subtract the mean (0.5, 0.5, 0.5).
-4. Divide by the standard deviation (0.5, 0.5, 0.5).
+1. Resize to 256×256 with bilinear resampling and no antialiasing, without keeping the aspect ratio.
+2. Crop the center 224×224.
+3. Divide by 255.
+4. Subtract the mean (0.5, 0.5, 0.5).
+5. Divide by the standard deviation (0.5, 0.5, 0.5).
 
 Text preprocessing:
 
