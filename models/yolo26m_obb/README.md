@@ -6,7 +6,7 @@
 
 YOLO26m-obb finds objects in aerial images, such as planes and ships, and
 returns a rotated box, a class, and a score for each one. Use it for aerial
-surveys or port monitoring. It knows only the 15 DOTA aerial classes. Your
+surveys or port monitoring. It is trained on the 15 DOTA aerial classes. Your
 application cuts large images into overlapping windows first. It comes from
 Ultralytics.
 

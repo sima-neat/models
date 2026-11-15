@@ -6,7 +6,7 @@
 
 YOLOv8s-det finds everyday objects in an image, such as people, vehicles, and
 animals, and returns a box, a class, and a score for each one. Use it to count,
-track, or monitor objects in live camera streams. It knows only the 80 object
+track, or monitor objects in live camera streams. It is trained on the 80 object
 classes of the COCO dataset. It comes from Ultralytics. It predicts several
 overlapping boxes for one object, and decoding removes the duplicates.
 

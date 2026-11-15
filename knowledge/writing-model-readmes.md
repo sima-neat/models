@@ -72,7 +72,7 @@ Rules for the rest of the overview:
 - Give the origin in one short sentence, such as "It comes from Ultralytics." Do not restate what the name already says: the size, the family, or the version.
 - Do not compare sizes. "The larger sizes are more accurate and slower" is true of every family, so it tells the reader nothing, and it reads wrongly on the largest size.
 - Before keeping a sentence, ask what the reader would lose without it. Remove it when the answer is nothing.
-- Name a surprise when there is one: the model needs another model first, its result is relative and not metric, it knows a fixed class list, it handles a fixed number of items.
+- Name a surprise when there is one: the model needs another model first, its result is relative and not metric, it is trained on a fixed class list (write "It is trained on the 80 COCO classes", not "It knows"), it handles a fixed number of items.
 - Leave out the architecture, the training method, and the number of components, unless the application has to act on them. A model with a CPU step between two components says so, because the application writes that step.
 - Do not make a speed or accuracy claim. The model page shows the measured values.
 

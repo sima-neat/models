@@ -6,10 +6,10 @@
 
 D-FINE Nano finds everyday objects in an image, such as people, vehicles, and
 animals, and returns a box, a class, and a score for each one. Use it to count,
-track, or monitor objects in camera streams. It knows the 80 COCO classes. The
-model runs in two parts, and your application picks the 300 best candidates on
-the CPU between them. Each object is predicted once, so there are no overlapping
-boxes to remove.
+track, or monitor objects in camera streams. It is trained on the 80 COCO
+classes. The model runs in two parts, and your application picks the 300 best
+candidates on the CPU between them. Each object is predicted once, so there are
+no overlapping boxes to remove.
 
 ## Inputs
 

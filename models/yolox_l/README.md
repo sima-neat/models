@@ -6,9 +6,9 @@
 
 YOLOX-l finds everyday objects in an image, such as people, vehicles, and
 animals, and returns a box, a class, and a score for each one. Use it to count,
-track, or monitor objects in live camera streams. It knows the 80 COCO classes.
-It comes from Megvii. It expects blue, green, red color order and unscaled pixel
-values.
+track, or monitor objects in live camera streams. It is trained on the 80 COCO
+classes. It comes from Megvii. It expects blue, green, red color order and
+unscaled pixel values.
 
 ## Inputs
 
