@@ -145,10 +145,7 @@ provenance fields. That call records the installed LLiMa compiler version as
 - `S3ArtifactStore.ensure_native_sha256` refuses a file larger than 5 GiB. The size of
   the whole deployment has no limit.
 - `stage_catalog_build` restores the folder from the registry and checks each file's
-  size and SHA-256. Its `metadata_only` mode stages the manifests and publication
-  receipts for direct DevKit downloads. `download_benchmark_deployments` calls SiMa CLI
-  with the staged catalog branch and selected registry environment, checks its package
-  identity, and adapts the downloaded folder to the compile input layout.
+  size and SHA-256.
 
 ### Publish job runner
 

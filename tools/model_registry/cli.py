@@ -426,16 +426,7 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     stage_registry.add_argument("--compile-invocation-id", required=True)
     stage_registry.add_argument("--benchmark-baseline", action="store_true",
                                 help="restore only the declared ordinary benchmark baseline")
-    stage_registry.add_argument("--metadata-only", action="store_true",
-                                help="stage native manifests and receipts without deployment payloads")
     stage_registry.add_argument("--json", action="store_true", dest="json_output")
-
-    download_benchmarks = subcommands.add_parser(
-        "download-benchmark-deployments", help="download staged native packages on the DevKit through SiMa CLI"
-    )
-    download_benchmarks.add_argument("--compiled-dir", type=Path, required=True)
-    download_benchmarks.add_argument("--download-dir", type=Path, required=True)
-    download_benchmarks.add_argument("--environment", choices=("production", "staging"), required=True)
 
     if not author_safe:
         from .promotions import add_parser
@@ -986,7 +977,6 @@ def _stage_registry_build(args: argparse.Namespace) -> int:
         branch=args.branch,
         catalog_revision=args.catalog_revision,
         deployment_branch=args.deployment_branch,
-        metadata_only=args.metadata_only,
         model_id=args.model_id,
         build_profile_id=args.build_profile_id,
         **({} if args.benchmark_baseline else {"compile_invocation_id": args.compile_invocation_id}),
@@ -1121,13 +1111,6 @@ def _main(argv: Sequence[str] | None, *, author_safe: bool) -> int:
             return _publish_catalog(args)
         if args.command == "stage-registry-build":
             return _stage_registry_build(args)
-        if args.command == "download-benchmark-deployments":
-            from .registry import download_benchmark_deployments
-
-            print(json.dumps(download_benchmark_deployments(
-                compiled_dir=args.compiled_dir, download_dir=args.download_dir, environment=args.environment,
-            )))
-            return 0
         parser.error(f"unsupported command: {args.command}")
     except ModelRegistryError as exc:
         print(f"error: {exc}", file=sys.stderr)

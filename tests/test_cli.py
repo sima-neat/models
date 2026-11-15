@@ -51,7 +51,6 @@ def test_benchmark_job_scopes_baseline_and_timeout(model, profile, stages, backe
         "resolve-benchmark-runtime",
         "benchmark-job",
         "stage-registry-build",
-        "download-benchmark-deployments",
         "plan-promoted-benchmarks",
     ],
 )

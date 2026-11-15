@@ -7,7 +7,6 @@ import logging
 import math
 import random
 import re
-import shutil
 import subprocess
 import tempfile
 import time
@@ -1261,9 +1260,8 @@ def stage_catalog_build(
     download_request: DownloadRequest | None = None,
     expected_compile_fingerprint: str | None = None,
     deployment_branch: str | None = None,
-    metadata_only: bool = False,
 ) -> JsonObject:
-    """Restore a published invocation, optionally deferring native payloads to the DevKit."""
+    """Restore a complete invocation from durable registry MPKs for later stages."""
     root = Path(repository).expanduser().resolve()
     output = Path(output_dir).expanduser().resolve()
     read = read_request or _public_registry_json
@@ -1322,8 +1320,6 @@ def stage_catalog_build(
             raise ValidationError(f"current catalog build has no retained compile run: {component_id}")
         component = next(item for item in model["components"] if item["id"] == component_id)
         native = component["interface"]["format"] == "huggingface"
-        if metadata_only and not native:
-            raise ValidationError("metadata-only staging requires a LLiMa deployment")
         kind = "llima" if native else "mpk"
         artifact_payload = read(f"{base_url}/v1/runs/{run_id}/artifacts/{kind}")
         artifact = artifact_payload.get("artifact")
@@ -1348,42 +1344,40 @@ def stage_catalog_build(
             if not isinstance(manifest, dict) or manifest.get("format") != "llima":
                 raise ValidationError(f"invalid LLiMa deployment manifest for {run_id}")
             files = deployment_files(manifest)
-            if not metadata_only:
-                deployment = component_dir / "deployment"
-                deployment.mkdir(exist_ok=True)
+            deployment = component_dir / "deployment"
+            deployment.mkdir(exist_ok=True)
 
-                def fetch_file(item: JsonObject) -> None:
-                    response = read(f"{base_url}/v1/runs/{run_id}/artifacts/{item['artifact']}")
-                    registered = response.get("artifact", {})
-                    if (registered.get("sha256") != item["sha256"]
-                            or registered.get("size_bytes") != item["size_bytes"]
-                            or not isinstance(registered.get("download_url"), str)):
-                        raise ValidationError(f"inconsistent deployment artifact: {item['path']}")
-                    path = deployment / item["path"]
-                    if any(parent.is_symlink() for parent in (path, *path.parents)):
-                        raise ValidationError(f"unsafe deployment output path: {path}")
-                    if (path.is_file() and path.stat().st_size == item["size_bytes"]
-                            and sha256_file(path)[0] == item["sha256"]):
-                        return
-                    _download_registry_file(registered["download_url"], path, registered, download_request)
+            def fetch_file(item: JsonObject) -> None:
+                response = read(f"{base_url}/v1/runs/{run_id}/artifacts/{item['artifact']}")
+                registered = response.get("artifact", {})
+                if (registered.get("sha256") != item["sha256"]
+                        or registered.get("size_bytes") != item["size_bytes"]
+                        or not isinstance(registered.get("download_url"), str)):
+                    raise ValidationError(f"inconsistent deployment artifact: {item['path']}")
+                path = deployment / item["path"]
+                if any(parent.is_symlink() for parent in (path, *path.parents)):
+                    raise ValidationError(f"unsafe deployment output path: {path}")
+                if (path.is_file() and path.stat().st_size == item["size_bytes"]
+                        and sha256_file(path)[0] == item["sha256"]):
+                    return
+                _download_registry_file(registered["download_url"], path, registered, download_request)
 
-                with ThreadPoolExecutor(max_workers=4) as executor:
-                    list(executor.map(fetch_file, sorted(files, key=lambda item: item["size_bytes"], reverse=True)))
-                declared = {item["path"] for item in files}
-                for path in deployment.rglob("*"):
-                    if path.is_symlink():
-                        raise ValidationError(f"unsafe deployment output path: {path}")
-                    if path.is_file() and path.relative_to(deployment).as_posix() not in declared:
-                        path.unlink()
-        if not metadata_only:
-            verified = verify_artifact(component_dir)
-            run_payload = read(f"{base_url}/v1/runs/{run_id}")
-            run = run_payload.get("run", {}) if isinstance(run_payload, dict) else {}
-            compiler_version = run.get("toolchain_version") if isinstance(run, dict) else None
-            compile_result = {**verified, "provenance": {"compiler_version": compiler_version}}
-            (component_dir / "compile-result.json").write_text(
-                json.dumps(compile_result, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-            )
+            with ThreadPoolExecutor(max_workers=4) as executor:
+                list(executor.map(fetch_file, sorted(files, key=lambda item: item["size_bytes"], reverse=True)))
+            declared = {item["path"] for item in files}
+            for path in deployment.rglob("*"):
+                if path.is_symlink():
+                    raise ValidationError(f"unsafe deployment output path: {path}")
+                if path.is_file() and path.relative_to(deployment).as_posix() not in declared:
+                    path.unlink()
+        verified = verify_artifact(component_dir)
+        run_payload = read(f"{base_url}/v1/runs/{run_id}")
+        run = run_payload.get("run", {}) if isinstance(run_payload, dict) else {}
+        compiler_version = run.get("toolchain_version") if isinstance(run, dict) else None
+        compile_result = {**verified, "provenance": {"compiler_version": compiler_version}}
+        (component_dir / "compile-result.json").write_text(
+            json.dumps(compile_result, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
         (component_dir / "registry-publication.json").write_text(
             json.dumps({"runs": [{
                 "model_id": model_id,
@@ -1417,27 +1411,6 @@ def stage_catalog_build(
         metadata = artifact.get("metadata") or {}
         if not isinstance(metadata, dict):
             raise ValidationError("artifact registry returned invalid package metadata")
-        if metadata_only:
-            component = staged_outputs[0]
-            component_runs = {item["component_id"]: item["run_id"] for item in staged_outputs}
-            if (metadata.get("layout") != "directory" or metadata.get("component_run_ids") != component_runs
-                    or package.get("component_run_ids") != component_runs):
-                raise ValidationError("native package does not match the selected component builds")
-            package_index = profile_dir / "package-manifest.json"
-            _download_registry_file(artifact["download_url"], package_index, artifact, download_request)
-            package_manifest = json.loads(package_index.read_text(encoding="utf-8"))
-            compile_manifest = json.loads((profile_dir / component["artifact_path"]).read_text(encoding="utf-8"))
-            if (package_manifest.get("model_id") != model_id
-                    or package_manifest.get("build_profile_id") != build_profile_id
-                    or package_manifest.get("package_id") != "default"
-                    or sorted(deployment_files(package_manifest), key=lambda item: item["path"])
-                    != sorted(deployment_files(compile_manifest), key=lambda item: item["path"])):
-                raise ValidationError("native package manifest differs from the selected compilation")
-            (profile_dir / "benchmark-download.json").write_text(json.dumps({
-                "model_id": model_id, "build_profile_id": build_profile_id, "branch": catalog_branch,
-                "component_id": component["component_id"], "run_id": package["run_id"],
-                "manifest_sha256": artifact["sha256"],
-            }, indent=2) + "\n", encoding="utf-8")
         if "runtime_files" in metadata:
             component_runs = {item["component_id"]: item["run_id"] for item in staged_outputs}
             if (artifact.get("sha256") != package.get("artifact_sha256", artifact.get("sha256"))
@@ -1451,8 +1424,6 @@ def stage_catalog_build(
                 _download_registry_file(artifact["download_url"], archive, artifact, download_request)
                 runtime_files = metadata["runtime_files"]
                 restore_runtime_files(archive, runtime_files, profile_dir)
-    if metadata_only and package is None:
-        raise ValidationError("native metadata staging requires a published package")
     # The same manifest a compile writes, so later stages read restored and fresh builds alike.
     (profile_dir / "compile-outputs.json").write_text(
         json.dumps({
@@ -1476,49 +1447,6 @@ def stage_catalog_build(
         )
     return {"count": len(staged_outputs), "outputs": staged_outputs}
 
-
-
-
-def download_benchmark_deployments(
-    *, compiled_dir: str | Path, download_dir: str | Path, environment: str,
-) -> JsonObject:
-    """Download pinned native packages through SiMa CLI into the job's existing input layout."""
-    output = Path(compiled_dir).resolve()
-    downloads = Path(download_dir).resolve()
-    installed = []
-    for plan_path in sorted(output.glob("*/*/benchmark-download.json")):
-        plan = json.loads(plan_path.read_text(encoding="utf-8"))
-        profile_dir = plan_path.parent
-        destination_root = downloads / plan["model_id"] / plan["build_profile_id"]
-        command = ["sima-cli", "models", "download", "--id", plan["model_id"],
-                   "--variant", plan["build_profile_id"], "--branch", plan["branch"],
-                   "--output", str(destination_root), "--json"]
-        if environment == "staging":
-            command.append("--stg")
-        elif environment != "production":
-            raise ValidationError("benchmark downloads require production or staging")
-        try:
-            result = json.loads(subprocess.check_output(command, text=True))
-        except (OSError, ValueError, subprocess.CalledProcessError) as exc:
-            raise ValidationError(f"SiMa CLI deployment download failed: {exc}") from exc
-        if (result.get("format") != "directory" or result.get("run_id") != plan["run_id"]
-                or result.get("manifest_sha256") != plan["manifest_sha256"]
-                or result.get("model_id") != plan["model_id"]
-                or result.get("build_profile_id") != plan["build_profile_id"]):
-            raise ValidationError("downloaded deployment differs from the staged package; the branch selection changed")
-        deployment = Path(result["path"]).resolve()
-        if not deployment.is_relative_to(destination_root) or deployment == destination_root:
-            raise ValidationError("SiMa CLI returned a deployment outside its job download directory")
-        manifest = deployment / "manifest.json"
-        if sha256_file(manifest)[0] != plan["manifest_sha256"]:
-            raise ValidationError("downloaded package manifest checksum differs from the staged package")
-        manifest.unlink()  # The compile layout keeps its manifest beside the deployment.
-        destination = profile_dir / plan["component_id"] / "deployment"
-        if destination.exists():
-            raise ValidationError(f"benchmark deployment already exists: {destination}")
-        shutil.move(str(deployment), destination)
-        installed.append(str(destination))
-    return {"deployments": installed}
 
 
 def stage_benchmark_baseline(
