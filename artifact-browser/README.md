@@ -311,8 +311,9 @@ resolves each to its run. A fingerprint without a run, or a profile without a
 fingerprint, shows **Not measured at this revision.**
 
 **Details** lists one source model row per distinct digest. **Compare** reads the
-selected branch's catalog and does not compare build history. Its links preserve the
-task, the workload, and the selected builds.
+selected branch's catalog and does not compare build history. For each variant it loads only the
+performance and accuracy results (`loadBenchmarkResults` in `api.js`), not the compile and package
+runs a model page shows. Its links preserve the task, the workload, and the selected builds.
 
 ## Downloading model variants
 

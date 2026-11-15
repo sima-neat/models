@@ -1541,6 +1541,17 @@ def test_compare_explores_one_task_with_a_chart_and_selected_table() -> None:
     assert '.workspace:not([data-view="compare"]) .compare-pane { display: none; }' in styles
 
 
+def test_compare_loads_only_the_results_it_shows() -> None:
+    compare = _browser_source("compare-view.js")
+    api = _browser_source("api.js")
+
+    # A model page's compile and package runs cost five requests per variant that Compare never shows.
+    assert "loadBenchmarkResults(option.model, option.profile)" in compare
+    assert "loadVariant" not in compare and "loadRunDetail" not in compare
+    loader = api.split("export async function loadBenchmarkResults(", 1)[1].split("\n}\n", 1)[0]
+    assert "loadRunDetail" not in loader and "loadPackageRun" not in loader
+
+
 def test_compare_lists_every_build_profile_of_a_multi_component_model() -> None:
     api = _browser_source("api.js")
     script = _browser_source("compare-view.js")

@@ -303,6 +303,18 @@ export function loadPackageRun(runId) {
 }
 
 // A variant's performance and accuracy each measure the whole model, once per build profile.
+// What Compare reads of a build profile: its two benchmark results and the model's published scores. It skips
+// the compile and package runs a model page loads, which Compare never shows.
+export async function loadBenchmarkResults(model, profile) {
+  const fingerprints = model.benchmark_fingerprints?.[profile] || {};
+  const [performance, accuracy, reference] = await Promise.all([
+    loadBenchmarkRun("performance", fingerprints.performance),
+    loadBenchmarkRun("accuracy", fingerprints.accuracy),
+    loadReferenceMetrics(model.model_id),
+  ]);
+  return { performance, accuracy, reference };
+}
+
 export async function loadVariant(anchor) {
   const key = variantBuildKey(anchor);
   if (state.variantCache.has(key)) return state.variantCache.get(key);

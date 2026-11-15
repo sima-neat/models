@@ -4,7 +4,7 @@ import { state, elements, catalogMode, showView, taxonomyLabel } from "./state.j
 import { escapeHtml, variantLabel } from "./ui.js";
 import { datasetName } from "./accuracy-metrics.js";
 import { metricDefinition, metricDisplay } from "./metrics.js";
-import { anchorBuild, compilerFilteredBuilds, loadRunDetail, loadVariant, profileGroups, mapWithConcurrency } from "./api.js";
+import { anchorBuild, compilerFilteredBuilds, loadBenchmarkResults, profileGroups, mapWithConcurrency } from "./api.js";
 import { compareModels } from "./catalog-view.js";
 import { accuracyHeadline } from "./accuracy-section.js";
 
@@ -64,6 +64,11 @@ function catalogVariants() {
   ));
 }
 
+// The catalog lists one build per component of a build profile.
+function componentCount({ model, profile }) {
+  return model.builds.filter((build) => build.build_profile_id === profile).length;
+}
+
 function measuredText(metric, key) {
   const definition = metricDefinition(key);
   const display = metricDisplay(metric, definition);
@@ -113,7 +118,7 @@ function comparisonTable(columns) {
       ${generative && columns.some(column => comparisonWorkload(column.performance)?.kind === "image_text")
         ? row("Image resolution", columns.map(column => text(comparisonWorkload(column.performance)?.image_size?.join(" × ")))) : ""}
       ${row("Task", columns.map(({ option }) => text((option.model.tasks || []).map((id) => taxonomyLabel("tasks", id)).join(", "))))}
-      ${row("Components", columns.map(({ variant }) => text(variant ? String(variant.details.length) : "")))}
+      ${row("Components", columns.map(({ option, failed }) => text(failed ? "" : String(componentCount(option)))))}
       ${group("Performance on Modalix")}
       ${performance}
       ${group("Accuracy")}
@@ -121,11 +126,6 @@ function comparisonTable(columns) {
       ${row("Published", columns.map(({ accuracy }) => text(accuracy?.reference)))}
     </tbody>
   </table></div>`;
-}
-
-async function loadPickedVariant(option) {
-  const anchor = (await loadRunDetail(option.build.run_id)).summary.run;
-  return loadVariant(anchor);
 }
 
 let compareRequestId = 0;
@@ -339,11 +339,11 @@ export async function renderComparison() {
   if (!options.length) return;
   const columns = await mapWithConcurrency(options, 3, async option => {
     if (requestId !== compareRequestId) return null;
-    const variant = await loadPickedVariant(option).catch(() => null);
-    const result = variant ? readPerformance(variant.performance) : null;
-    return {option, variant, failed: !variant, performance: result?.kind === "supported" ? result.value : null,
-      synthetic: result?.value?.generation?.synthetic, measurements: variant ? variantMeasurements(variant) : {},
-      accuracy: variant ? accuracyHeadline(variant) : null};
+    const results = await loadBenchmarkResults(option.model, option.profile).catch(() => null);
+    const result = results ? readPerformance(results.performance) : null;
+    return {option, failed: !results, performance: result?.kind === "supported" ? result.value : null,
+      synthetic: result?.value?.generation?.synthetic, measurements: results ? variantMeasurements(results) : {},
+      accuracy: results ? accuracyHeadline(results) : null};
   });
   if (requestId !== compareRequestId) return;
   loadedColumns = columns.filter(Boolean);
