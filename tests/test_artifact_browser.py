@@ -1059,7 +1059,7 @@ def test_browser_uses_refined_search_first_layout() -> None:
     assert 'class="page-header"' not in html
     assert "Trace every" not in html
     assert '<header class="catalog-intro">' in html
-    assert "Pick a model, check its speed and accuracy, and download it for Palette Neat." in html
+    assert "Pick a model, compare performance and accuracy, and download it for Palette Neat." in html
     assert "--font-display" not in styles
     assert "font-family: var(--font-body)" in styles
 
