@@ -29,8 +29,8 @@ Image preprocessing:
 
 Text preprocessing:
 
-1. Tokenize the prompt with the packaged `text_encoder/tokenizer.json`.
-2. Cut it to 77 tokens, or pad it to 77 with the end-of-text token (ID 49407).
+1. Tokenize the prompt with the packaged `text_encoder/tokenizer.json`, with the tokenizer's truncation set to 77 tokens. The tokenizer then shortens a long prompt and keeps the end-of-text token (ID 49407) last. Do not cut the token list yourself.
+2. Pad a shorter result to 77 with the end-of-text token.
 3. Replace each token ID with its 512-value row from `text_encoder/token_embeddings.npy`.
 
 ## Outputs

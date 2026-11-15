@@ -30,8 +30,8 @@ Image preprocessing:
 Text preprocessing:
 
 1. Lowercase the prompt.
-2. Tokenize it with the packaged `text_encoder/tokenizer.json`, which appends the end-of-sequence token.
-3. Cut it to 64 tokens, or pad it to 64 with the padding token (ID 0).
+2. Tokenize it with the packaged `text_encoder/tokenizer.json`, with the tokenizer's truncation set to 64 tokens. The tokenizer appends the end-of-sequence token, and for a long prompt it shortens the text and keeps that token last. Do not cut the token list yourself.
+3. Pad a shorter result to 64 with the padding token (ID 0).
 4. Replace each token ID with its 768-value row from `text_encoder/token_embeddings.npy`.
 
 ## Outputs
