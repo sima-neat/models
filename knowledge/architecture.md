@@ -156,6 +156,12 @@ Rules for changing what a stage depends on:
 - A shared file reruns a stage only when it is in that stage's tooling list in
   `fingerprints.py`. Add the file there, update the docs table, and add a test in
   `tests/test_compile_matrix.py` or `tests/test_stage_plan.py`.
+- A new script under the repository's `scripts/` is an input of no stage until a tooling
+  list names it. Add it to the list of each stage that runs it.
+- A `compilation.source: conversion` source resolves during planning
+  ([selection](publication.md#selection)). The compile fingerprint hashes only the
+  resolved file's SHA-256 (`source_identity` in `source.py`), never the run that produced
+  it. A conversion that reruns and yields the same ONNX therefore recompiles nothing.
 - A recompiled build has new compile run IDs, so its benchmark fingerprints change and its
   benchmarks run again.
 - No fingerprint includes a model's `tests/`, `tools/model_report/metrics.json`, the

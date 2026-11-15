@@ -179,6 +179,7 @@ A reviewer checks the picture:
 - It stays legible in the light and the dark theme.
 - It carries no instruction a reader needs. Instructions belong in the README text.
 - It is finished artwork, not a placeholder.
+- It is the `hero.png` file in the model folder, not a remote image URL and not an image from another folder.
 
 ### 7. Check the README and the hero
 
