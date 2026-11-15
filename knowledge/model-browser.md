@@ -85,6 +85,7 @@ customers see would be a line such as `customerNotice: !developer`.
 | `mlaUtilization` | MLA Utilization under Performance |
 | `evaluationDetails` | how an accuracy run was evaluated |
 | `referenceTables` | the tables of published and FP32 baseline scores |
+| `commandBranch` | the `--branch` option in the copied CLI command. The customer command names no branch and downloads from `main` |
 
 Three customer-view rules live outside this list, and the header of `audience.js` names
 them. `styles.css` hides `.developer-only` markup, and the branch and compiler tags.

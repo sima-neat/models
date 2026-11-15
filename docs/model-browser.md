@@ -121,8 +121,8 @@ name, tags, description, download action, and the validation and source-link
 icons in both UI modes; narrow screens stack them. The tags name what holds for every variant:
 tasks, model family, model type and license. The download dialog offers an outlined **Copy CLI command**
 button with a copy icon alongside browser downloads where available. The copied
-command names the branch only when it is not `main`, because `sima-cli` downloads
-from `main` by default. A package dialog names the model, summarizes the variant
+command names the selected branch in the developer view. In the customer view it
+names no branch, because `sima-cli` downloads from `main` by default. A package dialog names the model, summarizes the variant
 and size, and shows a quiet filename block and license line with a **Download**
 action, in both views. Dialogs and action buttons use softly rounded corners.
 The model's License section retains attribution in both views. Dialog actions

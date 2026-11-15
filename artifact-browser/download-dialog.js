@@ -4,7 +4,7 @@ import {
   huggingFaceLocation, modelDownloadCommand,
 } from "./downloads.js";
 import { runProfile } from "./branch-builds.js";
-import { config, state, elements } from "./state.js";
+import { config, shows, state, elements } from "./state.js";
 import { icons, escapeHtml, branchName, showToast, profileLabel, variantLabel } from "./ui.js";
 import { formatBytes } from "./metrics.js";
 import { api } from "./api.js";
@@ -36,7 +36,7 @@ function catalogDownloadCommand(run) {
     && (model.builds?.some((build) => build.run_id === run.id)
       || model.packages?.some((item) => item.run_id === run.id)));
   return current ? modelDownloadCommand(run.metadata.model_id, runProfile(run),
-    elements["branch-filter"].value || branchName(run.git_ref), config.environment?.toLowerCase() === "staging") : null;
+    shows.commandBranch ? elements["branch-filter"].value || branchName(run.git_ref) : null, config.environment?.toLowerCase() === "staging") : null;
 }
 
 function showFolderDownload(run, downloads) {

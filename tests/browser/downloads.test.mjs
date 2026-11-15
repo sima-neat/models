@@ -228,7 +228,7 @@ test('staging download commands keep the selected branch and use the staging reg
   assert.equal(modelDownloadCommand(run.metadata.model_id, run.metadata.build_profile_id, 'feature/llima-models', true),
     'sima-cli models download --id rf_detr_small --variant mixed --branch feature/llima-models --stg');
   assert.equal(modelDownloadCommand(run.metadata.model_id, run.metadata.build_profile_id, 'main'),
-    'sima-cli models download --id rf_detr_small --variant mixed');
+    'sima-cli models download --id rf_detr_small --variant mixed --branch main');
 });
 
 test('download commands shell-quote branch names containing metacharacters', () => {
@@ -246,6 +246,8 @@ test('CLI commands preserve branch, variant and staging and quote shell argument
   assert.equal(modelDownloadCommand('qwen3_5_0_8b', 'w4a16', 'feature/llima-models', true),
     'sima-cli models download --id qwen3_5_0_8b --variant w4a16 --branch feature/llima-models --stg');
   assert.equal(modelDownloadCommand('model', 'int8', 'main'),
+    'sima-cli models download --id model --variant int8 --branch main');
+  assert.equal(modelDownloadCommand('model', 'int8', null),
     'sima-cli models download --id model --variant int8');
   assert.ok(modelDownloadCommand('model', 'int8', 'feat/$(touch bad)').includes("--branch 'feat/$(touch bad)'"));
 });
