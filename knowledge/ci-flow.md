@@ -163,10 +163,13 @@ Runs on a GitHub-hosted runner.
    source revision differ in a file the benchmark fingerprints hash. The newer push then
    benchmarks the build.
 6. `scripts/stage_benchmark_inputs.sh` restores the build from the registry when no
-   source run supplies it, and restores the baseline deployment for a performance stage
-   ([restoring a published build](publication.md#restoring-a-published-build)).
-7. `model-component-artifacts` verifies each component, and the job requires the package
-   receipt. It uploads the result as `benchmark-input-<model>-<profile>-<invocation>`.
+   source run supplies it, and restores the baseline for a performance stage
+   ([restoring a published build](publication.md#restoring-a-published-build)). For
+   registry-backed LLiMa inputs it stages only the compile and package manifests,
+   publication receipts, and `benchmark-download.json`, without model payloads.
+7. `model-component-artifacts` verifies each component manifest or MPK, and the job
+   requires the package receipt. It uploads the result as
+   `benchmark-input-<model>-<profile>-<invocation>`.
 
 ### `benchmark` (Benchmark on DevKit)
 
@@ -186,13 +189,25 @@ script removes it on exit.
    prepares Core.
 6. For the `llima` backend, `scripts/install_mole_benchmark_runtime.sh` installs MoLE from
    the LLiMa pin and reuses a matching installation on the NVMe.
-7. `scripts/run_model_performance.sh` measures performance. It needs step 5, and step 4 or
-   step 6.
-8. `scripts/run_model_accuracy.sh` measures accuracy. It needs steps 4 and 5.
-9. After each measurement, `scripts/run_model_tests.sh` runs the model's test of that
+7. Registry-backed LLiMa jobs install SiMa CLI 2.1.21 for registry folder downloads,
+   then call `download-benchmark-deployments` after runtime setup.
+   SiMa CLI downloads each staged package directly into `_benchmark-models` under the
+   workspace, using its recorded deployment branch and the selected registry environment.
+   The adapter checks the package run ID and manifest checksum before moving the returned
+   folder into `_compiled/<model>/<profile>/<component>/deployment`. This includes the
+   ordinary baseline of a speculative pair. A changed branch selection fails the job.
+8. `scripts/run_model_performance.sh` measures performance. It needs step 5, and step 4 or
+   step 6 and the native download when applicable. LLiMa stops an existing Sentinel
+   recording once at startup because benchmarking requires exclusive use of its board.
+9. `scripts/run_model_accuracy.sh` measures accuracy. It needs steps 4 and 5.
+10. After each measurement, `scripts/run_model_tests.sh` runs the model's test of that
    stage on `model-report.json` and writes `passed`, `failed`, or `skipped` to
    `test-status.txt`.
-10. The job uploads `performance-…` and `accuracy-…` evidence, also after a failure.
+11. The job uploads `performance-…` and `accuracy-…` evidence, also after a failure.
+12. Registry-backed LLiMa jobs remove `_benchmark-models` and their staged deployment
+    directories with `always()`, preserving the small manifests and publication receipts.
+    No persistent model cache is created. A hard termination falls back to the next clean
+    checkout.
 
 `ensure-neat-core` reads `neat-core.install_target`. It resolves a floating target such as
 `core@develop` to the published tag once, then compares `neat --json` with that artifact's

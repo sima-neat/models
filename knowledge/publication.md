@@ -139,6 +139,12 @@ not report fields. Publication records them on the run.
 - The run environment records the DevKit's clocks, CPU governor, and kernel from
   `environment.json`, which `check-report` wrote on the board.
 
+For registry-backed LLiMa benchmarks, staging keeps only the compile and package
+manifests, their publication receipts, and `benchmark-download.json`. The download plan
+binds the deployment branch, package run ID and package manifest SHA-256. The DevKit
+checks those identities against SiMa CLI's JSON result before measurement. Publication
+reads the original compile manifests and receipts and never downloads the model payload.
+
 A run completes even when its model tests failed, so that stage is not measured again. The
 `check` job fails the workflow afterward.
 

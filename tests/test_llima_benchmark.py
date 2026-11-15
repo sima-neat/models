@@ -346,8 +346,10 @@ def test_declared_baseline_stages_its_deployment_and_records_the_compilation(mon
 
     monkeypatch.setattr(registry, "stage_catalog_build", stage)
     registry.stage_benchmark_baseline(repository=ROOT, output_dir=tmp_path,
-        model_id="gemma_4_e2b_it_textonly_mtp", build_profile_id="w4a16", api_url="https://example.invalid")
+        model_id="gemma_4_e2b_it_textonly_mtp", build_profile_id="w4a16", api_url="https://example.invalid",
+        metadata_only=True, deployment_branch="main")
     assert calls[0]["model_id"] == "gemma_4_e2b_it_textonly"
+    assert calls[0]["metadata_only"] is True and calls[0]["deployment_branch"] == "main"
     assert calls[0]["compile_invocation_id"] == "w4a16"
     receipt = json.loads((tmp_path / "benchmark-baseline.json").read_text())
     assert receipt["compile_run_id"] == "ordinary-run"

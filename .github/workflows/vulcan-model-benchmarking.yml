@@ -292,6 +292,7 @@ jobs:
 
       - name: Restore the current immutable compilation from the registry
         env:
+          BENCHMARK_BACKEND: ${{ steps.settings.outputs.backend }}
           AWS_ACCESS_KEY_ID: ${{ steps.registry-reader-credentials.outputs.aws-access-key-id }}
           AWS_SECRET_ACCESS_KEY: ${{ steps.registry-reader-credentials.outputs.aws-secret-access-key }}
           AWS_SESSION_TOKEN: ${{ steps.registry-reader-credentials.outputs.aws-session-token }}
@@ -477,11 +478,28 @@ jobs:
           TMPDIR: /media/nvme/llima/tmp
         run: scripts/install_mole_benchmark_runtime.sh "$BENCHMARK_RUNTIME"
 
+      - name: Install SiMa CLI for registry deployment downloads
+        id: registry-cli
+        if: >-
+          ${{ !cancelled() && steps.mole.outcome == 'success' &&
+          env.BENCHMARK_BACKEND == 'llima' && inputs.source_run_id == '' }}
+        run: sima-cli --yes selfupdate --version 2.1.21
+
+      - name: Download native deployments directly on the DevKit
+        id: deployment
+        if: ${{ !cancelled() && steps.registry-cli.outcome == 'success' }}
+        env:
+          VULCAN_ENV: ${{ inputs.environment != 'default' && inputs.environment || vars.VULCAN_ENV || 'staging' }}
+        run: >-
+          "$REGISTRY_PYTHON" -m model_registry download-benchmark-deployments
+          --compiled-dir _compiled --download-dir _benchmark-models --environment "$VULCAN_ENV"
+
       - name: Measure performance on DevKit
         id: performance
         if: >-
           ${{ !cancelled() && steps.core.outcome == 'success' && (steps.dataset-cache.outcome == 'success' ||
-          steps.mole.outcome == 'success') && steps.stages.outputs.performance == 'true' }}
+          steps.mole.outcome == 'success') && steps.stages.outputs.performance == 'true' &&
+          (env.BENCHMARK_BACKEND != 'llima' || inputs.source_run_id != '' || steps.deployment.outcome == 'success') }}
         run: scripts/run_model_performance.sh "_source/models/$MODEL_ID" "$BUILD_PROFILE_ID" _compiled _performance
 
       # Publication sends each recorded outcome with its report and then fails the run on a failed one.
@@ -525,6 +543,10 @@ jobs:
           path: _accuracy/
           if-no-files-found: error
           retention-days: 14
+
+      - name: Remove downloaded LLiMa deployments
+        if: always() && env.BENCHMARK_BACKEND == 'llima' && inputs.source_run_id == ''
+        run: rm -rf -- _benchmark-models _compiled/*/*/*/deployment
 
   publish:
     name: Publish benchmarks to Vulcan

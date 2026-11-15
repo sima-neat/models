@@ -87,7 +87,7 @@ marked CI only from the author package.
 | `stage_plan.py` | Which builds compile and which benchmarks run (`plan_stages`), the registry reads that decision needs, base-branch resolution, and the merge of source catalogs. |
 | `conversion.py` | The conversion fingerprint, declared outputs, bundles, conversion publication, the saved selection a plan records, and exact downloads. |
 | `registry_http.py` | The signed HTTP transport, and registry reads that sign only the configured IAM API. |
-| `registry.py` (CI only) | Publishing compile runs, packages with their fidelity report and MLA stage simulation, model documentation, and the branch catalog. Restoring a published build for a benchmark. |
+| `registry.py` (CI only) | Publishing compile runs, packages with their fidelity report and MLA stage simulation, model documentation, and the branch catalog. Restoring a published build for a benchmark, staging native metadata, and downloading staged deployments through SiMa CLI. |
 | `candidates.py` (CI only) | On-demand candidates: publication, run binding, finalization, and selection in a feature catalog. |
 | `promotions.py` (CI only) | Promotion requests, decisions, receipts, and the benchmark reference refresh after a promotion. |
 | `report_publication.py` (CI only) | Checking a `model-report.json` against `model.yaml` (`check_report`) and publishing one benchmark run (`publish_report`). |

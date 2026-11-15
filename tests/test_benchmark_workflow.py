@@ -478,7 +478,8 @@ def test_benchmarks_run_only_when_requested() -> None:
     performance = step(steps, "Measure performance on DevKit")
     assert performance["if"] == (
         "${{ !cancelled() && steps.core.outcome == 'success' && (steps.dataset-cache.outcome == 'success' || "
-        "steps.mole.outcome == 'success') && steps.stages.outputs.performance == 'true' }}"
+        "steps.mole.outcome == 'success') && steps.stages.outputs.performance == 'true' && "
+        "(env.BENCHMARK_BACKEND != 'llima' || inputs.source_run_id != '' || steps.deployment.outcome == 'success') }}"
     )
     assert performance["run"] == (
         'scripts/run_model_performance.sh "_source/models/$MODEL_ID" "$BUILD_PROFILE_ID" _compiled _performance'
@@ -1003,3 +1004,30 @@ if sys.argv[1:3] != ['-m', 'pip']:
     if supporting_files:
         assert arguments[arguments.index("--resources") + 1] == str(profile)
     assert arguments.count("--mpk") == 2
+
+
+def test_native_download_step_precedes_measurement_and_cleanup_keeps_metadata(tmp_path):
+    steps = load_workflow()["jobs"]["benchmark"]["steps"]
+    download = step(steps, "Download native deployments directly on the DevKit")
+    cli = step(steps, "Install SiMa CLI for registry deployment downloads")
+    assert "inputs.source_run_id == ''" in cli["if"]
+    assert "env.BENCHMARK_BACKEND == 'llima'" in cli["if"]
+    assert cli["run"] == "sima-cli --yes selfupdate --version 2.1.21"
+    assert "steps.registry-cli.outcome == 'success'" in download["if"]
+    assert steps.index(cli) < steps.index(download)
+    assert download["env"]["VULCAN_ENV"] == ENVIRONMENT
+    assert steps.index(download) < steps.index(step(steps, "Measure performance on DevKit"))
+    cleanup = step(steps, "Remove downloaded LLiMa deployments")
+    assert cleanup["if"].startswith("always()")
+    assert steps.index(cleanup) > steps.index(step(steps, "Retain accuracy evidence"))
+    profile = tmp_path / "_compiled/model/profile"
+    (profile / "model/deployment/target").mkdir(parents=True)
+    (profile / "model/deployment/draft").mkdir()
+    metadata = profile / "compile-outputs.json"
+    metadata.write_text("{}")
+    (tmp_path / "_benchmark-models/.partial").mkdir(parents=True)
+    (tmp_path / "_performance").mkdir()
+    subprocess.run(["bash", "-c", cleanup["run"]], cwd=tmp_path, check=True)
+    assert metadata.exists() and (tmp_path / "_performance").exists()
+    assert not (profile / "model/deployment").exists()
+    assert not (tmp_path / "_benchmark-models").exists()
