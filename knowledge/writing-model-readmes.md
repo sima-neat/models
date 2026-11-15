@@ -17,6 +17,10 @@ tensor are. They do not know the model's architecture, its training, or this
 repository's scripts, and they do not need to. The model page links the original model
 page for anyone who wants that depth, so the README does not retell it.
 
+Three words decide every choice below: brief, consistent, precise. Clearer never means
+more text. A README gets clearer by putting one thing in one place, in the same place on
+every model, with its exact value.
+
 ## What went wrong before
 
 The first READMEs were accurate but written from the model's side. Reviewers of the model
@@ -30,6 +34,9 @@ pages found them hard to understand, for these reasons:
 | Inputs and outputs mixed several things. | One paragraph held the input, its preparation, script details, and Neat options. |
 | Tensors came before the result. | The reader met `bbox_0` and strides before "a box, a class, and a score". |
 | Maintainer notes leaked in. | "The reference scripts pass this image", how a speed was measured, internal precision. |
+| Two ways to run the model were mixed into every section. | "With Neat: ..." and "Yourself: ..." items, followed by advice on which to prefer. |
+| Headings were inconsistent. | A section "Inputs and outputs" with bold lead-ins "Input.", "Image input.", and "Outputs." under it. |
+| Sentences told the reader nothing. | "The larger sizes are more accurate and slower.", "It comes from Roboflow." |
 
 ## The order of every README
 
@@ -46,8 +53,10 @@ Each part answers one question, in the order the reader asks them.
 | `## Outputs`, table | What does the model return? |
 | `Postprocessing:` steps | How do I turn that into a result? |
 
-The section names and these four parts are the same on every model page, also for a model
-with one input, so a reader finds the same structure everywhere. A part that has nothing
+The section names and these four parts are the same on every model page, so a reader
+finds the same structure everywhere. The sections are always `## Inputs` and `## Outputs`,
+in the plural, also for a model with one input or one output. There is no
+"Inputs and outputs" section above them, and no bold lead-in stands in for a heading. A part that has nothing
 to say is left out: an embedding model whose output needs no decoding has no
 postprocessing list.
 
@@ -76,6 +85,7 @@ Rules for the rest of the overview:
 - Name a surprise when there is one: the model needs another model first, its result is relative and not metric, it is trained on a fixed class list (write "It is trained on the 80 COCO classes", not "It knows"), it handles a fixed number of items.
 - Leave out the architecture, the training method, and the number of components, unless the application has to act on them. A model with a CPU step between two components says so, because the application writes that step.
 - Do not make a speed or accuracy claim. The model page shows the measured values.
+- The validator wants at least 50 words. An overview that falls short after these cuts needs a use, a result, or a limit the reader lacks, never a filler sentence.
 
 ## Inputs and Outputs sections
 
@@ -83,12 +93,14 @@ These two sections describe the model alone: what it takes, how to prepare it, w
 returns, and how to decode it. They are brief, precise, and the same shape on every model.
 
 - Do not name Neat, its options, or its decoders here. `Building applications` links the Neat API, and the first version of this standard was rejected for mixing a "With Neat" path and a "Yourself" path into every section.
-- Describe one path: the preprocessing of the original model, which `calibration.py` and `accuracy.py` implement and the published accuracy uses.
+- Describe one path: the preprocessing of the original model, which `calibration.py` and `accuracy.py` implement and the published accuracy uses. When the two scripts differ, follow `accuracy.py`, as `siglip2_vit_b_16` does with its 256×256 resize and 224×224 crop.
 - State steps, not advice. Leave out which path to prefer, why a step exists, and what happens otherwise, unless the application must act on it.
 - Never mention the scripts, how a result was measured, or how the model was converted or compiled.
 - Keep the exact values: sizes, means, thresholds, counts. Clarity comes from order and layout, never from dropping a value the application needs.
 - Write sizes one way: `640×640×3 (height, width, channel)` for an input and plain counts in a table, such as "196 rows of 768 values".
 - One step per line, in the order the application performs it. A step that needs a formula gives the formula.
+- Write each step so that it works for every input, not only the usual one. Do not tell the reader to cut a token list to the input length, because that drops the end token of a long prompt. Say to set the tokenizer's truncation instead, as `clip_vit_b_16` does.
+- Do not squeeze steps to save words. "Repeat step 5's drop across windows with 0.3" is shorter than the full rule and useless to someone implementing it. The limit is 400 words so that dense models can state each step in full.
 - A language or speech model has no tensors to show. It keeps the two sections and gives one short list under each: what to supply, and what comes back.
 
 ## Keeping a family consistent
@@ -115,4 +127,5 @@ a mistake in one of them.
 | Classifier | [`resnet_50`](../models/resnet_50/README.md) |
 | CPU step between two components | [`rf_detr_nano`](../models/rf_detr_nano/README.md) |
 | Outputs that need no decoding | [`dinov3_vit_b_16`](../models/dinov3_vit_b_16/README.md) |
+| Two inputs with their own preprocessing | [`clip_vit_b_16`](../models/clip_vit_b_16/README.md) |
 | Language model | [`qwen3_4b`](../models/qwen3_4b/README.md) |

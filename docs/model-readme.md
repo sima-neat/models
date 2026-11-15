@@ -104,13 +104,17 @@ order:
 3. What the application gets back, as the final result and not as tensors, such as "a box, a class, and a score for each object".
 4. What would surprise a user: a model it depends on, a result that is only relative, or an input it cannot handle.
 
-Do not say who made the model, because the model page links the original model and shows
-its license. Do not restate the size or family that the name already gives, and do not
-compare sizes. Leave the architecture, the
-training method, and the number of components to the original model page, which the model
-page links, unless the application has to act on them. Do not repeat tensor names, sizes,
-or decode steps from the next section. The Model Browser shows this section as the
-model's summary and searches its text.
+A reviewer also checks what the section leaves out:
+
+- It does not say who made the model, because the model page links the original model and shows its license.
+- It does not restate the size, family, or version that the name already gives.
+- It does not compare sizes, as in "the larger sizes are more accurate and slower".
+- It says which classes the model is trained on, such as "It is trained on the 80 COCO classes", and not which classes it "knows".
+- It leaves the architecture, the training method, and the number of components to the original model page, unless the application has to act on them.
+- It does not repeat tensor names, sizes, or decode steps from the next sections.
+- It holds no sentence that the reader could lose without missing anything.
+
+The Model Browser shows this section as the model's summary and searches its text.
 
 The validator checks its form:
 
@@ -129,12 +133,13 @@ the model alone. A reviewer checks each point:
 
 - Open `## Inputs` with one sentence that gives the input's size, layout, and value range, such as "One 640×640×3 (height, width, channel) RGB image with values from 0 to 1." A model with several inputs lists them in a table.
 - Under `Preprocessing:`, give each step with its exact values as a numbered list. A model with several inputs names each list, such as `Image preprocessing:` and `Text preprocessing:`.
-- Describe the preprocessing of the original model, which is the one its published accuracy uses.
+- Describe the preprocessing of the original model, which is the one its published accuracy uses. When `calibration.py` and `accuracy.py` differ, follow `accuracy.py`.
 - For a model with several components, give each step the application runs between them under `## Between the components`.
 - Open `## Outputs` with a table that names each actual output tensor, with its size and what it holds. A model with one output may state it in a sentence.
 - Under `Postprocessing:`, write the decode steps as a numbered list, in the order the application performs them. Leave the list out when the output needs no decoding.
 - Give the class-index mapping.
 - State what to do, not what to prefer: no advice, no comparison of paths, no reasons that the steps do not need.
+- Write each step in full, so that a reader can implement it without guessing, and so that it holds for every input. To shorten a long prompt, set the tokenizer's truncation, because cutting the token list drops its end token.
 - Write each list item and each table row on one line, because the model page ends a list item at its line break.
 - Take each value from `model.yaml` and the current scripts.
 
