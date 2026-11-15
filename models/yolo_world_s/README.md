@@ -7,8 +7,7 @@
 YOLO-Worldv2-S finds the objects you name in text and returns a box, a class,
 and a score for each. Use it to detect objects outside any fixed class list,
 without training. Encode each of up to 80 names once and reuse its vector for
-every image. Changing the list can change the other names' detections. It comes
-from Tencent AI Lab.
+every image. Changing the list can change the other names' detections.
 
 ## Inputs
 

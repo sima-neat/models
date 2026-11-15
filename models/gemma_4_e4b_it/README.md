@@ -8,7 +8,7 @@ Gemma 4 E4B answers questions about an image, describes what it shows, and holds
 a text conversation. Use it to caption images, answer questions about a camera
 frame, or chat about a picture. Your application sends a prompt, with or without
 an image, and gets the answer back as text, complete or streamed as it is
-generated. It comes from Google.
+generated.
 
 *Image resolution and maximum context length can be changed when recompiling the model.*
 

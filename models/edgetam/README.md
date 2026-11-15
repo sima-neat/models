@@ -4,11 +4,11 @@
 
 ## Overview
 
-EdgeTAM, from Meta, follows one object through a video. Mark the object on the
-first frame with a click or a box, and it returns the object's mask on every
-frame. Use it to cut a moving object out of footage or to track a user-selected
-item. Your application runs four components on each frame: an image encoder, a
-memory attention that recalls earlier frames, a mask decoder that returns four
+EdgeTAM follows one object through a video. Mark the object on the first frame
+with a click or a box, and it returns the object's mask on every frame. Use it
+to cut a moving object out of footage or to track a user-selected item. Your
+application runs four components on each frame: an image encoder, a memory
+attention that recalls earlier frames, a mask decoder that returns four
 candidate masks, and a memory encoder that stores the chosen one.
 
 ## Inputs

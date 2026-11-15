@@ -8,7 +8,7 @@ GPT-OSS 20B answers questions, follows instructions, and works through
 multi-step problems. Use it for a chat assistant, document summaries, or pulling
 facts out of text. Your application sends a prompt and gets the answer back as
 text, complete or streamed as it is generated. It is an open-weight reasoning
-model from OpenAI.
+model.
 
 *Maximum context length can be changed when recompiling the model.*
 

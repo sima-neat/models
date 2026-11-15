@@ -104,8 +104,9 @@ order:
 3. What the application gets back, as the final result and not as tensors, such as "a box, a class, and a score for each object".
 4. What would surprise a user: a model it depends on, a result that is only relative, or an input it cannot handle.
 
-Give the origin in one short sentence, such as "It comes from Ultralytics." Do not restate
-the size or family that the name already gives, and do not compare sizes. Leave the architecture, the
+Do not say who made the model, because the model page links the original model and shows
+its license. Do not restate the size or family that the name already gives, and do not
+compare sizes. Leave the architecture, the
 training method, and the number of components to the original model page, which the model
 page links, unless the application has to act on them. Do not repeat tensor names, sizes,
 or decode steps from the next section. The Model Browser shows this section as the

@@ -7,8 +7,7 @@
 Phi-4 Mini Instruct answers questions, rewrites text, extracts information, and
 holds a conversation. Use it for a chat assistant, a writing aid, or pulling
 facts out of text. Your application sends a prompt and gets the answer back as
-text, complete or streamed as it is generated. It is a compact model from
-Microsoft.
+text, complete or streamed as it is generated. It is a compact model.
 
 *Maximum context length can be changed when recompiling the model.*
 

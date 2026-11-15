@@ -6,10 +6,9 @@
 
 RF-DETR Medium finds everyday objects in an image and returns a box, a class,
 and a score for each. Use it to count, track, or monitor objects in camera
-streams. It is trained on the COCO classes. It comes from Roboflow. The model
-runs in two parts, and your application picks the 300 best candidate boxes on
-the CPU between them. Each object is predicted once, so there are no overlapping
-boxes to remove.
+streams. It is trained on the COCO classes. The model runs in two parts, and
+your application picks the 300 best candidate boxes on the CPU between them.
+Each object is predicted once, so there are no overlapping boxes to remove.
 
 ## Inputs
 

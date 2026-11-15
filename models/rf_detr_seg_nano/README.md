@@ -7,9 +7,8 @@
 RF-DETR Seg Nano finds everyday objects in an image and returns a box, a class,
 a score, and a pixel mask for each. Use it to cut objects out of a scene or
 measure their shape and area. It is trained on the COCO classes and predicts
-each object once, so no overlapping boxes need removing. It comes from Roboflow.
-Your application picks the 100 best candidate boxes on the CPU between the
-model's two parts.
+each object once, so no overlapping boxes need removing. Your application picks
+the 100 best candidate boxes on the CPU between the model's two parts.
 
 ## Inputs
 

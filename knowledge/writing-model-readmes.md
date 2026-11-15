@@ -69,7 +69,8 @@ Open with the task in words a non-specialist uses. Then name two or three applic
 Rules for the rest of the overview:
 
 - Give the result as the application sees it, not as tensors.
-- Give the origin in one short sentence, such as "It comes from Ultralytics." Do not restate what the name already says: the size, the family, or the version.
+- Do not say who made the model. The model page links the original model and shows its license.
+- Do not restate what the name already says: the size, the family, or the version.
 - Do not compare sizes. "The larger sizes are more accurate and slower" is true of every family, so it tells the reader nothing, and it reads wrongly on the largest size.
 - Before keeping a sentence, ask what the reader would lose without it. Remove it when the answer is nothing.
 - Name a surprise when there is one: the model needs another model first, its result is relative and not metric, it is trained on a fixed class list (write "It is trained on the 80 COCO classes", not "It knows"), it handles a fixed number of items.

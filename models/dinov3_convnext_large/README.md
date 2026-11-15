@@ -9,8 +9,7 @@ describe what the image shows, without a fixed set of classes. Use it to find
 similar images, to group or deduplicate them, or as the frozen base under a
 small classification or segmentation head that you train yourself. It returns
 one embedding for the whole image and one for each cell of a 7×7 grid. It names
-no objects on its own; your application compares the embeddings. It comes from
-Meta.
+no objects on its own; your application compares the embeddings.
 
 ## Inputs
 

@@ -9,7 +9,7 @@ Use it to estimate how a camera moved between two images, to stitch images, and
 for 3D reconstruction. It returns, for every keypoint pair, the probability that
 the two match, and your application picks the matches on the CPU. It does not
 detect keypoints: run SuperPoint on each image first. It takes exactly 512
-keypoints per image. It is a feature matcher from ETH Zurich.
+keypoints per image.
 
 ## Inputs
 

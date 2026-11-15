@@ -7,8 +7,8 @@
 YOLO26l-seg finds everyday objects in an image and returns a box, a class, a
 score, and a pixel mask that traces the outline of each one. Use it to cut
 objects out, measure their area, or blur them. It is trained on the 80 object
-classes of the COCO dataset. It comes from Ultralytics. Each object is predicted
-once, so your application does not need to remove overlapping boxes.
+classes of the COCO dataset. Each object is predicted once, so your application
+does not need to remove overlapping boxes.
 
 ## Inputs
 

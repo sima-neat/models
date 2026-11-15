@@ -9,7 +9,7 @@ holds a conversation. Use it for a chat assistant, document summaries, or
 pulling facts out of text. Your application sends a prompt and gets the answer
 back as text, complete or streamed as it is generated. This variant speeds up
 generation: a small DFlash assistant model in the package proposes tokens and
-the main model checks each one. It comes from Alibaba Cloud.
+the main model checks each one.
 
 *Maximum context length can be changed when recompiling the model.*
 

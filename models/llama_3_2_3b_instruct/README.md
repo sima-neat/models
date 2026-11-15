@@ -7,7 +7,7 @@
 Llama 3.2 3B Instruct answers questions, summarizes documents, rewrites text,
 and holds a conversation. Use it for a chat assistant, document summaries, or
 pulling facts out of text. Your application sends a prompt and gets the answer
-back as text, complete or streamed as it is generated. It comes from Meta.
+back as text, complete or streamed as it is generated.
 
 *Maximum context length can be changed when recompiling the model.*
 
