@@ -358,7 +358,7 @@ export function tablePerformance(variant, task) {
     const ttft = workloadRange(workloads, "ttft_ms");
     const input = workloads[0].kind === "text" ? `Input Tokens: ${workloads[0].inputTokens}`
       : `Input: ${workloads.map((workload) => workload.label).join(", ")}`;
-    return `<span class="catalog-reading"><span>TPS: ${escapeHtml(rate)}</span>${ttft ? `<small>TTFT: ${escapeHtml(ttft)} ${metricDefinition("ttft_ms").unit}</small>` : ""}<small>${escapeHtml(input)}</small></span>`;
+    return `<span class="catalog-reading"><span>TPS: ${escapeHtml(rate)}</span>${ttft ? `<span>TTFT: ${escapeHtml(ttft)} ${metricDefinition("ttft_ms").unit}</span>` : ""}<span>${escapeHtml(input)}</span></span>`;
   }
   if (result.kind === "supported" && result.value.scope === "components") {
     return result.value.components.map(({ id, measurements }) => {
