@@ -202,6 +202,7 @@ the code and workflows do.
 | When you | Read | It holds |
 |---|---|---|
 | need the repository's purpose, or the whole path from official model to measured results | [docs/getting-started.md](docs/getting-started.md) | each step in order with its command: datasets, convert, compile, performance, accuracy |
+| download a published model, or describe the `sima-cli models` commands | [docs/downloading-models.md](docs/downloading-models.md) | finding a model, the model card, downloading a variant, choosing a branch, the printed errors |
 | meet a term such as build profile, model package, or fingerprint | [docs/concepts.md](docs/concepts.md) | plain definitions with one example each, and the stage table |
 | add a model or change its folder | [docs/adding-a-model.md](docs/adding-a-model.md) | folder layout, input pinning, compile recipe, model tests and `tests.yaml`, supporting files, what a change reruns, LLiMa definitions |
 | set or change a `model.yaml` field | [docs/metadata-schema.md](docs/metadata-schema.md) | every field with its default, packages and pipeline, resources, license |

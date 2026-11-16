@@ -333,6 +333,7 @@ historical builds point to the current variant instead. Folder downloads
 require sima-cli 2.1.19 or later to download the files in parallel and assemble
 the model folder.
 The CLI verifies the manifest and each file and recreates their relative paths.
+[Download a model with sima-cli](downloading-models.md) shows the commands.
 The displayed size covers all deployment files; **Manifest SHA-256** identifies
 the index. MPK and ZIP packages keep their browser download flow.
 

@@ -77,7 +77,8 @@ on the target branch. A failed refresh can be retried without another approval.
 ## 4. Check the download
 
 Open the model page in the Develop catalog. Download
-the selected build from that page or with `sima-cli`, and check that it is the
+the selected build from that page or with
+[`sima-cli`](downloading-models.md#use-another-branch), and check that it is the
 build you tested. For a directory package, download and verify every required
 file.
 
