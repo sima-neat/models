@@ -126,6 +126,7 @@ no compiler dependency.
 | `__init__.py` | Building `model-report.json` from what Core returned: `from_performance`, `from_component_performance`, `from_accuracy`, and `from_generation` for LLiMa. Also `log`, which a benchmark script prints its progress with. |
 | `board_telemetry.py` | Sentinel traces around measured inference, summarized like Core's telemetry, and stopping a recording a killed benchmark left active (`stop_active_recording`). |
 | `generation_benchmark.py` | MoLE timings, dataset comparisons, and telemetry for deployed LLiMa models. |
+| `speech.py` | Scoring speech recognition transcripts: one text normalization, then corpus word and character error rates (`wer`, `cer`). Hashed only into the accuracy fingerprints of models that must report them. |
 | `metrics.json` | The one metric vocabulary: each metric's stage, label, unit, direction, Vulcan measurement name (`registry_name`), and whether a performance report requires it. |
 
 ### `tools/model_inputs`
