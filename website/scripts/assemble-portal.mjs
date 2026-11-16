@@ -24,6 +24,7 @@ const fingerprintedAssets = [
   'brand', 'styles', 'config', 'portal-shell', 'hero-images', 'environment',
 ];
 const stylesheets = ['brand', 'styles'];
+const modules = fingerprintedAssets.filter((asset) => !stylesheets.includes(asset) && asset !== 'config');
 function gitMetadata(args) {
   try { return execFileSync('git', args, {cwd: repository, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore']}).trim(); }
   catch { return null; } // Source archives may have CI metadata but no Git directory.
@@ -57,7 +58,8 @@ browserHtml = browserHtml
   .replace('href="brand.css"', `href="brand.${revision}.css"`)
   .replace('href="styles.css"', `href="styles.${revision}.css"`)
   .replace('src="config.js"', `src="${configFile}"`)
-  .replace('src="app.js"', `src="app.${revision}.js"`);
+  .replace('src="app.js"', `src="app.${revision}.js"`)
+  .replace('</head>', `${modules.map((asset) => `  <link rel="modulepreload" href="${asset}.${revision}.js">`).join('\n')}\n</head>`);
 writeFileSync(join(output, 'index.html'), browserHtml);
 
 // Repository data the page reads beside the registry API. api.js fetches each file by its unfingerprinted
@@ -83,7 +85,6 @@ for (const name of ['component-pipelines', 'reference-metrics', 'low-accuracy-va
 shipModelData('licenses', (file) => cpSync(join(browser, 'licenses.json'), file));
 writeFileSync(apiModule, apiSource);
 
-const modules = fingerprintedAssets.filter((asset) => !stylesheets.includes(asset) && asset !== 'config');
 const relativeImport = /(["'])(\.\.?\/[^"'\s]*\.js)\1/g;
 for (const asset of modules) {
   const path = join(output, `${asset}.${revision}.js`);

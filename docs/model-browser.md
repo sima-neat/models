@@ -29,8 +29,9 @@ one, and otherwise the score its authors published for the same dataset split. A
 variant with neither score stays. A model whose every variant is left out does not
 appear.
 
-While the catalog loads, the list shows a spinner. A message that a branch has
-no models appears only after the registry has answered.
+Cards appear when the catalog loads. In the developer view, compiler versions
+and newly completed builds can appear after the cards. A message that a branch
+has no models appears after the registry has answered.
 
 The catalog opens as a grid of cards, one per available **Model family**, sorted
 by its existing architecture ID. Selecting a family applies its sidebar filter

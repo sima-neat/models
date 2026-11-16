@@ -20,7 +20,7 @@ globalThis.document = {
 const requests = [];
 const responses = [];
 globalThis.fetch = async (url) => {
-  requests.push(url);
+  requests.push(String(url));
   const status = responses.shift() ?? 404;
   return {status, ok: status < 400, json: async () => ({})};
 };
@@ -37,10 +37,12 @@ function showTable(selectedId) {
   requests.length = 0;
   responses.length = 0;
   state.catalogMode = 'models';
+  state.catalogLoaded = true;
   state.catalogLayout = 'table';
   state.selectedId = selectedId;
   state.models = [{
     model_id: 'resnet_50',
+    benchmark_fingerprints: {w8a8: {performance: 'measured-fingerprint'}},
     builds: [{run_id: 'build', build_profile_id: 'w8a8', run: {id: 'build', metadata: {model_id: 'resnet_50'}}}],
   }];
   renderRuns();
@@ -55,7 +57,8 @@ test('the catalog table loads no results while a model page is open', async () =
 test('the catalog table loads its results when the list is shown', async () => {
   showTable(null);
   await settle();
-  assert.ok(requests.length > 0);
+  assert.ok(requests.some(url => url.includes('/resolve?') && url.includes('measured-fingerprint')));
+  assert.ok(requests.every(url => !url.includes('/v1/runs/build')));
 });
 
 test('a registry request answered 429 is retried until it succeeds', async () => {

@@ -9,13 +9,13 @@ import {
 } from "./state.js";
 import { icons, branchName, showToast, variantLabel } from "./ui.js";
 import {
-  api, audienceCatalog, readBranchPreference, writeBranchPreference, readCachedBranches, readCachedCatalog,
-  writeCachedCatalog,
+  api, audienceCatalog, snapshotModels, readBranchPreference, writeBranchPreference, readCachedBranches, readCachedCatalog,
+  writeCachedBranches,
   runFromCatalogBuild, loadRunDetail, variantPackage, loadVariant, loadPackageRun, loadHistoricalCatalogModel,
   selectedCatalogBuild,
 } from "./api.js";
 import {
-  populateCategoryFilters, setCategoryFiltersDisabled, loadTaxonomy, activeFilterCount, setFilterDrawer,
+  populateCategoryFilters, fetchCatalogDocument, applyTaxonomy, activeFilterCount, setFilterDrawer,
   updateFilterIndicators, applyCatalog, loadBranches, renderRuns, renderCatalogLoading,
 } from "./catalog-view.js";
 import {
@@ -144,54 +144,75 @@ async function loadRuns({ append = false, branch = elements["branch-filter"].val
   if (!repo) return;
   const requestId = ++state.runsRequestId;
   elements["load-more"].disabled = true;
-  const query = new URLSearchParams({ limit: String(limit) });
   const historical = elements["history-filter"].checked || !branch;
-  query.set("status", "completed");
-  query.set("run_type", "model_compile");
-  if (historical && !elements["history-filter"].checked) query.set("latest_per_model_compiler", "true");
-  if (branch) query.set("git_ref", `refs/heads/${branch}`);
-  if (historical) {
-    if (elements.search.value.trim()) query.set("q", elements.search.value.trim());
-    Object.entries(categoryFilters()).forEach(([name, value]) => {
-      if (value) query.set(name, value);
-    });
-  }
-  if (append && state.cursor) query.set("cursor", state.cursor);
+  const base = `/v1/repositories/${encodeURIComponent(repo.organization)}/${encodeURIComponent(repo.name)}`;
+  const snapshotBranch = branch || DEFAULT_BRANCH;
+  const gitRef = `refs/heads/${snapshotBranch}`;
+  const fetchSnapshot = async () => {
+    try {
+      return await fetchCatalogDocument(snapshotBranch);
+    } catch (error) {
+      // A branch has no catalog until its first orchestrator run publishes one.
+      if (error.status !== 404) throw error;
+      return null;
+    }
+  };
 
   try {
-    const base = `/v1/repositories/${encodeURIComponent(repo.organization)}/${encodeURIComponent(repo.name)}`;
-    let payload;
     if (historical) {
-      payload = await api(`${base}/runs?${query}`);
-    } else {
-      const compileQuery = new URLSearchParams(query);
-      compileQuery.set("limit", "100");
-      const packageQuery = new URLSearchParams({
-        limit: "100", status: "completed", run_type: "model_package", git_ref: `refs/heads/${branch}`,
+      if (state.taxonomyBranch !== snapshotBranch) {
+        const document = await fetchSnapshot().catch((error) => {
+          if (requestId === state.runsRequestId) showToast(`Category filters are temporarily unavailable. ${error.message}`, true);
+          return null;
+        });
+        if (requestId !== state.runsRequestId) return;
+        applyTaxonomy(document?.taxonomy || null, snapshotBranch);
+      }
+      const query = new URLSearchParams({ limit: String(limit), status: "completed", run_type: "model_compile" });
+      if (!elements["history-filter"].checked) query.set("latest_per_model_compiler", "true");
+      if (branch) query.set("git_ref", gitRef);
+      if (elements.search.value.trim()) query.set("q", elements.search.value.trim());
+      Object.entries(categoryFilters()).forEach(([name, value]) => {
+        if (value) query.set(name, value);
       });
-      const modelQuery = new URLSearchParams({ limit: "100", git_ref: `refs/heads/${branch}` });
-      const [branchRuns, packageRuns, catalogDefinitions] = await Promise.all([
-        allPages(api, `${base}/runs`, compileQuery, "runs"),
-        allPages(api, `${base}/runs`, packageQuery, "runs"),
-        // A branch has no catalog until its first orchestrator run publishes one.
-        allPages(api, `${base}/models`, modelQuery, "models").catch((error) => {
-          if (error.status === 404) return [];
-          throw error;
-        }).then(audienceCatalog),
-      ]);
-      const gitRef = `refs/heads/${branch}`;
-      const ownRuns = branchRuns.filter((run) => run.git_ref === gitRef);
-      const inheritedRuns = await catalogBuildRuns(catalogDefinitions, ownRuns, api, base);
-      payload = {
-        mode: "models",
-        compileRuns: [...ownRuns, ...inheritedRuns],
-        packageRuns: packageRuns.filter((run) => run.git_ref === gitRef),
-        catalogDefinitions,
-      };
+      if (append && state.cursor) query.set("cursor", state.cursor);
+      const payload = await api(`${base}/runs?${query}`);
+      if (requestId !== state.runsRequestId) return;
+      state.catalogLoaded = true;
+      applyCatalog(payload, { append });
+      return;
+    }
+
+    const runLists = shows.catalogRunMetadata ? Promise.allSettled(["model_compile", "model_package"].map((run_type) => {
+      const query = new URLSearchParams({ limit: "200", status: "completed", run_type, git_ref: gitRef });
+      return allPages(api, `${base}/runs`, query, "runs");
+    })) : null;
+    const document = await fetchSnapshot();
+    const catalogDefinitions = document ? await audienceCatalog(snapshotModels(document)) : [];
+    if (requestId !== state.runsRequestId) return;
+    applyTaxonomy(document?.taxonomy || null, snapshotBranch);
+    const payload = { mode: "models", catalogDefinitions };
+    state.catalogLoaded = !runLists;
+    applyCatalog(payload);
+    if (!runLists) return;
+
+    const [compile, packages] = await runLists;
+    if (requestId !== state.runsRequestId) return;
+    const branchRuns = (result) => result.value?.filter((run) => run.git_ref === gitRef) || [];
+    const ownRuns = branchRuns(compile);
+    let inheritedRuns = [];
+    let metadataError = [compile, packages].find((result) => result.status === "rejected")?.reason;
+    try {
+      inheritedRuns = await catalogBuildRuns(catalogDefinitions, ownRuns, api, base);
+    } catch (error) {
+      metadataError ||= error;
     }
     if (requestId !== state.runsRequestId) return;
     state.catalogLoaded = true;
-    applyCatalog(payload, { append });
+    applyCatalog({ ...payload, compileRuns: [...ownRuns, ...inheritedRuns], packageRuns: branchRuns(packages) }, { cache: false });
+    // Persist branch discovery only after registry runs have supplied their source branches.
+    writeCachedBranches();
+    if (metadataError) showToast(`Some build metadata is temporarily unavailable. ${metadataError.message}`, true);
   } catch (error) {
     if (requestId === state.runsRequestId) throw error;
   } finally {
@@ -223,6 +244,7 @@ async function initialize() {
     Object.entries(CATEGORY_QUERY_FIELDS).map(([elementId, queryName]) => [elementId, link.get(queryName) || ""]),
   );
   state.taxonomy = null;
+  state.taxonomyBranch = null;
   if (compareLink) {
     showView("compare");
     elements["compare-pane"].innerHTML = `<div class="detail-loading"><span></span><span></span><span></span></div>`;
@@ -273,8 +295,7 @@ async function initialize() {
   if (cachedBranches) state.availableBranches = cachedBranches;
   if (cached) {
     if (!cachedBranches && Array.isArray(cached.branches)) state.availableBranches = cached.branches;
-    state.taxonomy = cached.taxonomy || null;
-    if (state.taxonomy) populateCategoryFilters();
+    applyTaxonomy(cached.taxonomy || null, null);
     applyCatalog(cached, { cache: false });
   }
 
@@ -288,19 +309,10 @@ async function initialize() {
       elements["branch-filter"].innerHTML = `<option value="${DEFAULT_BRANCH}">${DEFAULT_BRANCH}</option>`;
       elements["branch-filter"].value = DEFAULT_BRANCH;
     }
-    const taxonomyResult = await Promise.resolve(loadTaxonomy(elements["branch-filter"].value || DEFAULT_BRANCH)).then(
-      () => ({ status: "fulfilled" }),
-      (reason) => ({ status: "rejected", reason }),
-    );
     if (navigationId !== state.navigationId) return;
-    if (taxonomyResult.status === "rejected") {
-      setCategoryFiltersDisabled(true);
-      showToast(`Category filters are temporarily unavailable. ${taxonomyResult.reason.message}`, true);
-    }
     if (branchResult.status === "rejected") {
       showToast(`Branch catalog is temporarily unavailable. ${branchResult.reason.message}`, true);
     }
-    if (activeFilterCount()) setFilterDrawer(true);
     if (cached || branchResult.status === "fulfilled" || state.availableBranches.length) {
       await loadRuns({ branch: elements["branch-filter"].value });
     } else {
@@ -308,7 +320,9 @@ async function initialize() {
       // without making that page authoritative.
       await loadRuns({ branch: "", limit: 200 });
     }
+    if (navigationId === state.navigationId && activeFilterCount()) setFilterDrawer(true);
   } catch (error) {
+    if (navigationId !== state.navigationId) return;
     // The registry did answer, with an error: show the snapshot it could not refresh, or the error itself.
     state.catalogLoaded = true;
     if (cached) {
@@ -391,8 +405,7 @@ elements.search.addEventListener("input", () => {
   searchTimer = setTimeout(() => loadRuns({ branch: state.preferredBranch }).catch((error) => showToast(error.message, true)), 250);
 });
 elements["branch-filter"].addEventListener("change", async () => {
-  const navigationId = ++state.navigationId;
-  state.runsRequestId += 1;
+  state.navigationId += 1;
   state.preferredBranch = elements["branch-filter"].value;
   state.urlBranch = true;
   writeBranchPreference(state.preferredBranch);
@@ -412,14 +425,6 @@ elements["branch-filter"].addEventListener("change", async () => {
   history.pushState({}, "", url);
   updateFilterIndicators();
   try {
-    await loadTaxonomy(state.preferredBranch || DEFAULT_BRANCH);
-  } catch (error) {
-    if (navigationId !== state.navigationId) return;
-    setCategoryFiltersDisabled(true);
-    showToast(`Category filters are temporarily unavailable. ${error.message}`, true);
-  }
-  if (navigationId !== state.navigationId) return;
-  try {
     await loadRuns({ branch: state.preferredBranch });
   } catch (error) {
     elements["result-list"].innerHTML = errorPanel(error.message);
@@ -433,7 +438,6 @@ elements["compiler-filter"].addEventListener("change", async () => {
       elements["compiler-filter"].value);
     state.runs = state.models.flatMap((model) => model.builds.map((build) => runFromCatalogBuild(model, build)));
     renderRuns();
-    writeCachedCatalog();
     return;
   }
   renderRuns();

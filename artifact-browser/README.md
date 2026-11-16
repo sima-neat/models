@@ -235,8 +235,8 @@ reserved for links that leave the browser. Cards group related numbers only
 sections and thin rules.
 
 `website/scripts/assemble-portal.mjs` renames every module with the revision
-for the deployed portal and fails when a module imports a file missing from its
-`fingerprintedAssets` list, so add a new module there.
+for the deployed portal, preloads the entry point and its modules, and fails when
+a module imports a file missing from its `fingerprintedAssets` list.
 It also writes `component-pipelines.<revision>.json` from the `pipeline` field
 of each `model.yaml`, which draws the component order on a multi-component
 model page, `reference-metrics.<revision>.json` from each
@@ -257,17 +257,26 @@ of `tools/model_report/metrics.json`, and tests keep them in step. Run
 search, and the filters a visitor uses. This section holds what the code does behind
 them.
 
-The initial view loads the repository branch catalog independently from build
-runs and caches both so repeat visits can render immediately while refreshing.
-The selected branch's model cards show what the branch delivers: the builds in
-its catalog, including builds it inherits from its base branch. A completed
-build compiled on the branch that is newer than the catalog's build of the same
-model and build profile replaces it, so a build the catalog has not recorded
-still shows. Each build keeps the provenance of its own compile run, so an
-inherited build names the branch that compiled it. A branch without a catalog
-shows an empty state until its first push completes. Components are grouped
-only within the same workflow build, and a full package appears only when its
-recorded component run IDs match the shown build.
+The customer catalog reads Main's `/catalogs/current` snapshot in one registry
+request. The snapshot supplies model definitions, build and package IDs, and the
+taxonomy. The browser applies the customer visibility rules and renders cards
+from those definitions. Table and Compare retrieve measurements for their
+views, and the model page loads full run data on demand.
+
+The developer view discovers branches first, then requests the selected
+branch's snapshot and its compile and package lists together. Cards render
+as soon as the snapshot arrives. When the lists finish, the browser resolves
+missing build IDs through `/runs?summary_ids=…` in batches of up to 40 and
+refreshes the catalog with compiler, source branch, and timing metadata.
+A reader that lacks batch support leaves those fields unavailable for the
+affected builds. The compiler filter includes only builds with a matching
+known compiler. Opening a model still retrieves its exact run data.
+
+Local storage saves the branch names and each catalog's definitions and
+taxonomy for the next visit. It keeps the live compile and package lists
+in memory. A package appears only when its recorded component IDs match
+the displayed build.
+
 Build history lists one entry per variant build, newest first, naming its
 components; an entry gains components as **Load more builds** brings in the rest of its
 build. If branch discovery is

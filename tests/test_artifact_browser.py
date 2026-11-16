@@ -882,7 +882,7 @@ def test_catalog_avoids_per_run_enrichment_and_uses_local_cache() -> None:
     assert "enrichRuns" not in browser
     assert "mapConcurrent" not in browser
     assert "readCachedCatalog" in script
-    assert "writeCachedCatalog" in script
+    assert "writeCachedCatalog" in browser
     assert "state.runs[0]?.id" not in browser
 
 
@@ -895,20 +895,6 @@ def test_branch_search_and_categories_filter_the_cached_snapshot() -> None:
     assert 'const compiler = branchSnapshot ? "any" :' in script
     assert 'if (branchSnapshotMode()) return;' in script
     assert 'if (branchSnapshotMode()) {\n    renderRuns();\n    return;\n  }' in script
-
-
-def test_branch_switch_loads_builds_even_if_taxonomy_refresh_fails() -> None:
-    script = _browser_source("app.js", "download-dialog.js", "state.js")
-    branch_change = script.split('elements["branch-filter"].addEventListener("change", async () => {', 1)[1]
-    branch_change = branch_change.split('elements["compiler-filter"].addEventListener', 1)[0]
-
-    assert 'await loadTaxonomy(state.preferredBranch || DEFAULT_BRANCH);\n  } catch (error) {' in branch_change
-    assert 'setCategoryFiltersDisabled(true);' in branch_change
-    assert (
-        'if (navigationId !== state.navigationId) return;\n  try {\n'
-        '    await loadRuns({ branch: state.preferredBranch });' in branch_change
-    )
-    assert 'elements[elementId].disabled ? "" :' in script
 
 
 def test_cached_build_history_preserves_run_mode() -> None:
@@ -991,7 +977,7 @@ def test_browser_history_restores_category_filters_and_empty_detail() -> None:
     )
     assert "state.taxonomy = null" in initialize
     assert "if (state.selectedId || linkedVariant) detailSkeleton();\n  else showEmptyDetail();" in initialize
-    assert "if (state.taxonomy) populateCategoryFilters();" in initialize
+    assert "applyTaxonomy(cached.taxonomy || null, null);" in initialize
     assert 'window.addEventListener("popstate", () => {' in script
 
 
@@ -1021,7 +1007,6 @@ def test_branch_filter_uses_an_independent_cached_registry_catalog() -> None:
     assert "branchCatalogCacheKey" in script
     assert "readCachedBranches" in script
     assert "writeCachedBranches" in script
-    assert "loadTaxonomy(elements[\"branch-filter\"].value || DEFAULT_BRANCH)" in script
     assert "The registry returned an empty branch catalog; keeping saved branches." in script
     assert "knownBranches.delete(branch)" not in browser
     assert "...(payload.branches || [])" not in browser
@@ -1030,7 +1015,7 @@ def test_branch_filter_uses_an_independent_cached_registry_catalog() -> None:
 def test_earlier_builds_pagination_tracks_the_selected_branch() -> None:
     script = _browser_source("app.js", "download-dialog.js", "catalog-view.js")
 
-    assert 'query.set("git_ref", `refs/heads/${branch}`)' in script
+    assert 'query.set("git_ref", gitRef)' in script
     assert "availableBranches" in script
     assert 'await loadRuns({ branch: elements["branch-filter"].value })' in script
     assert 'elements["load-more"].hidden = !state.hasMore' in script
@@ -1091,7 +1076,7 @@ def test_developer_filters_are_directly_visible_and_status_is_not_presented() ->
     assert 'id="status-filter"' not in html
     assert 'class="run-status' not in browser
     assert 'class="status-label' not in browser
-    assert 'query.set("status", "completed")' in script
+    assert 'status: "completed"' in script
     assert 'run.status === "completed"' in script
 
 
@@ -1104,12 +1089,11 @@ def test_model_catalog_is_default_with_explicit_build_history_mode() -> None:
     assert "Switches from models to chronological build runs." in html
     assert "Show build history" in html
     assert 'if (historical) {' in script
-    assert 'allPages(api, `${base}/runs`, compileQuery, "runs")' in script
-    assert 'allPages(api, `${base}/runs`, packageQuery, "runs")' in script
-    assert 'allPages(api, `${base}/models`, modelQuery, "models")' in script
-    assert 'query.set("run_type", "model_compile")' in script
+    assert '["model_compile", "model_package"]' in script
+    assert 'allPages(api, `${base}/runs`, query, "runs")' in script
+    assert 'run_type: "model_compile"' in script
     assert (
-        'if (historical && !elements["history-filter"].checked) query.set("latest_per_model_compiler", "true")'
+        'if (!elements["history-filter"].checked) query.set("latest_per_model_compiler", "true")'
         in script
     )
     assert 'link.get("history") === "1"' in script
@@ -1128,10 +1112,10 @@ def test_browser_loads_taxonomy_from_the_current_catalog_and_exposes_category_fa
         assert f'id="{removed}"' not in html
         assert removed not in script
     assert "/catalogs/current?git_ref=" in script
-    assert "payload.catalog?.document?.taxonomy" in script
+    assert "applyTaxonomy(document?.taxonomy || null, snapshotBranch)" in script
     assert '"task-filter": "task"' in script
     assert '"architecture-filter": "architecture_id"' in script
-    assert "setCategoryFiltersDisabled(true)" in script
+    assert "setCategoryFiltersDisabled(!taxonomy)" in script
     assert "Category filters are temporarily unavailable" in script
 
 
@@ -1807,8 +1791,10 @@ const current = [run('backbone', 'rf_detr_small', 'backbone', 'workflow-2'),
 const old = [run('old-backbone', 'rf_detr_small', 'backbone', 'workflow-1', '2.1', '2026-09-01T12:00:00Z'),
              run('old-decoder', 'rf_detr_small', 'decoder', 'workflow-1', '2.1', '2026-09-01T12:00:00Z')];
 const catalog = [{model_id: 'rf_detr_small', display_name: 'RF-DETR', builds: [
-  {run_id: 'stale-backbone', build_profile_id: 'w8a8_w16a16', component_id: 'backbone'},
-  {run_id: 'stale-decoder', build_profile_id: 'w8a8_w16a16', component_id: 'decoder'},
+  {run_id: 'stale-backbone', build_profile_id: 'w8a8_w16a16', component_id: 'backbone',
+   finished_at: '2026-08-01T00:00:00Z'},
+  {run_id: 'stale-decoder', build_profile_id: 'w8a8_w16a16', component_id: 'decoder',
+   finished_at: '2026-08-01T00:00:00Z'},
 ], benchmark_fingerprints: {w8a8_w16a16: {performance: 'stale-performance-fingerprint'}}},
                  {model_id: 'ssd_mobilenet', display_name: 'SSD',
                   builds: [{run_id: 'inherited', build_profile_id: 'w8a8_w16a16'}]}];
@@ -1838,9 +1824,12 @@ const sameCompilerOld = [
 assert.deepEqual(
   branchModels([...sameCompilerOld, ...current], packages, catalog, '3.0')[0].builds.map(build => build.run_id),
   ['backbone', 'decoder']);
-assert.deepEqual(branchModels([], packages, catalog), []);
+const [snapshot] = branchModels([], packages, catalog);
+assert.deepEqual(snapshot.builds.map(build => build.run_id), ['stale-backbone', 'stale-decoder']);
+assert.deepEqual(snapshot.benchmark_fingerprints, {w8a8_w16a16: {performance: 'stale-performance-fingerprint'}});
+assert.deepEqual(snapshot.packages, []);
 const performanceRun = {...run('benchmark', 'inherited', 'model', 'workflow-2'), run_type: 'model_performance'};
-assert.deepEqual(branchModels([performanceRun], [], catalog), []);
+assert.deepEqual(branchModels([performanceRun], [], catalog), branchModels([], [], catalog));
 const develop = ['ssd_mobilenet', 'resnet50', 'yolov8', 'mobilenet', 'rf_detr_small', 'unet']
   .map(model => run(model, model, 'model', model));
 // Only models the catalog lists show; a removed model's runs stay in the registry.

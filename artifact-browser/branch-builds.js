@@ -126,23 +126,45 @@ export function withoutProfiles(catalogModels, hiddenProfiles) {
   });
 }
 
-// Resolves the compile runs behind catalog builds that `knownRuns` lacks, such as builds a new
-// branch inherits. The catalog names each run and its commit; the run carries its own branch.
+// Resolve exact deployment runs even if their source branch differs or the run was superseded.
 export async function catalogBuildRuns(catalogModels, knownRuns, fetchPage, repositoryPath) {
-  catalogModels = catalogModels.map(deploymentCatalog);
   const known = new Set(knownRuns.map((run) => run.id));
-  const missing = new Map(catalogModels.flatMap((model) => model.builds || [])
+  const missing = [...new Set(catalogModels.flatMap((model) => deploymentCatalog(model).builds)
     .filter((build) => build.run_id && !known.has(build.run_id))
-    .map((build) => [build.run_id, build]));
-  const commits = [...new Set([...missing.values()].map((build) => build.commit_sha).filter(Boolean))];
-  const byCommit = await Promise.all(commits.map((commit) => allPages(fetchPage, `${repositoryPath}/runs`,
-    new URLSearchParams({ commit_sha: commit, status: "completed", run_type: "model_compile", limit: "100" }), "runs")));
-  const runs = byCommit.flat().filter((run) => missing.has(run.id));
-  // The run list omits superseded runs; a catalog may still name one.
-  const found = new Set(runs.map((run) => run.id));
-  const rest = await Promise.all([...missing.keys()].filter((id) => !found.has(id))
-    .map(async (id) => (await fetchPage(`/v1/runs/${encodeURIComponent(id)}`)).run));
-  return [...runs, ...rest];
+    .map((build) => build.run_id))].sort();
+  const runs = [];
+  const batchSize = 40;
+  for (let start = 0; start < missing.length; start += batchSize) {
+    const batch = missing.slice(start, start + batchSize);
+    // Older readers ignore summary_ids. Ask them for only one list entry.
+    const query = new URLSearchParams({ summary_ids: batch.join(","), limit: "1" });
+    const payload = await fetchPage(`${repositoryPath}/runs?${query}`);
+    if (start === 0 && !Object.hasOwn(payload, "summaries") && Array.isArray(payload.runs)) return [];
+    const summaries = payload.summaries?.map(({ run }) => run);
+    const ids = new Set(summaries?.map((run) => run?.id));
+    if (summaries?.length !== batch.length || !batch.every((id) => ids.has(id))) {
+      throw new Error("The registry returned an incomplete batch of run summaries.");
+    }
+    runs.push(...summaries);
+  }
+  return runs;
+}
+
+function catalogBuildRun(model, build) {
+  return {
+    id: build.run_id,
+    run_type: "model_compile",
+    status: "completed",
+    git_ref: build.git_ref,
+    commit_sha: build.commit_sha,
+    toolchain_name: build.toolchain_name,
+    toolchain_version: build.toolchain_version,
+    target_platform: build.target_platform,
+    created_at: build.created_at,
+    finished_at: build.finished_at,
+    metadata: { model_id: model.model_id, build_profile_id: build.build_profile_id, component_id: build.component_id },
+    catalogOnly: true,
+  };
 }
 
 // Shows the catalog's build of each model and build profile, unless `compileRuns` holds a newer
@@ -158,11 +180,14 @@ export function branchModels(compileRuns, packageRuns, catalogModels, compiler =
   const variantKey = (modelId, profile) => JSON.stringify([modelId, profile]);
 
   const latest = new Map();
-  const runsById = new Map(runs.map((run) => [run.id, run]));
+  const runsById = new Map(compileRuns.map((run) => [run.id, run]));
   for (const model of catalogModels) {
     for (const build of model.builds || []) {
-      const run = runsById.get(build.run_id);
-      if (!run || build.build_profile_id !== runProfile(run)
+      if (!build.run_id || !build.build_profile_id || !build.component_id) continue;
+      const run = runsById.get(build.run_id) || catalogBuildRun(model, build);
+      if (run.status !== "completed" || run.run_type !== "model_compile"
+        || (compiler && run.toolchain_version !== compiler)
+        || model.model_id !== run.metadata?.model_id || build.build_profile_id !== runProfile(run)
         || build.component_id !== run.metadata.component_id) continue;
       const key = variantKey(model.model_id, runProfile(run));
       if (!latest.has(key)) latest.set(key, { modelId: model.model_id, profile: runProfile(run), runs: [], time: 0, catalog: true });
@@ -185,8 +210,10 @@ export function branchModels(compileRuns, packageRuns, catalogModels, compiler =
     const previous = latest.get(key);
     // A build holding every run the catalog names is the catalog's build, with all its components.
     const isCatalogBuild = previous?.catalog && previous.runs.every((run) => group.runs.includes(run));
-    const newer = !previous || group.time > previous.time
-      || (!previous.catalog && group.time === previous.time && group.runs[0].id > previous.runs[0].id);
+    // Without a timestamp for a catalog component, keep the pinned build until its age is known.
+    const unknownAge = previous?.runs.some((run) => run.catalogOnly && !runTime(run));
+    const newer = !previous || (!unknownAge && (group.time > previous.time
+      || (!previous.catalog && group.time === previous.time && group.runs[0].id > previous.runs[0].id)));
     if (isCatalogBuild || newer) latest.set(key, group);
   }
 

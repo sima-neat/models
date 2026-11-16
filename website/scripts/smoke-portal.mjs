@@ -50,9 +50,24 @@ async function checkPage(browser, url, readySelector) {
       problems.push(`${request.failure()?.errorText} ${request.url()}`);
     }
   });
+  const catalogLanding = url.pathname === '/' && !url.search;
+  const registryRequests = [];
+  if (catalogLanding) page.on('request', request => {
+    const {pathname} = new URL(request.url());
+    if (request.resourceType() === 'fetch' && pathname.startsWith('/v1/')) registryRequests.push(pathname);
+  });
   await page.goto(url.href);
   await page.waitForSelector(readySelector, {timeout: 15_000})
     .catch(() => problems.push(`${readySelector} did not render`));
+  if (catalogLanding) {
+    const snapshots = registryRequests.filter(path => path.endsWith('/catalogs/current'));
+    if (snapshots.length !== 1 || (customer && registryRequests.length !== 1)) {
+      problems.push(`Unexpected catalog requests: ${registryRequests.join(', ')}`);
+    }
+    if (registryRequests.some(path => path.startsWith('/v1/runs/') || path.endsWith('/models'))) {
+      problems.push('Catalog fetched individual runs or a separate model list');
+    }
+  }
   if (await page.locator('[data-model-card-body]').count()) {
     await page.waitForSelector('[data-model-card-body] .model-documentation-body', {timeout: 15_000})
       .catch(() => problems.push('Inline model instructions did not load'));
@@ -204,8 +219,8 @@ async function checkCatalogLayouts(browser, url) {
         if (viewport.width === 390) await page.keyboard.press('Tab');
         if (!await taskFilter.evaluate(el => document.activeElement === el && getComputedStyle(el).outlineStyle === 'solid')) throw new Error('keyboard navigation lost its filter focus outline');
         if (viewport.width === 390) await page.locator('#filter-toggle').click();
-        // Search keeps individual cards; the target platform matches every usable build.
-        await page.locator('#search').fill('modalix');
+        // A punctuation-only search shows individual cards without filtering out any model.
+        await page.locator('#search').fill('.');
         await page.locator('[data-model-card]').first().waitFor();
         const ids = await page.locator('.model-card').evaluateAll(cards => cards.map(card => card.dataset.modelCard));
         const tasksByModel = await page.locator('.model-card').evaluateAll(cards => Object.fromEntries(cards.map(card => [

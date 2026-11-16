@@ -20,6 +20,13 @@ const catalog = [
   {model_id: 'yolo', display_name: 'YOLO', builds: [catalogBuild(yolo)]},
 ];
 
+function batchIds(path) {
+  const url = new URL(path, 'https://registry.example');
+  assert.match(url.pathname, /\/runs$/);
+  assert.equal(url.searchParams.get('limit'), '1');
+  return url.searchParams.get('summary_ids').split(',');
+}
+
 test('approved native roots select original runs and packages while newer candidates stay hidden', async () => {
   const newer = run('newer', 'resnet_50', feature, '2026-10-02T00:00:00Z');
   const definition = {...catalog[0], builds: [], packages: [], build_on_demand: true,
@@ -31,8 +38,8 @@ test('approved native roots select original runs and packages while newer candid
       ]},
   }};
   const inherited = await catalogBuildRuns([definition], [newer], async path => {
-    assert.equal(path, `/v1/runs/${resnet.id}`);
-    return {run: resnet};
+    assert.deepEqual(batchIds(path), [resnet.id]);
+    return {summaries: [{run: resnet}]};
   }, '/v1/repositories/sima-neat/models');
   assert.deepEqual(inherited, [resnet]);
   const [model] = branchModels([newer, ...inherited], [], [definition]);
@@ -61,8 +68,11 @@ test('approved subset packages cannot become full-model downloads', () => {
   assert.deepEqual(projected.packages.map(item => item.component_run_ids), [
     {backbone: 'backbone'}, {backbone: 'backbone', head: 'head'},
   ]);
-  const [model] = branchModels(components, [], [definition], '', 'develop');
-  assert.deepEqual(model.packages.map(item => item.run_id), ['complete-package']);
+  for (const runs of [components, []]) {
+    const [model] = branchModels(runs, [], [definition]);
+    assert.deepEqual(model.builds.map(item => item.run_id), ['backbone', 'head']);
+    assert.deepEqual(model.packages.map(item => item.run_id), ['complete-package']);
+  }
   const [unknown] = branchModels(components, [], [{...definition, build_requirements: undefined}], '', 'develop');
   assert.deepEqual(unknown.packages, []);
 });
@@ -119,24 +129,35 @@ test('a profile still pending in the catalog shows its completed run', () => {
   assert.deepEqual(model.builds.map((build) => build.build_profile_id).sort(), ['bf16', 'int8']);
 });
 
-test('catalog runs are resolved by commit, then by id for runs the list omits', async () => {
-  const superseded = run('superseded', 'yolo', develop, '2026-09-01T00:00:00Z');
-  const models = [...catalog, {model_id: 'old', builds: [catalogBuild(superseded)]}];
-  const paths = [];
+test('catalog runs are requested once per exact ID in batches of up to 40', async () => {
+  const superseded = Array.from({length: 42}, (_, index) =>
+    run(`superseded-${String(index).padStart(2, '0')}`, 'yolo', develop, '2026-09-01T00:00:00Z'));
+  const models = [...catalog, {model_id: 'old', builds: [...superseded.map(catalogBuild), catalogBuild(resnet)]}];
+  const expected = new Map([resnet, ...superseded].map((item) => [item.id, item]));
+  const batches = [];
   const runs = await catalogBuildRuns(models, [yolo], async (path) => {
-    paths.push(path);
-    if (path.startsWith('/v1/runs/')) return {run: superseded};
-    assert.match(path, /^\/v1\/repositories\/sima-neat\/models\/runs\?/);
-    assert.match(path, /run_type=model_compile/);
-    return {runs: [resnet, run('unrelated', 'other', develop, '2026-10-01T00:00:00Z')], has_more: false};
+    const ids = batchIds(path);
+    batches.push(ids);
+    return {summaries: ids.map((id) => ({run: expected.get(id)}))};
   }, '/v1/repositories/sima-neat/models');
 
-  assert.deepEqual(runs.map((item) => item.id), ['resnet-develop', 'superseded']);
-  // One query for the shared commit; the known yolo run is not fetched again.
-  assert.equal(paths.filter((path) => path.includes('commit_sha=')).length, 1);
-  assert.deepEqual(paths.filter((path) => path.startsWith('/v1/runs/')), ['/v1/runs/superseded']);
+  assert.deepEqual(batches.map((batch) => batch.length), [40, 3]);
+  assert.deepEqual(batches.flat(), [...expected.keys()].sort());
+  assert.deepEqual(runs, [...expected.values()]);
 });
 
+test('an older reader falls back to the published builds without individual run requests', async () => {
+  let requests = 0;
+  const runs = await catalogBuildRuns(catalog, [], async (path) => {
+    requests += 1;
+    assert.deepEqual(batchIds(path), [resnet.id, yolo.id]);
+    return {runs: [resnet]};
+  }, '/repo');
+  assert.equal(requests, 1);
+  assert.deepEqual(runs, []);
+  assert.deepEqual(branchModels(runs, [], catalog).map((model) => model.builds[0].run_id), [resnet.id, yolo.id]);
+  assert.deepEqual(branchModels(runs, [], catalog, resnet.toolchain_version), []);
+});
 
 test('completed candidates never replace an on-demand catalog approved build or package', () => {
   const candidate = run('candidate', 'resnet_50', feature, '2026-10-02T00:00:00Z');
@@ -155,8 +176,8 @@ test('feature catalogs show finalized selections rather than arbitrary completed
     {component_id: 'model', run_id: candidate.id, artifact_name: 'llima', layout: 'directory', format: 'llima'},
   ]}}};
   const resolved = await catalogBuildRuns([selected], [newer], async path => {
-    assert.equal(path, `/v1/runs/${candidate.id}`);
-    return {run: candidate};
+    assert.deepEqual(batchIds(path), [candidate.id]);
+    return {summaries: [{run: candidate}]};
   }, '/v1/repositories/sima-neat/models');
   const [model] = branchModels([newer, ...resolved], [], [selected]);
   assert.equal(model.builds[0].run_id, candidate.id);
@@ -212,8 +233,8 @@ test('deployment-only catalogs resolve inherited builds and keep the selected pa
     build_requirements: {int8: {packages: [{id: 'default', component_ids: ['model']}]}},
     branch_deployments: {int8: selection}}];
   const inherited = await catalogBuildRuns(definitions, [], async path => {
-    assert.equal(path, '/v1/runs/resnet-develop');
-    return {run: resnet};
+    assert.deepEqual(batchIds(path), [resnet.id]);
+    return {summaries: [{run: resnet}]};
   }, '/repo');
   const newer = {...resnet, id: 'newer', finished_at: '2026-10-17T00:00:00Z'};
   const [model] = branchModels([newer, ...inherited], [], definitions);

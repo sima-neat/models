@@ -114,19 +114,26 @@ A feature branch that later merges `develop` does not repeat that work. It leave
 
 ## What the model browser shows
 
-`branchModels` in `artifact-browser/branch-builds.js` builds a branch's view:
+The customer browser reads the published Main snapshot once. The developer
+browser renders the selected branch's snapshot while the branch's compile and
+package lists load. Each browser saves the definitions and taxonomy locally for
+repeat visits.
 
-- The view lists the catalog's builds. Every push publishes a catalog, so a branch that
-  changes no fingerprint still lists every model.
-- A completed build compiled on the branch that is newer than the catalog entry for its
-  model and build profile replaces that entry. A build missing from the catalog therefore
-  still shows.
-- Each build keeps its own compile run's branch, commit, and compiler. A reused build
-  names the branch that compiled it.
-- A profile keeps its benchmark fingerprints only while the view shows the catalog's own
-  build.
-- A deployment selection replaces a profile's catalog builds and packages
+`branchModels` in `artifact-browser/branch-builds.js` assembles the view:
+
+- It lists published builds, including inherited ones. A deployment selection
+  replaces its profile's builds and packages
   (`deploymentCatalog`, [on-demand builds](on-demand-builds.md)).
+- The developer view can overlay a newer completed build compiled on the
+  selected branch when both builds' ages are known. It also shows completed
+  builds for declared pending profiles. The customer view shows what the
+  snapshot publishes.
+- The developer view looks up missing exact run IDs in batches of up to 40.
+  The run identifies its build's source branch, commit, and compiler. Without
+  that data, the catalog can still show the published build, and a compiler
+  filter only matches builds with a known compiler.
+- A profile keeps its benchmark fingerprints only while the view shows the
+  catalog's own build. A package must match every shown component's run ID.
 
 ## Design decisions
 

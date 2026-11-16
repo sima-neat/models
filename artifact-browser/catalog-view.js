@@ -9,7 +9,7 @@ import { readPerformance } from "./model-report.js";
 import { accuracyHeadline } from "./accuracy-section.js";
 import {
   api, writeBranchPreference, writeCachedBranches, writeCachedCatalog,
-  runFromCatalogBuild, profileGroups, activeModelBuild, documentationHeroUrl, documentationHeroFallbackUrl, loadVariant, mapWithConcurrency,
+  runFromCatalogBuild, profileGroups, activeModelBuild, documentationHeroUrl, documentationHeroFallbackUrl, loadBenchmarkResults, mapWithConcurrency,
 } from "./api.js";
 
 // A filter lists only the values the loaded builds use, labeled from the taxonomy.
@@ -56,17 +56,21 @@ export function setCategoryFiltersDisabled(disabled) {
   });
 }
 
-export async function loadTaxonomy(branch = elements["branch-filter"].value || DEFAULT_BRANCH) {
+export async function fetchCatalogDocument(branch) {
   const repo = state.repository;
-  const requestId = ++state.taxonomyRequestId;
   const payload = await api(
     `/v1/repositories/${encodeURIComponent(repo.organization)}/${encodeURIComponent(repo.name)}/catalogs/current?git_ref=${encodeURIComponent(`refs/heads/${branch}`)}`,
   );
-  if (requestId !== state.taxonomyRequestId) return;
-  state.taxonomy = payload.catalog?.document?.taxonomy || null;
-  if (!state.taxonomy) throw new Error("The registry did not return a model taxonomy.");
+  const document = payload.catalog?.document;
+  if (!Array.isArray(document?.models)) throw new Error("The registry did not return a model catalog.");
+  return document;
+}
+
+export function applyTaxonomy(taxonomy, branch) {
+  state.taxonomy = taxonomy;
+  state.taxonomyBranch = branch;
   populateCategoryFilters();
-  setCategoryFiltersDisabled(false);
+  setCategoryFiltersDisabled(!taxonomy);
 }
 
 export function activeFilterCount() {
@@ -94,8 +98,8 @@ export function applyCatalog(payload, { append = false, cache = true } = {}) {
   const modelsMode = payload.mode === "models";
   state.catalogMode = modelsMode ? "models" : "runs";
   if (modelsMode) {
-    state.compileRuns = payload.compileRuns;
-    state.packageRuns = payload.packageRuns;
+    state.compileRuns = payload.compileRuns || [];
+    state.packageRuns = payload.packageRuns || [];
     state.catalogDefinitions = payload.catalogDefinitions;
     state.models = branchModels(state.compileRuns, state.packageRuns, state.catalogDefinitions,
       elements["compiler-filter"].value);
@@ -111,7 +115,7 @@ export function applyCatalog(payload, { append = false, cache = true } = {}) {
   }
   state.availableBranches = [...new Set([
     ...state.availableBranches,
-    ...state.runs.map((run) => branchName(run.git_ref)),
+    ...state.runs.filter((run) => run.git_ref?.startsWith("refs/heads/")).map((run) => branchName(run.git_ref)),
   ])].sort();
   state.cursor = payload.next_cursor ?? payload.cursor ?? null;
   state.hasMore = Boolean(payload.has_more ?? payload.hasMore);
@@ -347,9 +351,8 @@ function workloadRange(workloads, key) {
 }
 
 // Show token rates per task for generation, or inference throughput and latency for other models.
-export function tablePerformance(variant, task) {
-  const order = variant.details.map((detail) => detail.summary.run.metadata.component_id);
-  const result = readPerformance(variant.performance, order);
+export function tablePerformance(performance, task, componentOrder) {
+  const result = readPerformance(performance, componentOrder);
   if (result.kind === "supported" && result.value.generation) {
     const kinds = task === "visual_question_answering" ? ["image_text", "image_dataset"] : ["text", "text_dataset"];
     const workloads = catalogWorkloads(result.value.workloads.filter((workload) => kinds.includes(workload.kind)));
@@ -413,23 +416,24 @@ function renderCatalogTable(models) {
             <tbody>${entries.map((model) => renderRow(model, task)).join("")}</tbody></table></div></section>`;
     }).join("");
   // A model page hides the list; returning to the list renders the table again and loads its details then.
-  if (state.selectedId) return;
+  if (state.selectedId || !state.catalogLoaded) return;
   const requestId = tableRequestId;
-  // Load details only in table view, with bounded concurrency and the model page's existing cache.
+  // Each row needs benchmark results for its selected profile.
   mapWithConcurrency(models, 3, async (model) => {
     if (requestId !== tableRequestId) return;
     const active = activeModelBuild(model);
     const rows = elements["result-list"].querySelectorAll(`[data-catalog-entry="${CSS.escape(model.model_id)}"]`);
     try {
-      const variant = await loadVariant(runFromCatalogBuild(model, active.build));
+      const results = await loadBenchmarkResults(model, active.profile);
+      const componentOrder = active.builds.map((build) => build.component_id);
       if (requestId !== tableRequestId) return;
-      const accuracy = accuracyHeadline(variant);
+      const accuracy = accuracyHeadline(results);
       const accuracyHtml = accuracy
         ? `<span class="catalog-reading"><span>${escapeHtml(accuracy.value)}</span><small>${escapeHtml(accuracy.label)}</small></span>`
         : `<span class="catalog-unavailable">Not measured</span>`;
       rows.forEach((row) => {
         row.querySelector("[data-table-accuracy]").innerHTML = accuracyHtml;
-        row.querySelector("[data-table-performance]").innerHTML = tablePerformance(variant, row.dataset.catalogTask);
+        row.querySelector("[data-table-performance]").innerHTML = tablePerformance(results.performance, row.dataset.catalogTask, componentOrder);
       });
     } catch {
       if (requestId !== tableRequestId) return;
@@ -480,14 +484,15 @@ export function familyOverview() {
 }
 
 function renderModels() {
-  if (!state.models.length && !state.catalogLoaded) return renderCatalogLoading();
   const models = filteredModels();
+  if (!state.catalogLoaded && (!state.models.length || (!models.length && elements["compiler-filter"].value))) return renderCatalogLoading();
   const families = familyOverview() ? groupModelFamilies(models) : null;
   elements["result-count"].textContent = families
     ? `${families.length} model ${families.length === 1 ? "family" : "families"}`
     : `${models.length}${state.hasMore ? "+" : ""} model${models.length === 1 ? "" : "s"}`;
   if (!models.length) {
-    const noBuilds = !state.compileRuns.length && elements["branch-filter"].value;
+    const noBuilds = !state.compileRuns.length && !elements["compiler-filter"].value
+      && !state.models.length && elements["branch-filter"].value;
     elements["result-list"].innerHTML = noBuilds
       ? `<div class="no-results"><span>0</span><h3>No models on this branch yet</h3><p>${branchSelectionEnabled ? "Its catalog appears after its first push completes. Select another branch to browse its models." : "No models have been published to Main yet."}</p></div>`
       : `<div class="no-results"><span>0</span><h3>No matching models</h3><p>Broaden the search or clear the current filters.</p><button type="button" data-action="clear">Reset filters</button></div>`;

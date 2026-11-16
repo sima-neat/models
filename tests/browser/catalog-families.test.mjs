@@ -140,7 +140,7 @@ test('a failed taxonomy request keeps models usable without a nonfunctional fami
 test('a generative table row shows the smallest text bucket, one image, or the range across datasets', () => {
   const report = JSON.parse(readFileSync(new URL('../../artifact-browser/fixtures/genai-model-report.json', import.meta.url), 'utf8'));
   const row = (workloads, task) => tablePerformance(
-    {details: [], performance: {report: {...report, generation: {...report.generation, workloads}}}}, task)
+    {report: {...report, generation: {...report.generation, workloads}}}, task)
     .replace(/<[^>]+>/g, '|');
   const buckets = report.generation.workloads;
   assert.equal(row(buckets, 'text_generation'), '||TPS: 74.3||TTFT: 43.3 ms||Input Tokens: 128||');
