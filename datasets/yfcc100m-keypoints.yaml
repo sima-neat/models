@@ -1,3 +1,4 @@
 # What every model evaluating its accuracy on the YFCC100M keypoints dataset must report, by task.
+name: YFCC100M
 required_metrics:
   feature_matching: [pose_auc_5, pose_auc_10, pose_auc_20]

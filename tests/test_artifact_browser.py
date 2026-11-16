@@ -405,7 +405,7 @@ def assemble_portal(root: Path) -> subprocess.CompletedProcess[str]:
     (root / "website" / "build").mkdir()
     shutil.copy(PORTAL_ASSEMBLER, root / "website" / "scripts" / PORTAL_ASSEMBLER.name)
     shutil.copy(PORTAL_ASSEMBLER.with_name("portal-config.mjs"), root / "website" / "scripts" / "portal-config.mjs")
-    for source in ("models", "schemas", "tools"):
+    for source in ("models", "datasets", "schemas", "tools"):
         (root / source).symlink_to(ROOT / source)
     return subprocess.run(
         ["node", str(root / "website" / "scripts" / PORTAL_ASSEMBLER.name)],
@@ -469,7 +469,9 @@ def test_assembled_portal_ships_the_model_data_api_fetches(tmp_path: Path) -> No
     api = (portal / "api.aaaaaaaaaaaa.js").read_text(encoding="utf-8")
     hidden = json.loads((portal / "low-accuracy-variants.aaaaaaaaaaaa.json").read_text(encoding="utf-8"))
     assert all(isinstance(profiles, list) and profiles for profiles in hidden.values())
-    for name in ("component-pipelines", "reference-metrics", "low-accuracy-variants", "licenses"):
+    names = json.loads((portal / "dataset-names.aaaaaaaaaaaa.json").read_text(encoding="utf-8"))
+    assert names["imagenet-2012"] == "ImageNet 2012"
+    for name in ("component-pipelines", "reference-metrics", "low-accuracy-variants", "dataset-names", "licenses"):
         assert f'"./{name}.aaaaaaaaaaaa.json"' in api
         assert f'"./{name}.json"' not in api
 
@@ -567,6 +569,8 @@ def test_model_instructions_load_inline_with_integrity_checks() -> None:
     renderer = (BROWSER / "markdown.js").read_text(encoding="utf-8")
 
     assert "documentation?.overview_markdown" in script
+    # The Overview text opens its section without a title.
+    assert 'id="overview-title"' not in script
     assert 'headers: { Accept: "text/markdown" }' in script
     assert "/artifacts/${encodeURIComponent(documentation.artifact_name" in script
     assert 'crypto.subtle.digest("SHA-256"' in script
@@ -1215,7 +1219,8 @@ def test_performance_and_accuracy_name_the_commit_and_workflow_that_measured_the
     assert "${measurementSource(run, modelId)}</p>" in script
     assert "performanceSummary(result.value, run, modelId)" in script
     assert "measurementSource(variant.accuracy.run, modelId)" in script
-    assert "${escapeHtml(datasetName(dataset) || \"Dataset unavailable\")}${sourceMarkup}</p>" in script
+    # The accuracy line holds the measurement date and, in the developer view, its source.
+    assert '<p class="accuracy-scope">${measured}</p>' in script
     assert ".measurement-link {" in styles
 
 
@@ -1433,22 +1438,25 @@ def test_accuracy_result_is_rendered_with_coverage_and_reference_comparison() ->
     assert 'loadBenchmarkRun("accuracy", fingerprints.accuracy)' in script
     assert 'id="accuracy-section"' in script
     assert "dataset.evaluated_samples.toLocaleString()" in script
-    # Each dataset's coverage is a plain badge; its explanation sits in that dataset's Evaluation details row.
-    badge = '<span class="status-badge ${full ? "qualification" : "provisional"}">'
-    assert badge in script
+    # The dataset line states the sample count; the coverage explanation sits in Evaluation details.
+    assert "? `using ${evaluated} samples`" in script
+    assert "status-badge" not in script
     assert 'disclosure(`accuracy:${name}`, "Evaluation details", evaluation, coverageLabel)' in script
     assert 'const coverageLabel = full ? "Full coverage" : "Sampled coverage"' in script
-    # One section holds every dataset's result; one dataset keeps its badge beside the section title.
+    # One section holds every dataset's result, and each dataset line says when it was measured.
     assert 'data-accuracy-dataset="${escapeHtml(name)}"' in script
-    assert "const badge = datasets.length === 1 ? coverageBadge(datasets[0].dataset) : \"\";" in script
+    assert "`Measured ${escapeHtml(formatDate(timestamp, false))}`" in script
+    # The dataset and its sample count sit behind the info mark of the title they describe.
+    assert 'datasets.length === 1 ? evaluatedOn(datasets[0].dataset, target) : "")}' in script
+    assert "<h4>${escapeHtml(name)}${infoMark(evaluatedOn(dataset, target))}</h4>" in script
+    assert "performanceMethod(variant))}" in script
     assert "accuracy-explainer" not in browser
     for removed in ("Qualification", "Provisional", "Candidate top-1", "validation?.status"):
         assert removed not in script
     # A build without an accuracy run still shows what the model's authors published.
     assert 'if (result.kind === "missing") return referenceAccuracySection(reference, variant);' in script
     assert ".accuracy-summary" in styles
-    assert ".status-badge.provisional" in styles
-    assert ".status-badge.qualification" in styles
+    assert ".status-badge" not in styles
     assert ".accuracy-explainer" not in styles
 
 
@@ -1733,9 +1741,9 @@ def test_model_license_metadata_is_rendered_with_redistribution_and_attribution(
     assert "const license = catalogModel?.license || run.metadata?.license" in script
     assert "function licensePanel(license, listed)" in script
     assert 'detailTag(icons.license, license.spdx, "license")' in script
-    assert '<p class="license-line"><strong>${escapeHtml(license.spdx)}</strong>' in script
-    assert "<span>${escapeHtml(redistribution)}</span></p>" in script
-    assert "`Redistribution ${license.redistribution}`" in script
+    # The section names the license once; an unlisted license falls back to its identifier and model.yaml.
+    assert '<p class="license-line"><strong>${escapeHtml(listed?.name || license.spdx)}</strong></p>' in script
+    assert "listed?.summary || (license.redistribution ? `Redistribution ${license.redistribution}.` : \"\")" in script
     assert 'class="license-attribution"' in script
     assert ".detail-tag-license svg" in styles
     assert ".license-attribution" in styles
@@ -1745,8 +1753,7 @@ def test_model_page_names_the_license_and_what_it_asks_from_the_license_list() -
     script = _browser_source(*MODEL_PAGE_MODULES)
 
     assert "licensePanel(license, variant.licenses?.[license?.spdx])" in script
-    assert "<span>${escapeHtml(listed.name)}</span>" in script
-    assert '<p class="license-summary">${escapeHtml(listed.summary)}</p>' in script
+    assert '<p class="license-summary">${escapeHtml(terms)}</p>' in script
     assert ".license-summary" in (BROWSER / "styles.css").read_text(encoding="utf-8")
 
 
@@ -1755,7 +1762,12 @@ def test_model_page_offers_artifact_downloads_only_under_a_downloadable_license(
     render_detail = script.split("export function renderDetail(", 1)[1]
 
     assert "const offered = downloadOffered(license?.spdx, variant.licenses)" in render_detail
-    assert 'const downloadAction = !offered ? `<span class="download-unavailable">' in render_detail
+    # The notice names the reason and jumps to the License section.
+    notice = (
+        '`<button class="download-unavailable" type="button" data-scroll-to="license-section">'
+        "${icons.license}Download restricted by license</button>`"
+    )
+    assert f"const downloadAction = !offered ? {notice}" in render_detail
     assert "${offered ? packageCard(fullPackage," in render_detail
     # Every artifact download on the page sits in the header action or the package card.
     assert script.count("data-download-variant=") == 1

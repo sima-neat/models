@@ -9,6 +9,8 @@ you can check how your model will appear before you submit it.
 
 Models uses the shared Developer Portal header on the deployed site. Its own
 navigation underneath contains **Browse models**, **Compare** and **Developer docs**.
+**Browse models** opens the whole catalog and clears a selected model family. The
+breadcrumb on a model page returns to the family the reader came from.
 The section navigation matches Software documentation: full-width, left-aligned
 links with a blue active label. The catalog and contributor documentation share
 the portal's theme preference.
@@ -123,8 +125,9 @@ On a phone, the section navigation shortens **Developer docs** to **Docs**.
 Selecting an individual model opens its page. The page is built to be read at a glance:
 each section shows its key facts directly, and longer detail sits in a row
 marked with › that opens in place. The header places the model image beside its
-name, tags, description, download action, and the validation and source-link
-icons in both UI modes; narrow screens stack them. The tags name what holds for every variant:
+name, tags, and description in both UI modes; narrow screens stack them. The
+variant selector follows, and below it the download action with the validation
+and source-link icons. The tags name what holds for every variant:
 tasks, model family, model type and license. The download dialog offers an outlined **Copy CLI command**
 button with a copy icon alongside browser downloads where available. The copied
 command names the selected branch in the developer view. In the customer view it
@@ -136,11 +139,13 @@ place Cancel on the left, Copy CLI command in the middle and Download on the rig
 A model with several build profiles shows
 one tab per profile, labelled with its variant ID in uppercase, such as
 **W8A8**. Profiles with a W8A8 component come first and the page opens on the
-first tab, whatever order `model.yaml` declares. **Download** in the header
-downloads the selected variant, and the Performance and Accuracy titles name that variant.
-A model whose license does not permit redistribution has no download action. Its
-header shows **Not available for download** in that place, and its Details section
-has no package card. The GitHub link in the header opens
+first tab, whatever order `model.yaml` declares. A line under the tabs says that
+Performance and Accuracy are shown for the selected variant. **Download** below the
+selector downloads the selected variant, and the Performance and Accuracy titles name
+that variant.
+A model whose license does not permit redistribution has no download action. The page
+shows **Download restricted by license** in that place, which jumps to the License
+section, and its Details section has no package card. The GitHub link in the header opens
 the model's folder at the commit the README comes from. The original-model link
 beside it opens the page `upstream.model_card` names. It shows the Hugging Face
 logo for a Hugging Face page and an external-link icon for any other host, such
@@ -151,7 +156,8 @@ their verified settings, including fixed image resolutions without compiler
 overrides; other builds show their recorded compile parameters. Sections appear
 in this order:
 
-1. **Overview.** The `## Overview` section of the README, including
+1. **Overview.** The text of the README's `## Overview` section, without a
+   title of its own, including
    any model-specific note about changing context length or image resolution
    during compilation. The **Inputs**, **Outputs**, and **Building applications**
    sections appear inline from the
@@ -267,23 +273,29 @@ in this order:
    multi-component model whose `model.yaml` declares a `pipeline` first shows
    the order its components run in, from input to output: numbered components,
    with any CPU step between them, such as RF-DETR's **Top 300 proposals**.
+   An info mark beside the Performance title says the result was measured on the
+   DevKit, running the compiled model with the Neat Model API.
    The tiles, context line, and **Performance Details** are the
    [whole-model result](benchmarking.md#multi-component-models), with the
    components and CPU step running together. **Runtime Layer Analysis**,
    **MLA Utilization**, and **Execution Graph** each switch between the
    components, and **Download CSV** lists each component's layer timings.
 3. **Accuracy.** For each dataset the run evaluated, in `model.yaml` order:
-   the coverage (full when the run evaluated every sample of its split,
-   sampled otherwise), the first four metrics in their units (ratios as
-   percentages, EPE in pixels, D1-all in percent), the dataset, such as
-   **coco-2017 val**, the evaluated sample count when coverage is sampled, and,
-   in the developer UI, the commit and GitHub workflow of the run that measured them. With more than
-   one dataset, each result is titled by its dataset name. The catalog table
+   the first four metrics in their units (ratios as
+   percentages, EPE in pixels, D1-all in percent), the date of the measurement, and,
+   in the developer UI, the commit and GitHub workflow of the run that measured them.
+   An info mark beside the title says how the result was measured: the compiled model
+   ran on the DevKit and was evaluated on the dataset, named as its
+   [`datasets/<id>.yaml`](datasets.md#required-accuracy-metrics) names it, such as
+   **COCO 2017**, using the stated number of samples. With more than
+   one dataset, each result is titled by its dataset name and carries its own info mark. The catalog table
    and **Compare** use the first dataset. Under each of the four metrics, both
    views show its published score and its FP32 baseline when `reference_metrics`
    records them for the measured dataset. A published score links to the
    source `reference_metrics` names.
-   In the developer UI, each dataset's **Evaluation details** explains the coverage and lists
+   In the developer UI, each dataset's **Evaluation details** explains the coverage
+   (full when the run evaluated every sample of its split, sampled otherwise), names
+   the Dataset Registry archive, such as **coco-2017 val**, and lists
    the remaining metrics, each with its published score and its FP32 baseline
    when `reference_metrics` in `model.yaml` records them for the measured
    dataset. The **Published scores** and **FP32 baseline** rows list each
@@ -296,8 +308,8 @@ in this order:
    Then come rows for build provenance (the commit and workflow that compiled the
    build), source models, the package's numerical fidelity, and each
    component's files, checksum, and compile parameters.
-5. **License.** The license identifier and name, whether redistribution is
-   allowed, one sentence on what the license asks, and the attribution.
+5. **License.** The license name, one sentence on what the license asks,
+   and the attribution.
 
 A section that has no data, such as Accuracy for a model with neither an
 accuracy result nor published scores, is left out.

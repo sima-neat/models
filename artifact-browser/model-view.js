@@ -19,7 +19,7 @@ import {
   executionGraphSection, hideExecutionTooltip, layerAnalysisSection, renderMlaUtilization,
 } from "./execution-section.js";
 import {
-  componentPanels, githubModelUrl, humanize, keyValue, trustedHttpsUrl, variantSectionTitle,
+  componentPanels, githubModelUrl, humanize, keyValue, targetName, trustedHttpsUrl, variantSectionTitle,
 } from "./page-parts.js";
 import { generativeBenchmark, performanceSummary } from "./performance-section.js";
 
@@ -97,6 +97,12 @@ function pipelineStrip(pipeline) {
 
 // The build profile's numbers for the whole model, with each component's layer analysis, MLA utilization and
 // execution graph.
+// How the variant's performance was measured, for the info mark beside the section title.
+function performanceMethod(variant) {
+  if (readPerformance(variant.performance).kind !== "supported") return "";
+  return `Measured on the ${targetName(variant.performance.run)} DevKit, running the compiled model with the Neat Model API.`;
+}
+
 function modelPerformance(variant, modelId) {
   const benchmarkRun = variant.performance;
   const order = pipelineOrder(variant) || variant.details.map((detail) => detail.summary.run.metadata.component_id);
@@ -179,13 +185,13 @@ function fidelityPanel(tests, runId) {
 }
 
 // `listed` is the license's entry in licenses.json: its name, and what it asks of someone who redistributes
-// the model.
+// the model. A license the list lacks shows its identifier and what model.yaml records about redistribution.
 function licensePanel(license, listed) {
   if (!license?.spdx) return "";
-  const redistribution = license.redistribution ? `Redistribution ${license.redistribution}` : "Redistribution not recorded";
+  const terms = listed?.summary || (license.redistribution ? `Redistribution ${license.redistribution}.` : "");
   return `<section id="license-section" class="license-section" tabindex="-1"><div class="detail-section-title"><h3>License</h3></div>
-    <p class="license-line"><strong>${escapeHtml(license.spdx)}</strong>${listed ? `<span>${escapeHtml(listed.name)}</span>` : ""}<span>${escapeHtml(redistribution)}</span></p>
-    ${listed ? `<p class="license-summary">${escapeHtml(listed.summary)}</p>` : ""}
+    <p class="license-line"><strong>${escapeHtml(listed?.name || license.spdx)}</strong></p>
+    ${terms ? `<p class="license-summary">${escapeHtml(terms)}</p>` : ""}
     ${license.attribution ? `<p class="license-attribution">${escapeHtml(license.attribution)}</p>` : ""}
   </section>`;
 }
@@ -224,14 +230,14 @@ function modelHero(model) {
     : "";
 }
 
+// The README's Overview text opens the section without a title of its own, followed by the remaining sections.
 function overviewSection(model) {
   const documentation = model?.documentation;
   if (!documentation?.overview_markdown) return "";
   const instructions = documentation.run_id && documentation.artifact_sha256
     ? `<div data-model-card-body>${modelCardBody(documentation)}</div>`
     : "";
-  return `<section id="overview-section" class="overview-section" tabindex="-1" aria-labelledby="overview-title">
-    <div class="detail-section-title"><h3 id="overview-title">Overview</h3></div>
+  return `<section id="overview-section" class="overview-section" tabindex="-1" aria-label="Overview">
     <div class="model-documentation-body">${renderMarkdown(documentation.overview_markdown, { resolveLink: (source) => resolveDocumentationLink(documentation, source) })}</div>
     ${instructions}
   </section>`;
@@ -281,16 +287,12 @@ function detailBuildSwitcher(variant) {
   return `<section class="detail-build-switcher" aria-label="Variant selection">
     <strong>${profiles.length > 1 ? "Variants" : "Variant"}</strong>
     ${profiles.length ? `<div class="detail-variant-tabs" role="tablist" aria-label="${escapeHtml(model.display_name || model.model_id)} variants">${tabs}</div>` : `<span class="detail-variant-single">${escapeHtml(profileLabel(variant.anchor))}</span>`}
+    ${profiles.length > 1 ? `<p class="detail-variant-help">Select a variant. Performance and accuracy are shown for the selected variant.</p>` : ""}
   </section>`;
 }
 
 function uniqueBy(items, key) {
   return [...new Map(items.map((item) => [key(item), item])).values()];
-}
-
-function targetName(run) {
-  const target = run.target_platform || "";
-  return target ? target.charAt(0).toUpperCase() + target.slice(1) : "the target";
 }
 
 function sectionNavigation(sections) {
@@ -355,7 +357,7 @@ export function renderDetail(variant) {
   const singleComponent = details.length === 1;
   const order = pipelineOrder(variant);
   const backLabel = elements["result-title"].textContent || "Models";
-  const downloadAction = !offered ? `<span class="download-unavailable">${icons.license}Not available for download</span>`
+  const downloadAction = !offered ? `<button class="download-unavailable" type="button" data-scroll-to="license-section">${icons.license}Download restricted by license</button>`
     : fullPackage
     ? `<button class="download-action" type="button" data-download="package" data-run-id="${escapeHtml(fullPackage.run_id)}">${icons.download}<span>${downloadLabel}</span>${packageArtifact ? `<small>${escapeHtml(formatBytes(deploymentSize(packageArtifact)))}</small>` : ""}</button>`
     : hasArtifacts ? `<button class="download-action" type="button" data-download-variant="${escapeHtml(run.id)}" data-run-id="${escapeHtml(run.id)}">${icons.download}<span>${downloadLabel}</span></button>` : "";
@@ -374,20 +376,20 @@ export function renderDetail(variant) {
         <h2>${escapeHtml(displayName)}</h2>
         <div class="detail-tags">${(categories.tasks || []).map((task) => detailTag(icons.task, taxonomyLabel("tasks", task), "task")).join("")}${categories.architecture?.id ? detailTag(icons.architecture, taxonomyLabel("architectures", categories.architecture.id), "architecture") : ""}${categories.model_type ? detailTag(icons.modelType, taxonomyLabel("model_types", categories.model_type), "model-type") : ""}${detailTag(icons.compiler, `${run.toolchain_name || "compiler"} ${run.toolchain_version || ""}`.trim(), "compiler")}${detailTag(icons.branch, branchName(run.git_ref), "branch")}${license?.spdx ? detailTag(icons.license, license.spdx, "license") : ""}</div>
         ${catalogModel?.description ? `<p class="lede">${escapeHtml(catalogModel.description)}</p>` : ""}
-        <div class="detail-title-actions">
-          ${downloadAction}
-          <div class="detail-links">${validated ? artifactValidationMark(allTests) : ""}${originalModel ? `<a class="original-model-link${originalModel.huggingFace ? "" : " external-model-link"}" href="${escapeHtml(originalModel.href)}" target="_blank" rel="noreferrer" aria-label="${escapeHtml(originalModel.label)}" data-tooltip="${escapeHtml(originalModel.label)}">${originalModel.huggingFace ? icons.huggingFace : icons.external}</a>` : ""}${sourceUrl ? `<a class="model-source-link" href="${escapeHtml(sourceUrl)}" target="_blank" rel="noreferrer" aria-label="${escapeHtml(sourceLabel)}" data-tooltip="${escapeHtml(sourceLabel)}">${icons.github}</a>` : ""}</div>
-        </div>
       </div>
       ${modelHero(catalogModel)}
     </header>
     ${detailBuildSwitcher(variant)}
+    <div class="detail-title-actions">
+          ${downloadAction}
+          <div class="detail-links">${validated ? artifactValidationMark(allTests) : ""}${originalModel ? `<a class="original-model-link${originalModel.huggingFace ? "" : " external-model-link"}" href="${escapeHtml(originalModel.href)}" target="_blank" rel="noreferrer" aria-label="${escapeHtml(originalModel.label)}" data-tooltip="${escapeHtml(originalModel.label)}">${originalModel.huggingFace ? icons.huggingFace : icons.external}</a>` : ""}${sourceUrl ? `<a class="model-source-link" href="${escapeHtml(sourceUrl)}" target="_blank" rel="noreferrer" aria-label="${escapeHtml(sourceLabel)}" data-tooltip="${escapeHtml(sourceLabel)}">${icons.github}</a>` : ""}</div>
+    </div>
     ${compiledLimits ? `<dl class="key-grid">${compiledLimits}</dl>` : ""}
     ${sectionNavigation(sections)}
 
     ${overviewMarkup}
 
-    <section id="components-section" class="component-section" tabindex="-1">${variantSectionTitle(`Performance on ${targetName(run)}`, variant)}
+    <section id="components-section" class="component-section" tabindex="-1">${variantSectionTitle(`Performance on ${targetName(run)}`, variant, performanceMethod(variant))}
       ${singleComponent ? "" : `<p class="section-lede">${variant.performance?.report?.scope === "components"
         ? "Each component is benchmarked independently. Select a component to view its measurements."
         : `This model runs as ${details.length} components, measured running together.`}</p>`}

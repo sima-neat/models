@@ -204,21 +204,23 @@ function inRunOrder(entries, order) {
 // An accuracy report scores the whole model on each dataset model.yaml names, as ratios over the evaluated part
 // of it. The run's parameters give each dataset's registry entry and model.yaml's order; the first is the headline.
 export function readAccuracy(benchmarkRun) {
-  return read(benchmarkRun, "accuracy", ({ parameters, report }) => {
+  return read(benchmarkRun, "accuracy", ({ run, parameters, report, datasetNames }) => {
     const declared = parameters?.accuracy?.datasets || {};
     const names = [...Object.keys(declared), ...Object.keys(report.datasets)]
       .filter((name, index, all) => all.indexOf(name) === index && report.datasets[name]);
     return {
       datasets: names.map((name) => {
         const { metrics, details, ...evaluated } = report.datasets[name];
+        const dataset = { ...declared[name], ...evaluated };
         return {
           name,
           metrics: Object.fromEntries(Object.entries(metrics || {}).filter(([, value]) => Number.isFinite(value))),
-          dataset: { ...declared[name], ...evaluated },
+          dataset: datasetNames?.[dataset.id] ? { ...dataset, name: datasetNames[dataset.id] } : dataset,
           details: details && typeof details === "object" ? details : {},
         };
       }),
       tool: pyneatVersion(report),
+      timestamp: run?.finished_at || run?.created_at || null,
     };
   });
 }

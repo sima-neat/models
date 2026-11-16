@@ -296,6 +296,16 @@ export async function audienceCatalog(catalogModels) {
   return withoutProfiles(catalogModels, await lowAccuracyVariants);
 }
 
+// The name of each dataset by its Dataset Registry ID, from datasets/<id>.yaml when the portal is built.
+// Without the list the page names a dataset by its ID, so a failed fetch is not an error.
+let datasetNames = null;
+function loadDatasetNames() {
+  datasetNames ||= fetch(new URL("./dataset-names.json", import.meta.url))
+    .then((response) => (response.ok ? response.json() : {}))
+    .catch(() => ({}));
+  return datasetNames;
+}
+
 // The licenses a model may declare, from licenses.json beside this module. Without the list the page
 // cannot tell whether a license permits redistribution, so it offers no download.
 let licenseList = null;
@@ -335,14 +345,17 @@ export async function loadVariant(anchor) {
   const runs = details.map((detail) => detail.summary.run);
   const packageRun = variantPackage(componentRuns);
   const fingerprints = await benchmarkFingerprints(runs, runProfile(anchor));
-  const [performance, accuracy, [packageSummary, packageTests], pipeline, reference, licenses] = await Promise.all([
+  const [performance, accuracy, [packageSummary, packageTests], pipeline, reference, licenses, names] = await Promise.all([
     loadBenchmarkRun("performance", fingerprints.performance),
     loadBenchmarkRun("accuracy", fingerprints.accuracy),
     packageRun ? loadPackageRun(packageRun.run_id) : [null, null],
     loadComponentPipeline(anchor.metadata?.model_id),
     loadReferenceMetrics(anchor.metadata?.model_id),
     loadLicenses(),
+    loadDatasetNames(),
   ]);
+  // readAccuracy names each dataset of the report from this list.
+  if (accuracy) accuracy.datasetNames = names;
   const variant = {
     key, modelId: anchor.metadata?.model_id, profile: runProfile(anchor), anchor, runs, details, performance, accuracy,
     packageSummary, packageTests, requestedPackageId: packageRun?.run_id || null, pipeline, reference, licenses,

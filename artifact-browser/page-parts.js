@@ -49,6 +49,12 @@ export function tile(label, text, unit, qualifier = "") {
   return `<div class="kpi"><span>${escapeHtml(label)}${qualifier ? `<span class="qualifier">(${escapeHtml(qualifier)})</span>` : ""}</span><strong>${escapeHtml(text)}<small>${escapeHtml(unit)}</small></strong></div>`;
 }
 
+// The board a run targets, as the page names it, such as "Modalix".
+export function targetName(run) {
+  const target = run?.target_platform || "";
+  return target ? target.charAt(0).toUpperCase() + target.slice(1) : "the target";
+}
+
 export function infoMark(text) {
   return text ? `<span class="info-mark" tabindex="0" role="img" aria-label="${escapeHtml(text)}" data-tooltip="${escapeHtml(text)}">i</span>` : "";
 }
@@ -79,7 +85,8 @@ export function humanize(id) {
   return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
-// Performance and Accuracy describe the selected variant, so each title names it.
-export function variantSectionTitle(title, variant, badge = "") {
-  return `<div class="detail-section-title"><h3>${escapeHtml(title)} <span class="section-variant">${escapeHtml(variantLabel(variant.profile))}</span></h3>${badge}</div>`;
+// Performance and Accuracy describe the selected variant, so each title names it. `info` says how the
+// section's results were measured, behind an info mark.
+export function variantSectionTitle(title, variant, info = "") {
+  return `<div class="detail-section-title"><h3>${escapeHtml(title)} <span class="section-variant">${escapeHtml(variantLabel(variant.profile))}</span>${infoMark(info)}</h3></div>`;
 }

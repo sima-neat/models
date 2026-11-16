@@ -301,7 +301,7 @@ def _repository_requiring(tmp_path: Path, requirements: dict | None) -> Path:
     (repository / "datasets").mkdir()
     if requirements is not None:
         (repository / "datasets" / "imagenet-2012.yaml").write_text(
-            yaml.safe_dump({"required_metrics": requirements}), encoding="utf-8"
+            yaml.safe_dump({"name": "ImageNet 2012", "required_metrics": requirements}), encoding="utf-8"
         )
     return repository / "schemas" / "model.schema.json"
 
@@ -345,6 +345,17 @@ def test_accuracy_dataset_requirements_are_validated(tmp_path: Path, requirement
     directory, authored = _benchmarked_model(tmp_path, "accuracy")
     schema = _repository_requiring(tmp_path, requirements)
     with pytest.raises(ValidationError, match=expected):
+        validate_model(directory, authored, schema)
+
+
+def test_a_dataset_file_must_name_its_dataset(tmp_path: Path) -> None:
+    directory, authored = _benchmarked_model(tmp_path, "accuracy")
+    schema = _repository_requiring(tmp_path, {"image_classification": ["top1_accuracy"]})
+    requirements = tmp_path / "repository" / "datasets" / "imagenet-2012.yaml"
+    requirements.write_text(
+        yaml.safe_dump({"required_metrics": {"image_classification": ["top1_accuracy"]}}), encoding="utf-8"
+    )
+    with pytest.raises(ValidationError, match="'name' is a required property"):
         validate_model(directory, authored, schema)
 
 

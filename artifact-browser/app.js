@@ -538,9 +538,11 @@ function returnToCatalog() {
   renderRuns();
   showEmptyDetail();
 }
-elements["nav-models"].addEventListener("click", (event) => {
+// The navigation link opens the whole catalog; the breadcrumb returns to the family the reader came from.
+elements["nav-models"].addEventListener("click", async (event) => {
   event.preventDefault();
   returnToCatalog();
+  if (elements["architecture-filter"].value) await selectCategoryFilter("architecture-filter", "");
 });
 // The Compare page adds the model page the reader came from to its first empty picker.
 elements["nav-compare"].addEventListener("click", (event) => {

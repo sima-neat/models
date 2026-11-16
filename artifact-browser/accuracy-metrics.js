@@ -129,7 +129,13 @@ export function referenceNotes(name, scoresByOrigin) {
   });
 }
 
-// A Dataset Registry archive as readers know it: its ID and variant, such as "coco-2017 val".
+// A dataset as readers know it: the name datasets/<id>.yaml gives it, such as "COCO 2017". A dataset without
+// one goes by its Dataset Registry archive, such as "coco-2017 val".
 export function datasetName(dataset) {
+  return dataset.name || registryArchive(dataset);
+}
+
+// A Dataset Registry archive: its ID and variant, such as "coco-2017 val".
+export function registryArchive(dataset) {
   return [dataset.id, dataset.variant].filter(Boolean).join(" ");
 }

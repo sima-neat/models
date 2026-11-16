@@ -9,7 +9,7 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 from .artifact import record_compile_outputs, validate_compile_outputs, verify_artifact, verify_mpk
-from .benchmark_declarations import BENCHMARK_STAGES, benchmarked_profiles, reference_metrics_by_model
+from .benchmark_declarations import BENCHMARK_STAGES, benchmarked_profiles, dataset_names, reference_metrics_by_model
 from .compile_matrix import build_matrix
 from .dependencies import resolve_benchmark_runtime, resolve_model_compiler
 from .documentation import load_model_documentation
@@ -147,6 +147,12 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     )
     low_accuracy.add_argument("--repository", type=Path, default=Path.cwd())
     low_accuracy.add_argument("--output", type=Path, required=True)
+
+    names = subcommands.add_parser(
+        "dataset-names", help="write the name of each dataset in datasets/, for the model browser"
+    )
+    names.add_argument("--repository", type=Path, default=Path.cwd())
+    names.add_argument("--output", type=Path, required=True)
 
     stages = subcommands.add_parser(
         "plan-stages", help="select changed compile invocations and the benchmarks reused builds still need"
@@ -659,6 +665,12 @@ def _low_accuracy_variants(args: argparse.Namespace) -> int:
     return 0
 
 
+def _dataset_names(args: argparse.Namespace) -> int:
+    names = dataset_names(args.repository)
+    args.output.write_text(json.dumps(names, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")
+    return 0
+
+
 def _plan_stages(args: argparse.Namespace) -> int:
     from .registry import SigV4RegistryClient, _public_registry_json
 
@@ -1058,6 +1070,8 @@ def _main(argv: Sequence[str] | None, *, author_safe: bool) -> int:
             return _reference_metrics(args)
         if args.command == "low-accuracy-variants":
             return _low_accuracy_variants(args)
+        if args.command == "dataset-names":
+            return _dataset_names(args)
         if args.command == "plan-stages":
             return _plan_stages(args)
         if args.command == "plan-promoted-benchmarks":

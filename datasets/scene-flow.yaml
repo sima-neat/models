@@ -1,3 +1,4 @@
 # What every model evaluating its accuracy on the Scene Flow finalpass test split must report, by the model's task.
+name: Scene Flow
 required_metrics:
   depth_estimation: [epe]
