@@ -356,7 +356,9 @@ export function tablePerformance(variant, task) {
     const rate = workloadRange(workloads, "decode_tps");
     if (!rate) return `<span class="catalog-reading"><span>Not measured</span></span>`;
     const ttft = workloadRange(workloads, "ttft_ms");
-    const input = workloads[0].kind === "text" ? `Input Tokens: ${workloads[0].inputTokens}`
+    const [first] = workloads;
+    const input = first.kind === "text" ? `Input Tokens: ${first.inputTokens}`
+      : first.kind === "image_text" ? `Input Image: ${first.image_size.join(" × ")}`
       : `Input: ${workloads.map((workload) => workload.label).join(", ")}`;
     return `<span class="catalog-reading"><span>TPS: ${escapeHtml(rate)}</span>${ttft ? `<span>TTFT: ${escapeHtml(ttft)} ${metricDefinition("ttft_ms").unit}</span>` : ""}<span>${escapeHtml(input)}</span></span>`;
   }

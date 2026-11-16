@@ -239,7 +239,7 @@ async function checkCatalogLayouts(browser, url) {
         const languageReading = await page.locator('[data-catalog-entry="qwen3_5_0_8b"][data-catalog-task="text_generation"] [data-table-performance]').innerText();
         if (!languageReading.includes('TPS: 74.3') || !languageReading.includes('TTFT: 43.3 ms') || !languageReading.includes('Input Tokens: 128')) throw new Error('catalog does not show the 128-token text reading');
         const imageReading = await page.locator('[data-catalog-entry="qwen3_5_0_8b"][data-catalog-task="visual_question_answering"] [data-table-performance]').innerText();
-        if (!imageReading.includes('TPS: 73.5') || !imageReading.includes('TTFT: 132.3 ms') || !imageReading.includes('Input: Image 448 × 448 + text')) throw new Error('catalog mixed image timings with text workloads');
+        if (!imageReading.includes('TPS: 73.5') || !imageReading.includes('TTFT: 132.3 ms') || !imageReading.includes('Input Image: 448 × 448')) throw new Error('catalog mixed image timings with text workloads');
         const unmeasured = await page.locator('[data-catalog-entry="gemma_4_e2b_it_textonly"] [data-table-performance]').innerText();
         if (unmeasured !== 'Not measured') throw new Error('catalog fabricated an unmeasured language model result');
         await resnet.getByRole('combobox').selectOption('w16a16');

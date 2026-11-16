@@ -144,7 +144,7 @@ test('a generative table row shows the smallest text bucket, one image, or the r
     .replace(/<[^>]+>/g, '|');
   const buckets = report.generation.workloads;
   assert.equal(row(buckets, 'text_generation'), '||TPS: 74.3||TTFT: 43.3 ms||Input Tokens: 128||');
-  assert.equal(row(buckets, 'visual_question_answering'), '||TPS: 73.5||TTFT: 132.3 ms||Input: Image 448 × 448 + text||');
+  assert.equal(row(buckets, 'visual_question_answering'), '||TPS: 73.5||TTFT: 132.3 ms||Input Image: 448 × 448||');
   const dataset = (name, ttft, rate) => ({id: `dataset_${name}`, kind: 'text_dataset', dataset: {name},
     metrics: {ttft_ms: {value: ttft}, decode_tps: {value: rate}}});
   assert.equal(row([dataset('gsm8k', 90, 41.26), dataset('alpacaeval', 60, 38)], 'text_generation'),
