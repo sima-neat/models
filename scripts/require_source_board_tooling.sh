@@ -20,10 +20,17 @@ python - "$1" "$2" <<'PY'
 import sys
 from pathlib import Path
 
-from model_registry.fingerprints import ACCURACY_TOOLING, FRAME_TOOLING, LLIMA_PERFORMANCE_TOOLING, PERFORMANCE_TOOLING
+from model_registry.fingerprints import (
+    ACCURACY_TOOLING,
+    FRAME_TOOLING,
+    LLIMA_PERFORMANCE_TOOLING,
+    PERFORMANCE_TOOLING,
+    SPEECH_ACCURACY_TOOLING,
+)
 
 source = Path(sys.argv[1])
-tooling = {*PERFORMANCE_TOOLING, *ACCURACY_TOOLING,
+# The speech scorer is compared for every model: the guard does not know which model it measures.
+tooling = {*PERFORMANCE_TOOLING, *ACCURACY_TOOLING, *SPEECH_ACCURACY_TOOLING,
            "tools/model_registry/benchmark_declarations.py", "tools/model_registry/model.py"}
 if sys.argv[2] == "llima":
     tooling.update(LLIMA_PERFORMANCE_TOOLING)

@@ -1,0 +1,5 @@
+# What every model evaluating its accuracy on FLEURS must report, by the model's task.
+# The registered variant is English. A variant in a language written without spaces, such as Japanese or
+# Chinese, needs CER instead of WER, so add it with its own requirement.
+required_metrics:
+  automatic_speech_recognition: [wer]
