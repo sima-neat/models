@@ -452,10 +452,10 @@ elements["history-filter"].addEventListener("change", async () => {
     showToast(error.message, true);
   }
 });
-async function selectCategoryFilter(elementId, value) {
+async function selectCategoryFilter(elementId, value, { push = true } = {}) {
   elements[elementId].value = value;
   state.categorySelection[elementId] = value;
-  writeCategoryFilterUrl({ push: true });
+  writeCategoryFilterUrl({ push });
   populateCategoryFilters();
   updateFilterIndicators();
   if (branchSnapshotMode()) {
@@ -539,10 +539,11 @@ function returnToCatalog() {
   showEmptyDetail();
 }
 // The navigation link opens the whole catalog; the breadcrumb returns to the family the reader came from.
+// Clearing the family rewrites the entry returnToCatalog() pushed, so Back returns to the page the reader left.
 elements["nav-models"].addEventListener("click", async (event) => {
   event.preventDefault();
   returnToCatalog();
-  if (elements["architecture-filter"].value) await selectCategoryFilter("architecture-filter", "");
+  if (elements["architecture-filter"].value) await selectCategoryFilter("architecture-filter", "", { push: false });
 });
 // The Compare page adds the model page the reader came from to its first empty picker.
 elements["nav-compare"].addEventListener("click", (event) => {

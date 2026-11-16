@@ -274,7 +274,8 @@ in this order:
    the order its components run in, from input to output: numbered components,
    with any CPU step between them, such as RF-DETR's **Top 300 proposals**.
    An info mark beside the Performance title says the result was measured on the
-   DevKit, running the compiled model with the Neat Model API.
+   DevKit, running the compiled model with the Neat Model API, or with LLiMa for an
+   LLM or VLM.
    The tiles, context line, and **Performance Details** are the
    [whole-model result](benchmarking.md#multi-component-models), with the
    components and CPU step running together. **Runtime Layer Analysis**,

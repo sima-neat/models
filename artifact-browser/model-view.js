@@ -99,8 +99,11 @@ function pipelineStrip(pipeline) {
 // execution graph.
 // How the variant's performance was measured, for the info mark beside the section title.
 function performanceMethod(variant) {
-  if (readPerformance(variant.performance).kind !== "supported") return "";
-  return `Measured on the ${targetName(variant.performance.run)} DevKit, running the compiled model with the Neat Model API.`;
+  const result = readPerformance(variant.performance);
+  if (result.kind !== "supported") return "";
+  // A generation report comes from an LLM or VLM, which LLiMa runs.
+  const runtime = result.value.generation ? "LLiMa" : "the Neat Model API";
+  return `Measured on the ${targetName(variant.performance.run)} DevKit, running the compiled model with ${runtime}.`;
 }
 
 function modelPerformance(variant, modelId) {
