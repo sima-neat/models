@@ -45,11 +45,12 @@ usable build do not appear. Search always shows matching individual models.
 The table always shows individual models,
 selected precision, measured accuracy and whole-model performance. Changing
 the precision updates its measurements; opening the model shows the full results.
-LLM and VLM rows show generation speed in tokens/s and TTFT (time to first
-token) as ranges across measured workloads, with the workload count. Hover over
-the reading for the workload names. Text Generation rows use text workloads;
-Visual Question Answering rows use image workloads. Open the model for each
-workload's exact result.
+LLM and VLM rows show three lines: **TPS** (generation speed in tokens/s),
+**TTFT** (time to first token), and the input they were measured on. Text
+Generation rows show the 128-token input, the smallest one measured. Visual
+Question Answering rows show the image workload. A speculative model is measured
+on datasets, so its row shows the range across them and names them. Open the
+model for each workload's exact result.
 Both views share search and filters. The table groups models by task, with the
 same model-family ordering inside each group. Models with multiple tasks appear
 in every applicable group; selecting a task filter shows only that group. The

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
 import {beforeEach, test} from 'node:test';
 
 const elements = new Map();
@@ -15,7 +16,7 @@ globalThis.document = {
   },
 };
 const {state} = await import('../../artifact-browser/state.js');
-const {groupModelFamilies, familyOverview, renderRuns} = await import('../../artifact-browser/catalog-view.js');
+const {groupModelFamilies, familyOverview, renderRuns, tablePerformance} = await import('../../artifact-browser/catalog-view.js');
 
 const hero = (id) => ({run_id: id, hero: {artifact_name: 'hero', artifact_sha256: 'a'.repeat(64)}});
 const model = (id, family, name, tasks = ['detection'], compiler = '1') => ({
@@ -134,4 +135,19 @@ test('a failed taxonomy request keeps models usable without a nonfunctional fami
   elements.get('architecture-filter').disabled = false;
   state.taxonomy = null;
   assert.equal(familyOverview(), false);
+});
+
+test('a generative table row shows the smallest text bucket, one image, or the range across datasets', () => {
+  const report = JSON.parse(readFileSync(new URL('../../artifact-browser/fixtures/genai-model-report.json', import.meta.url), 'utf8'));
+  const row = (workloads, task) => tablePerformance(
+    {details: [], performance: {report: {...report, generation: {...report.generation, workloads}}}}, task)
+    .replace(/<[^>]+>/g, '|');
+  const buckets = report.generation.workloads;
+  assert.equal(row(buckets, 'text_generation'), '||TPS: 74.3||TTFT: 43.3 ms||Input Tokens: 128||');
+  assert.equal(row(buckets, 'visual_question_answering'), '||TPS: 73.5||TTFT: 132.3 ms||Input: Image 448 × 448 + text||');
+  const dataset = (name, ttft, rate) => ({id: `dataset_${name}`, kind: 'text_dataset', dataset: {name},
+    metrics: {ttft_ms: {value: ttft}, decode_tps: {value: rate}}});
+  assert.equal(row([dataset('gsm8k', 90, 41.26), dataset('alpacaeval', 60, 38)], 'text_generation'),
+    '||TPS: 38.0–41.3||TTFT: 60.0–90.0 ms||Input: GSM8K, AlpacaEval||');
+  assert.equal(row([], 'text_generation'), '||Not measured||');
 });

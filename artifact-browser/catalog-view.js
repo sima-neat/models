@@ -328,25 +328,37 @@ function catalogMetric(measurements, key) {
   return reading ? `${reading.value.toFixed(1)} ${reading.unit}` : null;
 }
 
+// A row shows one reading: the smallest text input bucket when the model has buckets. Other workloads,
+// an image or the datasets of a speculative model, have no bucket, so the row covers all of them.
+function catalogWorkloads(workloads) {
+  const buckets = workloads.filter((workload) => workload.kind === "text");
+  if (!buckets.length) return workloads;
+  return [buckets.reduce((smallest, bucket) => (bucket.inputTokens < smallest.inputTokens ? bucket : smallest))];
+}
+
+// One value, or the lowest and highest across several workloads, without the unit.
+function workloadRange(workloads, key) {
+  const values = workloads.map((workload) => metricDisplay(workload.measurements[key], metricDefinition(key))?.value)
+    .filter(Number.isFinite);
+  if (!values.length) return null;
+  const low = Math.min(...values).toFixed(1);
+  const high = Math.max(...values).toFixed(1);
+  return low === high ? low : `${low}–${high}`;
+}
+
 // Show token rates per task for generation, or inference throughput and latency for other models.
-function tablePerformance(variant, task) {
+export function tablePerformance(variant, task) {
   const order = variant.details.map((detail) => detail.summary.run.metadata.component_id);
   const result = readPerformance(variant.performance, order);
   if (result.kind === "supported" && result.value.generation) {
     const kinds = task === "visual_question_answering" ? ["image_text", "image_dataset"] : ["text", "text_dataset"];
-    const workloads = result.value.workloads.filter((workload) => kinds.includes(workload.kind));
-    const range = (key) => {
-      const values = workloads.map((workload) => metricDisplay(workload.measurements[key], metricDefinition(key)))
-        .filter(Boolean);
-      if (!values.length) return null;
-      const low = Math.min(...values.map(({ value }) => value)).toFixed(1);
-      const high = Math.max(...values.map(({ value }) => value)).toFixed(1);
-      return `${low === high ? low : `${low}–${high}`} ${values[0].unit}`;
-    };
-    const rate = range("decode_tps");
-    const ttft = range("ttft_ms");
-    const context = workloads.map((workload) => workload.label).join(", ");
-    return `<span class="catalog-reading" title="${escapeHtml(context)}"><span>${escapeHtml(rate || "Not measured")}</span>${ttft ? `<small>TTFT ${escapeHtml(ttft)}</small>` : ""}${rate ? `<small>${workloads.length} workload${workloads.length === 1 ? "" : "s"}</small>` : ""}</span>`;
+    const workloads = catalogWorkloads(result.value.workloads.filter((workload) => kinds.includes(workload.kind)));
+    const rate = workloadRange(workloads, "decode_tps");
+    if (!rate) return `<span class="catalog-reading"><span>Not measured</span></span>`;
+    const ttft = workloadRange(workloads, "ttft_ms");
+    const input = workloads[0].kind === "text" ? `Input Tokens: ${workloads[0].inputTokens}`
+      : `Input: ${workloads.map((workload) => workload.label).join(", ")}`;
+    return `<span class="catalog-reading"><span>TPS: ${escapeHtml(rate)}</span>${ttft ? `<small>TTFT: ${escapeHtml(ttft)} ${metricDefinition("ttft_ms").unit}</small>` : ""}<small>${escapeHtml(input)}</small></span>`;
   }
   if (result.kind === "supported" && result.value.scope === "components") {
     return result.value.components.map(({ id, measurements }) => {
