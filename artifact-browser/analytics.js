@@ -18,6 +18,8 @@ const deniedConsent = {
 const grantedConsent = { ...deniedConsent, analytics_storage: "granted" };
 
 let settings = null;
+// The choice made on this page, kept in memory so it still applies when storage is blocked.
+let sessionConsent = null;
 let gtagLoaded = false;
 let lastTrackedPath = "";
 
@@ -35,6 +37,7 @@ export function parseConsent(value) {
 }
 
 function storedConsent() {
+  if (sessionConsent) return sessionConsent;
   try {
     return parseConsent(window.localStorage.getItem(CONSENT_KEY));
   } catch {
@@ -44,6 +47,7 @@ function storedConsent() {
 
 function storeConsent(analytics) {
   const next = { version: CONSENT_VERSION, analytics, marketing: false, updatedAt: new Date().toISOString() };
+  sessionConsent = next;
   try {
     window.localStorage.setItem(CONSENT_KEY, JSON.stringify(next));
   } catch {
@@ -206,11 +210,21 @@ function bindPreferenceLinks() {
   });
 }
 
+// Marks the page so footers show Cookie preferences. An attribute, not a class: the docs rewrite the html
+// class on every route change, so the docs call this again after each one.
+function markAnalyticsActive() {
+  document.documentElement.setAttribute("data-analytics-consent", "enabled");
+}
+
 export function startAnalytics(analytics) {
-  if (settings || typeof window === "undefined") return;
+  if (typeof window === "undefined") return;
+  if (settings) {
+    markAnalyticsActive();
+    return;
+  }
   if (!analyticsEnabled(analytics, window.location.hostname)) return;
   settings = analytics;
-  document.documentElement.classList.add("analytics-consent-enabled");
+  markAnalyticsActive();
   ensureGtag();
   watchNavigation();
   bindPreferenceLinks();

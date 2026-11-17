@@ -544,7 +544,13 @@ html.developer-center-shell-enabled .navbar-sidebar { top: 112px; height: calc(1
   }
 }
 
-/* Footer control that reopens the cookie settings (artifact-browser/analytics.js), as on the core docs. */
+/* Footer control that reopens the cookie settings (artifact-browser/analytics.js), as on the core docs.
+   It shows only where analytics started, so a preview with analytics off has no dead control. */
+html:not([data-analytics-consent="enabled"]) .footer__item:has(.cookie-preferences-link),
+html:not([data-analytics-consent="enabled"]) .cookie-preferences-link {
+  display: none;
+}
+
 .cookie-preferences-link {
   appearance: none;
   border: 0;

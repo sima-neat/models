@@ -136,7 +136,7 @@ main { width: min(1240px, 100%); margin: 0 auto; padding: 0 clamp(16px, 4vw, 48p
 .text-button:focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; }
 /* The footer holds only Cookie preferences, so it shows only where analytics is active. */
 .site-footer { display: none; }
-.analytics-consent-enabled .site-footer { display: flex; justify-content: center; padding: 8px 16px 24px; border-top: 1px solid var(--line); }
+[data-analytics-consent="enabled"] .site-footer { display: flex; justify-content: center; padding: 8px 16px 24px; border-top: 1px solid var(--line); }
 .site-footer .text-button { font-size: 13px; color: var(--ink-soft); }
 
 .results-pane { min-width: 0; }
