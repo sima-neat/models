@@ -1,3 +1,4 @@
+import { startAnalytics } from "./analytics.js";
 import { installHeroImageRecovery } from "./hero-images.js";
 import { mountDeveloperPortal } from "./portal-shell.js";
 import {
@@ -31,6 +32,7 @@ import { selectComponentPanel } from "./page-parts.js";
 import { downloadVariant, downloadPackage, downloadArtifact, copyText } from "./download-dialog.js";
 
 installHeroImageRecovery(document);
+startAnalytics(config.analytics);
 
 function writeCategoryFilterUrl({ push = false } = {}) {
   const url = new URL(location.href);

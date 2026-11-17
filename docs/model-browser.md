@@ -122,6 +122,11 @@ The Task menu leaves out tasks with no comparison yet, such as the audio tasks. 
 
 On a phone, the section navigation shortens **Developer docs** to **Docs**.
 
+On the first visit, a cookie notice asks whether to allow optional Google Analytics
+cookies. The choice is shared with the rest of the Developer Center, so a visitor who
+already chose there is not asked again. The browser works either way, and
+**Cookie preferences** at the bottom of the page changes the choice later.
+
 ## The model page
 
 Selecting an individual model opens its page. The page is built to be read at a glance:

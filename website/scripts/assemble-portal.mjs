@@ -21,7 +21,7 @@ const fingerprintedAssets = [
   'app', 'state', 'audience', 'ui', 'metrics', 'api', 'catalog-view', 'compare-view', 'model-view', 'page-parts',
   'performance-section', 'execution-section', 'accuracy-section', 'download-dialog',
   'model-report', 'mla-layer-stats', 'mla-utilization', 'branch-builds', 'downloads', 'markdown', 'accuracy-metrics',
-  'brand', 'styles', 'config', 'portal-shell', 'hero-images', 'environment',
+  'brand', 'styles', 'config', 'portal-shell', 'hero-images', 'environment', 'analytics',
 ];
 const stylesheets = ['brand', 'styles'];
 const modules = fingerprintedAssets.filter((asset) => !stylesheets.includes(asset) && asset !== 'config');

@@ -18,15 +18,24 @@ export function portalConfig(env = process.env) {
   if (heroCdnBaseUrl && !/^https:\/\/[^/?#]+(?:\/[^?#]*)?$/.test(heroCdnBaseUrl)) {
     throw new Error('Hero CDN base URL must be HTTPS without a query or fragment.');
   }
+  // GA4 web streams of the Developer Center property, one per environment. Empty disables analytics.
+  const siteUrl = production ? 'https://developer.sima.ai' : 'https://developer-stg.sima.ai';
+  const gaMeasurementId = (env.MODEL_BROWSER_GA_MEASUREMENT_ID ?? (production ? 'G-Y6YREB4EG5' : 'G-T1D371DW1K')).trim();
+  if (gaMeasurementId && !/^G-[A-Z0-9]+$/.test(gaMeasurementId)) {
+    throw new Error('The GA4 measurement ID must look like G-XXXXXXXXXX, or be empty to disable analytics.');
+  }
+  // Analytics runs only on the site's own host, so local previews and smoke tests never report.
+  const analyticsHost = (env.MODEL_BROWSER_ANALYTICS_HOST || new URL(siteUrl).hostname).trim();
   return {
     uiMode,
     deploymentEnvironment: environment,
+    analytics: {measurementId: gaMeasurementId, host: analyticsHost},
     heroCdnBaseUrl,
     apiBase: apiBase.replace(/\/$/, ''),
     environment: production ? 'Production' : 'Staging',
     allowProductionPreview: !production && apiBase.replace(/\/$/, '') === 'https://models-registry.stg.neat.sima.ai',
     defaultBranch: customer ? 'main' : 'develop',
-    siteUrl: production ? 'https://developer.sima.ai' : 'https://developer-stg.sima.ai',
+    siteUrl,
     repository: {organization: 'sima-neat', name: 'models'},
   };
 }

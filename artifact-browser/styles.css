@@ -134,6 +134,10 @@ main { width: min(1240px, 100%); margin: 0 auto; padding: 0 clamp(16px, 4vw, 48p
 .toggle-filter small { color: var(--ink-soft); font-size: 12px; line-height: 1.4; }
 .text-button { justify-self: start; padding: 8px 0; border: 0; color: var(--blue); background: transparent; font-size: 14px; font-weight: 600; cursor: pointer; }
 .text-button:focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; }
+/* The footer holds only Cookie preferences, so it shows only where analytics is active. */
+.site-footer { display: none; }
+.analytics-consent-enabled .site-footer { display: flex; justify-content: center; padding: 8px 16px 24px; border-top: 1px solid var(--line); }
+.site-footer .text-button { font-size: 13px; color: var(--ink-soft); }
 
 .results-pane { min-width: 0; }
 .results-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
