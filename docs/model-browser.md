@@ -129,7 +129,9 @@ each section shows its key facts directly, and longer detail sits in a row
 marked with › that opens in place. The header places the model image beside its
 name, tags, and description in both UI modes; narrow screens stack them. The
 variant selector follows, and below it the download action with the validation
-and source-link icons. The tags name what holds for every variant:
+and source-link icons. A model whose `model.yaml` names an `example_app` also
+shows an application icon there, which opens that example on the Apps portal.
+The tags name what holds for every variant:
 tasks, model family, model type and license. The download dialog offers an outlined **Copy CLI command**
 button with a copy icon alongside browser downloads where available. The copied
 command names the selected branch in the developer view. In the customer view it

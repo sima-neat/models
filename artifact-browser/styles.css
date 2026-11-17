@@ -305,14 +305,15 @@ main { width: min(1240px, 100%); margin: 0 auto; padding: 0 clamp(16px, 4vw, 48p
 .download-unavailable:hover { color: var(--ink); }
 .download-unavailable svg { width: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .detail-links { display: flex; align-items: center; gap: 8px; }
-.model-source-link, .original-model-link, .mpk-validation-mark { width: 38px; height: 38px; flex: 0 0 auto; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 50%; color: var(--ink-soft); background: var(--surface-raised); transition: color 160ms ease, border-color 160ms ease, background 160ms ease, transform 160ms ease; }
-.model-source-link:hover, .original-model-link:hover, .mpk-validation-mark:hover { border-color: var(--ink-soft); background: var(--surface); transform: translateY(-1px); }
-.model-source-link:hover { color: var(--ink); }
-.model-source-link:focus-visible, .original-model-link:focus-visible, .mpk-validation-mark:focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; }
+.model-source-link, .original-model-link, .example-app-link, .mpk-validation-mark { width: 38px; height: 38px; flex: 0 0 auto; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 50%; color: var(--ink-soft); background: var(--surface-raised); transition: color 160ms ease, border-color 160ms ease, background 160ms ease, transform 160ms ease; }
+.model-source-link:hover, .original-model-link:hover, .example-app-link:hover, .mpk-validation-mark:hover { border-color: var(--ink-soft); background: var(--surface); transform: translateY(-1px); }
+.model-source-link:hover, .example-app-link:hover { color: var(--ink); }
+.model-source-link:focus-visible, .original-model-link:focus-visible, .example-app-link:focus-visible, .mpk-validation-mark:focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; }
 .model-source-link svg { width: 20px; fill: currentColor; }
 .original-model-link svg { width: 20px; height: 19px; }
 .external-model-link:hover { color: var(--ink); }
-.external-model-link svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.example-app-link svg { width: 20px; }
+.external-model-link svg, .example-app-link svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .mpk-validation-mark { color: var(--green); font-size: 17px; font-weight: 800; cursor: help; }
 .detail-links > [data-tooltip] { position: relative; }
 .detail-links > [data-tooltip]::after { content: attr(data-tooltip); width: max-content; max-width: min(300px, calc(100vw - 44px)); position: absolute; z-index: 30; top: calc(100% + 10px); right: 0; padding: 9px 11px; border: 1px solid var(--line); color: var(--ink); background: var(--surface-raised); box-shadow: var(--shadow); font-size: 12px; font-weight: 500; line-height: 1.45; text-align: left; opacity: 0; pointer-events: none; transform: translateY(-3px); transition: opacity 140ms ease, transform 140ms ease; }

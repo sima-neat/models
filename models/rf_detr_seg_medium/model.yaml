@@ -2,6 +2,7 @@
 build-on-demand: true
 display_name: RF-DETR Seg Medium
 description: A mid-size RF-DETR transformer instance segmenter for COCO objects.
+example_app: https://developer.sima.ai/examples/app/object-detection%2Frfdetr-detection-segmentation
 model_type: vision
 tasks: [instance_segmentation]
 

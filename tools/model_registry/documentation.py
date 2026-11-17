@@ -72,6 +72,11 @@ _ADAM7_PASSES = ((0, 0, 8, 8), (4, 0, 8, 8), (0, 4, 4, 8), (2, 0, 4, 4),
                  (0, 2, 2, 4), (1, 0, 2, 2), (0, 1, 1, 2))
 
 
+def example_apps(models: dict[str, dict[str, Any]]) -> dict[str, str]:
+    """Each model's example application page, keyed by model ID, for the model browser."""
+    return {model_id: model["example_app"] for model_id, model in sorted(models.items()) if "example_app" in model}
+
+
 def _png_pass_dimensions(width: int, height: int, interlace: int) -> list[tuple[int, int]]:
     if interlace == 0:
         return [(width, height)]

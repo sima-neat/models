@@ -184,6 +184,26 @@ def test_model_card_must_be_https(model_card: str) -> None:
         validate_model(FIXTURE, authored, SCHEMA)
 
 
+def test_example_app_accepts_an_apps_portal_page() -> None:
+    authored = _authored()
+    authored["example_app"] = "https://developer.sima.ai/examples/app/object-detection%2Fyolo26-object-detector"
+    assert validate_model(FIXTURE, authored, SCHEMA)["example_app"] == authored["example_app"]
+
+
+@pytest.mark.parametrize("example_app", (
+    "https://developer.sima.ai/examples",
+    "https://developer.sima.ai/examples/app/",
+    "https://developer.sima.ai/examples/app/yolo26?next=https://example.org",
+    "https://example.org/examples/app/yolo26",
+    "http://developer.sima.ai/examples/app/yolo26",
+))
+def test_example_app_must_be_an_apps_portal_application_page(example_app: str) -> None:
+    authored = _authored()
+    authored["example_app"] = example_app
+    with pytest.raises(ValidationError, match="example_app: .* does not match"):
+        validate_model(FIXTURE, authored, SCHEMA)
+
+
 def test_missing_compile_script_fails(tmp_path: Path) -> None:
     directory = tmp_path / "fixture_model"
     shutil.copytree(FIXTURE, directory)

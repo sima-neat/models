@@ -2,6 +2,7 @@
 build-on-demand: true
 display_name: RF-DETR Large
 description: The largest RF-DETR transformer detector here, for COCO objects.
+example_app: https://developer.sima.ai/examples/app/object-detection%2Frfdetr-detection-segmentation
 model_type: vision
 tasks: [object_detection]
 

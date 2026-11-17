@@ -1,5 +1,6 @@
 display_name: YOLO26m-det
 description: A mid-size YOLO26 detector for COCO objects.
+example_app: https://developer.sima.ai/examples/app/object-detection%2Fyolo26-object-detector
 model_type: vision
 tasks: [object_detection]
 

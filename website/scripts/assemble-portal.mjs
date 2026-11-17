@@ -77,7 +77,7 @@ function shipModelData(name, write) {
   }
   apiSource = apiSource.replace(`"${url}"`, `"./${file}"`);
 }
-for (const name of ['component-pipelines', 'reference-metrics', 'low-accuracy-variants', 'dataset-names']) {
+for (const name of ['component-pipelines', 'reference-metrics', 'low-accuracy-variants', 'dataset-names', 'example-apps']) {
   shipModelData(name, (file) => execFileSync(process.env.PYTHON || 'python3', [
     '-m', 'model_registry', name, '--repository', repository, '--output', file,
   ], {env: {...process.env, PYTHONPATH: join(repository, 'tools')}, stdio: 'inherit'}));

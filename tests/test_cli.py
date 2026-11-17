@@ -359,6 +359,15 @@ def test_reference_metrics_writes_each_models_published_scores(tmp_path: Path) -
     assert reference["resnet_50"][0]["metrics"] == {"top1_accuracy": 0.80382, "top5_accuracy": 0.94598}
 
 
+def test_example_apps_writes_the_page_of_each_model_that_declares_one(tmp_path: Path) -> None:
+    output = tmp_path / "example-apps.json"
+    assert main(["example-apps", "--repository", str(ROOT), "--output", str(output)]) == 0
+
+    apps = json.loads(output.read_text(encoding="utf-8"))
+    assert apps["yolo26m"] == "https://developer.sima.ai/examples/app/object-detection%2Fyolo26-object-detector"
+    assert "vgg_11" not in apps
+
+
 def test_dataset_names_writes_a_name_for_every_dataset_file(tmp_path: Path) -> None:
     output = tmp_path / "dataset-names.json"
     assert main(["dataset-names", "--repository", str(ROOT), "--output", str(output)]) == 0

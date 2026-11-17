@@ -471,7 +471,13 @@ def test_assembled_portal_ships_the_model_data_api_fetches(tmp_path: Path) -> No
     assert all(isinstance(profiles, list) and profiles for profiles in hidden.values())
     names = json.loads((portal / "dataset-names.aaaaaaaaaaaa.json").read_text(encoding="utf-8"))
     assert names["imagenet-2012"] == "ImageNet 2012"
-    for name in ("component-pipelines", "reference-metrics", "low-accuracy-variants", "dataset-names", "licenses"):
+    apps = json.loads((portal / "example-apps.aaaaaaaaaaaa.json").read_text(encoding="utf-8"))
+    assert apps["rf_detr_nano"] == "https://developer.sima.ai/examples/app/object-detection%2Frfdetr-detection-segmentation"
+    model_data = (
+        "component-pipelines", "reference-metrics", "low-accuracy-variants", "dataset-names", "example-apps",
+        "licenses",
+    )
+    for name in model_data:
         assert f'"./{name}.aaaaaaaaaaaa.json"' in api
         assert f'"./{name}.json"' not in api
 
@@ -1219,7 +1225,9 @@ def test_archive_validation_is_a_compact_accessible_status_mark() -> None:
     assert "integrity verified: file structure, checksum, and build provenance match." in script
     assert '<h3>Validation</h3>' not in browser
     assert ".detail-title-actions" in styles
-    compact_controls = ".model-source-link, .original-model-link, .mpk-validation-mark { width: 38px; height: 38px"
+    compact_controls = (
+        ".model-source-link, .original-model-link, .example-app-link, .mpk-validation-mark { width: 38px; height: 38px"
+    )
     assert compact_controls in styles
     assert ".detail-links > [data-tooltip]:hover::after" in styles
     # Narrow screens anchor tooltips to the links row so a hidden tooltip never widens the page.
@@ -1327,7 +1335,22 @@ def test_detail_links_to_the_original_model_whatever_was_compiled() -> None:
     assert 'fill="#FFD21E"' in script
     assert ".original-model-link:focus-visible" in styles
     assert ".original-model-link svg { width: 20px; height: 19px; }" in styles
-    assert ".external-model-link svg { fill: none; stroke: currentColor;" in styles
+    assert ".external-model-link svg, .example-app-link svg { fill: none; stroke: currentColor;" in styles
+
+
+def test_model_page_links_the_example_application_model_yaml_names() -> None:
+    api = _browser_source("api.js")
+    script = _browser_source("model-view.js")
+    example_app_link = script.split("function exampleAppLink(", 1)[1].split("\n}\n", 1)[0]
+
+    # The page reaches the browser as a file built from model.yaml, so a model without one shows no link.
+    assert 'fetch(new URL("./example-apps.json", import.meta.url))' in api
+    assert "exampleApps.then((apps) => apps[modelId] || null)" in api
+    assert "${exampleAppLink(variant.exampleApp)}</div>" in script
+    assert "const url = trustedHttpsUrl(exampleApp);" in example_app_link
+    assert 'if (!url) return "";' in example_app_link
+    assert 'target="_blank" rel="noreferrer"' in example_app_link
+    assert "${icons.apps}" in example_app_link
 
 
 def test_performance_rendering_reads_the_model_report_and_is_charted() -> None:

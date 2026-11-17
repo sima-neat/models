@@ -332,7 +332,7 @@ is always benchmarked again.
 
 | Change | Reruns |
 | --- | --- |
-| README, display metadata, `license`, `artifact-browser/licenses.json`, `pipeline`, `reference_metrics`, `runner_class`, `runner_market`, `tools/model_report/metrics.json`, registry tooling outside a stage's tooling | nothing |
+| README, display metadata, `example_app`, `license`, `artifact-browser/licenses.json`, `pipeline`, `reference_metrics`, `runner_class`, `runner_market`, `tools/model_report/metrics.json`, registry tooling outside a stage's tooling | nothing |
 | `build-on-demand` | nothing; changes scheduling and catalog metadata only |
 | the upstream checkpoint, `conversion.outputs`, or `convert.py`, its requirements and the files it uses | with `source: conversion`, planning fails until you run Vulcan Model Convert again. The model recompiles only if the ONNX changes. |
 | the Convert workflow, `scripts/run_model_conversion.sh`, or the registry's conversion, fetch or source code | nothing. When the change alters converted output, raise `FINGERPRINT_VERSION` in `conversion.py`, and every conversion-backed model then needs Convert again. |
