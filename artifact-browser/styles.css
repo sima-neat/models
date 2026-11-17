@@ -315,7 +315,9 @@ main { width: min(1240px, 100%); margin: 0 auto; padding: 0 clamp(16px, 4vw, 48p
 .example-app-link svg { width: 20px; }
 .external-model-link svg, .example-app-link svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .mpk-validation-mark { color: var(--green); font-size: 17px; font-weight: 800; cursor: help; }
-.detail-links > [data-tooltip] { position: relative; }
+/* The hover lift makes a link its own stacking context, so the link carries the z-index that keeps its
+   tooltip above the sticky .subnav (z-index 10). */
+.detail-links > [data-tooltip] { position: relative; z-index: 11; }
 .detail-links > [data-tooltip]::after { content: attr(data-tooltip); width: max-content; max-width: min(300px, calc(100vw - 44px)); position: absolute; z-index: 30; top: calc(100% + 10px); right: 0; padding: 9px 11px; border: 1px solid var(--line); color: var(--ink); background: var(--surface-raised); box-shadow: var(--shadow); font-size: 12px; font-weight: 500; line-height: 1.45; text-align: left; opacity: 0; pointer-events: none; transform: translateY(-3px); transition: opacity 140ms ease, transform 140ms ease; }
 .detail-links > [data-tooltip]:hover::after, .detail-links > [data-tooltip]:focus-visible::after { opacity: 1; transform: none; }
 .detail-tags { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -656,7 +658,9 @@ main { width: min(1240px, 100%); margin: 0 auto; padding: 0 clamp(16px, 4vw, 48p
   .run-row { grid-template-columns: minmax(180px,1fr) minmax(115px,.6fr) 18px; }
   .run-branch { display: none; }
   .detail-title { grid-template-columns: minmax(0, 1fr); align-items: start; gap: 22px; }
-  .detail-links > [data-tooltip] { position: static; }
+  /* Without the hover lift a link is no containing block, so its tooltip starts at the row's left edge
+     and stays inside a narrow screen. */
+  .detail-links > [data-tooltip], .detail-links > [data-tooltip]:hover { position: static; transform: none; }
   .detail-links > [data-tooltip]::after { right: auto; left: 0; }
   .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .kpi:nth-child(3) { border-left: 0; }

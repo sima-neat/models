@@ -1230,6 +1230,10 @@ def test_archive_validation_is_a_compact_accessible_status_mark() -> None:
     )
     assert compact_controls in styles
     assert ".detail-links > [data-tooltip]:hover::after" in styles
+    # A hovered link lifts, which traps its tooltip's z-index, so the link itself sits above the section bar.
+    assert ".detail-links > [data-tooltip] { position: relative; z-index: 11; }" in styles
+    assert ".subnav { position: sticky;" in styles and "z-index: 10; display: flex;" in styles
+    assert ".detail-links > [data-tooltip]:hover { position: static; transform: none; }" in styles
     # Narrow screens anchor tooltips to the links row so a hidden tooltip never widens the page.
     assert ".detail-title-actions { position: relative;" in styles
 

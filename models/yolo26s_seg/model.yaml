@@ -1,5 +1,6 @@
 display_name: YOLO26s-seg
 description: A compact YOLO26 instance segmenter for COCO objects.
+example_app: https://developer.sima.ai/examples/app/segmentation%2Fsingle-stream-instance-segmenter
 model_type: vision
 tasks: [instance_segmentation]
 
