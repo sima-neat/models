@@ -29,7 +29,10 @@ Rules every publisher follows:
 
 - Each request carries an idempotency key derived from what it publishes. Compile and
   package keys include the workflow run ID and not the attempt, so a new attempt of the
-  same workflow run resumes the same registry run.
+  same workflow run resumes the same registry run. The registry rejects a key longer than
+  200 characters, so a catalog snapshot key (`catalog_snapshot_key` in `registry.py`)
+  replaces a branch name that would overflow it with the first 16 hex digits of the
+  name's SHA-256.
 - `S3ArtifactStore.ensure_native_sha256` uploads with a native SHA-256 checksum, verifies
   the stored object, and reuses an existing object whose checksum and size match. One
   object may be at most 5 GiB.

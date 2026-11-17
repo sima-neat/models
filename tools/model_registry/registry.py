@@ -1035,6 +1035,21 @@ def _remaining_pending_builds(prior: JsonObject, document: JsonObject) -> list[J
 
 # How long publish_catalog keeps retrying a compare-and-swap that other publishers win.
 CATALOG_CONFLICT_RETRY_SECONDS = 180
+# The registry rejects a longer Idempotency-Key as missing.
+IDEMPOTENCY_KEY_MAX_LENGTH = 200
+
+
+def catalog_snapshot_key(branch: str, git_sha: str, previous_snapshot: str | None, snapshot_identity: str) -> str:
+    """The Idempotency-Key of one catalog snapshot request.
+
+    The key names the branch when it fits. A branch name long enough to push the key past the registry's limit is
+    replaced by the first 16 hex digits of its SHA-256, so every branch keeps a distinct, stable key.
+    """
+    suffix = f"{git_sha.lower()}-{(previous_snapshot or 'initial')[:16]}-{snapshot_identity}"
+    key = f"models-catalog-{branch}-{suffix}"
+    if len(key) <= IDEMPOTENCY_KEY_MAX_LENGTH:
+        return key
+    return f"models-catalog-{hashlib.sha256(branch.encode()).hexdigest()[:16]}-{suffix}"
 
 
 def publish_catalog(
@@ -1186,8 +1201,7 @@ def publish_catalog(
                 # Bind the key to the complete compare-and-swap request. Documentation
                 # receipt run IDs and incrementally published packages can differ across
                 # workflow dispatches even for the same branch and Git revision.
-                f"models-catalog-{branch}-{git_sha.lower()}-"
-                f"{(previous_snapshot or 'initial')[:16]}-{snapshot_identity}",
+                catalog_snapshot_key(branch, git_sha, previous_snapshot, snapshot_identity),
             )
         except RegistryPublicationError as exc:
             if "catalog_snapshot_conflict" not in str(exc) or time.monotonic() >= deadline:

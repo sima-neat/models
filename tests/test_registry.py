@@ -28,6 +28,7 @@ from model_registry.registry import (
     _package_media_type,
     build_catalog_snapshot,
     canonical_sha256,
+    catalog_snapshot_key,
     publish_catalog,
     publish_compilations,
     publish_model_documentation,
@@ -1196,6 +1197,27 @@ def test_approved_profile_without_a_benchmark_declaration_drops_legacy_fingerpri
         "approved_deployments": {"w4a16": {}}, "benchmark_fingerprints": {"w4a16": {"accuracy": "a" * 64}}}]}
     _refresh_approved_benchmarks(ROOT, document, document, "https://reader.example.invalid", lambda url: {})
     assert "benchmark_fingerprints" not in document["models"][0]
+
+
+def test_catalog_snapshot_key_stays_within_the_registry_limit() -> None:
+    sha, previous, identity = "A" * 40, "c" * 64, "d" * 16
+    # A key that fits keeps the branch name, unchanged from before.
+    assert catalog_snapshot_key("develop", sha, previous, identity) == (
+        "models-catalog-develop-" + "a" * 40 + "-" + "c" * 16 + "-" + "d" * 16
+    )
+    assert catalog_snapshot_key("develop", sha, None, identity).endswith("-initial-" + "d" * 16)
+    # A branch long enough to overflow the key is replaced by a stable digest of its name.
+    long_branch = (
+        "1205-add-shufflenet-v2-image-classifiers-shufflenet-10-v2-shufflenet-12-v2-shufflenet-v2-x20"
+        "-to-the-model-registry"
+    )
+    key = catalog_snapshot_key(long_branch, sha, previous, identity)
+    assert len(key) <= 200
+    assert key == "models-catalog-" + hashlib.sha256(long_branch.encode()).hexdigest()[:16] + "-" + "a" * 40 + "-" + (
+        "c" * 16 + "-" + "d" * 16
+    )
+    assert key == catalog_snapshot_key(long_branch, sha, previous, identity)
+    assert key != catalog_snapshot_key(long_branch + "-2", sha, previous, identity)
 
 
 def test_publish_catalog_keys_bind_dispatch_specific_documentation_receipts(monkeypatch) -> None:
