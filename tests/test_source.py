@@ -15,6 +15,13 @@ REVISION = "0123456789abcdef0123456789abcdef01234567"
 ROOT = Path(__file__).resolve().parents[1]
 GITHUB_RELEASE_FILE = "https://github.com/ultralytics/assets/releases/download/v8.4.0/yolov8n-obb.pt"
 GITHUB_RELEASE_DOWNLOAD = re.compile(r"github\.com/(?:repos/)?[\w.-]+/[\w.-]+/releases/(?:download|assets)/")
+OPENMMLAB_CHECKPOINT = (
+    "https://download.openmmlab.com/mmdetection/v3.0/rtmdet/rtmdet-ins_s_8xb32-300e_coco/"
+    "rtmdet-ins_s_8xb32-300e_coco_20221121_212604-fdc5d7ec.pth"
+)
+OPENMMLAB_DIGEST = "fdc5d7ec" + "0" * 56
+# Files a host can replace or delete: only a conversion reads them, once, and no script downloads them itself.
+CONVERSION_ONLY_DOWNLOAD = re.compile(f"{GITHUB_RELEASE_DOWNLOAD.pattern}|download\\.openmmlab\\.com/")
 
 
 def test_hugging_face_uri_resolves_full_commit() -> None:
@@ -114,7 +121,37 @@ def test_other_github_urls_are_not_sources(uri: str, reason: str) -> None:
         SourceSpec(uri=uri, sha256=DIGEST, size_bytes=10).resolve_url()
 
 
-def test_scripts_and_shared_tooling_download_nothing_from_github_releases() -> None:
+def test_openmmlab_checkpoint_named_by_its_checksum_is_a_source() -> None:
+    source = SourceSpec(uri=OPENMMLAB_CHECKPOINT, sha256=OPENMMLAB_DIGEST, size_bytes=10)
+    assert source.resolve_url() == OPENMMLAB_CHECKPOINT
+    assert source.filename == "rtmdet-ins_s_8xb32-300e_coco_20221121_212604-fdc5d7ec.pth"
+
+
+def test_openmmlab_checkpoint_name_must_match_the_pinned_sha256() -> None:
+    with pytest.raises(SourcePolicyError, match="first eight digits of their pinned sha256"):
+        SourceSpec(uri=OPENMMLAB_CHECKPOINT, sha256=DIGEST, size_bytes=10).resolve_url()
+
+
+@pytest.mark.parametrize(
+    ("uri", "reason"),
+    [
+        ("https://download.openmmlab.com/mmdetection/v3.0/rtmdet/rtmdet-ins_s_8xb32-300e_coco/latest.pth", "checksum"),
+        ("https://download.openmmlab.com/mmdetection/rtmdet/rtmdet-ins_s_20221121_212604-fdc5d7ec.pth", "checksum"),
+        ("https://download.openmmlab.com/mmdetection/v3.0/rtmdet/rtmdet-ins_s/rtmdet-ins_s-fdc5d7ec.zip", "checksum"),
+        ("https://download.openmmlab.com/other/v3.0/rtmdet/rtmdet-ins_s/rtmdet-ins_s-fdc5d7ec.pth", "checksum"),
+        (OPENMMLAB_CHECKPOINT.replace("fdc5d7ec", "FDC5D7EC"), "checksum"),
+        (OPENMMLAB_CHECKPOINT.replace("/rtmdet/", "/rtmdet/../"), "dot or parent segments"),
+        (f"{OPENMMLAB_CHECKPOINT}?v=1", "credentials, query parameters, or fragments"),
+        (OPENMMLAB_CHECKPOINT.replace("https://", "http://"), "scheme must be hf or https"),
+        (OPENMMLAB_CHECKPOINT.replace("download.openmmlab.com", "openmmlab.com"), "host is not approved"),
+    ],
+)
+def test_other_openmmlab_urls_are_not_sources(uri: str, reason: str) -> None:
+    with pytest.raises(SourcePolicyError, match=reason):
+        SourceSpec(uri=uri, sha256=OPENMMLAB_DIGEST, size_bytes=10).resolve_url()
+
+
+def test_scripts_and_shared_tooling_download_nothing_from_conversion_only_hosts() -> None:
     # A source is pinned in model.yaml and fetched by the registry, and datasets come from the Dataset
     # Registry, so no script or tool names a release file itself.
     offenders = [
@@ -124,7 +161,7 @@ def test_scripts_and_shared_tooling_download_nothing_from_github_releases() -> N
         if path.is_file()
         and path.name != "model.yaml"
         and "__pycache__" not in path.parts
-        and GITHUB_RELEASE_DOWNLOAD.search(path.read_text(encoding="utf-8", errors="ignore"))
+        and CONVERSION_ONLY_DOWNLOAD.search(path.read_text(encoding="utf-8", errors="ignore"))
     ]
     assert offenders == []
 
@@ -132,15 +169,16 @@ def test_scripts_and_shared_tooling_download_nothing_from_github_releases() -> N
 def pins_release_file_outside_conversion(model_yaml: str) -> bool:
     document = yaml.safe_load(model_yaml)
     document.get("conversion", {}).pop("source", None)
-    return bool(GITHUB_RELEASE_DOWNLOAD.search(yaml.safe_dump(document, width=float("inf"))))
+    return bool(CONVERSION_ONLY_DOWNLOAD.search(yaml.safe_dump(document, width=float("inf"))))
 
 
 @pytest.mark.parametrize(
     ("section", "expected"),
     [("conversion", False), ("compilation", True)],
 )
-def test_release_file_pin_is_found_outside_the_conversion_source(section: str, expected: bool) -> None:
-    model_yaml = yaml.safe_dump({section: {"source": {"uri": GITHUB_RELEASE_FILE, "sha256": DIGEST, "size_bytes": 10}}})
+@pytest.mark.parametrize("uri", [GITHUB_RELEASE_FILE, OPENMMLAB_CHECKPOINT])
+def test_release_file_pin_is_found_outside_the_conversion_source(section: str, expected: bool, uri: str) -> None:
+    model_yaml = yaml.safe_dump({section: {"source": {"uri": uri, "sha256": DIGEST, "size_bytes": 10}}})
     assert pins_release_file_outside_conversion(model_yaml) is expected
 
 

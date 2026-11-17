@@ -22,32 +22,45 @@ VULCAN_ONNX_RE = re.compile(r"^/models-onnx/[a-z][a-z0-9_]*/[a-f0-9]{64}/[0-9]+-
 GITHUB_RELEASE_RE = re.compile(
     r"^/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/releases/download/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$"
 )
+# OpenMMLab's model zoo names each checkpoint with the first eight hexadecimal digits of its SHA-256.
+OPENMMLAB_CHECKPOINT_RE = re.compile(
+    r"^/mm[a-z0-9]+/v[0-9]+(?:\.[0-9]+)*(?:/[A-Za-z0-9._-]+)+/[A-Za-z0-9._-]+-[0-9a-f]{8}\.pth$"
+)
 GITHUB_RAW_RE = re.compile(r"^/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/[a-f0-9]{40}/.+$")
 
 
-def _require_hugging_face_commit(path: str) -> None:
+def _require_hugging_face_commit(path: str, sha256: str) -> None:
     if not HF_RESOLVE_RE.fullmatch(path):
         raise SourcePolicyError("Hugging Face HTTPS sources must use a full commit in a resolve URL")
 
 
-def _require_vulcan_onnx(path: str) -> None:
+def _require_vulcan_onnx(path: str, sha256: str) -> None:
     if not VULCAN_ONNX_RE.fullmatch(path):
         raise SourcePolicyError("Vulcan sources must identify a versioned ONNX file")
 
 
-def _require_github_release_file(path: str) -> None:
+def _require_github_release_file(path: str, sha256: str) -> None:
     if not GITHUB_RELEASE_RE.fullmatch(path):
         raise SourcePolicyError("GitHub sources must be a release file addressed by its tag")
 
 
-def _require_github_raw_commit(path: str) -> None:
+def _require_openmmlab_checkpoint(path: str, sha256: str) -> None:
+    if not OPENMMLAB_CHECKPOINT_RE.fullmatch(path):
+        raise SourcePolicyError("OpenMMLab sources must be a versioned model zoo checkpoint named by its checksum")
+    # An OpenMMLab checkpoint's name carries the start of its SHA-256, so the pin must agree with it.
+    if not path.endswith(f"-{sha256[:8]}.pth"):
+        raise SourcePolicyError("OpenMMLab sources must be named by the first eight digits of their pinned sha256")
+
+
+def _require_github_raw_commit(path: str, sha256: str) -> None:
     if not GITHUB_RAW_RE.fullmatch(path):
         raise SourcePolicyError("Raw GitHub sources must use a full commit and file path")
 
 
-# Every approved HTTPS host and the check its URL path must pass. Approving a host is one entry here.
-HTTPS_HOST_CHECKS: dict[str, Callable[[str], None]] = {
+# Every approved HTTPS host and the check its URL path and pinned sha256 must pass. Approving a host is one entry here.
+HTTPS_HOST_CHECKS: dict[str, Callable[[str, str], None]] = {
     "artifacts.stg.neat.sima.ai": _require_vulcan_onnx,
+    "download.openmmlab.com": _require_openmmlab_checkpoint,
     "github.com": _require_github_release_file,
     "huggingface.co": _require_hugging_face_commit,
     "raw.githubusercontent.com": _require_github_raw_commit,
@@ -142,7 +155,7 @@ class SourceSpec:
         hostname = (parts.hostname or "").lower()
         if hostname not in hosts:
             raise SourcePolicyError(f"HTTPS source host is not approved: {hostname or '<missing>'}")
-        require_path = HTTPS_HOST_CHECKS.get(hostname)
-        if require_path:
-            require_path(parts.path)
+        require_source = HTTPS_HOST_CHECKS.get(hostname)
+        if require_source:
+            require_source(parts.path, self.sha256)
         return self.uri

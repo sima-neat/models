@@ -88,10 +88,11 @@ A source comes from an approved host, in this form:
 | Hugging Face | `hf://models/<owner>/<repository>@<commit>/<file>`, with the full 40-character commit |
 | GitHub | `https://github.com/<owner>/<repository>/releases/download/<tag>/<file>`, a release file of a public repository |
 | GitHub raw files | `https://raw.githubusercontent.com/<owner>/<repository>/<commit>/<file>`, with the full 40-character commit |
+| OpenMMLab | `https://download.openmmlab.com/<project>/v<version>/.../<name>-<sha256 prefix>.pth`, a model zoo checkpoint whose name ends with the first eight hexadecimal digits of its SHA-256 |
 | the registry | the ONNX files the registry converts |
 
-The owner of a repository can replace or delete a GitHub release file, so only
-`conversion.source` pins one: Convert reads the checkpoint once, and the
+The owner of a repository can replace or delete a GitHub release file, and
+OpenMMLab can do the same with its model zoo, so only `conversion.source` pins one: Convert reads the checkpoint once, and the
 registry keeps the converted model. A model whose checkpoint is not on Hugging
 Face also declares [`upstream`](metadata-schema.md#product-identity-and-provenance)
 itself. Datasets come only from the Dataset Registry.

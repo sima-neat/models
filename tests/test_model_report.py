@@ -497,6 +497,12 @@ def test_every_single_component_script_benchmarks_a_dataset_image(script, monkey
         segmentation = options.semantic_segmentation
         assert (segmentation.enable, segmentation.output_width, segmentation.output_height) == (True, width, height)
         assert f"{width}x{height} class map" in report["workload"]
+    elif first_accuracy_dataset(script) == "coco-2017" and not hasattr(options, "decode_type"):
+        # A COCO model that Neat has no decoder for benchmarks a COCO image letterboxed with the ImageNet preset,
+        # and returns its raw outputs.
+        assert_letterboxed_frame(frame)
+        assert (options.preprocess.resize.mode, options.preprocess.preset) == ("Letterbox", "ImageNet")
+        assert "raw head outputs" in report["workload"]
     elif first_accuracy_dataset(script) == "pitts30k":
         # A place-recognition model benchmarks a Pittsburgh 30k image, stretched to its input with the ImageNet preset.
         assert_letterboxed_frame(frame)

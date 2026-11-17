@@ -1,0 +1,9 @@
+mmdet==3.3.0
+mmengine==0.10.7
+mmcv-lite==2.1.0
+torch==2.8.0
+torchvision==0.23.0
+numpy==1.26.4
+onnx==1.17.0
+onnxruntime==1.21.1
+onnxsim==0.7.3

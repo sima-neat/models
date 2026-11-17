@@ -166,6 +166,11 @@ not the MPK alone:
    `normalize.has_explicit_stats = True`. Without a preset or explicit
    statistics, Neat applies no mean or standard deviation.
 
+Neat has no decoder for some models, such as RTMDet-Ins. Their script still
+benchmarks the frame on the image route, here letterboxed with the ImageNet
+preset, and the MPK returns raw outputs. The application's decode on the CPU
+is not timed, and the workload says "raw head outputs".
+
 The report's `workload` names the dataset, the image, the frame, and the
 decoder settings. Preprocessing is part of the measurement and can bound
 throughput. Give a Model one frame size only: Core builds the benchmark runner

@@ -1,0 +1,87 @@
+# A build profile of this model compiles for over 20 minutes, so it builds only on request.
+build-on-demand: true
+display_name: RTMDet-Ins S
+description: The small RTMDet-Ins instance segmenter for COCO objects.
+model_type: vision
+tasks: [instance_segmentation]
+
+modalities:
+  inputs: [image]
+  outputs: [bounding_boxes, class_scores, masks]
+
+architecture: rtmdet_ins
+
+license:
+  spdx: Apache-2.0
+  redistribution: allowed
+  attribution: >-
+    RTMDet-Ins S is developed by OpenMMLab in MMDetection and distributed under Apache-2.0. Its weights are trained
+    on COCO, whose annotations are licensed CC BY 4.0.
+
+upstream:
+  repository: https://github.com/open-mmlab/mmdetection
+  revision: 44ebd17b145c2372c4b700bfb9cb20dbd28ab64a
+
+resources:
+  license:
+    source:
+      uri: https://raw.githubusercontent.com/open-mmlab/mmdetection/44ebd17b145c2372c4b700bfb9cb20dbd28ab64a/LICENSE
+      sha256: 874b8b2e6f12306a1ff7812c068a0dbf880418b8ac1f7190382bd6c6da9f23a1
+      size_bytes: 11398
+    install_path: licenses/LICENSE
+
+conversion:
+  source:
+    # OpenMMLab publishes RTMDet-Ins checkpoints only on its model zoo server: not on Hugging Face, and the
+    # MMDetection releases have no assets. This is the checkpoint MMDetection v3.3.0's RTMDet metafile lists.
+    uri: https://download.openmmlab.com/mmdetection/v3.0/rtmdet/rtmdet-ins_s_8xb32-300e_coco/rtmdet-ins_s_8xb32-300e_coco_20221121_212604-fdc5d7ec.pth
+    sha256: fdc5d7ec327cf46dba079d664be98a853e80936098c1778edf5ffb726b084908
+    size_bytes: 40976121
+
+compilation:
+  format: onnx
+  source: conversion
+
+calibrations:
+- id: coco-2017-cal
+  dataset: {id: coco-2017, variant: cal, sha256: 54c64d84122eba371ac014d7b43849a461551c2e6c5c430b5ead90ec1dec12b1, size_bytes: 187510866}
+
+# The network's sigmoids run as INT8 lookup tables even with BF16 activations, so every profile calibrates.
+build_profiles:
+  w16a16:
+    calibration_dataset: coco-2017-cal
+    components:
+      model:
+        parameters: {precision: w16a16, calibration_bins: 2048, calibration_samples: 50}
+
+  # No INT8 builds: on a DevKit, w8a16 scored 0.0001 COCO mask AP at 171.2 FPS and w8a8 0.001. Folding BatchNorm
+  # leaves some pointwise convolutions with weights and biases that cancel about 200-fold, so INT8 rounding of
+  # either the weights or the activations destroys their outputs. compile.py keeps both recipes.
+  # w8a16:
+  #   calibration_dataset: coco-2017-cal
+  #   components:
+  #     model:
+  #       parameters: {precision: w8a16, calibration_bins: 2048, calibration_samples: 50}
+
+  # w8a8:
+  #   calibration_dataset: coco-2017-cal
+  #   components:
+  #     model:
+  #       parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 50}
+
+accuracy:
+  datasets:
+  - {id: coco-2017, variant: val, sha256: a40de1caf42b47c5a8976eb97efe3c83f3a41337c4d16d318eb15d65c293f2da, size_bytes: 898368520}
+
+performance: {}
+
+reference_metrics:
+- source: https://github.com/open-mmlab/mmdetection/blob/44ebd17b145c2372c4b700bfb9cb20dbd28ab64a/configs/rtmdet/metafile.yml
+  dataset: {id: coco-2017, split: val}
+  conditions: 640x640, keep-ratio resize padded on the right and bottom, MMDetection's test configuration
+  metrics: {coco_mask_map: 0.387, coco_box_map: 0.440}
+- origin: fp32_baseline
+  script: scripts/fp32_baseline_accuracy.py
+  dataset: {id: coco-2017, split: val}
+  conditions: FP32 ONNX on ONNX Runtime CPU; MMDetection's keep-ratio resize to 640x640 padded on the right and bottom, and its test configuration; all 5000 val2017 images
+  metrics: {coco_mask_map: 0.3867, coco_mask_ap50: 0.5926, coco_mask_ap75: 0.4128, coco_box_map: 0.4406, coco_box_ap50: 0.6194}

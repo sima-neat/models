@@ -105,7 +105,8 @@ later or never. Apply them while you write.
   local paths: `--mpk`, `--dataset`, `--output`, and `--resources` when the
   model declares supporting files.
 - **Pin sources by content.** Prefer a Hugging Face checkpoint pinned to a full
-  repository commit. Use an official upstream GitHub release asset only as a
+  repository commit. Use an official upstream GitHub release asset, or an
+  OpenMMLab model zoo checkpoint named by its SHA-256 prefix, only as a
   fallback, with its SHA-256 and byte count, and explain the fallback in a
   comment in `model.yaml`.
 - **Hide an unready variant by commenting it out.** A commented-out profile in

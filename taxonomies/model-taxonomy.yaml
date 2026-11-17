@@ -220,6 +220,11 @@ architectures:
     description: Detects objects and outlines each instance with a segmentation mask using transformer-based detectors.
     paradigm: transformer
     allowed_model_types: [vision]
+  rtmdet_ins:
+    display_name: RTMDet-Ins
+    description: Detects objects and outlines each instance with a segmentation mask using dynamic mask kernels.
+    paradigm: cnn
+    allowed_model_types: [vision]
   segformer:
     display_name: SegFormer
     description: Labels every pixel of an image with hierarchical transformer encoders and lightweight decoders.
