@@ -696,3 +696,20 @@ def test_model_runtime_directory_verifies_assets_and_omits_unneeded_arguments(tm
     asset.write_text("corrupted")
     assert main(arguments) != 0
     assert "SHA-256" in capsys.readouterr().err
+
+
+def test_model_runtime_directory_copies_verified_assets_into_requested_root(tmp_path, capsys):
+    from model_registry.fetch import sha256_file
+
+    profile = tmp_path / "compiled/test/w16a16"
+    profile.mkdir(parents=True)
+    asset = profile / "constants.json"
+    asset.write_text("{}")
+    (profile / "compile-outputs.json").write_text(json.dumps({
+        "runtime_files": [{"path": asset.name, "sha256": sha256_file(asset)[0]}],
+    }))
+    output = tmp_path / "scratch resources"
+    assert main(["model-runtime-directory", str(tmp_path / "compiled"), "--model", "test",
+                 "--build-profile", "w16a16", "--output-dir", str(output)]) == 0
+    assert capsys.readouterr().out.strip() == str(output)
+    assert (output / asset.name).read_bytes() == asset.read_bytes()

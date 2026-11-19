@@ -339,6 +339,8 @@ def test_performance_runs_the_model_owned_script() -> None:
     assert '"${mpks[@]}" "${dataset[@]}" "${resources[@]}" --output "$OUTPUT_DIR"' in script
     # A model's CPU work gets its pinned resources and its pinned wheels, beside PyNeat's environment.
     assert "model_registry fetch-resources" in script
+    assert "model_registry model-runtime-directory" in script
+    assert '--output-dir "$WORK_DIR/resources"' in script
     assert 'resources=(--resources "$resource_dir")' in script
     assert script.index("fetch-resources") < script.index('scripts/performance.py"')
     assert 'REQUIREMENTS="$MODEL_DIR/scripts/requirements-performance.txt"' in script
@@ -973,7 +975,7 @@ if sys.argv[1] == '-c' or sys.argv[3] == 'model-runtime-directory':
 command = sys.argv[3]
 if command == 'resolve-devkit-accuracy':
     print(json.dumps({{"name": "imagenet-2012-val", "path": {str(dataset)!r}}}))
-elif command == 'model-component-mpks':
+elif command in ('model-component-mpks', 'model-component-artifacts'):
     print('image_encoder=image.tar.gz\\ntext_encoder=text.tar.gz')
 elif command != 'check-report':
     raise AssertionError(command)
@@ -1003,3 +1005,93 @@ if sys.argv[1:3] != ['-m', 'pip']:
     if supporting_files:
         assert arguments[arguments.index("--resources") + 1] == str(profile)
     assert arguments.count("--mpk") == 2
+
+
+@pytest.mark.parametrize("kind", ["none", "derived", "pinned", "both", "corrupt", "collision"])
+def test_performance_runner_uses_verified_combined_package_resources(tmp_path, kind):
+    import hashlib
+    import io
+    import tarfile
+
+    compiled = tmp_path / "compiled"
+    profile = compiled / "clip_vit_b_16/w8a16"
+    profile.mkdir(parents=True)
+    manifest = {}
+    if kind in {"derived", "both", "corrupt", "collision"}:
+        asset = profile / "derived/constants.json"
+        asset.parent.mkdir()
+        asset.write_text("derived")
+        manifest["runtime_files"] = [{"path": "derived/constants.json",
+                                      "sha256": hashlib.sha256(asset.read_bytes()).hexdigest()}]
+        if kind == "corrupt":
+            asset.write_text("corrupt")
+    (profile / "compile-outputs.json").write_text(json.dumps(manifest))
+    dataset = tmp_path / "dataset.tgz"
+    with tarfile.open(dataset, "w:gz") as stream:
+        info = tarfile.TarInfo("val2012/image.JPEG")
+        info.size = 3
+        stream.addfile(info, io.BytesIO(b"img"))
+    registry = tmp_path / "registry-python"
+    registry.write_text(f'''#!{sys.executable}
+import json, os, sys
+from pathlib import Path
+if sys.argv[1] == '-c' or sys.argv[3] == 'model-runtime-directory':
+    os.execv(sys.executable, [sys.executable, *sys.argv[1:]])
+command = sys.argv[3]
+if command == 'resolve-devkit-accuracy':
+    print(json.dumps({{"name": "imagenet-2012-val", "path": {str(dataset)!r}}}))
+elif command in ('model-component-mpks', 'model-component-artifacts'):
+    print('image_encoder=image.tar.gz\\ntext_encoder=text.tar.gz')
+elif command == 'fetch-resources':
+    if {kind!r} in ('pinned', 'both', 'collision'):
+        root = Path(sys.argv[sys.argv.index('--output-dir') + 1])
+        path = root / ('derived/constants.json' if {kind!r} == 'collision' else 'pinned.json')
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('pinned')
+        print(root)
+elif command != 'check-report':
+    raise AssertionError(command)
+''')
+    board, captured = tmp_path / "board-python", tmp_path / "arguments.json"
+    board.write_text(f'''#!{sys.executable}
+import json, sys
+from pathlib import Path
+if sys.argv[1:3] != ['-m', 'pip']:
+    args = sys.argv[2:]
+    root = Path(args[args.index('--resources') + 1]) if '--resources' in args else None
+    files = {{str(p.relative_to(root)): p.read_text() for p in root.rglob('*') if p.is_file()}} if root else {{}}
+    Path({str(captured)!r}).write_text(json.dumps({{"arguments": args, "files": files}}))
+''')
+    registry.chmod(0o755)
+    board.chmod(0o755)
+    # Only the sysfs locations are substituted: never read or write the host's hardware clock controls.
+    script = (ROOT / "scripts/run_model_performance.sh").read_text()
+    for literal, directory, name, value in (
+        ('MLA_DEVFREQ=/sys/class/devfreq/5000000.mla', 'mla', 'cur_freq', '1000000000'),
+        ('CPU_CPUFREQ=/sys/devices/system/cpu/cpufreq/policy0', 'cpu', 'scaling_cur_freq', '1400000'),
+    ):
+        mock = tmp_path / directory
+        mock.mkdir()
+        (mock / name).write_text(value)
+        assert script.count(literal) == 1
+        script = script.replace(literal, literal.split('=')[0] + '=' + str(mock))
+    runner = tmp_path / "performance-runner.sh"
+    runner.write_text(script)
+    environment = {
+        **os.environ, "PYTHONPATH": str(ROOT / "tools") + os.pathsep + os.environ.get("PYTHONPATH", ""),
+        "REGISTRY_PYTHON": str(registry), "PYNEAT_PYTHON": str(board), "WORK_DIR": str(tmp_path / "scratch"),
+        "DATASET_CACHE": str(tmp_path / "cache"), "DATASET_LOCK": str(tmp_path / "prepare.lock"),
+    }
+    run = subprocess.run(["bash", runner, ROOT / "models/clip_vit_b_16", "w8a16", compiled, tmp_path / "report"],
+                         cwd=ROOT, env=environment, capture_output=True, text=True)
+    if kind in {"corrupt", "collision"}:
+        assert run.returncode != 0
+        assert not captured.exists()
+        return
+    assert run.returncode == 0, run.stderr
+    result = json.loads(captured.read_text())
+    assert ("--resources" in result["arguments"]) == (kind != "none")
+    assert result["files"] == {
+        **({"derived/constants.json": "derived"} if kind in {"derived", "both"} else {}),
+        **({"pinned.json": "pinned"} if kind in {"pinned", "both"} else {}),
+    }

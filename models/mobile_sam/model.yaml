@@ -1,0 +1,103 @@
+# The w16a16 build compiles for over three hours, so this model builds only on request.
+build-on-demand: true
+display_name: MobileSAM
+description: Segments the object a click or a box points at, with a lightweight Segment Anything model.
+model_type: vision
+tasks: [promptable_segmentation]
+
+modalities:
+  inputs: [image]
+  outputs: [masks]
+
+architecture: sam
+
+license:
+  spdx: Apache-2.0
+  redistribution: allowed
+  attribution: MobileSAM by Chaoning Zhang et al. (Kyung Hee University), distributed under Apache-2.0; its prompt encoder and mask decoder are Meta's Segment Anything.
+
+upstream:
+  repository: https://huggingface.co/dhkim2810/MobileSAM
+  revision: 4e2e5245fe9dc63096d575d36e70eb39b03b3aba
+  derived_from: https://github.com/ChaoningZhang/MobileSAM/tree/f706ad9c4eb7f219c00d9050e46328518ffb65d2
+
+resources:
+  license:
+    # The checkpoint repository omits LICENSE. The MobileSAM code repository carries the Apache-2.0 text.
+    source:
+      uri: https://raw.githubusercontent.com/ChaoningZhang/MobileSAM/f706ad9c4eb7f219c00d9050e46328518ffb65d2/LICENSE
+      sha256: c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4
+      size_bytes: 11357
+    install_path: licenses/LICENSE
+
+conversion:
+  # Byte-identical to weights/mobile_sam.pt in the upstream GitHub repository at the derived_from commit.
+  source:
+    uri: hf://models/dhkim2810/MobileSAM@4e2e5245fe9dc63096d575d36e70eb39b03b3aba/mobile_sam.pt
+    sha256: 6dbb90523a35330fedd7f1d3dfc66f995213d81b29a5ca8108dbcdd4e37d6c2f
+    size_bytes: 40728226
+  outputs: [image_encoder.onnx, weights.pth]
+
+compilation:
+  format: onnx
+  source: conversion
+  # One whole encoder per image; reuse its embedding for every subsequent prompt.
+  components: [image_encoder, prompt_decoder]
+
+calibrations:
+- id: coco-2017-cal
+  dataset: {id: coco-2017, variant: cal, sha256: 54c64d84122eba371ac014d7b43849a461551c2e6c5c430b5ead90ec1dec12b1, size_bytes: 187510866}
+
+build_profiles:
+  w16a16:
+    # Whole-encoder compilation exceeds the default 32 GiB runner. A larger CI class needs a deployed
+    # Vulcan grant before enabling it; do not restore the legacy split as a memory workaround.
+    calibration_dataset: coco-2017-cal
+    # Both parts use the qualified BF16 histogram policy; decoder samples use this encoder's own outputs.
+    components:
+      image_encoder:
+        parameters: {precision: w16a16, calibration_bins: 2048, calibration_samples: 50}
+      prompt_decoder:
+        parameters: {precision: w16a16, calibration_bins: 2048, calibration_samples: 50}
+  # A genuine INC mixed-precision build remains disabled until full native quality and performance pass.
+
+# Display only: Neat letterboxes the image top-left into the encoder's 1024x1024 input and normalizes it, and Neat's
+# MobileSAM decoder resizes the chosen mask to the image and thresholds it.
+pipeline:
+- {component: image_encoder}
+- {cpu: "CPU FP32 prompt Fourier encoding and one-hot point types"}
+- {component: prompt_decoder}
+
+# Scored against the float32 ONNX encoder and decoder, on fixed prompts, since COCO has no prompt annotations.
+numerical_fidelity:
+  status: diagnostic
+  dataset: {id: coco-2017, variant: val, sha256: a40de1caf42b47c5a8976eb97efe3c83f3a41337c4d16d318eb15d65c293f2da, size_bytes: 898368520}
+  selection: {method: seeded_random_without_replacement, seed: 42, offset: 0, samples: 8}
+  outputs: [masks, iou_predictions]
+
+accuracy:
+  # Each non-crowd object's ground-truth box is the prompt, so the scores measure the masks, not detection.
+  datasets:
+  - {id: coco-2017, variant: val, sha256: a40de1caf42b47c5a8976eb97efe3c83f3a41337c4d16d318eb15d65c293f2da, size_bytes: 898368520}
+
+performance: {}
+
+reference_metrics:
+- origin: fp32_baseline
+  script: scripts/fp32_baseline_accuracy.py
+  dataset: {id: coco-2017, split: val2017}
+  conditions: FP32 ONNX on ONNX Runtime 1.21.1 CPU; all 5000 COCO val2017 images and 36335 non-crowd ground-truth box prompts; mask 0; six prompt slots with inactive-key masking; segment_anything's CPU preprocessing and mask resizing; the same prompts and COCO mask scoring as accuracy.py.
+  note: Exported-source reference, not a paper score, detection benchmark, native result or independent upstream task score. ONNX SHA256 851318a1de33b9b6cea8dfbcf8d0d9644cc3434915f4653da49959c0289359d6.
+  metrics:
+    coco_mask_map: 0.5528711608445899
+    coco_mask_ap50: 0.8737750312315425
+    coco_mask_ap75: 0.5868266747678924
+    coco_mask_ap_small: 0.44855026543223636
+    coco_mask_ap_medium: 0.5896595173169363
+    coco_mask_ap_large: 0.684144186694107
+    coco_mask_ar1: 0.373732806516299
+    coco_mask_ar10: 0.5876234022879028
+    coco_mask_ar100: 0.596866719297224
+    coco_mask_ar_small: 0.4905677052386268
+    coco_mask_ar_medium: 0.6350950125035553
+    coco_mask_ar_large: 0.7207919414980226

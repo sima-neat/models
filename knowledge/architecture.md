@@ -94,7 +94,7 @@ marked CI only from the author package.
 | `neat_core.py` (CI only) | Resolving the selected Core artifact and installing it only when the installed one differs. |
 | `benchmark_declarations.py` | The `performance` and `accuracy` declarations: benchmarked profiles, stage scripts, required metrics, `reference_metrics` validation, and the dataset names the model browser shows. |
 | `artifact.py` | `compile-outputs.json` validation, MPK and LLiMa deployment verification, the LLiMa reproduction recipe, and deployment file indexes. |
-| `runtime_files.py` | Path and checksum validation of a compile's `runtime_files`, and their restoration from a package ZIP. |
+| `runtime_files.py` | Path and checksum validation of a compile's `runtime_files`, verified copies for benchmark and component staging, and their restoration from a package ZIP. |
 | `mla_stage_simulation.py` | The simulator's operation counts and latency for each MLA stage (`simulate-mla-stages`). |
 | `package.py` | Assembling a profile's `default` package from MPKs, pinned `resources`, and `runtime_files`, or from a complete LLiMa deployment folder. |
 | `dependencies.py` | Resolving the Model Compiler and DevKit runtime pins in `deps/manifest.json`. |

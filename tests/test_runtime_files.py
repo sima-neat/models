@@ -93,3 +93,59 @@ def test_restore_rejects_invalid_runtime_files_without_installing_them(tmp_path,
     with pytest.raises(ValidationError):
         restore_runtime_files(archive, files, output)
     assert not (output / name).exists()
+
+
+def runtime_profile(root):
+    import json
+
+    root.mkdir()
+    asset = root / "derived/constants.json"
+    asset.parent.mkdir()
+    asset.write_text('{"example": 1}')
+    (root / "compile-outputs.json").write_text(json.dumps({
+        "runtime_files": [{"path": "derived/constants.json", "sha256": sha256_file(asset)[0]}],
+    }))
+    return asset
+
+
+def test_copy_preserves_pinned_resources_and_is_idempotent(tmp_path):
+    from model_registry.runtime_files import copy_runtime_files
+
+    source, output = tmp_path / "profile", tmp_path / "resources"
+    asset = runtime_profile(source)
+    output.mkdir()
+    (output / "pinned.json").write_text("pinned")
+    assert copy_runtime_files(source, output) == output
+    assert (output / "derived/constants.json").read_bytes() == asset.read_bytes()
+    assert (output / "pinned.json").read_text() == "pinned"
+    copy_runtime_files(source, output, copy_function=lambda *args: pytest.fail("must reuse identical files"))
+
+
+@pytest.mark.parametrize("problem", ["corrupt-source", "collision", "symlink", "bad-copy"])
+def test_copy_rejects_invalid_inputs_and_never_overwrites_resources(tmp_path, problem):
+    from model_registry.runtime_files import copy_runtime_files
+
+    source, output = tmp_path / "profile", tmp_path / "resources"
+    asset = runtime_profile(source)
+    target = output / "derived/constants.json"
+    if problem == "corrupt-source":
+        asset.write_text("corrupt")
+    elif problem == "collision":
+        target.parent.mkdir(parents=True)
+        target.write_text("existing pinned resource")
+    elif problem == "symlink":
+        output.mkdir()
+        (output / "derived").symlink_to(source, target_is_directory=True)
+    copy = (lambda *args: None) if problem == "bad-copy" else __import__("shutil").copy2
+    with pytest.raises(ValidationError):
+        copy_runtime_files(source, output, copy_function=copy)
+    if problem == "collision":
+        assert target.read_text() == "existing pinned resource"
+    assert not output.exists() or not (output / "compile-outputs.json").exists()
+
+
+def test_copy_with_no_supporting_files_does_not_create_an_output(tmp_path):
+    from model_registry.runtime_files import copy_runtime_files
+
+    assert copy_runtime_files(tmp_path / "empty", tmp_path / "output") is None
+    assert not (tmp_path / "output").exists()

@@ -6,6 +6,7 @@ import json
 import shutil
 import tempfile
 import zipfile
+from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -75,6 +76,29 @@ def read_runtime_files(profile_dir: Path) -> list[dict[str, str]]:
     if not isinstance(document, dict):
         raise ValidationError(f"compile outputs must be an object: {manifest}")
     return validate_runtime_files(document["runtime_files"], profile_dir) if "runtime_files" in document else []
+
+
+def copy_runtime_files(
+    profile_dir: Path, output_dir: Path, *, copy_function: Callable = shutil.copy2
+) -> Path | None:
+    """Copy verified supporting files into a shared resource root without replacing other resources.
+
+    An identical existing file is reusable. Check every destination before copying, then verify the result;
+    benchmark preparation and retained-component staging therefore use the same checksum and path rules.
+    """
+    files = read_runtime_files(profile_dir)
+    if not files:
+        return None
+    destinations = [(item, runtime_file_path(output_dir, item["path"])) for item in files]
+    for item, target in destinations:
+        if target.exists() and (not target.is_file() or sha256_file(target)[0] != item["sha256"]):
+            raise ValidationError(f"runtime file destination already differs: {target}")
+    for item, target in destinations:
+        if not target.exists():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            copy_function(str(runtime_file_path(profile_dir, item["path"])), str(target))
+    validate_runtime_files(files, output_dir)
+    return output_dir.resolve()
 
 
 def restore_runtime_files(archive: Path, files: Any, profile_dir: Path) -> None:

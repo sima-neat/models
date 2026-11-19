@@ -239,6 +239,7 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     resources.add_argument("compiled_dir", type=Path)
     resources.add_argument("--model", required=True)
     resources.add_argument("--build-profile", required=True)
+    resources.add_argument("--output-dir", type=Path, help="copy verified files into this resource directory")
 
     check = subcommands.add_parser(
         "check-report", help="check a model report against model.yaml and record the DevKit it ran on"
@@ -1122,11 +1123,13 @@ def _main(argv: Sequence[str] | None, *, author_safe: bool) -> int:
             print("\n".join(inputs(args.compiled_dir, args.repository, args.model, args.build_profile)))
             return 0
         if args.command == "model-runtime-directory":
-            from .runtime_files import read_runtime_files
+            from .runtime_files import copy_runtime_files, read_runtime_files
 
             profile_dir = args.compiled_dir.resolve() / args.model / args.build_profile
-            if read_runtime_files(profile_dir):
-                print(profile_dir)
+            directory = (copy_runtime_files(profile_dir, args.output_dir) if args.output_dir is not None
+                         else profile_dir if read_runtime_files(profile_dir) else None)
+            if directory is not None:
+                print(directory)
             return 0
         if args.command == "check-report":
             return _check_report(args)
