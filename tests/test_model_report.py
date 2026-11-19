@@ -311,8 +311,9 @@ def write_image(path, value, size=SOURCE_SIZE):
 
 def benchmark_dataset(root):
     """A dataset with the files each script samples from: COCO val2017, ImageNet's val2012 and ImageNet mini's val
-    split, a DAVIS val sequence, an HPatches val sequence, DOTA's val images, Pittsburgh 30k, ADE20K's validation
-    images, and the Scene Flow test list. Only the second COCO image labels a person, so a pose script must pick it."""
+    split, a DAVIS val sequence, an HPatches val sequence, DOTA's val images, Pittsburgh 30k, ADE20K's and WIDER
+    FACE's validation images, and the Scene Flow test list. Only the second COCO image labels a person, so a pose
+    script must pick it."""
     write_image(root / STEREO_PAIR.format(view="left"), STEREO_LEFT, STEREO_VIEW)
     write_image(root / STEREO_PAIR.format(view="right"), STEREO_RIGHT, STEREO_VIEW)
     disparity = STEREO_PAIR.replace("frames_finalpass", "disparity").format(view="left").replace(".png", ".pfm")
@@ -331,6 +332,7 @@ def benchmark_dataset(root):
     write_image(root / "images/000/000000_pitch1_yaw1.jpg", 200)
     # Under the archive's top folder, so that no other script's images/ glob finds it.
     write_image(root / "ade20k-val/images/validation/ADE_val_00000001.jpg", 200)
+    write_image(root / "wider-face-val/WIDER_val/images/0--Parade/0_Parade_marchingband_1_465.jpg", 200)
     keypoints = {
         "images": [{"id": 1, "file_name": "000000000001.jpg"}, {"id": 2, "file_name": "000000000002.jpg"}],
         "annotations": [{"image_id": 1, "num_keypoints": 0}, {"image_id": 2, "num_keypoints": 17}],
@@ -502,6 +504,17 @@ def test_every_single_component_script_benchmarks_a_dataset_image(script, monkey
         assert_letterboxed_frame(frame)
         assert (options.preprocess.resize.mode, options.preprocess.preset) == ("Stretch", "ImageNet")
         assert "_pitch1_yaw1.jpg" in report["workload"]
+    elif first_accuracy_dataset(script) == "wider-face":
+        # A face detector benchmarks a WIDER FACE validation image, letterboxed with zero padding to BGR pixel values.
+        assert_letterboxed_frame(frame)
+        color, normalize = options.preprocess.color_convert, options.preprocess.normalize
+        assert (options.preprocess.resize.mode, options.preprocess.resize.pad_value) == ("Letterbox", 0)
+        assert (color.enable, color.input_format, color.output_format) == (
+            "On", "PreprocessColorFormat.RGB", "PreprocessColorFormat.BGR"
+        )
+        assert normalize.mean == [0.0] * 3 and normalize.stddev == [1.0 / 255] * 3
+        assert normalize.has_explicit_stats
+        assert "0--Parade/0_Parade_marchingband_1_465.jpg" in report["workload"]
     else:
         assert_letterboxed_frame(frame)
         assert options.preprocess.resize.mode == "Stretch"

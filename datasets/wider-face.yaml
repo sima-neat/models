@@ -1,0 +1,4 @@
+# WIDER FACE validation: average precision of the face boxes on the official easy, medium and hard subsets.
+name: WIDER FACE
+required_metrics:
+  face_detection: [widerface_ap_easy, widerface_ap_medium, widerface_ap_hard]

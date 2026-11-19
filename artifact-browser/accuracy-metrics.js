@@ -61,6 +61,9 @@ export const ACCURACY_METRIC_LABELS = {
   abs_rel: "AbsRel",
   delta1: "δ1",
   miou: "mIoU",
+  widerface_ap_easy: "AP (easy)",
+  widerface_ap_medium: "AP (medium)",
+  widerface_ap_hard: "AP (hard)",
 };
 
 // Accuracy metrics with non-default units, directions or display settings; matches metrics.json.
