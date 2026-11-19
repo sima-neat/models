@@ -240,6 +240,11 @@ architectures:
     description: Matches image keypoints using their locations and descriptors.
     paradigm: transformer
     allowed_model_types: [vision]
+  wav2vec2:
+    display_name: Wav2Vec2
+    description: Encodes speech waveforms and predicts tokens with CTC.
+    paradigm: transformer
+    allowed_model_types: [audio]
   supertonic:
     display_name: Supertonic
     description: Synthesizes speech from text with selectable voices.
