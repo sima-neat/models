@@ -488,6 +488,14 @@ def test_every_single_component_script_benchmarks_a_dataset_image(script, monkey
         assert not hasattr(options.preprocess, "preset")
         assert (options.superpoint.profile, options.top_k) == ("MagicLeapDemoV1", 1000)
         assert "v_scene/1.ppm" in report["workload"]
+    elif first_accuracy_dataset(script) == "coco-2017":
+        # A COCO model without a Neat decoder, such as a landmark model, stretches the frame to its input and
+        # scales pixels to [0, 1] without a preset; pose accuracy scores only images with a labelled person.
+        assert_letterboxed_frame(frame)
+        assert options.preprocess.resize.mode == "Stretch"
+        assert not hasattr(options.preprocess, "preset")
+        assert not getattr(options.preprocess.normalize, "has_explicit_stats", False)
+        assert "000000000002.jpg" in report["workload"]
     elif first_accuracy_dataset(script) == "ade20k":
         # A semantic segmenter benchmarks an ADE20K validation image, stretched to its input with the ImageNet preset.
         assert_letterboxed_frame(frame)

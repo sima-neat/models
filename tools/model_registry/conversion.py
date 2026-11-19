@@ -233,6 +233,7 @@ def _safe_path(name: str) -> str:
 
 def _external_data_files(path: Path) -> set[str]:
     import onnx
+    from google.protobuf.message import Message
 
     names = set()
 
@@ -246,7 +247,9 @@ def _external_data_files(path: Path) -> set[str]:
                     names.add(name)
         for descriptor, value in message.ListFields():
             if descriptor.type == descriptor.TYPE_MESSAGE:
-                for child in value if descriptor.is_repeated else [value]:
+                # A singular field holds one message, a repeated one a container of them. FieldDescriptor.is_repeated
+                # does not exist in protobuf 4, the newest a TensorFlow 2.17 conversion environment can install.
+                for child in [value] if isinstance(value, Message) else value:
                     visit(child)
 
     visit(onnx.load(str(path), load_external_data=False))
