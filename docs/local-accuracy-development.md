@@ -107,12 +107,33 @@ How the script evaluates each dataset is up to the model. Every score is
 named as an accuracy metric in
 [`tools/model_report/metrics.json`](../tools/model_report/metrics.json) and
 given in that metric's unit: a ratio from 0 to 1 for most metrics, a
-nonnegative ratio without an upper bound for `abs_rel`, a percentage from 0 to 100
+nonnegative ratio without an upper bound for `abs_rel`, `wer` and `cer`, a percentage from 0 to 100
 for `d1_all`, and pixels for `epe`. Each dataset's
 result must hold every metric its requirements file lists for
 the model's tasks. Other known accuracy metrics are allowed. Existing scripts also accept
 `--limit <images>` to evaluate a subset for a quick local check; CI never
 passes it.
+
+A speech recognition model scores its transcripts with
+[`tools/model_report/speech.py`](../tools/model_report/speech.py), so every
+model is measured the same way:
+
+```python
+from model_report.speech import word_error_rate
+
+wer = word_error_rate(references, transcripts)  # FLEURS raw transcriptions, in the same order
+```
+
+Both texts are normalized first: Unicode NFKC, lowercase, punctuation and
+symbols replaced by spaces, and whitespace collapsed. Numbers are compared as
+written, so "15" and "fifteen" count as an error. The rate is a corpus total,
+the edits of every recording over the reference words of every recording, and
+can exceed 1 when a model inserts many words. `char_error_rate` scores
+characters with whitespace removed, for languages written without spaces.
+Strip the model's own special tokens, such as a language tag, before
+scoring. A model whose accuracy datasets require `wer` or `cer` hashes
+`speech.py` into its accuracy fingerprint, so a scoring change reruns only
+those models.
 
 ### Run it on a DevKit
 

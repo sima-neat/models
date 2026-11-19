@@ -173,6 +173,13 @@ def test_accuracy_report_keeps_disparity_errors_in_their_units(tmp_path):
 SAMPLES = {"split": "val", "evaluated_samples": 1, "available_samples": 1}
 
 
+def test_speech_error_rates_are_unbounded_because_insertions_can_exceed_the_reference(tmp_path):
+    result = {**SAMPLES, "metrics": {"wer": 1.2, "cer": 0.0731}}
+    model_report.from_accuracy({"fleurs-en-us-test": result}).save(tmp_path)
+    assert saved_report(tmp_path)["datasets"]["fleurs-en-us-test"]["metrics"] == result["metrics"]
+    assert {model_report.METRICS[name]["direction"] for name in ("wer", "cer")} == {"lower"}
+
+
 def test_depth_error_is_unbounded_but_threshold_accuracy_is_a_fraction(tmp_path):
     result = {**SAMPLES, "metrics": {"abs_rel": 1.25, "delta1": 0.89}}
     model_report.from_accuracy({"nyu-depth-v2-default": result}).save(tmp_path)
@@ -193,6 +200,8 @@ def test_depth_error_is_unbounded_but_threshold_accuracy_is_a_fraction(tmp_path)
         ({"validation": {**SAMPLES, "metrics": {"abs_rel": float("inf")}}}, "abs_rel must be at least 0 ratio"),
         ({"validation": {**SAMPLES, "metrics": {"abs_rel": float("nan")}}}, "abs_rel must be at least 0 ratio"),
         ({"validation": {**SAMPLES, "metrics": {"delta1": 1.01}}}, "delta1 must be a ratio from 0 to 1"),
+        ({"validation": {**SAMPLES, "metrics": {"wer": -0.01}}}, "wer must be at least 0 ratio"),
+        ({"validation": {**SAMPLES, "metrics": {"cer": float("nan")}}}, "cer must be at least 0 ratio"),
         ({"validation": {**SAMPLES, "evaluated_samples": 2, "metrics": {"coco_map": 0.5}}}, "evaluated_samples"),
         ({"validation": {"metrics": {"coco_map": 0.5}}}, "validation must give metrics, split"),
         ({"validation": {**SAMPLES, "metrics": {"coco_map": 0.5}, "notes": "x"}}, "validation must give"),
@@ -216,7 +225,8 @@ def test_every_metric_names_its_stage_unit_direction_and_measurement():
 
 def test_the_package_needs_only_the_standard_library():
     probe = (
-        "import sys, model_report, model_report.generation_benchmark, model_report.board_telemetry; "
+        "import sys, model_report, model_report.generation_benchmark, model_report.board_telemetry, "
+        "model_report.speech; "
         "third_party = {name.partition('.')[0] for name in sys.modules} - set(sys.stdlib_module_names); "
         "print(sorted(third_party - {'model_report', '__main__'}))"
     )
