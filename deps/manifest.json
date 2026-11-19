@@ -1,5 +1,5 @@
 {
-  "platform-version": "3.0.0",
+  "platform-version": "3.0.1",
   "devkit": {
     "board": "modalix",
     "os_type": "elxr"
@@ -8,7 +8,7 @@
     "version": "3.0.0.2"
   },
   "neat-core": {
-    "install_target": "core@develop"
+    "install_target": "core@v0.6.2"
   },
   "llima": {
     "install_target": "llima@develop:abcfe372a575"
