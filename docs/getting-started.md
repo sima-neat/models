@@ -197,7 +197,7 @@ PYTHONPATH=tools python models/yolo26n/scripts/compile.py \
 
 `compile.py` works in three parts:
 
-1. It rewrites the graph with `surgery.py`, which cuts YOLO26n at its raw detection heads, before the box decode. A model without `surgery.py` compiles the ONNX as it is.
+1. It rewrites the graph with `surgery.py`, which cuts YOLO26n at its raw detection heads, before the box decode, and rewrites its attention blocks into an equivalent form the MLA runs without changing layouts. A model without `surgery.py` compiles the ONNX as it is.
 2. It quantizes the graph. The `w8a8` build profile uses 50 calibration images to choose its INT8 ranges.
 3. It writes one MPK per model component. An MPK is the archive a DevKit runs.
 
