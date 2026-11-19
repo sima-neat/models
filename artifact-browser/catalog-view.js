@@ -1,7 +1,7 @@
 // Model catalog and build history: filters, search, and the result list.
 import { branchModels, variantBuilds } from "./branch-builds.js";
 import {
-  DEFAULT_BRANCH, branchSelectionEnabled, CATEGORY_QUERY_FIELDS, state, elements, categoryFilters, filters, catalogMode, taxonomyLabel,
+  config, DEFAULT_BRANCH, branchSelectionEnabled, CATEGORY_QUERY_FIELDS, state, elements, categoryFilters, filters, catalogMode, taxonomyLabel,
 } from "./state.js";
 import { icons, escapeHtml, branchName, shortSha, profileLabel, variantLabel } from "./ui.js";
 import { formatDate, metricDefinition, metricDisplay } from "./metrics.js";
@@ -58,9 +58,13 @@ export function setCategoryFiltersDisabled(disabled) {
 
 export async function fetchCatalogDocument(branch) {
   const repo = state.repository;
-  const payload = await api(
-    `/v1/repositories/${encodeURIComponent(repo.organization)}/${encodeURIComponent(repo.name)}/catalogs/current?git_ref=${encodeURIComponent(`refs/heads/${branch}`)}`,
-  );
+  const catalogs = `/v1/repositories/${encodeURIComponent(repo.organization)}/${encodeURIComponent(repo.name)}/catalogs`;
+  const gitRef = encodeURIComponent(`refs/heads/${branch}`);
+  // A pinned production customer page keeps the snapshot it was deployed with.
+  const snapshot = config.catalogSnapshot;
+  const payload = await api(snapshot
+    ? `${catalogs}/${snapshot.revision}?git_ref=${gitRef}&snapshot=${snapshot.canonicalSha256}`
+    : `${catalogs}/current?git_ref=${gitRef}`);
   const document = payload.catalog?.document;
   if (!Array.isArray(document?.models)) throw new Error("The registry did not return a model catalog.");
   return document;

@@ -17,6 +17,11 @@ on:
         options: [developer, customer]
         default: developer
         required: true
+      catalog_snapshot:
+        description: "Production customer only: <catalog_revision>:<canonical_sha256> to show. Empty pins Main's current catalog"
+        type: string
+        default: ""
+        required: false
 
 permissions:
   contents: read
@@ -63,6 +68,7 @@ jobs:
     with:
       environment: ${{ inputs.environment }}
       ui_mode: ${{ inputs.audience }}
+      catalog_snapshot: ${{ inputs.catalog_snapshot }}
 
   publish:
     if: github.run_attempt == 1 && github.actor == github.triggering_actor

@@ -24,6 +24,8 @@ export MODEL_BROWSER_ENVIRONMENT=production MODEL_BROWSER_UI_MODE="$mode"
 export DOCS_SITE_URL=https://developer.sima.ai DOCS_BASE_URL=/models/
 unset MODEL_REGISTRY_API_URL MODEL_HERO_CDN_BASE_URL GITHUB_SHA
 npm ci --prefix website
+pin="$(node website/scripts/pin-catalog-snapshot.mjs)"
+[[ -z "$pin" ]] || export "$pin"
 npm run typecheck --prefix website
 node --test tests/browser/*.test.mjs
 npm run build:portal --prefix website

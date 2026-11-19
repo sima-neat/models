@@ -312,7 +312,10 @@ push to `main` or `develop` cancels that ref's running push run, including
 `publish-model-browser` during its upload.
 
 No push publishes to production. Production is reached through the manual workflow, or
-through `scripts/deploy-production-model-browser.sh` from an operator's machine.
+through `scripts/deploy-production-model-browser.sh` from an operator's machine. Both pin
+the production customer page to one Main catalog snapshot with
+`website/scripts/pin-catalog-snapshot.mjs`, run before the portal build
+([Pin the production catalog](../artifact-browser/README.md#pin-the-production-catalog)).
 
 The manual workflow runs from `main` or `develop`. `authorize` waits on the
 `model-browser-deploy` environment and runs

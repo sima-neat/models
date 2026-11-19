@@ -188,6 +188,8 @@ requirements and to get its own approval.
    in staging before any job assumes a role.
 6. Have a maintainer approve the `production-promote-main` gate.
 7. Check the selected download in the main catalog.
+8. Deploy the production customer browser, so developer.sima.ai shows the promotion
+   ([Pin the production catalog](../artifact-browser/README.md#pin-the-production-catalog)).
 
 The metadata run publishes main's definitions and documentation with `publish-catalog
 --branch main --base-branches main`. It compiles, benchmarks, and approves nothing, and
@@ -220,6 +222,8 @@ Dispatch **Promote model** from `develop` with the operation, the existing
 - `withdraw` posts to the promotion's `withdraw` endpoint and requires a
   `result_snapshot` in the reply (`withdraw` in `promotions.py`). Vulcan keeps the request
   in state `promoted` and decides what the catalog then shows for the profile.
+- After a `withdraw` on `main`, deploy the production customer browser. Until then the
+  page shows the withdrawn build, and its download can fail.
 - Rejecting or cancelling the GitHub job does not reject or cancel the request in Vulcan.
   Run `status`, then `cancel` when the request should end. Otherwise the pending hold
   stays until it expires.
