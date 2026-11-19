@@ -102,6 +102,4 @@ console.log(`Assembled Model Browser portal at ${output}`);
 console.log(`Catalog: ${routeBase}/`);
 console.log(`Developer docs: ${routeBase}/docs`);
 console.log(`Asset revision: ${revision}`);
-const snapshot = config.catalogSnapshot;
-const catalog = snapshot ? `${config.defaultBranch} snapshot ${snapshot.revision}:${snapshot.canonicalSha256}` : `${config.defaultBranch}, current`;
-console.log(`Audience: ${config.uiMode}; registry: ${config.environment}; catalog: ${catalog}`);
+console.log(`Audience: ${config.uiMode}; registry: ${config.environment}; catalog: ${config.defaultBranch}`);

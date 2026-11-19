@@ -28,6 +28,7 @@ jobs:
     env:
       MODEL_BROWSER_ENVIRONMENT: ${{ inputs.environment || 'staging' }}
       MODEL_BROWSER_UI_MODE: ${{ inputs.ui_mode }}
+      MODEL_BROWSER_CATALOG_SNAPSHOT: ${{ inputs.catalog_snapshot }}
     runs-on: ubuntu-latest
     steps:
       - name: Check out the repository
@@ -57,11 +58,6 @@ jobs:
 
       - name: Install registry tooling for portal assembly and the preview API
         run: python -m pip install .
-
-      - name: Pin the catalog snapshot of a production customer build
-        env:
-          MODEL_BROWSER_CATALOG_SNAPSHOT: ${{ inputs.catalog_snapshot }}
-        run: node website/scripts/pin-catalog-snapshot.mjs >> "$GITHUB_ENV"
 
       - name: Build unified Model Browser portal
         working-directory: website

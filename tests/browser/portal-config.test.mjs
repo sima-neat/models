@@ -33,8 +33,9 @@ test('Local previews can build either UI against a local API', () => {
 
 
 test('Production selects its public reader and site independently of audience', () => {
+  const pin = {customer: `${'a'.repeat(40)}:${'b'.repeat(64)}`, developer: ''};
   for (const uiMode of ['customer', 'developer']) {
-    const config = portalConfig({MODEL_BROWSER_ENVIRONMENT: 'production', MODEL_BROWSER_UI_MODE: uiMode});
+    const config = portalConfig({MODEL_BROWSER_ENVIRONMENT: 'production', MODEL_BROWSER_UI_MODE: uiMode, MODEL_BROWSER_CATALOG_SNAPSHOT: pin[uiMode]});
     assert.equal(config.apiBase, 'https://models-registry.neat.sima.ai');
     assert.equal(config.siteUrl, 'https://developer.sima.ai');
     assert.equal(config.environment, 'Production');
@@ -65,12 +66,13 @@ test('A customer build carries the catalog snapshot it pins, and every other bui
   assert.equal(portalConfig({}).catalogSnapshot, null);
 });
 
-test('A catalog snapshot names a full revision and hash, and pins only the customer view', () => {
+test('A catalog snapshot names a full revision and hash, pins only the customer view, and is required on production', () => {
   const snapshot = `${'a'.repeat(40)}:${'b'.repeat(64)}`;
   for (const malformed of ['a'.repeat(40), `${'a'.repeat(12)}:${'b'.repeat(64)}`, `${'A'.repeat(40)}:${'b'.repeat(64)}`, `${snapshot}\nX=1`]) {
     assert.throws(() => portalConfig({MODEL_BROWSER_UI_MODE: 'customer', MODEL_BROWSER_CATALOG_SNAPSHOT: malformed}), /catalog snapshot must be/);
   }
   assert.throws(() => portalConfig({MODEL_BROWSER_CATALOG_SNAPSHOT: snapshot}), /only the customer view/);
+  assert.throws(() => portalConfig({MODEL_BROWSER_ENVIRONMENT: 'production', MODEL_BROWSER_UI_MODE: 'customer'}), /needs MODEL_BROWSER_CATALOG_SNAPSHOT/);
 });
 
 test('Each environment reports to its own Developer Center GA4 stream on its own host', () => {

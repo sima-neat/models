@@ -418,7 +418,7 @@ and publishes it as run metadata.
 | `MODEL_HERO_CDN_BASE_URL` | An HTTPS URL, or empty | See [Hero image CDN](#hero-image-cdn) | Where hero images load from |
 | `MODEL_BROWSER_GA_MEASUREMENT_ID` | A GA4 measurement ID, or empty | The selected environment's Developer Center stream: `G-T1D371DW1K` for staging, `G-Y6YREB4EG5` for production | Where page views report. Empty disables analytics and the consent banner |
 | `MODEL_BROWSER_ANALYTICS_HOST` | A hostname | The selected environment's site host | The only host where analytics runs. Set `127.0.0.1` to test the banner on a local preview |
-| `MODEL_BROWSER_CATALOG_SNAPSHOT` | `<catalog_revision>:<canonical_sha256>`, customer view only | None: the page reads Main's current catalog | The catalog snapshot the customer page shows. A production deploy sets it, see [Pin the production catalog](#pin-the-production-catalog) |
+| `MODEL_BROWSER_CATALOG_SNAPSHOT` | `<catalog_revision>:<canonical_sha256>`, customer view only | None: the page reads Main's current catalog. Required for a production customer build | The catalog snapshot the customer page shows, see [Pin the production catalog](#pin-the-production-catalog) |
 
 The view and the environment are independent. Customer view hides contributor
 navigation, branch/compiler filters, build history and the Details section while
@@ -561,9 +561,8 @@ using that environment's Terraform-managed bucket, KMS key, identity and CDN.
 It neither builds models nor publishes the registry tooling package. Production
 Basic Auth is managed by infrastructure, and this workflow leaves it enabled.
 
-For the production customer audience, `catalog_snapshot` chooses the catalog the
-page shows. Leave it empty to pin Main's current catalog, see
-[Pin the production catalog](#pin-the-production-catalog).
+For the production customer audience, `catalog_snapshot` names the Main catalog
+snapshot the page shows, see [Pin the production catalog](#pin-the-production-catalog).
 
 The dispatching user must belong to `owners-models` and approve their own
 `model-browser-deploy` environment gate. GitHub's Run button is visible to other
@@ -604,8 +603,8 @@ portal, publishes only the production docs bucket's `models/` prefix, and
 invalidates only `/models` paths. It retains old assets and uploads the entry
 point last.
 
-For the customer view the script pins Main's current catalog, or the snapshot that
-`MODEL_BROWSER_CATALOG_SNAPSHOT` names.
+For the customer view, set `MODEL_BROWSER_CATALOG_SNAPSHOT`, see
+[Pin the production catalog](#pin-the-production-catalog).
 
 Before deployment, record the prior root index object version and
 source revision. Roll back by restoring that index version and invalidating
@@ -617,25 +616,24 @@ Model registry contents and publisher environment selections are unchanged.
 ### Pin the production catalog
 
 A production customer page shows one Main catalog snapshot, chosen when the site is
-deployed, until the next production deploy. Pushes, rebuilds, benchmarks,
-promotions and withdrawals on Main change Main's current catalog, not the page. Staging,
-developer and local builds keep reading Main's current catalog.
+deployed, until the next production deploy. Pushes, benchmarks, promotions and
+withdrawals on Main change Main's current catalog, not the page. Every other build
+reads Main's current catalog.
 
-`website/scripts/pin-catalog-snapshot.mjs` chooses the snapshot before the portal
-build, in both deploy paths. It takes the snapshot that
-`MODEL_BROWSER_CATALOG_SNAPSHOT` (the workflow's `catalog_snapshot`) names, or else
-Main's current one. It then requests that exact snapshot from the registry and fails
-the deploy when the registry does not serve it. `assemble-portal.mjs` logs the pinned
-snapshot as `<catalog_revision>:<canonical_sha256>`.
+A production customer build fails without `MODEL_BROWSER_CATALOG_SNAPSHOT` (the
+workflow's `catalog_snapshot`). Print Main's current snapshot with:
 
-1. Deploy with an empty `catalog_snapshot` once Main's catalog is complete: its builds
-   published and its benchmarks measured.
-2. While Main rebuilds or rebenchmarks, deploy with `catalog_snapshot` set to the
-   snapshot in the previous deploy's log. A hotfix or rollback then keeps the
-   measured catalog.
+```bash
+curl -s 'https://models-registry.neat.sima.ai/v1/repositories/sima-neat/models/catalogs/current?git_ref=refs/heads/main' | jq -r '.catalog | "\(.catalog_revision):\(.canonical_sha256)"'
+```
+
+1. Deploy Main's current snapshot once its builds are published and measured.
+2. While Main rebuilds or rebenchmarks, a hotfix deploy reuses the previous deploy's
+   snapshot.
 3. Redeploy after a Main promotion or withdrawal, so the page shows it.
+4. Open the page after the deploy. A snapshot the registry does not serve leaves the
+   catalog empty until a redeploy with a correct one.
 
-`sima-cli models` still reads Main's current catalog, so it can offer a build the page
-does not show yet. The page's model data files (pipelines, reference scores,
-low-accuracy variants, dataset names, example apps, licenses) come from the deployed
-commit, not from the pinned snapshot.
+`sima-cli models` still reads Main's current catalog. The page's model data files
+(pipelines, reference scores, dataset names, example apps, licenses) come from the
+deployed commit.
