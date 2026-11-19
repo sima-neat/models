@@ -1,0 +1,83 @@
+# A build profile of this model compiles for over 20 minutes, so it builds only on request.
+build-on-demand: true
+display_name: Swin-T
+description: Classifies an image into one of the 1,000 ImageNet classes with a shifted-window vision transformer.
+model_type: vision
+tasks: [image_classification]
+
+modalities:
+  inputs: [image]
+  outputs: [class_scores]
+
+architecture: swin
+
+license:
+  spdx: Apache-2.0
+  redistribution: allowed
+  attribution: Derived from microsoft/swin-tiny-patch4-window7-224 and distributed under Apache-2.0.
+
+upstream:
+  repository: https://huggingface.co/onnx-community/swin-tiny-patch4-window7-224-ONNX
+  revision: 5e1ad787e956d6d5d106d800f308b1a7416cc052
+  derived_from: https://huggingface.co/microsoft/swin-tiny-patch4-window7-224/tree/d00d478bfaf1f417d34a1186673ad4b4be264c51
+
+# The ONNX export has dynamic shapes; compile.py folds it to 1x3x224x224 and rewrites
+# its window attention (surgery.py) before importing it.
+compilation:
+  format: onnx
+  source:
+    uri: hf://models/onnx-community/swin-tiny-patch4-window7-224-ONNX@5e1ad787e956d6d5d106d800f308b1a7416cc052/onnx/model.onnx
+    sha256: 270e905de29f4933de2aa8aa6a861cd0873c0ca15bb92dff612076d9c850ce35
+    size_bytes: 115196624
+
+calibrations:
+- id: imagenet-2012-cal
+  dataset: {id: imagenet-2012, variant: cal, sha256: e6c18b281f5ac5fc7cf6d36ef9a5f486ce95eb43ead99ee8523bd8162bc49a6f, size_bytes: 112710756}
+
+build_profiles:
+  w16a16:
+    components:
+      model:
+        parameters:
+          precision: w16a16
+          input_name: pixel_values
+          input_shape: [1, 3, 224, 224]
+
+  w8a8:
+    calibration_dataset: imagenet-2012-cal
+    components:
+      model:
+        parameters:
+          precision: w8a8
+          input_name: pixel_values
+          input_shape: [1, 3, 224, 224]
+          calibration_samples: 500
+
+  # W8A8 falls about 5 top-1 points below FP32; BF16 activations recover the accuracy while the
+  # INT8 weights keep it faster than W16A16.
+  w8a16:
+    components:
+      model:
+        parameters:
+          precision: w8a16
+          input_name: pixel_values
+          input_shape: [1, 3, 224, 224]
+
+numerical_fidelity:
+  status: diagnostic
+  dataset: {id: imagenet-2012, variant: cal, sha256: e6c18b281f5ac5fc7cf6d36ef9a5f486ce95eb43ead99ee8523bd8162bc49a6f, size_bytes: 112710756}
+  selection: {method: seeded_random_without_replacement, seed: 42, offset: 0, samples: 50}
+  outputs: [logits]
+
+accuracy:
+  datasets:
+  - {id: imagenet-2012, variant: val, sha256: 018bf95eb75b8b7f1d7766303cdecf3c45ecb02ccf4cf161122ae885c4d7a36f, size_bytes: 6666407650}
+
+performance: {}
+
+reference_metrics:
+- source: https://github.com/microsoft/Swin-Transformer/blob/f82860bfb5225915aca09c3227159ee9e1df874d/README.md
+  dataset: {id: imagenet-2012, split: val}
+  conditions: 224x224, bicubic resize to 256 then center crop, FP32
+  note: Swin-T trained on ImageNet-1K, scored on all 50,000 validation images.
+  metrics: {top1_accuracy: 0.812, top5_accuracy: 0.955}

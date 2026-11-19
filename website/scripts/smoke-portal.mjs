@@ -513,7 +513,7 @@ async function checkTaskComparison(browser, base) {
         await page.locator('[data-compare-control="task"]').selectOption('image_classification');
         await add.waitFor();
         // Each classifier's variants by exact model name (Wide ResNet-50-2 contains "ResNet-50"), and nothing from another task.
-        const classifiers = {'ResNet-50': 3, 'ResNet-18': 2, 'ResNet-34': 2, 'ResNeXt-50 32x4d': 2, 'ResNeXt-101 32x8d': 2, 'ResNeXt-101 64x4d': 2, 'Wide ResNet-50-2': 2, 'DLA-34': 2, 'Inception v3': 2, 'VGG-11': 2, 'VGG-11-BN': 2, 'VGG-13': 2, 'VGG-13-BN': 2, 'VGG-16': 2, 'VGG-16-BN': 2, 'VGG-19': 2, 'VGG-19-BN': 2, 'HRNet-W32': 2, 'ViT-B/16': 2, 'DenseNet-121': 2, 'DenseNet-161': 2, 'DenseNet-169': 2};
+        const classifiers = {'ResNet-50': 3, 'ResNet-18': 2, 'ResNet-34': 2, 'ResNeXt-50 32x4d': 2, 'ResNeXt-101 32x8d': 2, 'ResNeXt-101 64x4d': 2, 'Wide ResNet-50-2': 2, 'DLA-34': 2, 'Inception v3': 2, 'VGG-11': 2, 'VGG-11-BN': 2, 'VGG-13': 2, 'VGG-13-BN': 2, 'VGG-16': 2, 'VGG-16-BN': 2, 'VGG-19': 2, 'VGG-19-BN': 2, 'HRNet-W32': 2, 'ViT-B/16': 2, 'DenseNet-121': 2, 'DenseNet-161': 2, 'DenseNet-169': 2, 'Swin-T': 3};
         const variants = Object.values(classifiers).reduce((total, count) => total + count, 0);
         const choices = (await add.locator('option').allTextContents()).slice(1);
         if (choices.length !== variants || !Object.entries(classifiers).every(([name, count]) => choices.filter(text => text.startsWith(`${name} · `)).length === count)) throw new Error('comparison mixed tasks or omitted a variant');
