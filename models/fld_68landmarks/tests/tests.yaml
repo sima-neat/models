@@ -1,0 +1,22 @@
+conversion:
+  run_tests: true
+compile:
+  run_tests: true
+accuracy:
+  run_tests: true
+  expected:
+    w16a16:
+      afw-faces-default:
+        nme: 0.0329
+    w8a16:
+      afw-faces-default:
+        nme: 0.03304
+performance:
+  run_tests: true
+  # Reviewed three-run medians for the complete known-face-box-to-landmarks workload.
+  # Historical heatmap-only 267.81/388.92 FPS measured a different, incomplete boundary.
+  expected:
+    w16a16:
+      throughput_fps: 193.37686029432484
+    w8a16:
+      throughput_fps: 188.49828681446994

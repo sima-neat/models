@@ -95,6 +95,11 @@ architectures:
     description: Encodes images into a global embedding and patch embeddings with a convolutional network.
     paradigm: cnn
     allowed_model_types: [vision]
+  fan:
+    display_name: FAN
+    description: Locates facial landmarks on face crops with stacked-hourglass face alignment networks.
+    paradigm: cnn
+    allowed_model_types: [vision]
   dla:
     display_name: DLA
     description: Classifies images by combining features across layers and resolutions.

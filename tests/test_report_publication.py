@@ -3,10 +3,12 @@ from __future__ import annotations
 import hashlib
 import json
 import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
 import yaml
+from model_registry import report_publication
 from model_registry.errors import ValidationError
 from model_registry.fingerprints import benchmark_fingerprint
 from model_registry.model import load_and_validate_model
@@ -369,6 +371,79 @@ def test_publish_report_measures_each_dataset_apart(tmp_path: Path) -> None:
             ),
         ]
     )
+
+
+@pytest.mark.parametrize(
+    ("status", "matching_packages"),
+    [
+        ("ii ", {}),
+        ("ii ", {"simaai-core:arm64": "0.6.0"}),
+        ("ii ", {"simaai-core:arm64": "0.6.0", "libneat": "0.7.0", "simaai-neat-runtime": "1.2.3"}),
+        ("hi ", {"simaai-core:arm64": "0.6.0"}),
+        ("ri ", {"simaai-core:arm64": "0.6.0"}),
+        ("pi ", {"simaai-core:arm64": "0.6.0"}),
+    ],
+    ids=["no-match", "one-pattern-only", "both-patterns", "held-installed", "remove-selected", "purge-selected"],
+)
+def test_runner_environment_filters_installed_packages_without_failing_on_unmatched_patterns(
+    monkeypatch, tmp_path, status, matching_packages
+):
+    rows = [f"{status}\t{name}\t{version}" for name, version in matching_packages.items()]
+    rows += [
+        "ii \tunrelated\t1.0",
+        "rc \tsimaai-removed\t2.0",
+        "iU \tsimaai-unpacked\t2.0",
+        "iiR\tsimaai-reinstall-required\t2.0",
+        "i \tsimaai-malformed-status\t2.0",
+        "ii \tsimaai-blank\t   ",
+        "malformed-row",
+    ]
+    calls = []
+
+    def query(command, **kwargs):
+        calls.append((command, kwargs))
+        return subprocess.CompletedProcess(command, 0, stdout="\n".join(rows))
+
+    monkeypatch.setattr(report_publication.subprocess, "run", query)
+    read_text = Path.read_text
+
+    def read(path, *args, **kwargs):
+        return "BOARD=fixture\n" if path == Path("/etc/buildinfo") else read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", read)
+    for name in ("CPU_GOVERNOR", "MLA_FREQUENCY", "CPU_FREQUENCY"):
+        monkeypatch.setattr(report_publication, name, tmp_path / name)
+    environment = report_publication.runner_environment()
+
+    assert list(environment["packages"].items()) == list(matching_packages.items())
+    assert environment["buildinfo"] == "BOARD=fixture\n"
+    assert environment["cpu_governor"] is None
+    assert environment["mla_frequency_hz"] is None
+    assert environment["cpu_frequency_khz"] is None
+    assert calls == [
+        (
+            ["dpkg-query", "-W", "-f=${db:Status-Abbrev}\t${binary:Package}\t${Version}\n"],
+            {"capture_output": True, "text": True, "check": True},
+        )
+    ]
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        subprocess.CalledProcessError(1, "dpkg-query"),
+        subprocess.CalledProcessError(2, "dpkg-query"),
+        FileNotFoundError("dpkg-query"),
+    ],
+)
+def test_runner_environment_preserves_actual_package_query_errors(monkeypatch, error):
+    def query(*args, **kwargs):
+        raise error
+
+    monkeypatch.setattr(report_publication.subprocess, "run", query)
+    with pytest.raises(type(error)) as caught:
+        report_publication.runner_environment()
+    assert caught.value is error
 
 
 def component_performance_report() -> dict:

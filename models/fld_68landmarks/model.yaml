@@ -1,0 +1,100 @@
+display_name: FLD 68 Landmarks
+description: Finds the 68 iBUG facial landmarks on a face crop with ibug's two-hourglass FAN network.
+model_type: vision
+tasks: [face_landmark_detection]
+
+modalities:
+  inputs: [image]
+  outputs: [landmarks]
+
+architecture: fan
+
+# ibug-group/face_alignment's 2dfan2_alt (MIT), which ibug trained on 300W-LP. SiMa's earlier fld_68landmarks was a
+# different network (cunjian/pytorch_face_landmark's MobileNetV2_SE 56x56) with no upstream licence; this model takes
+# its name and task.
+license:
+  spdx: MIT
+  redistribution: allowed
+  attribution: FAN 2dfan2_alt by ibug (Jie Shen et al.), from ibug-group/face_alignment, distributed under MIT.
+
+upstream:
+  repository: https://github.com/ibug-group/face_alignment
+  revision: b52975cfec7a08edbb247ac1db0f860827235070
+  derived_from: https://github.com/hhj1897/fan_training
+
+# The weights, byte-identical to ibug-group/face_alignment's ibug/face_alignment/fan/weights/2dfan2_alt.pth.
+resources:
+  license:
+    # The checkpoint mirror omits LICENSE. ibug's face_alignment repository carries the MIT text.
+    source:
+      uri: https://raw.githubusercontent.com/ibug-group/face_alignment/b52975cfec7a08edbb247ac1db0f860827235070/LICENSE
+      sha256: b165b2ee572fc366994577ee9d121adb752fb3c03f1f1ec84ced94c9dcf94b2c
+      size_bytes: 1065
+    install_path: licenses/LICENSE
+
+conversion:
+  source:
+    uri: hf://models/public-data/ibug-face-alignment@8aef0e928499d334364f4c98e33dc6c4ffc8111a/fan/2dfan2_alt.pth
+    sha256: 7af082061a91545ffd887b0914f143d0a17a650d4ffdf06868c7f3f60b131204
+    size_bytes: 48730771
+
+compilation:
+  format: onnx
+  source: conversion
+
+# AFW face crops: cal_data/ for calibration, test_data/ with 68-point iBUG annotations for accuracy.
+calibrations:
+- id: afw-faces-default
+  dataset: {id: afw-faces, variant: default, sha256: 246c02499f74aecdcfdd5bc8e96dcc40196621cc879a3066d232ad85b74b5e92, size_bytes: 1378649}
+
+build_profiles:
+  w16a16:
+    components:
+      model:
+        parameters:
+          precision: w16a16
+          input_name: image
+          input_shape: [1, 3, 256, 256]
+
+  # INT8 weights, BF16 activations: NME within 0.4% of BF16 on the AFW test faces on a DevKit. Full INT8 (w8a8) is not
+  # shipped: with the default mse calibration on the archive's 8 calibration faces its NME is 6% above BF16, outside
+  # the 5% rule. A percentile (99.99) calibration measured 2.3% above BF16 on a DevKit and is left for a follow-up.
+  w8a16:
+    calibration_dataset: afw-faces-default
+    components:
+      model:
+        parameters:
+          precision: w8a16
+          input_name: image
+          input_shape: [1, 3, 256, 256]
+          # The pinned archive contains exactly eight calibration faces; use all of them.
+          calibration_samples: 8
+
+  # Candidate only: uncomment after fresh compiled-artifact, accuracy and whole-landmark performance qualification.
+  # Earlier percentile calibration improved NME, but no qualified full-pipeline baseline exists for this profile.
+  # w8a8:
+  #   calibration_dataset: afw-faces-default
+  #   components:
+  #     model:
+  #       parameters:
+  #         precision: w8a8
+  #         input_name: image
+  #         input_shape: [1, 3, 256, 256]
+  #         calibration_samples: 8
+  #         calibration_method: percentile
+  #         calibration_percentile: 99.99
+
+accuracy:
+  datasets:
+  - {id: afw-faces, variant: default, sha256: 246c02499f74aecdcfdd5bc8e96dcc40196621cc879a3066d232ad85b74b5e92, size_bytes: 1378649}
+
+performance: {}
+
+reference_metrics:
+- origin: fp32_baseline
+  script: scripts/fp32_baseline_accuracy.py
+  dataset: {id: afw-faces, split: test}
+  conditions: FP32 ONNX on ONNX Runtime 1.21.1 CPU; all 44 annotated faces in AFW test_data/; 256x256 ibug crops; radius-6.4 heatmap centroid; NME over the outer-eye-corner distance (points 36 and 45); 8 of the 44 faces also occur in the quantization calibration split; upstream 300W-LP training includes AFW, so this subset is not established as held-out from checkpoint training.
+  # Upstream training: https://github.com/hhj1897/fan_training/tree/5882f9edf2f1a07c80a6d1f3341a7cf1d348e217
+  note: The pinned AFW face-crop subset, not full 300-W or a paper benchmark. Exact per-image checkpoint training membership is not independently verified.
+  metrics: {nme: 0.03292382306898405}

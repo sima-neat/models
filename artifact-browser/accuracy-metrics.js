@@ -39,6 +39,7 @@ export const ACCURACY_METRIC_LABELS = {
   coco_mask_ar_small: "Mask AR small",
   coco_mask_ar_medium: "Mask AR medium",
   coco_mask_ar_large: "Mask AR large",
+  nme: "NME",
   coco_box_map: "Box mAP 50–95",
   coco_box_ap50: "Box AP50",
   dota_obb_map50: "DOTA mAP50",
@@ -65,6 +66,7 @@ export const ACCURACY_METRIC_LABELS = {
 
 // Accuracy metrics with non-default units, directions or display settings; matches metrics.json.
 export const ACCURACY_METRIC_SCALES = {
+  nme: { unit: "ratio", direction: "lower" },
   epe: { unit: "px", direction: "lower" },
   d1_all: { unit: "%", direction: "lower" },
   abs_rel: { unit: "ratio", direction: "lower", display: {unit: "", scale: 1} },

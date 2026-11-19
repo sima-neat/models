@@ -1,0 +1,48 @@
+{
+  "license": "CC BY 2.0",
+  "license_url": "https://creativecommons.org/licenses/by/2.0/",
+  "images": [
+    {
+      "coco_image_id": 2473,
+      "file_name": "000000002473.jpg",
+      "sha256": "2f1bfa7634a64f7999ba5488ec904ad1f85bbc63d0fe4b9fe35f52abbf8c5f4f",
+      "bytes": 95783,
+      "width": 640,
+      "height": 427,
+      "author": "Moosealope",
+      "author_url": "https://www.flickr.com/photos/8510057@N02/",
+      "title": "Mt. Washington",
+      "flickr_photo_page": "https://www.flickr.com/photos/8510057@N02/4377710907/",
+      "coco_source_url": "http://images.cocodataset.org/val2017/000000002473.jpg",
+      "alterations": "None; exact COCO val2017 JPEG bytes"
+    },
+    {
+      "coco_image_id": 8762,
+      "file_name": "000000008762.jpg",
+      "sha256": "8b8aa2412ac3502dbb4b8a7d7987359d4049cf70e7177748e907e3ddfa3211ce",
+      "bytes": 48914,
+      "width": 640,
+      "height": 427,
+      "author": "vaxomatic",
+      "author_url": "https://www.flickr.com/photos/vax-o-matic/",
+      "title": "Stoplight on AZ-90, Sierra Vista on the horizon",
+      "flickr_photo_page": "https://www.flickr.com/photos/vax-o-matic/4466652187/",
+      "coco_source_url": "http://images.cocodataset.org/val2017/000000008762.jpg",
+      "alterations": "None; exact COCO val2017 JPEG bytes"
+    },
+    {
+      "coco_image_id": 21167,
+      "file_name": "000000021167.jpg",
+      "sha256": "b77df96f91ed9a0842559ea8a238d602d4a09069b9129c43a9d62a27361df156",
+      "bytes": 49463,
+      "width": 426,
+      "height": 640,
+      "author": "ChefMattRock",
+      "author_url": "https://www.flickr.com/photos/chefmattrock/",
+      "title": "DSC_9931",
+      "flickr_photo_page": "https://www.flickr.com/photos/chefmattrock/3397730036/",
+      "coco_source_url": "http://images.cocodataset.org/val2017/000000021167.jpg",
+      "alterations": "None; exact COCO val2017 JPEG bytes"
+    }
+  ]
+}

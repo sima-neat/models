@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 import pytest
-from model_registry.dependencies import resolve_benchmark_runtime, resolve_model_compiler
+from model_registry.dependencies import resolve_benchmark_runtime, resolve_model_compiler, resolve_model_sdk_version
 from model_registry.errors import ValidationError
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -116,3 +116,25 @@ def test_missing_model_compiler_dependency_fails(tmp_path: Path) -> None:
 
     with pytest.raises(ValidationError, match="must define model-compiler"):
         resolve_model_compiler(tmp_path)
+
+
+def test_sdk_version_is_not_the_compiler_service_release() -> None:
+    assert resolve_model_compiler(ROOT)["version"] == "3.0.0.2"
+    assert resolve_model_sdk_version(ROOT) == "3.0.0"
+
+
+@pytest.mark.parametrize("sdk_version", [None, "3.0", "3.0.0.1", "3.0.0-dev", 300])
+def test_sdk_version_requires_an_explicit_semantic_version(tmp_path: Path, sdk_version: object) -> None:
+    manifest = tmp_path / "deps" / "manifest.json"
+    manifest.parent.mkdir()
+    manifest.write_text(json.dumps({"model-compiler": {"version": "3.0.0.1", "sdk_version": sdk_version}}))
+    with pytest.raises(ValidationError, match="model-compiler.sdk_version"):
+        resolve_model_sdk_version(tmp_path)
+
+
+def test_sdk_version_does_not_make_an_invalid_package_identity_valid(tmp_path: Path) -> None:
+    manifest = tmp_path / "deps" / "manifest.json"
+    manifest.parent.mkdir()
+    manifest.write_text(json.dumps({"model-compiler": {"version": "wrong", "sdk_version": "3.0.0"}}))
+    with pytest.raises(ValidationError, match="model-compiler.version"):
+        resolve_model_sdk_version(tmp_path)

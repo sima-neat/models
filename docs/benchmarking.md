@@ -166,6 +166,8 @@ not the MPK alone:
    `normalize.has_explicit_stats = True`. Without a preset or explicit
    statistics, Neat applies no mean or standard deviation.
 
+   The face-landmark custom pipeline instead measures the annotated face crop, CPU preparation, tensor-route MLA inference and final landmark decoding; it does not omit those steps or call the heatmap-only rate full-pipeline throughput.
+
 The report's `workload` names the dataset, the image, the frame, and the
 decoder settings. Preprocessing is part of the measurement and can bound
 throughput. Give a Model one frame size only: Core builds the benchmark runner

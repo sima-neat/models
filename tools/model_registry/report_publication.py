@@ -16,6 +16,7 @@ import platform
 import subprocess
 import uuid
 from collections.abc import Callable
+from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -134,10 +135,11 @@ def _run_id(value: Any, path: Path) -> str:
 
 def runner_environment(*, native: bool = False) -> JsonObject:
     """The DevKit's installation and clocks, without taking performance measurements."""
-    # Core installs the Neat runtime as Scheduler packages named simaai-*.
-    patterns = ["sima-lmm-*"] if native else ["*neat*", "simaai-*"]
+    # Enumerate once: dpkg-query exits nonzero if even one requested glob has no matches. Core installs the Neat
+    # runtime as Scheduler packages named simaai-*; a valid installation need not have packages matching *neat* too.
+    patterns = ("sima-lmm-*",) if native else ("*neat*", "simaai-*")
     packages = subprocess.run(
-        ["dpkg-query", "-W", "-f=${db:Status-Abbrev}\t${binary:Package}\t${Version}\n", *patterns],
+        ["dpkg-query", "-W", "-f=${db:Status-Abbrev}\t${binary:Package}\t${Version}\n"],
         capture_output=True,
         text=True,
         check=True,
@@ -145,7 +147,12 @@ def runner_environment(*, native: bool = False) -> JsonObject:
     installed = {}
     for line in packages.splitlines():
         fields = line.split("\t", 2)
-        if len(fields) == 3 and fields[0] == "ii " and fields[2].strip():
+        if (
+            len(fields) == 3
+            and fields[0][1:] == "i "  # Installed without errors, including packages selected on hold.
+            and fields[2].strip()
+            and any(fnmatchcase(fields[1], pattern) for pattern in patterns)
+        ):
             installed[fields[1]] = fields[2]
     return {
         "buildinfo": Path("/etc/buildinfo").read_text(encoding="utf-8"),

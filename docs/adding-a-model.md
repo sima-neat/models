@@ -32,6 +32,18 @@ download. A downloadable ONNX model also pins its upstream license file as a
 `license` resource, so every package carries it
 ([license files in the package](metadata-schema.md#license-files-in-the-package)).
 
+### Compiler package and MPK SDK versions
+
+`deps/manifest.json` pins the Model Compiler **package** version used by CI and
+compile fingerprints. Its explicit `model-compiler.sdk_version` comes from the
+official bundle's `source.json` and is the value to check in an MPK's
+`model_sdk_version`. Resolve it with `resolve_model_sdk_version`; do not truncate
+the package version. These identities can differ: package
+[3.0.0.1](https://github.com/sima-neat/model-compiler/blob/8821a191220de67ba2d9653ac21c8755f4c24a57/scripts/source.json)
+ships SDK version `3.0.0`. An MPK SDK match alone does **not** prove it was built
+with the pinned package; preserve the separate compiler installation receipt
+and compile fingerprint checks.
+
 ## 2. Create the directory
 
 The directory name supplies the lowercase snake-case model ID; `model.yaml`
@@ -385,6 +397,19 @@ A test without a stage-output fixture runs in `python -m pytest` on every pull
 request. Import a model script with the `load_script` fixture, as in
 `load_script("compile")`; it stubs Model Compiler and DevKit modules the host
 lacks. `build_profile` names the build profile of the given output.
+
+To inspect the actual compiled contract, take the shared `mpk_json` fixture and
+call `mpk_json("model")` (or another component ID). It reads exactly one
+authoritative `mpk.json` or `*_mpk.json` from that component's archive; it never
+uses sidecar JSON. The fixture depends on `compiled`, so these checks run after
+compilation, not during an offline plain pytest run. Keep independent expected
+values in the test rather than generating them from the manifest being checked.
+Do not check copied MPK manifests into a model's test fixtures. For local tests,
+download the model with `sima-cli models download`, stage the verified archive in
+the usual component directory, and record its compile-output inventory with
+`model_registry.artifact.record_compile_outputs`. Then pass that directory to
+`scripts/run_model_tests.sh compile`. This reuses the existing stage-test route;
+it adds no separate downloader or Registry client to model tests.
 
 The tests under `tests/benchmark/` also run on the DevKit, in PyNeat, which has no
 `onnx`, `onnxruntime`, or `torch`. Import such a package inside the test that needs it,
