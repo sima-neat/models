@@ -641,6 +641,31 @@ def test_every_multi_component_script_feeds_its_backbone_a_dataset_frame(script,
     assert (options.preprocess.input_max_width, options.preprocess.input_max_height) == (width, height)
 
 
+@pytest.mark.parametrize(
+    "script", [path for path in performance_scripts(components=True, accuracy=False) if takes_images(path)],
+    ids=lambda path: path.parents[1].name,
+)
+def test_every_multi_component_script_without_a_dataset_feeds_a_fixed_frame(script, monkeypatch):
+    monkeypatch.setitem(sys.modules, "pyneat", types.SimpleNamespace(
+        ModelOptions=ModelOptions, Tensor=Tensor, **SCRIPT_PYNEAT,
+    ))
+    functions = runpy.run_path(str(script))
+
+    first, second = functions["synthetic_frame"](), functions["synthetic_frame"]()
+
+    # Every run measures the same realistic 720p frame, not a blank one, on Neat's image route.
+    assert (first.shape, str(first.dtype)) == ((720, 1280, 3), "uint8")
+    assert (first == second).all() and first.std() > 10
+    options = functions["image_options"]()
+    assert (options.preprocess.kind, options.preprocess.enable, options.preprocess.resize.enable) == (
+        "Image",
+        "On",
+        "On",
+    )
+    height, width = first.shape[:2]
+    assert (options.preprocess.input_max_width, options.preprocess.input_max_height) == (width, height)
+
+
 def test_model_code_uses_cores_mla_stats_names():
     """Core renamed include_layer_stats and total_execution_time_us; PyNeat rejects the old option."""
     old_names = ("include_layer_stats", "total_execution_time_us")
