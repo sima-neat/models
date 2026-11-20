@@ -1,0 +1,80 @@
+display_name: FresUNet
+description: Finds changes between two co-registered 13-band Sentinel-2 images of the same area and returns a per-pixel change map.
+model_type: vision
+tasks: [change_detection]
+
+modalities:
+  inputs: [multispectral_image]
+  outputs: [change_map]
+
+architecture: fresunet
+
+# The FresUNet architecture is by Rodrigo Caye Daudt, Bertrand Le Saux, Alexandre Boulch and Yann Gousseau
+# ("Multitask learning for large-scale semantic change detection", CVIU 2019, arXiv 1810.08452), from
+# rcdaudt/fully_convolutional_change_detection, which has no licence file and publishes no weights. SiMa.ai trained
+# these weights on OSCD, whose change labels are CC BY-NC-SA and whose images are modified Copernicus Sentinel-2
+# data, so the weights carry CC BY-NC-SA 4.0.
+license:
+  spdx: CC-BY-NC-SA-4.0
+  redistribution: restricted
+  attribution: FresUNet by Rodrigo Caye Daudt, Bertrand Le Saux, Alexandre Boulch and Yann Gousseau (rcdaudt/fully_convolutional_change_detection); weights trained by SiMa.ai on the Onera Satellite Change Detection dataset (labels CC BY-NC-SA; contains modified Copernicus Sentinel-2 data), under CC BY-NC-SA 4.0.
+
+upstream:
+  repository: https://github.com/rcdaudt/fully_convolutional_change_detection
+  revision: 4dd83231f25319a7ebb16cbfa9912541ceabac9a
+  model_card: https://github.com/rcdaudt/fully_convolutional_change_detection/blob/4dd83231f25319a7ebb16cbfa9912541ceabac9a/fresunet.py
+
+# SiMa.ai's ONNX export of its OSCD-trained weights (PyTorch 2.3, opset 17): input new_input [1, 26, 544, 544], output
+# [1, 2, 544, 544] log-probabilities of no change and change. Upstream publishes no weights, releases or tags, so there
+# is no upstream checkpoint to convert; the registry compiles this ONNX as it is.
+compilation:
+  format: onnx
+  source:
+    uri: hf://models/REPLACE-ORG/REPLACE-REPO@0000000000000000000000000000000000000000/fresunet_13ch.onnx
+    sha256: 604a2fdda0c49d1f4a0ceb148cc6bac01b3ece52503f291da0bb37dc066d919e
+    size_bytes: 4440814
+
+# OSCD: the 14 cities of train.txt calibrate, the 10 of test.txt score accuracy.
+calibrations:
+- id: oscd-default
+  dataset: {id: oscd, variant: default, sha256: 24cb5751fb047d7c4b5027b626a93327e80daaf97c9a385dbeaae469bbaab80f, size_bytes: 527859286}
+
+build_profiles:
+  # BF16 also takes its activation ranges from calibration, as the INT8 build does.
+  w16a16:
+    calibration_dataset: oscd-default
+    components:
+      model:
+        parameters: {precision: w16a16, calibration_samples: 14, calibration_bins: 1024}
+
+  # Asymmetric per-tensor INT8 activations, per-channel INT8 weights and bias correction. On a DevKit its change F1
+  # was within 0.1% of w16a16's on the OSCD test cities.
+  w8a8:
+    calibration_dataset: oscd-default
+    components:
+      model:
+        parameters: {precision: w8a8, calibration_samples: 14, calibration_bins: 1024}
+
+  # No w8a16: its change F1 is within 5% of w16a16's, but on a DevKit it ran slower than w16a16, 155.8 inferences/s
+  # against 181.1 model-only. compile.py keeps its recipe.
+  # w8a16:
+  #   calibration_dataset: oscd-default
+  #   components:
+  #     model:
+  #       parameters: {precision: w8a16, calibration_samples: 14, calibration_bins: 1024}
+
+accuracy:
+  datasets:
+  - {id: oscd, variant: default, sha256: 24cb5751fb047d7c4b5027b626a93327e80daaf97c9a385dbeaae469bbaab80f, size_bytes: 527859286}
+
+performance: {}
+
+# Upstream publishes no score for these weights. scripts/fp32_baseline_accuracy.py scores the FP32 ONNX on a host
+# with accuracy.py's preprocessing and scoring, which reproduce SiMa's earlier model zoo (its OSCDPerformanceAnalyzer
+# reported the same 54.26% F1).
+reference_metrics:
+- origin: fp32_baseline
+  script: scripts/fp32_baseline_accuracy.py
+  dataset: {id: oscd, split: test}
+  conditions: FP32 ONNX on ONNX Runtime CPU; both dates' 13 bands per image normalized, resized to 544x544; change-class F1 over every pixel of the 10 test cities
+  metrics: {change_f1: 0.5426, change_precision: 0.4933, change_recall: 0.6029}

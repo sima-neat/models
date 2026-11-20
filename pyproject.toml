@@ -30,6 +30,7 @@ dev = [
   "Pillow>=10,<13",
   "pytest>=8,<9",
   "ruff==0.17.4",
+  "scipy>=1.11,<2",
 ]
 
 [project.scripts]

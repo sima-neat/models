@@ -34,6 +34,10 @@ modalities:
     display_name: Keypoints
   keypoint_matches:
     display_name: Keypoint Matches
+  multispectral_image:
+    display_name: Multispectral Image
+  change_map:
+    display_name: Change Map
 
 # An architecture is the network design a family is built on. Keep it coarse.
 architecture_paradigms:
@@ -104,6 +108,11 @@ architectures:
     display_name: EdgeTAM
     description: Segments an object through a video from a click or a box on one frame, with a memory of earlier frames.
     paradigm: transformer
+    allowed_model_types: [vision]
+  fresunet:
+    display_name: FresUNet
+    description: Detects changes between co-registered satellite images with fully convolutional residual U-Nets.
+    paradigm: cnn
     allowed_model_types: [vision]
   gemma4:
     display_name: Gemma4
