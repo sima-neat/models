@@ -114,7 +114,9 @@ A feature branch that later merges `develop` does not repeat that work. It leave
 
 ## What the model browser shows
 
-The customer browser reads the published Main snapshot once. The developer
+The customer browser reads the published Main snapshot once. On production it reads
+the snapshot its deploy pinned, so a later change to Main reaches it at the next deploy
+([Pin the production catalog](../artifact-browser/README.md#pin-the-production-catalog)). The developer
 browser renders the selected branch's snapshot while the branch's compile and
 package lists load. Each browser saves the definitions and taxonomy locally for
 repeat visits.

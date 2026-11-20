@@ -82,7 +82,11 @@ test('a snapshot the registry does not serve fails the deploy', async () => {
   const {fetch} = registry({});
   await assert.rejects(resolveCatalogSnapshot(deployConfig(snapshot), fetch), /HTTP 404/);
   const other = registry({[pinnedUrl]: {...served, canonical_sha256: 'c'.repeat(64)}});
-  await assert.rejects(resolveCatalogSnapshot(deployConfig(snapshot), other.fetch), /served snapshot c+ for b+/);
+  await assert.rejects(resolveCatalogSnapshot(deployConfig(snapshot), other.fetch), /served snapshot a+:c+ for a+:b+/);
+  const otherRevision = registry({[pinnedUrl]: {...served, catalog_revision: 'd'.repeat(40)}});
+  await assert.rejects(resolveCatalogSnapshot(deployConfig(snapshot), otherRevision.fetch), /served snapshot d+:b+ for a+:b+/);
+  const noModels = registry({[pinnedUrl]: {...served, document: {}}});
+  await assert.rejects(resolveCatalogSnapshot(deployConfig(snapshot), noModels.fetch), /no model catalog/);
 });
 
 test('a pinned page requests its snapshot instead of the current catalog', async () => {

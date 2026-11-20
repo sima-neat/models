@@ -11,6 +11,7 @@ async function readCatalogSnapshot(url, fetch) {
   const response = await fetch(url);
   if (!response.ok) throw new Error(`The registry answered HTTP ${response.status} for ${url}`);
   const {catalog} = await response.json();
+  if (!Array.isArray(catalog?.document?.models)) throw new Error(`The registry returned no model catalog for ${url}`);
   return parseCatalogSnapshot(`${catalog?.catalog_revision}:${catalog?.canonical_sha256}`);
 }
 
@@ -23,8 +24,8 @@ export async function resolveCatalogSnapshot(config, fetch = globalThis.fetch) {
   const served = await readCatalogSnapshot(
     `${catalogs}/${snapshot.revision}?git_ref=${gitRef}&snapshot=${snapshot.canonicalSha256}`, fetch,
   );
-  if (served.canonicalSha256 !== snapshot.canonicalSha256) {
-    throw new Error(`The registry served snapshot ${served.canonicalSha256} for ${snapshot.canonicalSha256}`);
+  if (served.revision !== snapshot.revision || served.canonicalSha256 !== snapshot.canonicalSha256) {
+    throw new Error(`The registry served snapshot ${served.revision}:${served.canonicalSha256} for ${snapshot.revision}:${snapshot.canonicalSha256}`);
   }
   return snapshot;
 }

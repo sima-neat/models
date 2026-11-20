@@ -1118,6 +1118,8 @@ def test_browser_loads_taxonomy_from_the_current_catalog_and_exposes_category_fa
         assert f'id="{removed}"' not in html
         assert removed not in script
     assert "${catalogs}/current?git_ref=${gitRef}" in script
+    # A pinned page reports a snapshot the registry no longer serves instead of showing an empty catalog.
+    assert "if (error.status !== 404 || config.catalogSnapshot) throw error;" in script
     assert "applyTaxonomy(document?.taxonomy || null, snapshotBranch)" in script
     assert '"task-filter": "task"' in script
     assert '"architecture-filter": "architecture_id"' in script
