@@ -362,6 +362,10 @@ def first_accuracy_dataset(script: Path) -> str | None:
     return datasets[0]["id"] if datasets else None
 
 
+# Models whose inputs are not images benchmark a fixed tensor input on the tensor route.
+TENSOR_INPUT_MODELS = {"pointnet2_ssg_s3dis"}
+
+
 def performance_scripts(*, components: bool, accuracy: bool | None = None) -> list[Path]:
     """Benchmarked models' scripts: single-component ones run Model.benchmark, multi-component ones time their
     pipeline and take each component's MLA stats from its own Model.benchmark. accuracy selects the models that
@@ -599,6 +603,8 @@ def test_every_multi_component_script_keeps_cores_mla_stats(script, monkeypatch)
 
     pyneat = types.SimpleNamespace(Model=ScriptModel, BenchmarkOptions=BenchmarkOptions)
     monkeypatch.setitem(sys.modules, "pyneat", pyneat)
+    # A script may import a helper beside it, as it does when run from its directory.
+    monkeypatch.syspath_prepend(str(script.parent))
     monkeypatch.setitem(sys.modules, "onnxruntime", types.SimpleNamespace())
 
     layer_stats, stage_stats = runpy.run_path(str(script))["mla_stats"](Path("backbone.tar.gz"))
@@ -608,9 +614,10 @@ def test_every_multi_component_script_keeps_cores_mla_stats(script, monkeypatch)
 
 
 @pytest.mark.parametrize(
-    "script", [path for path in performance_scripts(components=True, accuracy=True)
-               if yaml.safe_load((path.parents[1] / "model.yaml").read_text())["performance"].get("scope")
-               != "components"],
+    "script",
+    [path for path in performance_scripts(components=True, accuracy=True)
+     if path.parents[1].name not in TENSOR_INPUT_MODELS
+     and yaml.safe_load((path.parents[1] / "model.yaml").read_text())["performance"].get("scope") != "components"],
     ids=lambda path: path.parents[1].name,
 )
 def test_every_multi_component_script_feeds_its_backbone_a_dataset_frame(script, monkeypatch, tmp_path):
@@ -639,6 +646,74 @@ def test_every_multi_component_script_feeds_its_backbone_a_dataset_frame(script,
         assert options.preprocess.preset == "ImageNet"
     height, width = frame.array.shape[:2]
     assert (options.preprocess.input_max_width, options.preprocess.input_max_height) == (width, height)
+
+
+@pytest.mark.parametrize("model_name", sorted(TENSOR_INPUT_MODELS))
+def test_every_tensor_input_pipeline_script_feeds_channels_last_tensors(model_name, monkeypatch):
+    import numpy as np
+
+    script = REPOSITORY / "models" / model_name / "scripts/performance.py"
+    built, ran, depths = [], [], []
+
+    class Runner:
+        def run(self, tensors, timeout_ms):
+            ran.append(tensors[0].array.shape)
+            return [types.SimpleNamespace(to_numpy=lambda copy: np.zeros(1, np.float32))]
+
+    class ScriptModel:
+        def build(self, tensors, run_options):
+            built.append(tensors[0].array.shape)
+            depths.append((run_options.queue_depth, run_options.advanced.sync_num_buffers_override))
+            return Runner()
+
+    def run_options():
+        return types.SimpleNamespace(queue_depth=4, advanced=types.SimpleNamespace(sync_num_buffers_override=-1))
+
+    monkeypatch.setitem(sys.modules, "pyneat", types.SimpleNamespace(
+        ModelOptions=ModelOptions, Tensor=Tensor, RunOptions=run_options, **SCRIPT_PYNEAT,
+    ))
+    monkeypatch.syspath_prepend(str(script.parent))
+    functions = runpy.run_path(str(script))
+
+    options = functions["tensor_options"]()
+    assert (options.preprocess.kind, options.preprocess.resize.enable, options.preprocess.normalize.enable) == (
+        "Tensor", "Off", "Off"
+    )
+    run, runners = functions["pipeline"]({"sa1": ScriptModel()})
+    run("sa1", np.zeros((1024, 32, 12), np.float32))
+    run("sa1", np.zeros((1024, 32, 12), np.float32))
+    # segment(..., channels_last=True) builds the [H, W, C] tensor; it reaches the MPK unchanged, built once.
+    assert built == [(1024, 32, 12)] and ran == [(1024, 32, 12)] * 2 and list(runners) == ["sa1"]
+    # One block at a time: one buffer per runner, so a Neat worker's eight runners fit the DevKit's CMA memory.
+    assert depths == [(1, 1)]
+    with pytest.raises(SystemExit):
+        functions["parse_mpks"](["sa1=a.tar.gz"])
+
+
+@pytest.mark.parametrize("model_name", sorted(TENSOR_INPUT_MODELS))
+def test_every_tensor_input_pipeline_script_benchmarks_a_seeded_dataset_block(model_name, monkeypatch, tmp_path):
+    import numpy as np
+
+    monkeypatch.setitem(sys.modules, "pyneat", types.SimpleNamespace(
+        ModelOptions=ModelOptions, Tensor=Tensor, **SCRIPT_PYNEAT,
+    ))
+    script = REPOSITORY / "models" / model_name / "scripts/performance.py"
+    monkeypatch.syspath_prepend(str(script.parent))
+    functions = runpy.run_path(str(script))
+    rng = np.random.default_rng(0)
+    rooms = ["Area_5/office_1", "Area_5/office_2"]
+    for room in rooms:
+        (tmp_path / "val" / room).mkdir(parents=True)
+        np.save(tmp_path / "val" / room / "xyz.npy", (rng.uniform(0, 1, (6000, 3)) * [2, 2, 3]).astype(np.float32))
+        np.save(tmp_path / "val" / room / "rgb.npy", rng.integers(0, 256, (6000, 3)).astype(np.uint8))
+    (tmp_path / "manifest.json").write_text(json.dumps({"id": "s3dis", "variant": "val", "rooms": rooms}))
+
+    source, block = functions["dataset_block"](tmp_path)
+
+    # The room is chosen with random.Random(0); its first tile is the block, 4096 points of 9 features.
+    assert source.startswith("s3dis-val Area_5/office_")
+    assert block.shape == (4096, 9) and block.dtype == np.float32
+    np.testing.assert_array_equal(block, functions["dataset_block"](tmp_path)[1])
 
 
 def test_model_code_uses_cores_mla_stats_names():

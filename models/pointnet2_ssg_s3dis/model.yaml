@@ -1,0 +1,97 @@
+display_name: PointNet++ SSG S3DIS
+description: Labels every point of an indoor 3D scan with one of 13 S3DIS classes.
+model_type: vision
+tasks: [semantic_segmentation]
+
+modalities:
+  inputs: [point_cloud]
+  outputs: [class_scores]
+
+architecture: pointnet
+
+license:
+  spdx: MIT
+  redistribution: allowed
+  attribution: PointNet++ by Charles R. Qi et al. (MIT); PyTorch implementation and S3DIS weights by Xu Yan (yanx27/Pointnet_Pointnet2_pytorch, MIT), converted by torch-pointcloud (MIT).
+
+upstream:
+  repository: https://huggingface.co/torch-pointcloud/pointnet2.s3dis-area5.xu-yan
+  revision: baad7109f27ad7d2f8555c42fde5131e36d3433c
+  derived_from: https://github.com/yanx27/Pointnet_Pointnet2_pytorch
+
+resources:
+  license:
+    # The checkpoint repository omits LICENSE. Xu Yan's PyTorch repository, which trained the weights, carries the MIT text.
+    source:
+      uri: https://raw.githubusercontent.com/yanx27/Pointnet_Pointnet2_pytorch/eb64fe0b4c24055559cea26299cb485dcb43d8dd/LICENSE
+      sha256: e87db35978e80247634bddd15029c7b69ec0ac9f492a6954133dbe08c71e1372
+      size_bytes: 1061
+    install_path: licenses/LICENSE
+
+conversion:
+  source:
+    repository: torch-pointcloud/pointnet2.s3dis-area5.xu-yan
+    revision: baad7109f27ad7d2f8555c42fde5131e36d3433c
+    main_file: model.safetensors
+    files:
+      model.safetensors: {sha256: 895c03da0e94d31dc2a74f76451e8db8a5f6d8d2083d4782dd9aa93fc450be1b, size_bytes: 3922092}
+      config.json: {sha256: 75b196d53b308a5eb357b63cbf1377b01ae8686e2d3e3cf6e39eb58f36f9a192, size_bytes: 1376}
+
+compilation:
+  format: onnx
+  source:
+    uri: https://artifacts.stg.neat.sima.ai/models-onnx/pointnet2_ssg_s3dis/39b4db06ce5f81e397451b3c5559200eded8c92e24f86d1dc833f08cc1141cb5/40496156362-1/model.onnx
+    sha256: 39b4db06ce5f81e397451b3c5559200eded8c92e24f86d1dc833f08cc1141cb5
+    size_bytes: 3852241
+  # The four set-abstraction levels, then the four feature-propagation levels; fp1 also runs the classifier head.
+  components: [sa1, sa2, sa3, sa4, fp4, fp3, fp2, fp1]
+
+build_profiles:
+  w16a16:
+    components:
+      sa1:
+        parameters: {precision: w16a16}
+      sa2:
+        parameters: {precision: w16a16}
+      sa3:
+        parameters: {precision: w16a16}
+      sa4:
+        parameters: {precision: w16a16}
+      fp4:
+        parameters: {precision: w16a16}
+      fp3:
+        parameters: {precision: w16a16}
+      fp2:
+        parameters: {precision: w16a16}
+      fp1:
+        parameters: {precision: w16a16}
+
+pipeline:
+- {cpu: "Sample, ball-query and 3-NN all levels; group 1024 x 32 neighbours"}
+- {component: sa1}
+- {cpu: Group 256 x 32 neighbours}
+- {component: sa2}
+- {cpu: Group 64 x 32 neighbours}
+- {component: sa3}
+- {cpu: Group 16 x 32 neighbours}
+- {component: sa4}
+- {cpu: Interpolate to 64 points}
+- {component: fp4}
+- {cpu: Interpolate to 256 points}
+- {component: fp3}
+- {cpu: Interpolate to 1024 points}
+- {component: fp2}
+- {cpu: Interpolate to 4096 points}
+- {component: fp1}
+
+accuracy:
+  datasets:
+  - {id: s3dis, variant: val, sha256: d88c5f60ad559aa3051ab7e983f5284e48f309ba294166516b0051284b96f575, size_bytes: 561585555}
+
+performance: {}
+
+reference_metrics:
+- source: https://huggingface.co/torch-pointcloud/pointnet2.s3dis-area5.xu-yan/blob/baad7109f27ad7d2f8555c42fde5131e36d3433c/README.md
+  dataset: {id: s3dis, split: area-5}
+  conditions: FP32, 4096-point blocks
+  metrics: {miou: 0.5483, overall_accuracy: 0.8371}

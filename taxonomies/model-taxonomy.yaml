@@ -30,6 +30,8 @@ modalities:
     display_name: Embeddings
   landmarks:
     display_name: Landmarks
+  point_cloud:
+    display_name: Point Cloud
   keypoints:
     display_name: Keypoints
   keypoint_matches:
@@ -41,6 +43,8 @@ architecture_paradigms:
     display_name: CNN
   transformer:
     display_name: Transformer
+  point_based:
+    display_name: Point-based
 
 # A family is the upstream model line, named without size (YOLO26-det, not
 # YOLO26n-det). The model's id and display_name carry the size.
@@ -180,6 +184,11 @@ architectures:
     description: Generates text for conversational and reasoning tasks.
     paradigm: transformer
     allowed_model_types: [llm]
+  pointnet:
+    display_name: PointNet
+    description: Classifies and segments 3D point clouds with hierarchical point-based networks.
+    paradigm: point_based
+    allowed_model_types: [vision]
   qwen3:
     display_name: Qwen3
     description: Generates text for conversational, reasoning and instruction-following tasks.
