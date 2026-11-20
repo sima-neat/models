@@ -628,7 +628,10 @@ def test_every_multi_component_script_feeds_its_backbone_a_dataset_frame(script,
     assert_letterboxed_frame(frame)
     assert frame.options["memory"] == "EV74"
     options = functions["image_options"]()
-    assert (options.preprocess.kind, options.preprocess.resize.mode) == ("Image", "Stretch")
+    assert options.preprocess.kind == "Image"
+    # Faster R-CNN keeps the aspect ratio as torchvision does; the other pipelines stretch.
+    keeps_aspect = script.parents[1].name.startswith("faster_rcnn")
+    assert options.preprocess.resize.mode == ("Letterbox" if keeps_aspect else "Stretch")
     # The first component normalizes with the ImageNet preset, or with the mean and std of its own preprocessing.
     normalize = options.preprocess.normalize
     if getattr(normalize, "has_explicit_stats", False):

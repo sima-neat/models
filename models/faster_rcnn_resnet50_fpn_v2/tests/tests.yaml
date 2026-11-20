@@ -1,0 +1,16 @@
+compile:
+  run_tests: true
+# Initial Modalix DevKit measurements on all 5,000 COCO val2017 images, recorded in the pull request; shared
+# regression limits apply.
+accuracy:
+  run_tests: true
+  expected:
+    w8a8:
+      coco-2017-val: {coco_map: 0.4658, coco_ap50: 0.6709, coco_ap75: 0.5096}
+    w16a16:
+      coco-2017-val: {coco_map: 0.4679, coco_ap50: 0.6750, coco_ap75: 0.5122}
+performance:
+  run_tests: true
+  expected:
+    w8a8: {throughput_fps: 15.91}
+    w16a16: {throughput_fps: 5.23}
