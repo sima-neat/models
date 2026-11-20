@@ -199,6 +199,7 @@ delegation.
 | `config.js` | The registry, environment, and view settings for a source preview. Assembly writes its own for a deployed build |
 | `environment.js` | The `env=prod` production preview and the `branches=0` branch policy |
 | `portal-shell.js` | Load and mount the shared Developer Portal header |
+| `analytics.js` | The cookie consent banner and consent-gated GA4 page views, shared with the developer docs |
 | `state.js` | Shared page state, configuration, and DOM element lookup |
 | `api.js` | Registry requests, caches, catalog build selection, and build profile order |
 | `branch-builds.js` | Which builds a branch shows, and grouping by workflow |
@@ -235,13 +236,15 @@ reserved for links that leave the browser. Cards group related numbers only
 sections and thin rules.
 
 `website/scripts/assemble-portal.mjs` renames every module with the revision
-for the deployed portal and fails when a module imports a file missing from its
-`fingerprintedAssets` list, so add a new module there.
+for the deployed portal, preloads the entry point and its modules, and fails when
+a module imports a file missing from its `fingerprintedAssets` list.
 It also writes `component-pipelines.<revision>.json` from the `pipeline` field
 of each `model.yaml`, which draws the component order on a multi-component
 model page, `reference-metrics.<revision>.json` from each
-`reference_metrics`, and `low-accuracy-variants.<revision>.json`, the variants
-the customer view leaves out; `preview.py` serves the same data from `models/`.
+`reference_metrics`, `low-accuracy-variants.<revision>.json`, the variants
+the customer view leaves out, `dataset-names.<revision>.json` from the `name`
+of each `datasets/<id>.yaml`, and `example-apps.<revision>.json` from each
+`example_app`; `preview.py` serves the same data from the checkout.
 It copies `licenses.json` to `licenses.<revision>.json`. That file names each
 license and decides whether a model page offers downloads, and it sits in this
 directory so that a static file server serves it with the page.
@@ -256,17 +259,26 @@ of `tools/model_report/metrics.json`, and tests keep them in step. Run
 search, and the filters a visitor uses. This section holds what the code does behind
 them.
 
-The initial view loads the repository branch catalog independently from build
-runs and caches both so repeat visits can render immediately while refreshing.
-The selected branch's model cards show what the branch delivers: the builds in
-its catalog, including builds it inherits from its base branch. A completed
-build compiled on the branch that is newer than the catalog's build of the same
-model and build profile replaces it, so a build the catalog has not recorded
-still shows. Each build keeps the provenance of its own compile run, so an
-inherited build names the branch that compiled it. A branch without a catalog
-shows an empty state until its first push completes. Components are grouped
-only within the same workflow build, and a full package appears only when its
-recorded component run IDs match the shown build.
+The customer catalog reads Main's `/catalogs/current` snapshot in one registry
+request. The snapshot supplies model definitions, build and package IDs, and the
+taxonomy. The browser applies the customer visibility rules and renders cards
+from those definitions. Table and Compare retrieve measurements for their
+views, and the model page loads full run data on demand.
+
+The developer view discovers branches first, then requests the selected
+branch's snapshot and its compile and package lists together. Cards render
+as soon as the snapshot arrives. When the lists finish, the browser resolves
+missing build IDs through `/runs?summary_ids=…` in batches of up to 40 and
+refreshes the catalog with compiler, source branch, and timing metadata.
+A reader that lacks batch support leaves those fields unavailable for the
+affected builds. The compiler filter includes only builds with a matching
+known compiler. Opening a model still retrieves its exact run data.
+
+Local storage saves the branch names and each catalog's definitions and
+taxonomy for the next visit. It keeps the live compile and package lists
+in memory. A package appears only when its recorded component IDs match
+the displayed build.
+
 Build history lists one entry per variant build, newest first, naming its
 components; an entry gains components as **Load more builds** brings in the rest of its
 build. If branch discovery is
@@ -403,6 +415,8 @@ and publishes it as run metadata.
 | `MODEL_BROWSER_ENVIRONMENT` | `staging`, `production` | `staging` | The registry API, the site origin, and the environment label |
 | `MODEL_REGISTRY_API_URL` | An HTTPS origin, or `http://localhost` for a preview | The selected environment's public registry | Another registry API |
 | `MODEL_HERO_CDN_BASE_URL` | An HTTPS URL, or empty | See [Hero image CDN](#hero-image-cdn) | Where hero images load from |
+| `MODEL_BROWSER_GA_MEASUREMENT_ID` | A GA4 measurement ID, or empty | The selected environment's Developer Center stream: `G-T1D371DW1K` for staging, `G-Y6YREB4EG5` for production | Where page views report. Empty disables analytics and the consent banner |
+| `MODEL_BROWSER_ANALYTICS_HOST` | A hostname | The selected environment's site host | The only host where analytics runs. Set `127.0.0.1` to test the banner on a local preview |
 
 The view and the environment are independent. Customer view hides contributor
 navigation, branch/compiler filters, build history and the Details section while
@@ -423,6 +437,16 @@ The staging default is the WAF-protected public staging registry at
 `GET` requests from the static app's origin. The separate
 `artifacts-registry.stg.neat.sima.ai` endpoint is reserved for IAM-signed
 publisher traffic and rejects direct public reads.
+
+Analytics follows the rest of the Developer Center. The browser and the developer
+docs share one cookie decision for the developer.sima.ai origin with the core
+documentation, stored in `localStorage` as `sima-developer-center-cookie-consent`.
+A visitor who already chose on another Developer Center page is not asked again.
+Without a stored decision, the page shows the consent banner. GA4 loads only after
+analytics is accepted, and a page view is sent on load, on each `pushState`
+navigation, and on Back and Forward; `replaceState` URL updates are not page views.
+**Cookie preferences** in the footer reopens the settings. Local previews and the
+smoke test run on another host, so they show no banner and send nothing.
 
 The assembled configuration file is named after a hash of its contents. Changing the
 view or the environment at one source revision therefore keeps the earlier settings

@@ -13,6 +13,7 @@ measure on a DevKit.
 model
 ├── display_name ─────────── name on the model card
 ├── description ──────────── one-line description on the model card
+├── example_app ──────────── optional: Apps portal page of an application that runs the model
 ├── parameter_count_billion  optional: parameter count in billions
 ├── model_type ───────────── taxonomy ID
 ├── tasks ────────────────── taxonomy IDs
@@ -62,6 +63,18 @@ See [Model taxonomy](model-taxonomy.md) for sanctioned taxonomy values.
 Optional `parameter_count_billion` gives the unquantized total parameter count,
 including embeddings and all experts, in billions (for example `0.8` or `5.1`).
 Speculative models use the target's count.
+
+Optional `example_app` is the Apps portal page of an example application that runs
+this model:
+
+```yaml
+example_app: https://developer.sima.ai/examples/app/object-detection%2Fyolo26-object-detector
+```
+
+Copy the address from the application's page on the
+[Apps portal](https://developer.sima.ai/examples). The model browser shows an
+application icon beside the download action that opens it. Changing it reruns no
+stage.
 
 `upstream` records where the source model comes from, for people to review:
 

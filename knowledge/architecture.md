@@ -92,7 +92,7 @@ marked CI only from the author package.
 | `promotions.py` (CI only) | Promotion requests, decisions, receipts, and the benchmark reference refresh after a promotion. |
 | `report_publication.py` (CI only) | Checking a `model-report.json` against `model.yaml` (`check_report`) and publishing one benchmark run (`publish_report`). |
 | `neat_core.py` (CI only) | Resolving the selected Core artifact and installing it only when the installed one differs. |
-| `benchmark_declarations.py` | The `performance` and `accuracy` declarations: benchmarked profiles, stage scripts, required metrics, and `reference_metrics` validation. |
+| `benchmark_declarations.py` | The `performance` and `accuracy` declarations: benchmarked profiles, stage scripts, required metrics, `reference_metrics` validation, and the dataset names the model browser shows. |
 | `artifact.py` | `compile-outputs.json` validation, MPK and LLiMa deployment verification, the LLiMa reproduction recipe, and deployment file indexes. |
 | `runtime_files.py` | Path and checksum validation of a compile's `runtime_files`, and their restoration from a package ZIP. |
 | `mla_stage_simulation.py` | The simulator's operation counts and latency for each MLA stage (`simulate-mla-stages`). |
@@ -101,7 +101,7 @@ marked CI only from the author package.
 | `fetch.py` | Verified downloads, the cache, dataset resolution, and unsigned registry reads. |
 | `source.py` | The approved source hosts (`HTTPS_HOST_CHECKS`), source identity, and URL redaction. |
 | `taxonomy.py` | Loading the taxonomy and validating a model's categories. |
-| `documentation.py` | Loading and validating a model's README and hero image. |
+| `documentation.py` | Loading and validating a model's README and hero image, and the example application page the model browser links. |
 | `runner_approval.py` | Authorizing requested compile runner classes and markets, and selecting the runner audit fields a compile run records. |
 | `model_tests.py` | Each model's test files and `tests/tests.yaml`, the comparison of a report with its expected values, the test outcomes, and the variants the model browser hides for low accuracy. |
 | `errors.py` | The error types every module raises. |

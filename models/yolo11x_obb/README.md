@@ -32,6 +32,8 @@ Preprocessing:
 
 Postprocessing:
 
+[BoxDecode](https://developer.sima.ai/software/reference/boxdecode_decode_types) with decode type `YoloV8Obb`, which YOLO11 shares with YOLOv8, runs steps 1 to 10 for one window:
+
 1. Each edge's distance in cells is the softmax of its 16 logits, weighted by bin index 0 to 15 and summed.
 2. The angle is (sigmoid(logit) − 0.25) × π radians.
 3. The cell in column c and row r has its center at (c + 0.5, r + 0.5).

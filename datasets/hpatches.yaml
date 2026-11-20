@@ -1,3 +1,4 @@
 # What every model evaluating its accuracy on HPatches must report, by the model's task.
+name: HPatches
 required_metrics:
   feature_point_detection: [keypoint_repeatability, homography_accuracy]

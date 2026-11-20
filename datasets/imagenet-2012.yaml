@@ -1,4 +1,5 @@
 # What every model evaluating its accuracy on ImageNet 2012 must report, by the model's task.
+name: ImageNet 2012
 required_metrics:
   image_classification: [top1_accuracy]
   image_text_embedding: [top1_accuracy]

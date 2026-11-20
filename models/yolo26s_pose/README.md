@@ -31,6 +31,8 @@ Preprocessing:
 
 Postprocessing:
 
+[BoxDecode](https://developer.sima.ai/software/reference/boxdecode_decode_types) with decode type `YoloV26Pose` runs these steps for you:
+
 1. The cell in column c and row r has its center at (c + 0.5, r + 0.5).
 2. The box corners are the center minus the left and top distances, and the center plus the right and bottom distances, times the stride.
 3. Apply a sigmoid to the person logits to get person scores.

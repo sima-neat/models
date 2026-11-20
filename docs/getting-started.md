@@ -52,11 +52,10 @@ The page uses one model from start to finish, so you can copy every command as w
 The example is YOLO26n, the smallest YOLO26 object detector. Its folder is
 `models/yolo26n`.
 
-A model can be compiled in several variants, called build profiles. YOLO26n has three:
-`w16a16`, `w8a8`, and `w8a16`. Each name gives the bit widths of the weights and of the
-activations. The commands build `w8a8`, the 8-bit variant. To reproduce another model or
-variant, replace `yolo26n` and `w8a8` in the commands. [Concepts](concepts.md) defines
-the terms this page uses.
+A model can be compiled in several variants, called build profiles. The commands build
+`w8a8`, the 8-bit variant of YOLO26n. To reproduce another model or variant, replace
+`yolo26n` and `w8a8` in the commands. Step 2 shows which variants a model supports.
+[Concepts](concepts.md) defines the terms this page uses.
 
 ## Before you start
 
@@ -64,10 +63,10 @@ the terms this page uses.
 | --- | --- |
 | A clone of this repository. Run each command from its root. | `ls models/yolo26n/model.yaml` |
 | Python 3.12 and internet access, for the conversion. | `python3.12 --version` |
-| The Model Compiler, at the version [`deps/manifest.json`](../deps/manifest.json) pins under `model-compiler`. Activate its environment in the shell that runs step 4. | `python -c 'import afe; print("Model Compiler Python APIs available")'` prints that sentence. |
-| A Modalix DevKit that your machine reaches over SSH, with PyNeat, the Python package that runs a compiled model. Step 7 also needs internet access on the DevKit. [DevKit performance](benchmarking.md) describes the setup. | `~/pyneat/bin/python -c 'import pyneat; print(pyneat.__version__)'` prints the PyNeat version. |
+| The Model Compiler, at the version [`deps/manifest.json`](../deps/manifest.json) pins under `model-compiler`. Activate its environment in the shell that runs step 5. In the Neat SDK, run `activate-model-compiler`. | `python -c 'import afe; print("Model Compiler Python APIs available")'` prints that sentence. |
+| A Modalix DevKit that your machine reaches over SSH, with PyNeat, the Python package that runs a compiled model. Step 8 also needs internet access on the DevKit. [DevKit performance](benchmarking.md) describes the setup. | `~/pyneat/bin/python -c 'import pyneat; print(pyneat.__version__)'` prints the PyNeat version. |
 
-Steps 3 to 5 run in one clone, because each step reads what the step before wrote to
+Steps 4 to 6 run in one clone, because each step reads what the step before wrote to
 `build/`.
 
 ## Steps
@@ -79,6 +78,9 @@ Steps 3 to 5 run in one clone, because each step reads what the step before wrot
 | Measure performance | the DevKit | `performance.py` | `model-report.json` |
 | Measure accuracy | the DevKit | `accuracy.py` | `model-report.json` |
 
+A model without one of these scripts has no such step. A model with `compile.sh` in place
+of `compile.py` is a [language model](#language-models).
+
 ### 1. Read `model.yaml`
 
 Open [`models/yolo26n/model.yaml`](../models/yolo26n/model.yaml). It declares everything
@@ -88,8 +90,8 @@ the scripts use:
 | --- | --- | --- |
 | `upstream` | the official model | the Hugging Face repository `Ultralytics/YOLO26`, at a pinned revision |
 | `conversion.source` | the checkpoint `convert.py` downloads | `yolo26n.pt`, with its SHA-256 and size |
-| `compilation.source` | where the ONNX to compile comes from | `conversion`, so step 3 produces it |
-| `build_profiles` | what gets compiled | `w16a16`, `w8a8`, and `w8a16` |
+| `compilation.source` | where the ONNX to compile comes from | `conversion`, so step 4 produces it |
+| `build_profiles` | the variants you can build | `w16a16`, `w8a8`, and `w8a16` |
 | `calibrations` | the dataset that calibrates a build profile | `coco-2017-cal`, used by `w8a8` |
 | `accuracy.datasets` | the datasets accuracy is measured on | `coco-2017-val` |
 | `reference_metrics` | the scores the official model publishes | `coco_map: 0.401` |
@@ -97,7 +99,22 @@ the scripts use:
 A dataset goes by its source ID, `<id>-<variant>`. The pin with `id: coco-2017` and
 `variant: val` is `coco-2017-val`.
 
-### 2. Get the datasets
+### 2. Choose a build profile
+
+The entries under `build_profiles` in `model.yaml` are the variants you can build. Each
+name gives the bit widths of the weights and of the activations. YOLO26n declares
+`w16a16`, `w8a8`, and `w8a16`.
+
+Check three things before you choose one:
+
+- `compile.py` builds only a declared build profile. For any other name it stops with an error that names the build profile.
+- A build profile that is commented out in `model.yaml` is not supported. Leave it commented out.
+- A build profile with a `calibration_dataset` line needs that dataset in step 5. In YOLO26n only `w8a8` has one.
+
+The published results differ between build profiles.
+`models/yolo26n/tests/tests.yaml` lists the expected values of each one.
+
+### 3. Get the datasets
 
 The `w8a8` build needs two datasets. `coco-2017-cal` calibrates the compile, which means
 the compiler runs sample images to choose the INT8 value ranges. `coco-2017-val` supplies
@@ -143,7 +160,7 @@ calibrates `w8a8` from the registered `coco-2017-cal` archive, so other images i
 `cal2017` give a different INT8 model. The `w16a16` and `w8a16` build profiles use no
 calibration dataset.
 
-### 3. Convert the checkpoint to ONNX
+### 4. Convert the checkpoint to ONNX
 
 Run this on the machine with your clone:
 
@@ -165,7 +182,7 @@ Other models differ here:
 - A model that lists `conversion.outputs` in `model.yaml` writes those files instead of `model.onnx`.
 - A model that pins an ONNX file under `compilation.source`, as [`models/resnet_50`](../models/resnet_50/model.yaml) does, has no `convert.py`. Skip this step. `model-registry fetch models/resnet_50` downloads the file, verifies it, and prints its path.
 
-### 4. Compile the model
+### 5. Compile the model
 
 Run this in the same clone, with the Model Compiler environment active:
 
@@ -200,11 +217,11 @@ The command prints `Valid artifact: yolo26n_w8a8_mpk.tar.gz`.
 Other models differ here:
 
 - The `w16a16` and `w8a16` build profiles take no `--dataset`.
-- A model that declares `numerical_fidelity` in `model.yaml`, such as `resnet_50`, also takes `--fidelity-dataset` with that dataset's archive.
+- A model that declares `numerical_fidelity` in `model.yaml`, such as `resnet_50`, also takes `--fidelity-dataset`. Pass the archive or directory of the dataset that `numerical_fidelity.dataset` names. Without it, `compile.py` stops before it compiles.
 - A model with several components, such as `rf_detr_nano`, writes one folder and one MPK per component.
 - `scripts/run_model_compilation.sh` is the runner CI uses. For a model whose `compilation.source` is `conversion`, it fetches the ONNX that CI published, which needs CI's registry credentials. Call `compile.py` with your own ONNX instead.
 
-### 5. Copy the build and the dataset to the DevKit
+### 6. Copy the build and the dataset to the DevKit
 
 Set `devkit` to your DevKit's user and address, then copy the model folder, the report
 tooling, and the MPK:
@@ -220,25 +237,24 @@ Copy the whole model folder, because `accuracy.py` imports `calibration.py` from
 root filesystem.
 
 The validation dataset belongs in `/media/nvme/datasets/coco-2017-val` on the DevKit.
-Copy your own directory there, or copy the Dataset Registry archive from step 2:
+Copy your own directory there, or extract the Dataset Registry archive from step 3
+straight onto the DevKit:
 
 ```bash
-ssh "$devkit" 'mkdir -p /media/nvme/datasets'
-scp "$validation" "$devkit":/media/nvme/datasets/coco-2017-val.tar.gz
+ssh "$devkit" 'mkdir -p /media/nvme/datasets/coco-2017-val && tar -xzf - -C /media/nvme/datasets/coco-2017-val' < "$validation"
 ```
 
-Then extract the archive on the DevKit:
+The command stores no archive on the DevKit, so a connection that drops leaves no
+half-copied file. Run it again in that case. Then check the result:
 
 ```bash
-mkdir -p /media/nvme/datasets/coco-2017-val
-tar -xzf /media/nvme/datasets/coco-2017-val.tar.gz -C /media/nvme/datasets/coco-2017-val
-ls /media/nvme/datasets/coco-2017-val
+ssh "$devkit" 'ls /media/nvme/datasets/coco-2017-val'
 ```
 
 `ls` prints `annotations` and `val2017`. If it prints one folder instead, that folder is
-the dataset directory to pass in steps 6 and 7.
+the dataset directory to pass in steps 7 and 8.
 
-### 6. Measure performance
+### 7. Measure performance
 
 On the DevKit, read the two clocks that throughput depends on:
 
@@ -250,7 +266,7 @@ cat /sys/devices/system/cpu/cpufreq/policy0/scaling_cur_freq
 The commands print `1000000000` and `1400000`. The first is the clock of the MLA, the
 DevKit's machine learning accelerator, at 1 GHz. The second is the CPU clock at 1.4 GHz.
 CI measures at these clocks, so a lower clock gives a lower throughput than the model
-page shows.
+page shows. [If something fails](#if-something-fails) shows how to raise a lower clock.
 
 Then run the script:
 
@@ -271,10 +287,10 @@ Other models differ here:
 
 - A model with several components takes one `--mpk <component>=<archive>` per component.
 - A model without an accuracy dataset takes no `--dataset`.
-- A model with `scripts/requirements-performance.txt` needs those packages first. Install them as step 7 installs the accuracy packages.
+- A model with `scripts/requirements-performance.txt` needs those packages first. Install them as step 8 installs the accuracy packages.
 - [DevKit performance](benchmarking.md) covers these cases and the `--resources` argument.
 
-### 7. Measure accuracy
+### 8. Measure accuracy
 
 Run this on the DevKit:
 
@@ -307,7 +323,7 @@ Other models differ here:
 - A model with several components takes one `--mpk <component>=<archive>` per component.
 - [Accuracy and fidelity](local-accuracy-development.md) describes the arguments of `accuracy.py`.
 
-### 8. Compare with the model page
+### 9. Compare with the model page
 
 Open the model's page in the Model Browser and select the **W8A8** tab. Compare these
 fields of the two reports with the page:
@@ -330,7 +346,7 @@ than 10%.
 ## Language models
 
 A model whose `model.yaml` sets `compilation.format: huggingface` is a language,
-vision-language, or speech model. It has no `convert.py`. Its `scripts/compile.sh`
+vision-language, or speech model. It has no `convert.py` and no `accuracy.py`. Its `scripts/compile.sh`
 compiles the pinned Hugging Face checkpoint, and `scripts/run_llima_compilation.sh` runs
 that script:
 
@@ -346,22 +362,31 @@ writes a `deployment/` folder under `build/gemma_4_e2b_it/w4a16/model/`. [LLiMa 
 vision-language models](adding-a-model.md#llima-language-and-vision-language-models) has
 the details.
 
+The result is a folder, not an MPK, so the DevKit commands of steps 7 and 8 do not apply.
+A language model's `performance.py` takes the folder with `--deployment` and writes its report
+to `--output`. The speech models have no `performance.py`.
+[LLiMa text and image performance](benchmarking.md#llima-text-and-image-performance)
+describes that run.
+
 ## If something fails
 
 | What you see | Cause | Fix |
 | --- | --- | --- |
-| `yolo26n: resolve conversion with plan-stages before compilation` | `model-registry fetch` or `scripts/run_model_compilation.sh` looked for the ONNX that CI published. | Pass your own ONNX to `compile.py` with `--model`, as in step 4. |
+| `yolo26n: resolve conversion with plan-stages before compilation` | `model-registry fetch` or `scripts/run_model_compilation.sh` looked for the ONNX that CI published. | Pass your own ONNX to `compile.py` with `--model`, as in step 5. |
 | `python3.12: command not found` | `scripts/run_model_conversion.sh` starts the conversion with `python3.12`. | Install Python 3.12, or set `CONVERSION_PYTHON` to its path. |
 | `FileExistsError` from `convert.py` or `compile.py` | The output directory exists. Both scripts create it themselves. | Delete the directory, or name a new one. |
-| `No module named 'afe'` | The command does not run in the Model Compiler environment. | Activate the Model Compiler environment, then run the command again. |
+| `No module named 'afe'` | The command does not run in the Model Compiler environment. | Activate the Model Compiler environment, then run the command again. In the Neat SDK, run `activate-model-compiler`. |
+| `model.yaml declares no build profile` or `expected exactly one build profile` | `--build-profile` names a variant that `model.yaml` does not declare. | Pass a name from `build_profiles`, as step 2 describes. |
+| `model.yaml declares numerical_fidelity; pass --fidelity-dataset` | The model measures numerical fidelity during the compile. | Pass `--fidelity-dataset` with the dataset that `numerical_fidelity.dataset` names. |
 | `No module named 'model_registry'` | `PYTHONPATH` lacks `tools`, or the command runs outside the repository root. | Run the command from the repository root with `PYTHONPATH=tools`. |
-| `the INT8 build requires --dataset from dataset-registry` | `compile.py` ran for `w8a8` without `--dataset`. | Pass the calibration archive or directory from step 2. |
+| `the INT8 build requires --dataset from dataset-registry` | `compile.py` ran for `w8a8` without `--dataset`. | Pass the calibration archive or directory from step 3. |
 | `cannot select 50 calibration images from 0 cal2017 images` | The calibration input has no folder named `cal2017`, or the folder holds fewer than 50 images. | Put at least 50 images in a folder named `cal2017`. |
 | `--model must be the verified ONNX from the conversion workflow` | The `--model` path does not end in `.onnx`. | Pass `build/yolo26n/onnx/model.onnx`. |
 | `has no images under val2017/` | The dataset directory does not hold `val2017/` directly. | Pass the folder that contains `val2017/` and `annotations/`. |
 | `No module named 'model_report'` | `PYTHONPATH` lacks `tools`, or the command runs outside the folder that holds `tools/`. | Run from `/media/nvme/neat-tests/yolo26n` with `PYTHONPATH=tools`. |
-| `No module named 'faster_coco_eval'` | The accuracy packages are missing, or `PYTHONPATH` lacks `site-packages`. | Run both commands of step 7 from the same folder. |
-| A clock in step 6 prints a lower value | The DevKit runs the MLA or the CPU below the clock CI measures at. | Set both clocks with the commands below, then read them again. |
+| `No module named 'faster_coco_eval'` | The accuracy packages are missing, or `PYTHONPATH` lacks `site-packages`. | Run both commands of step 8 from the same folder. |
+| A clock in step 7 prints a lower value | The DevKit runs the MLA or the CPU below the clock CI measures at. | Set both clocks with the commands below, then read them again. |
+| The MLA clock stays below `1000000000` after you set it | The DevKit started with a lower limit for the MLA clock. `cat /sys/class/devfreq/5000000.mla/max_freq` prints that limit. | Restart the DevKit with `sudo reboot` and read the clock again. Repeat until it prints `1000000000`. |
 | The performance report has no `avg_power_watts` | Sentinel, the DevKit's telemetry service, gave no power readings. | Set up the DevKit as [DevKit performance](benchmarking.md) describes. |
 | `dataset-registry` cannot download an archive | The machine has no access to the dataset storage. | Follow the access steps in [Datasets](datasets.md). |
 
@@ -371,6 +396,9 @@ Set the MLA clock to 1 GHz and the CPU clock to 1.4 GHz:
 echo 1000000000 | sudo tee /sys/class/devfreq/5000000.mla/userspace/set_freq
 echo 1400000 | sudo tee /sys/devices/system/cpu/cpufreq/policy0/scaling_setspeed
 ```
+
+The first command prints `1000000000` even when the DevKit keeps the lower clock, so read
+both clocks again afterwards.
 
 ## Next
 

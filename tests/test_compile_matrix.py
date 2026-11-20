@@ -463,6 +463,8 @@ def test_accuracy_fingerprint_covers_the_model_datasets_and_their_requirements(t
         "another dataset file": edit(tmp_path / "datasets" / "imagenet-2012.yaml",
                                      lambda d: d["required_metrics"]["image_classification"].append("top5_accuracy")),
         "the build profiles": edit(manifest, lambda d: d["accuracy"].update(build_profiles=["w8a8_w16a16"])),
+        # The name is what the model browser shows; it changes no measurement.
+        "the dataset's name": edit(coco, lambda d: d.update(name="Common Objects in Context 2017")),
     }
 
     assert [change for change, value in rerun.items() if value == first] == []

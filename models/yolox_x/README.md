@@ -29,6 +29,8 @@ Preprocessing:
 
 Postprocessing:
 
+[BoxDecode](https://developer.sima.ai/software/reference/boxdecode_decode_types) with decode type `YoloX` and option `Split3Interleaved` runs these steps for you:
+
 1. For column c, row r, and stride s, the box center is ((dx + c) × s, (dy + r) × s).
 2. The width and height are exp(log width) × s and exp(log height) × s.
 3. The box corners are the center minus and plus half the width and height.

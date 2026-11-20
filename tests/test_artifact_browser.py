@@ -405,7 +405,7 @@ def assemble_portal(root: Path) -> subprocess.CompletedProcess[str]:
     (root / "website" / "build").mkdir()
     shutil.copy(PORTAL_ASSEMBLER, root / "website" / "scripts" / PORTAL_ASSEMBLER.name)
     shutil.copy(PORTAL_ASSEMBLER.with_name("portal-config.mjs"), root / "website" / "scripts" / "portal-config.mjs")
-    for source in ("models", "schemas", "tools"):
+    for source in ("models", "datasets", "schemas", "tools"):
         (root / source).symlink_to(ROOT / source)
     return subprocess.run(
         ["node", str(root / "website" / "scripts" / PORTAL_ASSEMBLER.name)],
@@ -469,7 +469,15 @@ def test_assembled_portal_ships_the_model_data_api_fetches(tmp_path: Path) -> No
     api = (portal / "api.aaaaaaaaaaaa.js").read_text(encoding="utf-8")
     hidden = json.loads((portal / "low-accuracy-variants.aaaaaaaaaaaa.json").read_text(encoding="utf-8"))
     assert all(isinstance(profiles, list) and profiles for profiles in hidden.values())
-    for name in ("component-pipelines", "reference-metrics", "low-accuracy-variants", "licenses"):
+    names = json.loads((portal / "dataset-names.aaaaaaaaaaaa.json").read_text(encoding="utf-8"))
+    assert names["imagenet-2012"] == "ImageNet 2012"
+    apps = json.loads((portal / "example-apps.aaaaaaaaaaaa.json").read_text(encoding="utf-8"))
+    assert apps["rf_detr_nano"] == "https://developer.sima.ai/examples/app/object-detection%2Frfdetr-detection-segmentation"
+    model_data = (
+        "component-pipelines", "reference-metrics", "low-accuracy-variants", "dataset-names", "example-apps",
+        "licenses",
+    )
+    for name in model_data:
         assert f'"./{name}.aaaaaaaaaaaa.json"' in api
         assert f'"./{name}.json"' not in api
 
@@ -567,6 +575,8 @@ def test_model_instructions_load_inline_with_integrity_checks() -> None:
     renderer = (BROWSER / "markdown.js").read_text(encoding="utf-8")
 
     assert "documentation?.overview_markdown" in script
+    # The Overview text opens its section without a title.
+    assert 'id="overview-title"' not in script
     assert 'headers: { Accept: "text/markdown" }' in script
     assert "/artifacts/${encodeURIComponent(documentation.artifact_name" in script
     assert 'crypto.subtle.digest("SHA-256"' in script
@@ -878,7 +888,7 @@ def test_catalog_avoids_per_run_enrichment_and_uses_local_cache() -> None:
     assert "enrichRuns" not in browser
     assert "mapConcurrent" not in browser
     assert "readCachedCatalog" in script
-    assert "writeCachedCatalog" in script
+    assert "writeCachedCatalog" in browser
     assert "state.runs[0]?.id" not in browser
 
 
@@ -891,20 +901,6 @@ def test_branch_search_and_categories_filter_the_cached_snapshot() -> None:
     assert 'const compiler = branchSnapshot ? "any" :' in script
     assert 'if (branchSnapshotMode()) return;' in script
     assert 'if (branchSnapshotMode()) {\n    renderRuns();\n    return;\n  }' in script
-
-
-def test_branch_switch_loads_builds_even_if_taxonomy_refresh_fails() -> None:
-    script = _browser_source("app.js", "download-dialog.js", "state.js")
-    branch_change = script.split('elements["branch-filter"].addEventListener("change", async () => {', 1)[1]
-    branch_change = branch_change.split('elements["compiler-filter"].addEventListener', 1)[0]
-
-    assert 'await loadTaxonomy(state.preferredBranch || DEFAULT_BRANCH);\n  } catch (error) {' in branch_change
-    assert 'setCategoryFiltersDisabled(true);' in branch_change
-    assert (
-        'if (navigationId !== state.navigationId) return;\n  try {\n'
-        '    await loadRuns({ branch: state.preferredBranch });' in branch_change
-    )
-    assert 'elements[elementId].disabled ? "" :' in script
 
 
 def test_cached_build_history_preserves_run_mode() -> None:
@@ -987,7 +983,7 @@ def test_browser_history_restores_category_filters_and_empty_detail() -> None:
     )
     assert "state.taxonomy = null" in initialize
     assert "if (state.selectedId || linkedVariant) detailSkeleton();\n  else showEmptyDetail();" in initialize
-    assert "if (state.taxonomy) populateCategoryFilters();" in initialize
+    assert "applyTaxonomy(cached.taxonomy || null, null);" in initialize
     assert 'window.addEventListener("popstate", () => {' in script
 
 
@@ -1017,7 +1013,6 @@ def test_branch_filter_uses_an_independent_cached_registry_catalog() -> None:
     assert "branchCatalogCacheKey" in script
     assert "readCachedBranches" in script
     assert "writeCachedBranches" in script
-    assert "loadTaxonomy(elements[\"branch-filter\"].value || DEFAULT_BRANCH)" in script
     assert "The registry returned an empty branch catalog; keeping saved branches." in script
     assert "knownBranches.delete(branch)" not in browser
     assert "...(payload.branches || [])" not in browser
@@ -1026,7 +1021,7 @@ def test_branch_filter_uses_an_independent_cached_registry_catalog() -> None:
 def test_earlier_builds_pagination_tracks_the_selected_branch() -> None:
     script = _browser_source("app.js", "download-dialog.js", "catalog-view.js")
 
-    assert 'query.set("git_ref", `refs/heads/${branch}`)' in script
+    assert 'query.set("git_ref", gitRef)' in script
     assert "availableBranches" in script
     assert 'await loadRuns({ branch: elements["branch-filter"].value })' in script
     assert 'elements["load-more"].hidden = !state.hasMore' in script
@@ -1061,7 +1056,7 @@ def test_browser_uses_refined_search_first_layout() -> None:
     assert 'class="page-header"' not in html
     assert "Trace every" not in html
     assert '<header class="catalog-intro">' in html
-    assert "Pick a model, compare performance and accuracy, and download it for Palette Neat." in html
+    assert "Pick a model, compare performance and accuracy, and download it for Palette." in html
     assert "--font-display" not in styles
     assert "font-family: var(--font-body)" in styles
 
@@ -1087,7 +1082,7 @@ def test_developer_filters_are_directly_visible_and_status_is_not_presented() ->
     assert 'id="status-filter"' not in html
     assert 'class="run-status' not in browser
     assert 'class="status-label' not in browser
-    assert 'query.set("status", "completed")' in script
+    assert 'status: "completed"' in script
     assert 'run.status === "completed"' in script
 
 
@@ -1100,12 +1095,11 @@ def test_model_catalog_is_default_with_explicit_build_history_mode() -> None:
     assert "Switches from models to chronological build runs." in html
     assert "Show build history" in html
     assert 'if (historical) {' in script
-    assert 'allPages(api, `${base}/runs`, compileQuery, "runs")' in script
-    assert 'allPages(api, `${base}/runs`, packageQuery, "runs")' in script
-    assert 'allPages(api, `${base}/models`, modelQuery, "models")' in script
-    assert 'query.set("run_type", "model_compile")' in script
+    assert '["model_compile", "model_package"]' in script
+    assert 'allPages(api, `${base}/runs`, query, "runs")' in script
+    assert 'run_type: "model_compile"' in script
     assert (
-        'if (historical && !elements["history-filter"].checked) query.set("latest_per_model_compiler", "true")'
+        'if (!elements["history-filter"].checked) query.set("latest_per_model_compiler", "true")'
         in script
     )
     assert 'link.get("history") === "1"' in script
@@ -1124,10 +1118,10 @@ def test_browser_loads_taxonomy_from_the_current_catalog_and_exposes_category_fa
         assert f'id="{removed}"' not in html
         assert removed not in script
     assert "/catalogs/current?git_ref=" in script
-    assert "payload.catalog?.document?.taxonomy" in script
+    assert "applyTaxonomy(document?.taxonomy || null, snapshotBranch)" in script
     assert '"task-filter": "task"' in script
     assert '"architecture-filter": "architecture_id"' in script
-    assert "setCategoryFiltersDisabled(true)" in script
+    assert "setCategoryFiltersDisabled(!taxonomy)" in script
     assert "Category filters are temporarily unavailable" in script
 
 
@@ -1215,7 +1209,8 @@ def test_performance_and_accuracy_name_the_commit_and_workflow_that_measured_the
     assert "${measurementSource(run, modelId)}</p>" in script
     assert "performanceSummary(result.value, run, modelId)" in script
     assert "measurementSource(variant.accuracy.run, modelId)" in script
-    assert "${escapeHtml(datasetName(dataset) || \"Dataset unavailable\")}${sourceMarkup}</p>" in script
+    # The accuracy line holds the measurement date and, in the developer view, its source.
+    assert '<p class="accuracy-scope">${measured}</p>' in script
     assert ".measurement-link {" in styles
 
 
@@ -1230,9 +1225,15 @@ def test_archive_validation_is_a_compact_accessible_status_mark() -> None:
     assert "integrity verified: file structure, checksum, and build provenance match." in script
     assert '<h3>Validation</h3>' not in browser
     assert ".detail-title-actions" in styles
-    compact_controls = ".model-source-link, .original-model-link, .mpk-validation-mark { width: 38px; height: 38px"
+    compact_controls = (
+        ".model-source-link, .original-model-link, .example-app-link, .mpk-validation-mark { width: 38px; height: 38px"
+    )
     assert compact_controls in styles
     assert ".detail-links > [data-tooltip]:hover::after" in styles
+    # A hovered link lifts, which traps its tooltip's z-index, so the link itself sits above the section bar.
+    assert ".detail-links > [data-tooltip] { position: relative; z-index: 11; }" in styles
+    assert ".subnav { position: sticky;" in styles and "z-index: 10; display: flex;" in styles
+    assert ".detail-links > [data-tooltip]:hover { position: static; transform: none; }" in styles
     # Narrow screens anchor tooltips to the links row so a hidden tooltip never widens the page.
     assert ".detail-title-actions { position: relative;" in styles
 
@@ -1338,7 +1339,22 @@ def test_detail_links_to_the_original_model_whatever_was_compiled() -> None:
     assert 'fill="#FFD21E"' in script
     assert ".original-model-link:focus-visible" in styles
     assert ".original-model-link svg { width: 20px; height: 19px; }" in styles
-    assert ".external-model-link svg { fill: none; stroke: currentColor;" in styles
+    assert ".external-model-link svg, .example-app-link svg { fill: none; stroke: currentColor;" in styles
+
+
+def test_model_page_links_the_example_application_model_yaml_names() -> None:
+    api = _browser_source("api.js")
+    script = _browser_source("model-view.js")
+    example_app_link = script.split("function exampleAppLink(", 1)[1].split("\n}\n", 1)[0]
+
+    # The page reaches the browser as a file built from model.yaml, so a model without one shows no link.
+    assert 'fetch(new URL("./example-apps.json", import.meta.url))' in api
+    assert "exampleApps.then((apps) => apps[modelId] || null)" in api
+    assert "${exampleAppLink(variant.exampleApp)}</div>" in script
+    assert "const url = trustedHttpsUrl(exampleApp);" in example_app_link
+    assert 'if (!url) return "";' in example_app_link
+    assert 'target="_blank" rel="noreferrer"' in example_app_link
+    assert "${icons.apps}" in example_app_link
 
 
 def test_performance_rendering_reads_the_model_report_and_is_charted() -> None:
@@ -1433,22 +1449,25 @@ def test_accuracy_result_is_rendered_with_coverage_and_reference_comparison() ->
     assert 'loadBenchmarkRun("accuracy", fingerprints.accuracy)' in script
     assert 'id="accuracy-section"' in script
     assert "dataset.evaluated_samples.toLocaleString()" in script
-    # Each dataset's coverage is a plain badge; its explanation sits in that dataset's Evaluation details row.
-    badge = '<span class="status-badge ${full ? "qualification" : "provisional"}">'
-    assert badge in script
+    # The dataset line states the sample count; the coverage explanation sits in Evaluation details.
+    assert "? `using ${evaluated} samples`" in script
+    assert "status-badge" not in script
     assert 'disclosure(`accuracy:${name}`, "Evaluation details", evaluation, coverageLabel)' in script
     assert 'const coverageLabel = full ? "Full coverage" : "Sampled coverage"' in script
-    # One section holds every dataset's result; one dataset keeps its badge beside the section title.
+    # One section holds every dataset's result, and each dataset line says when it was measured.
     assert 'data-accuracy-dataset="${escapeHtml(name)}"' in script
-    assert "const badge = datasets.length === 1 ? coverageBadge(datasets[0].dataset) : \"\";" in script
+    assert "`Measured ${escapeHtml(formatDate(timestamp, false))}`" in script
+    # The dataset and its sample count sit behind the info mark of the title they describe.
+    assert 'datasets.length === 1 ? evaluatedOn(datasets[0].dataset, target) : "")}' in script
+    assert "<h4>${escapeHtml(name)}${infoMark(evaluatedOn(dataset, target))}</h4>" in script
+    assert "performanceMethod(variant))}" in script
     assert "accuracy-explainer" not in browser
     for removed in ("Qualification", "Provisional", "Candidate top-1", "validation?.status"):
         assert removed not in script
     # A build without an accuracy run still shows what the model's authors published.
     assert 'if (result.kind === "missing") return referenceAccuracySection(reference, variant);' in script
     assert ".accuracy-summary" in styles
-    assert ".status-badge.provisional" in styles
-    assert ".status-badge.qualification" in styles
+    assert ".status-badge" not in styles
     assert ".accuracy-explainer" not in styles
 
 
@@ -1733,9 +1752,9 @@ def test_model_license_metadata_is_rendered_with_redistribution_and_attribution(
     assert "const license = catalogModel?.license || run.metadata?.license" in script
     assert "function licensePanel(license, listed)" in script
     assert 'detailTag(icons.license, license.spdx, "license")' in script
-    assert '<p class="license-line"><strong>${escapeHtml(license.spdx)}</strong>' in script
-    assert "<span>${escapeHtml(redistribution)}</span></p>" in script
-    assert "`Redistribution ${license.redistribution}`" in script
+    # The section names the license once; an unlisted license falls back to its identifier and model.yaml.
+    assert '<p class="license-line"><strong>${escapeHtml(listed?.name || license.spdx)}</strong></p>' in script
+    assert "listed?.summary || (license.redistribution ? `Redistribution ${license.redistribution}.` : \"\")" in script
     assert 'class="license-attribution"' in script
     assert ".detail-tag-license svg" in styles
     assert ".license-attribution" in styles
@@ -1745,8 +1764,7 @@ def test_model_page_names_the_license_and_what_it_asks_from_the_license_list() -
     script = _browser_source(*MODEL_PAGE_MODULES)
 
     assert "licensePanel(license, variant.licenses?.[license?.spdx])" in script
-    assert "<span>${escapeHtml(listed.name)}</span>" in script
-    assert '<p class="license-summary">${escapeHtml(listed.summary)}</p>' in script
+    assert '<p class="license-summary">${escapeHtml(terms)}</p>' in script
     assert ".license-summary" in (BROWSER / "styles.css").read_text(encoding="utf-8")
 
 
@@ -1755,7 +1773,12 @@ def test_model_page_offers_artifact_downloads_only_under_a_downloadable_license(
     render_detail = script.split("export function renderDetail(", 1)[1]
 
     assert "const offered = downloadOffered(license?.spdx, variant.licenses)" in render_detail
-    assert 'const downloadAction = !offered ? `<span class="download-unavailable">' in render_detail
+    # The notice names the reason and jumps to the License section.
+    notice = (
+        '`<button class="download-unavailable" type="button" data-scroll-to="license-section">'
+        "${icons.license}Download restricted by license</button>`"
+    )
+    assert f"const downloadAction = !offered ? {notice}" in render_detail
     assert "${offered ? packageCard(fullPackage," in render_detail
     # Every artifact download on the page sits in the header action or the package card.
     assert script.count("data-download-variant=") == 1
@@ -1795,8 +1818,10 @@ const current = [run('backbone', 'rf_detr_small', 'backbone', 'workflow-2'),
 const old = [run('old-backbone', 'rf_detr_small', 'backbone', 'workflow-1', '2.1', '2026-09-01T12:00:00Z'),
              run('old-decoder', 'rf_detr_small', 'decoder', 'workflow-1', '2.1', '2026-09-01T12:00:00Z')];
 const catalog = [{model_id: 'rf_detr_small', display_name: 'RF-DETR', builds: [
-  {run_id: 'stale-backbone', build_profile_id: 'w8a8_w16a16', component_id: 'backbone'},
-  {run_id: 'stale-decoder', build_profile_id: 'w8a8_w16a16', component_id: 'decoder'},
+  {run_id: 'stale-backbone', build_profile_id: 'w8a8_w16a16', component_id: 'backbone',
+   finished_at: '2026-08-01T00:00:00Z'},
+  {run_id: 'stale-decoder', build_profile_id: 'w8a8_w16a16', component_id: 'decoder',
+   finished_at: '2026-08-01T00:00:00Z'},
 ], benchmark_fingerprints: {w8a8_w16a16: {performance: 'stale-performance-fingerprint'}}},
                  {model_id: 'ssd_mobilenet', display_name: 'SSD',
                   builds: [{run_id: 'inherited', build_profile_id: 'w8a8_w16a16'}]}];
@@ -1826,9 +1851,12 @@ const sameCompilerOld = [
 assert.deepEqual(
   branchModels([...sameCompilerOld, ...current], packages, catalog, '3.0')[0].builds.map(build => build.run_id),
   ['backbone', 'decoder']);
-assert.deepEqual(branchModels([], packages, catalog), []);
+const [snapshot] = branchModels([], packages, catalog);
+assert.deepEqual(snapshot.builds.map(build => build.run_id), ['stale-backbone', 'stale-decoder']);
+assert.deepEqual(snapshot.benchmark_fingerprints, {w8a8_w16a16: {performance: 'stale-performance-fingerprint'}});
+assert.deepEqual(snapshot.packages, []);
 const performanceRun = {...run('benchmark', 'inherited', 'model', 'workflow-2'), run_type: 'model_performance'};
-assert.deepEqual(branchModels([performanceRun], [], catalog), []);
+assert.deepEqual(branchModels([performanceRun], [], catalog), branchModels([], [], catalog));
 const develop = ['ssd_mobilenet', 'resnet50', 'yolov8', 'mobilenet', 'rf_detr_small', 'unet']
   .map(model => run(model, model, 'model', model));
 // Only models the catalog lists show; a removed model's runs stay in the registry.

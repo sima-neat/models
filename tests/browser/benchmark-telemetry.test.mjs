@@ -94,6 +94,9 @@ test('reads accuracy per dataset, in the order the run parameters declare them',
     split: 'val', evaluated_samples: 1000, available_samples: 1000,
   });
   assert.deepEqual(imagenet.details, result.details);
+  // A dataset the list names carries that name; one it lacks stays as the report and parameters give it.
+  const named = readAccuracy({run, parameters, report: {...report, datasets}, datasetNames: {'coco-2017': 'COCO 2017'}}).value;
+  assert.deepEqual(named.datasets.map(({dataset}) => dataset.name), ['COCO 2017', undefined]);
   assert.equal(readAccuracy({run, parameters: {}, report: {...report, stage: 'performance'}}).kind, 'unsupported');
   assert.equal(readAccuracy({run, parameters: {}, report: {...report, datasets: null}}).kind, 'unsupported');
 });

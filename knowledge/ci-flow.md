@@ -330,7 +330,7 @@ reuse an approval. The manual publish keeps files that the new site no longer ha
 `model-branch-lifecycle.yml` has two jobs. `cancel-branch-runs` runs
 `scripts/cancel_branch_runs.sh` for a deleted branch and cancels its unfinished runs.
 `update-registry` calls the registry's `purge` endpoint for a deleted branch and `restore`
-for a created one, then waits up to five minutes for a purge to complete. It refuses
+for a created one, then waits up to 15 minutes for a purge to complete. It refuses
 `main`, `develop`, and `release-*`. It does not refuse `integration/*`, although
 `is_long_lived` treats those branches as long-lived. The job runs once for the staging
 registry and once for the production registry, each in its own GitHub environment. A

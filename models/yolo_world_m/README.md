@@ -45,6 +45,8 @@ Image preprocessing:
 
 Postprocessing:
 
+[BoxDecode](https://developer.sima.ai/software/reference/boxdecode_decode_types) with decode type `YoloV8` and option `GroupedByRoleProbability` runs these steps for you:
+
 1. Softmax each edge's 16 bins and sum bin index (0 to 15) times probability. This is the edge's distance in cells.
 2. The corners are the cell center (c + 0.5, r + 0.5) minus (left, top) and plus (right, bottom), times the stride.
 3. Keep the cell-class pairs that score above your threshold.

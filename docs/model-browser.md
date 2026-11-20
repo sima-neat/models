@@ -9,6 +9,8 @@ you can check how your model will appear before you submit it.
 
 Models uses the shared Developer Portal header on the deployed site. Its own
 navigation underneath contains **Browse models**, **Compare** and **Developer docs**.
+**Browse models** opens the whole catalog and clears a selected model family. The
+breadcrumb on a model page returns to the family the reader came from.
 The section navigation matches Software documentation: full-width, left-aligned
 links with a blue active label. The catalog and contributor documentation share
 the portal's theme preference.
@@ -27,8 +29,9 @@ one, and otherwise the score its authors published for the same dataset split. A
 variant with neither score stays. A model whose every variant is left out does not
 appear.
 
-While the catalog loads, the list shows a spinner. A message that a branch has
-no models appears only after the registry has answered.
+Cards appear when the catalog loads. In the developer view, compiler versions
+and newly completed builds can appear after the cards. A message that a branch
+has no models appears after the registry has answered.
 
 The catalog opens as a grid of cards, one per available **Model family**, sorted
 by its existing architecture ID. Selecting a family applies its sidebar filter
@@ -43,11 +46,12 @@ usable build do not appear. Search always shows matching individual models.
 The table always shows individual models,
 selected precision, measured accuracy and whole-model performance. Changing
 the precision updates its measurements; opening the model shows the full results.
-LLM and VLM rows show generation speed in tokens/s and TTFT (time to first
-token) as ranges across measured workloads, with the workload count. Hover over
-the reading for the workload names. Text Generation rows use text workloads;
-Visual Question Answering rows use image workloads. Open the model for each
-workload's exact result.
+LLM and VLM rows show three lines: **TPS** (generation speed in tokens/s),
+**TTFT** (time to first token), and the input they were measured on. Text
+Generation rows show the 128-token input, the smallest one measured. Visual
+Question Answering rows show the image workload with its image size. A
+speculative model is measured on datasets, so its row shows the range across
+them and names them. Open the model for each workload's exact result.
 Both views share search and filters. The table groups models by task, with the
 same model-family ordering inside each group. Models with multiple tasks appear
 in every applicable group; selecting a task filter shows only that group. The
@@ -118,13 +122,21 @@ The Task menu leaves out tasks with no comparison yet, such as the audio tasks. 
 
 On a phone, the section navigation shortens **Developer docs** to **Docs**.
 
+On the first visit, a cookie notice asks whether to allow optional Google Analytics
+cookies. The choice is shared with the rest of the Developer Center, so a visitor who
+already chose there is not asked again. The browser works either way, and
+**Cookie preferences** at the bottom of the page changes the choice later.
+
 ## The model page
 
 Selecting an individual model opens its page. The page is built to be read at a glance:
 each section shows its key facts directly, and longer detail sits in a row
 marked with › that opens in place. The header places the model image beside its
-name, tags, description, download action, and the validation and source-link
-icons in both UI modes; narrow screens stack them. The tags name what holds for every variant:
+name, tags, and description in both UI modes; narrow screens stack them. The
+variant selector follows, and below it the download action with the validation
+and source-link icons. A model whose `model.yaml` names an `example_app` also
+shows an application icon there, which opens that example on the Apps portal.
+The tags name what holds for every variant:
 tasks, model family, model type and license. The download dialog offers an outlined **Copy CLI command**
 button with a copy icon alongside browser downloads where available. The copied
 command names the selected branch in the developer view. In the customer view it
@@ -136,11 +148,13 @@ place Cancel on the left, Copy CLI command in the middle and Download on the rig
 A model with several build profiles shows
 one tab per profile, labelled with its variant ID in uppercase, such as
 **W8A8**. Profiles with a W8A8 component come first and the page opens on the
-first tab, whatever order `model.yaml` declares. **Download** in the header
-downloads the selected variant, and the Performance and Accuracy titles name that variant.
-A model whose license does not permit redistribution has no download action. Its
-header shows **Not available for download** in that place, and its Details section
-has no package card. The GitHub link in the header opens
+first tab, whatever order `model.yaml` declares. A line under the tabs says that
+Performance and Accuracy are shown for the selected variant. **Download** below the
+selector downloads the selected variant, and the Performance and Accuracy titles name
+that variant.
+A model whose license does not permit redistribution has no download action. The page
+shows **Download restricted by license** in that place, which jumps to the License
+section, and its Details section has no package card. The GitHub link in the header opens
 the model's folder at the commit the README comes from. The original-model link
 beside it opens the page `upstream.model_card` names. It shows the Hugging Face
 logo for a Hugging Face page and an external-link icon for any other host, such
@@ -151,7 +165,8 @@ their verified settings, including fixed image resolutions without compiler
 overrides; other builds show their recorded compile parameters. Sections appear
 in this order:
 
-1. **Overview.** The `## Overview` section of the README, including
+1. **Overview.** The text of the README's `## Overview` section, without a
+   title of its own, including
    any model-specific note about changing context length or image resolution
    during compilation. The **Inputs**, **Outputs**, and **Building applications**
    sections appear inline from the
@@ -267,23 +282,30 @@ in this order:
    multi-component model whose `model.yaml` declares a `pipeline` first shows
    the order its components run in, from input to output: numbered components,
    with any CPU step between them, such as RF-DETR's **Top 300 proposals**.
+   An info mark beside the Performance title says the result was measured on the
+   DevKit, running the compiled model with the Neat Model API, or with LLiMa for an
+   LLM or VLM.
    The tiles, context line, and **Performance Details** are the
    [whole-model result](benchmarking.md#multi-component-models), with the
    components and CPU step running together. **Runtime Layer Analysis**,
    **MLA Utilization**, and **Execution Graph** each switch between the
    components, and **Download CSV** lists each component's layer timings.
 3. **Accuracy.** For each dataset the run evaluated, in `model.yaml` order:
-   the coverage (full when the run evaluated every sample of its split,
-   sampled otherwise), the first four metrics in their units (ratios as
-   percentages, EPE in pixels, D1-all in percent), the dataset, such as
-   **coco-2017 val**, the evaluated sample count when coverage is sampled, and,
-   in the developer UI, the commit and GitHub workflow of the run that measured them. With more than
-   one dataset, each result is titled by its dataset name. The catalog table
+   the first four metrics in their units (ratios as
+   percentages, EPE in pixels, D1-all in percent), the date of the measurement, and,
+   in the developer UI, the commit and GitHub workflow of the run that measured them.
+   An info mark beside the title says how the result was measured: the compiled model
+   ran on the DevKit and was evaluated on the dataset, named as its
+   [`datasets/<id>.yaml`](datasets.md#required-accuracy-metrics) names it, such as
+   **COCO 2017**, using the stated number of samples. With more than
+   one dataset, each result is titled by its dataset name and carries its own info mark. The catalog table
    and **Compare** use the first dataset. Under each of the four metrics, both
    views show its published score and its FP32 baseline when `reference_metrics`
    records them for the measured dataset. A published score links to the
    source `reference_metrics` names.
-   In the developer UI, each dataset's **Evaluation details** explains the coverage and lists
+   In the developer UI, each dataset's **Evaluation details** explains the coverage
+   (full when the run evaluated every sample of its split, sampled otherwise), names
+   the Dataset Registry archive, such as **coco-2017 val**, and lists
    the remaining metrics, each with its published score and its FP32 baseline
    when `reference_metrics` in `model.yaml` records them for the measured
    dataset. The **Published scores** and **FP32 baseline** rows list each
@@ -296,8 +318,8 @@ in this order:
    Then come rows for build provenance (the commit and workflow that compiled the
    build), source models, the package's numerical fidelity, and each
    component's files, checksum, and compile parameters.
-5. **License.** The license identifier and name, whether redistribution is
-   allowed, one sentence on what the license asks, and the attribution.
+5. **License.** The license name, one sentence on what the license asks,
+   and the attribution.
 
 A section that has no data, such as Accuracy for a model with neither an
 accuracy result nor published scores, is left out.
@@ -320,6 +342,7 @@ historical builds point to the current variant instead. Folder downloads
 require sima-cli 2.1.19 or later to download the files in parallel and assemble
 the model folder.
 The CLI verifies the manifest and each file and recreates their relative paths.
+[Download a model with sima-cli](downloading-models.md) shows the commands.
 The displayed size covers all deployment files; **Manifest SHA-256** identifies
 the index. MPK and ZIP packages keep their browser download flow.
 

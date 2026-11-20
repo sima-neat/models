@@ -92,7 +92,8 @@ Rules for the rest of the overview:
 These two sections describe the model alone: what it takes, how to prepare it, what it
 returns, and how to decode it. They are brief, precise, and the same shape on every model.
 
-- Do not name Neat, its options, or its decoders here. `Building applications` links the Neat API, and the first version of this standard was rejected for mixing a "With Neat" path and a "Yourself" path into every section.
+- Do not name Neat or its options here. `Building applications` links the Neat API, and the first version of this standard was rejected for mixing a "With Neat" path and a "Yourself" path into every section.
+- The one exception is the BoxDecode line. A model whose `performance.py` selects a `BoxDecodeType` names that type in one line between `Postprocessing:` and the steps, with a link to the decode types page, so that a reader does not implement by hand what the decoder already does. The line names the type, and the option or profile the script sets, and nothing else. A YOLO11 model says that it shares the YOLOv8 type. An oriented-box model says which steps the decoder runs, because it decodes one window and the application joins the windows.
 - Describe one path: the preprocessing of the original model, which `calibration.py` and `accuracy.py` implement and the published accuracy uses. When the two scripts differ, follow `accuracy.py`, as `siglip2_vit_b_16` does with its 256×256 resize and 224×224 crop.
 - State steps, not advice. Leave out which path to prefer, why a step exists, and what happens otherwise, unless the application must act on it.
 - Never mention the scripts, how a result was measured, or how the model was converted or compiled.

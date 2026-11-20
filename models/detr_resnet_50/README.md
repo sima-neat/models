@@ -30,6 +30,8 @@ Preprocessing:
 
 Postprocessing:
 
+[BoxDecode](https://developer.sima.ai/software/reference/boxdecode_decode_types) with decode type `Detr` runs these steps for you:
+
 1. Apply a softmax to each query's 92 logits.
 2. Drop the last class, which means no object. The best remaining class and its probability are the class and the score.
 3. Keep the queries whose score passes your threshold.

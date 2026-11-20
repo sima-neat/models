@@ -121,6 +121,16 @@ def test_model_readme_contract_requires_the_hero_line(tmp_path: Path) -> None:
         load_model_documentation(model_dir, "Fixture Model", repository=tmp_path)
 
 
+def test_repository_model_readmes_name_the_box_decode_type_of_their_performance_script() -> None:
+    root = Path(__file__).resolve().parents[1]
+    for readme in sorted((root / "models").glob("*/README.md")):
+        script = readme.parent / "scripts" / "performance.py"
+        source = script.read_text(encoding="utf-8") if script.is_file() else ""
+        selected = set(re.findall(r"BoxDecodeType\.(\w+)", source))
+        named = set(re.findall(r"\[BoxDecode\]\(\S+\) with decode type `(\w+)`", readme.read_text(encoding="utf-8")))
+        assert named == selected, f"{readme} names {sorted(named)}, but {script.name} selects {sorted(selected)}"
+
+
 def test_repository_model_readme_shell_blocks_do_not_use_redirection_shaped_placeholders() -> None:
     root = Path(__file__).resolve().parents[1]
     placeholder = re.compile(r"<[A-Za-z0-9_-]+>")
