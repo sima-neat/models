@@ -41,6 +41,8 @@ architecture_paradigms:
     display_name: CNN
   transformer:
     display_name: Transformer
+  mlp:
+    display_name: MLP
 
 # A family is the upstream model line, named without size (YOLO26-det, not
 # YOLO26n-det). The model's id and display_name carry the size.
@@ -130,6 +132,11 @@ architectures:
     description: Generates text for conversational and instruction-following tasks.
     paradigm: transformer
     allowed_model_types: [llm]
+  lenet:
+    display_name: LeNet
+    description: Classifies small grayscale images with compact LeNet-style convolutional networks.
+    paradigm: cnn
+    allowed_model_types: [vision]
   lfm2_5:
     display_name: LFM2.5
     description: Generates text for conversational and instruction-following tasks.
@@ -165,6 +172,11 @@ architectures:
     description: Generates text for conversational and instruction-following tasks.
     paradigm: transformer
     allowed_model_types: [llm]
+  mlp:
+    display_name: MLP
+    description: Classifies images with fully connected multilayer perceptrons.
+    paradigm: mlp
+    allowed_model_types: [vision]
   netvlad:
     display_name: NetVLAD
     description: Describes a whole image as one place descriptor for recognizing places seen before.

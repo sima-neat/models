@@ -362,6 +362,11 @@ def first_accuracy_dataset(script: Path) -> str | None:
     return datasets[0]["id"] if datasets else None
 
 
+# Models of grayscale digits benchmark one seeded MNIST test digit from the dataset's IDX file, which Neat converts
+# to grayscale and stretches to the model input.
+DIGIT_MODELS = {"mnist_cnn", "mnist_fc"}
+
+
 def performance_scripts(*, components: bool, accuracy: bool | None = None) -> list[Path]:
     """Benchmarked models' scripts: single-component ones run Model.benchmark, multi-component ones time their
     pipeline and take each component's MLA stats from its own Model.benchmark. accuracy selects the models that
@@ -387,7 +392,8 @@ def takes_images(script: Path) -> bool:
 # A model whose inputs are not images, such as a keypoint matcher, benchmarks tensors its own tests cover.
 @pytest.mark.parametrize(
     "script",
-    [path for path in performance_scripts(components=False) if takes_images(path) and first_accuracy_dataset(path)],
+    [path for path in performance_scripts(components=False)
+     if takes_images(path) and first_accuracy_dataset(path) and path.parents[1].name not in DIGIT_MODELS],
     ids=lambda path: path.parents[1].name,
 )
 def test_every_single_component_script_benchmarks_a_dataset_image(script, monkeypatch, tmp_path):
@@ -518,6 +524,59 @@ def test_every_single_component_script_benchmarks_a_dataset_image(script, monkey
     assert list(report["components"]) == ["model"]
     assert report["components"]["model"]["mla_layer_stats"] == CORE_REPORT["mla_layer_stats"]
     assert report["components"]["model"]["mla_stage_stats"] == CORE_REPORT["mla_stage_stats"]
+
+
+@pytest.mark.parametrize("model_name", sorted(DIGIT_MODELS))
+def test_every_digit_script_benchmarks_a_seeded_test_digit_in_a_720p_frame(model_name, monkeypatch, tmp_path):
+    import random
+
+    import numpy as np
+
+    script = REPOSITORY / "models" / model_name / "scripts/performance.py"
+    loaded, requests = [], []
+
+    class ScriptModel(Model):
+        def __init__(self, *args):
+            super().__init__("model")
+            loaded.append(args)
+
+        def benchmark(self, options):
+            requests.append(options)
+            return Saved(CORE_REPORT)
+
+    monkeypatch.setitem(sys.modules, "pyneat", types.SimpleNamespace(
+        __version__="3.0.0", build_info=lambda: {"version": "3.0.0"}, Model=ScriptModel,
+        ModelOptions=ModelOptions, BenchmarkOptions=BenchmarkOptions, Tensor=Tensor, **SCRIPT_PYNEAT,
+    ))
+    # Every test digit is blank except the one random.Random(0) picks, which is white.
+    chosen = random.Random(0).randrange(10000)
+    digits = np.zeros((10000, 28, 28), np.uint8)
+    digits[chosen] = 255
+    dataset = tmp_path / "mnist"
+    dataset.mkdir()
+    header = np.array([0x803, 10000, 28, 28], dtype=">u4").tobytes()
+    (dataset / "t10k-images-idx3-ubyte").write_bytes(header + digits.tobytes())
+    output = tmp_path / "output"
+    monkeypatch.setattr(sys, "argv", [
+        str(script), "--mpk", "model.tar.gz", "--dataset", f"mnist-default={dataset}", "--output", str(output),
+    ])
+
+    runpy.run_path(str(script), run_name="__main__")
+
+    assert [args[0] for args in loaded] == ["model.tar.gz"]
+    assert [(r.num_samples, r.min_duration_ms, r.include_mla_layer_stats, r.include_mla_stage_stats)
+            for r in requests] == [(1000, 60000, True, True)]
+    options = loaded[0][1]
+    assert (options.preprocess.kind, options.preprocess.resize.mode) == ("Image", "Stretch")
+    assert options.preprocess.color_convert.output_format == "PreprocessColorFormat.GRAY8"
+    assert not hasattr(options.preprocess, "preset")
+    (frame,) = requests[0].inputs
+    # The 28x28 digit letterboxes to the frame's centre 720x720, grey on both sides.
+    assert frame.array.shape == (720, 1280, 3) and frame.options["image_format"] == "RGB"
+    assert (frame.array[:, 280:1000] == 255).all() and (frame.array[:, :280] == 114).all()
+    report = saved_report(output)
+    assert f"mnist-default test digit {chosen} " in report["workload"]
+    assert list(report["components"]) == ["model"]
 
 
 # A model without an accuracy dataset takes no --dataset and builds its own frame.
