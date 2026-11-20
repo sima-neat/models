@@ -1,0 +1,88 @@
+display_name: ShuffleNet V2 x2.0
+description: Classifies an image into one of the 1,000 ImageNet classes.
+model_type: vision
+tasks: [image_classification]
+
+modalities:
+  inputs: [image]
+  outputs: [class_scores]
+
+architecture: shufflenet
+
+license:
+  spdx: BSD-3-Clause
+  redistribution: allowed
+  attribution: torchvision's ShuffleNet V2 x2.0 ImageNet weights (ShuffleNet_V2_X2_0_Weights.IMAGENET1K_V1), distributed under BSD-3-Clause; ShuffleNet V2 by Ningning Ma et al. (Megvii); ONNX export by the ONNX Model Zoo.
+
+upstream:
+  repository: https://huggingface.co/onnxmodelzoo/shufflenet_v2_x2_0_Opset17
+  revision: b23fdf17872274347cd802fa05a0fd8f5854809a
+  derived_from: https://github.com/pytorch/vision/blob/134f6382956071833f05f072763c03f9858453f2/torchvision/models/shufflenetv2.py
+
+resources:
+  license:
+    source:
+      uri: https://raw.githubusercontent.com/pytorch/vision/134f6382956071833f05f072763c03f9858453f2/LICENSE
+      sha256: 6502f676851cfe25f8af75531dfb32375b7325b73c37e7b43741fa422893e71d
+      size_bytes: 1517
+    install_path: licenses/LICENSE
+
+# The ONNX Model Zoo's export of torchvision's weights (ONNX opset 17), compiled as published.
+compilation:
+  format: onnx
+  source:
+    uri: hf://models/onnxmodelzoo/shufflenet_v2_x2_0_Opset17@b23fdf17872274347cd802fa05a0fd8f5854809a/shufflenet_v2_x2_0_Opset17.onnx
+    sha256: 39723ea40f55ab3dd50eadbd7dc9e6d335cb5e178fa790f7ebae83fdad372baa
+    size_bytes: 29571592
+
+calibrations:
+- id: imagenet-2012-cal
+  dataset: {id: imagenet-2012, variant: cal, sha256: e6c18b281f5ac5fc7cf6d36ef9a5f486ce95eb43ead99ee8523bd8162bc49a6f, size_bytes: 112710756}
+
+build_profiles:
+  w16a16:
+    components:
+      model:
+        parameters:
+          precision: w16a16
+          input_name: x
+          input_shape: [1, 3, 224, 224]
+
+  w8a8:
+    calibration_dataset: imagenet-2012-cal
+    components:
+      model:
+        parameters:
+          precision: w8a8
+          input_name: x
+          input_shape: [1, 3, 224, 224]
+          calibration_samples: 50
+
+  # w8a16 is not shipped: w8a8 is within 5% of w16a16 in top-1, and on a DevKit w8a16 measured top-1 0.7613
+  # at 701.7 inferences/s, against w16a16's 689.1: no faster than BF16.
+  # w8a16:
+  #   components:
+  #     model:
+  #       parameters:
+  #         precision: w8a16
+  #         input_name: x
+  #         input_shape: [1, 3, 224, 224]
+
+numerical_fidelity:
+  status: diagnostic
+  dataset: {id: imagenet-2012, variant: cal, sha256: e6c18b281f5ac5fc7cf6d36ef9a5f486ce95eb43ead99ee8523bd8162bc49a6f, size_bytes: 112710756}
+  selection: {method: seeded_random_without_replacement, seed: 42, offset: 0, samples: 50}
+  outputs: [logits]
+
+accuracy:
+  datasets:
+  - {id: imagenet-2012, variant: val, sha256: 018bf95eb75b8b7f1d7766303cdecf3c45ecb02ccf4cf161122ae885c4d7a36f, size_bytes: 6666407650}
+
+performance: {}
+
+reference_metrics:
+- source: https://github.com/pytorch/vision/blob/134f6382956071833f05f072763c03f9858453f2/torchvision/models/shufflenetv2.py
+  dataset: {id: imagenet-2012, split: val}
+  conditions: 224x224, resize 232 bilinear, center crop, FP32
+  note: torchvision's published ShuffleNet_V2_X2_0_Weights.IMAGENET1K_V1 accuracy, on all 50,000 validation images.
+  metrics: {top1_accuracy: 0.7623, top5_accuracy: 0.93006}

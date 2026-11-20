@@ -225,6 +225,11 @@ architectures:
     description: Labels every pixel of an image with hierarchical transformer encoders and lightweight decoders.
     paradigm: transformer
     allowed_model_types: [vision]
+  shufflenet:
+    display_name: ShuffleNet
+    description: Classifies images with lightweight convolutional networks built from channel-split and channel-shuffle units.
+    paradigm: cnn
+    allowed_model_types: [vision]
   siglip:
     display_name: SigLIP
     description: Encodes images and text into shared embeddings for similarity search and classification.
