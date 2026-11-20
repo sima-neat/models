@@ -1,0 +1,22 @@
+conversion:
+  run_tests: true
+compile:
+  run_tests: true
+accuracy:
+  run_tests: true
+  expected:
+    w16a16:
+      nyu-depth-v2-val:
+        abs_rel: 0.117
+        delta1: 0.8645
+    w8a8:
+      nyu-depth-v2-val:
+        abs_rel: 0.1203
+        delta1: 0.8561
+performance:
+  run_tests: true
+  expected:
+    w16a16:
+      throughput_fps: 443.4
+    w8a8:
+      throughput_fps: 1262.1

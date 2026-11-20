@@ -1,0 +1,95 @@
+display_name: MiDaS v2.1 Small
+description: Estimates relative depth for every pixel of an image with an EfficientNet-Lite3 encoder and RefineNet decoder.
+model_type: vision
+tasks: [depth_estimation]
+
+modalities:
+  inputs: [image]
+  outputs: [depth_map]
+
+architecture: midas
+
+license:
+  spdx: MIT
+  redistribution: allowed
+  attribution: Derived from the MiDaS v2.1 Small weights (midas_v21_small_256.pt) released in isl-org/MiDaS, and distributed under MIT.
+
+# The v2_1 tag points at a 2020 commit; this revision's README links the release file below, and its
+# midas/model_loader.py builds midas_v21_small_256 as convert.py does.
+upstream:
+  repository: https://github.com/isl-org/MiDaS
+  revision: 454597711a62eabcbf7d1e89f3fb9f569051ac9b
+
+resources:
+  license:
+    source:
+      uri: https://raw.githubusercontent.com/isl-org/MiDaS/454597711a62eabcbf7d1e89f3fb9f569051ac9b/LICENSE
+      sha256: 99ec0b9f9bcc9234b649787b8f03b07dbece95764b7879e1e72fb76cb0f96876
+      size_bytes: 1098
+    install_path: licenses/LICENSE
+
+conversion:
+  source:
+    # Neither isl-org nor Intel publishes this checkpoint on Hugging Face, so pin the authors' release asset as the
+    # source of record, rather than a third-party mirror.
+    uri: https://github.com/isl-org/MiDaS/releases/download/v2_1/midas_v21_small_256.pt
+    sha256: 70d6b9c891758c67f974a6097fb0c608c7ee67fb81ac3e5588847d5596d56fca
+    size_bytes: 85761505
+
+compilation:
+  format: onnx
+  source: conversion
+
+calibrations:
+- id: nyu-depth-v2-cal
+  dataset: {id: nyu-depth-v2, variant: cal, sha256: 2fdf34652b47f3b2c4b28917f2c06bc25347e4a3ac480a5bfc040c91497ebb0b, size_bytes: 48030102}
+
+build_profiles:
+  w16a16:
+    components:
+      model:
+        parameters:
+          precision: w16a16
+          input_name: pixel_values
+          input_shape: [1, 3, 256, 256]
+
+  w8a8:
+    calibration_dataset: nyu-depth-v2-cal
+    components:
+      model:
+        parameters:
+          precision: w8a8
+          input_name: pixel_values
+          input_shape: [1, 3, 256, 256]
+          calibration_samples: 50
+
+numerical_fidelity:
+  status: diagnostic
+  dataset: {id: nyu-depth-v2, variant: cal, sha256: 2fdf34652b47f3b2c4b28917f2c06bc25347e4a3ac480a5bfc040c91497ebb0b, size_bytes: 48030102}
+  selection: {method: seeded_random_without_replacement, seed: 42, offset: 0, samples: 50}
+  outputs: [predicted_depth]
+
+accuracy:
+  # NYU's official 654-image test split, scored with the MiDaS protocol (see accuracy.py).
+  datasets:
+  - {id: nyu-depth-v2, variant: val, sha256: 6e94b032248af78cc091b6a295808fc95ed4830d32e5084f1e7ec3797eec679e, size_bytes: 156136510}
+
+performance: {}
+
+# No published score is comparable to this package: the MiDaS README reports NYU Depth V2 delta1 only as an error,
+# at the image's own aspect ratio, and this package takes a 256x256 image without keeping it. The builds compare with
+# the FP32 baseline instead, which scripts/fp32_baseline_accuracy.py measures on this package's own inputs, on the
+# ONNX convert.py writes (surgery.py's compile-time rewrite is exact).
+reference_metrics:
+- origin: fp32_baseline
+  script: scripts/fp32_baseline_accuracy.py
+  dataset: {id: nyu-depth-v2, split: test}
+  conditions: FP32 ONNX on ONNX Runtime CPU; each image resized bicubically to 256x256 without keeping its aspect ratio; the prediction resized bicubically to 640x480, aligned per image by scale and shift in inverse depth and capped at 10 m; all 654 test images
+  metrics: {abs_rel: 0.1171, delta1: 0.8642}
+
+# The published table, kept for reference and not shown (it prints delta1 as an error, 13.43%, and no AbsRel):
+# reference_metrics:
+# - source: https://github.com/isl-org/MiDaS/blob/454597711a62eabcbf7d1e89f3fb9f569051ac9b/README.md
+#   dataset: {id: nyu-depth-v2, split: test}
+#   conditions: Zero-shot relative depth, affine-invariant inverse depth, the image's aspect ratio kept, FP32
+#   metrics: {delta1: 0.8657}

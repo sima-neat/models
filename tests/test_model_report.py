@@ -311,8 +311,9 @@ def write_image(path, value, size=SOURCE_SIZE):
 
 def benchmark_dataset(root):
     """A dataset with the files each script samples from: COCO val2017, ImageNet's val2012 and ImageNet mini's val
-    split, a DAVIS val sequence, an HPatches val sequence, DOTA's val images, Pittsburgh 30k, ADE20K's validation
-    images, and the Scene Flow test list. Only the second COCO image labels a person, so a pose script must pick it."""
+    split, a DAVIS val sequence, an HPatches val sequence, DOTA's val images, NYU Depth V2's test split, Pittsburgh
+    30k, ADE20K's validation images, and the Scene Flow test list. Only the second COCO image labels a person, so a
+    pose script must pick it."""
     write_image(root / STEREO_PAIR.format(view="left"), STEREO_LEFT, STEREO_VIEW)
     write_image(root / STEREO_PAIR.format(view="right"), STEREO_RIGHT, STEREO_VIEW)
     disparity = STEREO_PAIR.replace("frames_finalpass", "disparity").format(view="left").replace(".png", ".pfm")
