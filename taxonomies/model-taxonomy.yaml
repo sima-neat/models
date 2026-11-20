@@ -305,6 +305,11 @@ architectures:
     description: Detects objects with rotated bounding boxes in aerial imagery.
     paradigm: cnn
     allowed_model_types: [vision]
+  yolov8_seg:
+    display_name: YOLOv8-seg
+    description: Detects objects and outlines each instance with a segmentation mask.
+    paradigm: cnn
+    allowed_model_types: [vision]
   yolox:
     display_name: YOLOX
     description: Detects objects and their bounding boxes in images.

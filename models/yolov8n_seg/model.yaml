@@ -1,0 +1,74 @@
+display_name: YOLOv8n-seg
+description: The smallest YOLOv8 instance segmenter for COCO objects.
+model_type: vision
+tasks: [instance_segmentation]
+
+modalities:
+  inputs: [image]
+  outputs: [bounding_boxes, class_scores, masks]
+
+architecture: yolov8_seg
+
+license:
+  spdx: AGPL-3.0-only
+  redistribution: restricted
+  attribution: YOLOv8 is developed by Ultralytics and distributed under AGPL-3.0.
+
+upstream:
+  repository: https://github.com/ultralytics/assets
+  revision: ccdadba8adba2f772b03f06f720324e422889e9c
+  derived_from: https://github.com/ultralytics/ultralytics/tree/f2d3aed634a5b0e4828024718d4a61ab2f83fb19
+
+resources:
+  license:
+    source:
+      uri: https://raw.githubusercontent.com/ultralytics/ultralytics/f2d3aed634a5b0e4828024718d4a61ab2f83fb19/LICENSE
+      sha256: 0d96a4ff68ad6d4b6f1f30f713b18d5184912ba8dd389f86aa7710db079abcb0
+      size_bytes: 34523
+    install_path: licenses/LICENSE
+
+conversion:
+  source:
+    # Ultralytics/YOLOv8 on Hugging Face has no segmentation checkpoints. Its yolov8n.pt is byte-identical to
+    # the v0.0.0 release asset, so the segmenters come from that original release too.
+    uri: https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov8n-seg.pt
+    sha256: d39e867b2c3a5dbc1aa764411544b475cb14727bf6af1ec46c238f8bb1351ab9
+    size_bytes: 7054355
+
+compilation:
+  format: onnx
+  source: conversion
+
+calibrations:
+- id: coco-2017-cal
+  dataset: {id: coco-2017, variant: cal, sha256: 54c64d84122eba371ac014d7b43849a461551c2e6c5c430b5ead90ec1dec12b1, size_bytes: 187510866}
+
+build_profiles:
+  w16a16:
+    components:
+      model:
+        parameters: {precision: w16a16}
+
+  w8a8:
+    calibration_dataset: coco-2017-cal
+    components:
+      model:
+        parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 50}
+
+  w8a16:
+    components:
+      model:
+        parameters: {precision: w8a16}
+
+accuracy:
+  # The reference uses padded rectangular batches; accuracy.py runs a square 640x640 input.
+  datasets:
+  - {id: coco-2017, variant: val, sha256: a40de1caf42b47c5a8976eb97efe3c83f3a41337c4d16d318eb15d65c293f2da, size_bytes: 898368520}
+
+performance: {}
+
+reference_metrics:
+- source: https://github.com/ultralytics/ultralytics/blob/f2d3aed634a5b0e4828024718d4a61ab2f83fb19/docs/en/models/yolov8.md
+  dataset: {id: coco-2017, split: val}
+  conditions: 640x640, NMS at IoU 0.7
+  metrics: {coco_mask_map: 0.305, coco_box_map: 0.367}
