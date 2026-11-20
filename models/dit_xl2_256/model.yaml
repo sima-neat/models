@@ -1,0 +1,74 @@
+display_name: DiT-XL/2 256
+description: Generates a 256x256 image of one of the 1000 ImageNet classes with a diffusion transformer.
+model_type: vision
+tasks: [image_generation]
+
+modalities:
+  inputs: [class_label]
+  outputs: [image]
+
+architecture: dit
+
+# Upstream terms are CC BY-NC 4.0: noncommercial use only, with attribution.
+license:
+  spdx: CC-BY-NC-4.0
+  redistribution: restricted
+  attribution: DiT by William Peebles and Saining Xie (Meta Platforms, Inc.), CC BY-NC 4.0; its VAE is Stability AI's sd-vae-ft-ema.
+
+upstream:
+  repository: https://huggingface.co/facebook/DiT-XL-2-256
+  revision: eab87f77abd5aef071a632f08807fbaab0b704d0
+  derived_from: https://github.com/facebookresearch/DiT
+
+conversion:
+  source:
+    repository: facebook/DiT-XL-2-256
+    revision: eab87f77abd5aef071a632f08807fbaab0b704d0
+    main_file: model_index.json
+    files:
+      model_index.json: {sha256: 685dd8124152d9126f07528b728253041c5719426458c43176bd2f96c6f39f70, size_bytes: 35837}
+      transformer/config.json: {sha256: 26f9e069aa6d89fbb1f97acce3dba1628a41b3030879c98c0407562595c84bc4, size_bytes: 602}
+      transformer/diffusion_pytorch_model.bin: {sha256: e592d64df5a579691e65d2b245641a00bb070b652e2c5ca775cce20a729ce9d9, size_bytes: 2999533581}
+      vae/config.json: {sha256: 44b0169010f4a071272f69d03ead58b0661415bb9c88702a5e0ac631b80f7ee2, size_bytes: 601}
+      vae/diffusion_pytorch_model.bin: {sha256: 4ec99ed96663e2418dba665762930f9eae8884e6b0a223fd53507931e8446eba, size_bytes: 334711857}
+
+compilation:
+  format: onnx
+  source:
+    uri: https://artifacts.stg.neat.sima.ai/models-onnx/dit_xl2_256/27cf32ad3e265dbd53f7297c38205a0ab9b268d60cc47b8424f7450d6ef09f56/41586144443-1/model.onnx
+    sha256: 27cf32ad3e265dbd53f7297c38205a0ab9b268d60cc47b8424f7450d6ef09f56
+    size_bytes: 1452458642
+  # The transformer's 28 blocks in four parts of 7 (compiling all 28 at once ran out of the runner's memory),
+  # then the decoder of the final latent.
+  components: [transformer_0, transformer_1, transformer_2, transformer_3, vae_decoder]
+
+build_profiles:
+  # Batch 1: the compiler can split the transformer's large tensors only at batch 1 (at batch 2,
+  # CannotSplitLargeTensorError), so a step runs the two guidance slots as two passes through the parts.
+  w16a16:
+    components:
+      transformer_0:
+        parameters: {precision: w16a16}
+      transformer_1:
+        parameters: {precision: w16a16}
+      transformer_2:
+        parameters: {precision: w16a16}
+      transformer_3:
+        parameters: {precision: w16a16}
+      # The decoder will not quantize without calibration (its SiLUs and 4D GroupNorms need ranges), so it calibrates
+      # on seeded standard-normal latents, the scale its input has once denoised.
+      vae_decoder:
+        parameters: {precision: w16a16, calibration_bins: 2048, calibration_samples: 4}
+
+pipeline:
+- {cpu: "Seed a [1, 4, 32, 32] noise latent; DDIM timesteps; timestep features and class one-hot"}
+- {component: transformer_0}
+- {component: transformer_1}
+- {component: transformer_2}
+- {component: transformer_3}
+- {cpu: "Guide the noise (class pass, null-class pass) and take the DDIM step; repeat per timestep"}
+- {component: vae_decoder}
+- {cpu: "Map the image from [-1, 1] to 8-bit RGB"}
+
+# A fixed input (class 207, seed 0, 50 DDIM steps): the model takes no image, so performance.py builds it.
+performance: {}

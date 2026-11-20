@@ -1,0 +1,10 @@
+conversion:
+  run_tests: true
+compile:
+  run_tests: true
+performance:
+  run_tests: true
+  expected:
+    w16a16:
+      # Images per second: one inference is one 50-step generated image, the parts pipelined (DevKit, 2026-11-04).
+      throughput_fps: 0.1107

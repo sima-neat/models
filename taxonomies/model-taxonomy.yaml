@@ -18,6 +18,8 @@ modalities:
     display_name: Text
   audio:
     display_name: Audio
+  class_label:
+    display_name: Class Label
   class_scores:
     display_name: Class Scores
   bounding_boxes:
@@ -94,6 +96,11 @@ architectures:
     display_name: DINOv3 ConvNeXt
     description: Encodes images into a global embedding and patch embeddings with a convolutional network.
     paradigm: cnn
+    allowed_model_types: [vision]
+  dit:
+    display_name: DiT
+    description: Generates images from class labels with diffusion transformers over a latent space.
+    paradigm: transformer
     allowed_model_types: [vision]
   dla:
     display_name: DLA
@@ -350,6 +357,9 @@ tasks:
     allowed_model_types: [vision]
   image_embedding:
     display_name: Image Embedding
+    allowed_model_types: [vision]
+  image_generation:
+    display_name: Image Generation
     allowed_model_types: [vision]
   image_super_resolution:
     display_name: Image Super Resolution

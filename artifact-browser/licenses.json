@@ -19,6 +19,11 @@
     "summary": "Permissive license. Redistribution must keep the copyright notice and disclaimer.",
     "downloadable": true
   },
+  "CC-BY-NC-4.0": {
+    "name": "Creative Commons Attribution-NonCommercial 4.0",
+    "summary": "Noncommercial use only, with attribution. SiMa.ai does not offer this model for download.",
+    "downloadable": false
+  },
   "LicenseRef-BigScience-OpenRAIL-M": {
     "name": "BigScience Open RAIL-M License",
     "summary": "Responsible AI license. Redistribution must include the license and pass its use restrictions on to every recipient.",

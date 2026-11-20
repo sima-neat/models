@@ -279,6 +279,7 @@ PYNEAT_ENUMS = {
     "NormalizePreset": ("ImageNet",),
     "PixelFormat": ("RGB",),
     "TensorMemory": ("EV74",),
+    "TensorLayout": ("HWC",),
     "BoxDecodeType": (
         "YoloV8", "YoloV26", "YoloV26Pose", "YoloV26Seg", "YoloV8Obb", "YoloV26Obb", "SuperPoint", "YoloX", "Detr"
     ),
@@ -346,6 +347,10 @@ def assert_letterboxed_frame(tensor):
     assert tensor.options["image_format"] == "RGB"
     assert (frame[:, : IMAGE_COLUMNS.start] == FILL).all() and (frame[:, IMAGE_COLUMNS.stop :] == FILL).all()
     assert (frame[:, IMAGE_COLUMNS] == 200).all()
+
+
+# Models that take no image benchmark a fixed input their script builds, and take no --dataset.
+NO_IMAGE_MODELS = {"dit_xl2_256"}
 
 
 def assert_side_by_side_frame(tensor):
@@ -599,6 +604,8 @@ def test_every_multi_component_script_keeps_cores_mla_stats(script, monkeypatch)
 
     pyneat = types.SimpleNamespace(Model=ScriptModel, BenchmarkOptions=BenchmarkOptions)
     monkeypatch.setitem(sys.modules, "pyneat", pyneat)
+    # A script may import a helper beside it, as it does when run from its directory.
+    monkeypatch.syspath_prepend(str(script.parent))
     monkeypatch.setitem(sys.modules, "onnxruntime", types.SimpleNamespace())
 
     layer_stats, stage_stats = runpy.run_path(str(script))["mla_stats"](Path("backbone.tar.gz"))
@@ -608,9 +615,10 @@ def test_every_multi_component_script_keeps_cores_mla_stats(script, monkeypatch)
 
 
 @pytest.mark.parametrize(
-    "script", [path for path in performance_scripts(components=True, accuracy=True)
-               if yaml.safe_load((path.parents[1] / "model.yaml").read_text())["performance"].get("scope")
-               != "components"],
+    "script",
+    [path for path in performance_scripts(components=True, accuracy=True)
+     if path.parents[1].name not in NO_IMAGE_MODELS
+     and yaml.safe_load((path.parents[1] / "model.yaml").read_text())["performance"].get("scope") != "components"],
     ids=lambda path: path.parents[1].name,
 )
 def test_every_multi_component_script_feeds_its_backbone_a_dataset_frame(script, monkeypatch, tmp_path):
@@ -639,6 +647,32 @@ def test_every_multi_component_script_feeds_its_backbone_a_dataset_frame(script,
         assert options.preprocess.preset == "ImageNet"
     height, width = frame.array.shape[:2]
     assert (options.preprocess.input_max_width, options.preprocess.input_max_height) == (width, height)
+
+
+@pytest.mark.parametrize("model_name", sorted(NO_IMAGE_MODELS))
+def test_every_no_image_script_builds_the_same_fixed_input(model_name, monkeypatch):
+    import numpy as np
+
+    script = REPOSITORY / "models" / model_name / "scripts/performance.py"
+    monkeypatch.setitem(sys.modules, "pyneat", types.SimpleNamespace(
+        ModelOptions=ModelOptions, Tensor=Tensor, **SCRIPT_PYNEAT,
+    ))
+    monkeypatch.syspath_prepend(str(script.parent))
+    functions = runpy.run_path(str(script))
+
+    first, second = functions["initial_latent"](), functions["initial_latent"]()
+    assert (first == second).all() and first.std() > 0.5
+    schedule = functions["Schedule"].ddim(functions["STEPS"])
+    conditioning = functions["Conditioning"].of(schedule, functions["CLASS_LABEL"])
+    assert len(conditioning.timesteps) == functions["STEPS"]
+    for tensor in conditioning.classes:
+        assert tensor.options["layout"] == "HWC" and tensor.array.shape == (1, 1, 1001)
+    # Slot 0 is the requested class, slot 1 the null class.
+    assert np.argmax(conditioning.classes[0].array) == functions["CLASS_LABEL"]
+    assert np.argmax(conditioning.classes[1].array) == 1000
+    options = functions["tensor_options"]()
+    assert options.preprocess.kind == "Tensor"
+    assert (options.preprocess.resize.enable, options.preprocess.normalize.enable) == ("Off", "Off")
 
 
 def test_model_code_uses_cores_mla_stats_names():
