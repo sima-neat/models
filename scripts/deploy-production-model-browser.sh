@@ -2,7 +2,6 @@
 # Usage: AWS_PROFILE=<production operator profile> PRODUCTION_AWS_ACCOUNT_ID=<account> \
 #   PRODUCTION_DOCS_BUCKET=<bucket> PRODUCTION_CLOUDFRONT_DISTRIBUTION_ID=<distribution> \
 #   scripts/deploy-production-model-browser.sh developer|customer
-# The customer view also needs MODEL_BROWSER_CATALOG_SNAPSHOT=<catalog_revision>:<canonical_sha256>.
 # Build, test and publish only the production Developer Center models/ prefix.
 # The script refuses to publish unless the active credentials belong to the given
 # account and the bucket is encrypted with a key of that account.
@@ -25,6 +24,8 @@ export MODEL_BROWSER_ENVIRONMENT=production MODEL_BROWSER_UI_MODE="$mode"
 export DOCS_SITE_URL=https://developer.sima.ai DOCS_BASE_URL=/models/
 unset MODEL_REGISTRY_API_URL MODEL_HERO_CDN_BASE_URL GITHUB_SHA
 npm ci --prefix website
+pin="$(node website/scripts/pin-catalog-snapshot.mjs)"
+[[ -z "$pin" ]] || export "$pin"
 npm run typecheck --prefix website
 node --test tests/browser/*.test.mjs
 npm run build:portal --prefix website

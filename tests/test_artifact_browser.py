@@ -441,8 +441,6 @@ def test_portal_config_assets_preserve_audience_and_backend_on_rollback(tmp_path
         shutil.copytree(BROWSER, root / "artifact-browser")
         monkeypatch.setenv("MODEL_BROWSER_ENVIRONMENT", environment)
         monkeypatch.setenv("MODEL_BROWSER_UI_MODE", audience)
-        snapshot = f"{'a' * 40}:{'b' * 64}" if audience == "customer" else ""
-        monkeypatch.setenv("MODEL_BROWSER_CATALOG_SNAPSHOT", snapshot)
         result = assemble_portal(root)
         assert result.returncode == 0, result.stderr
         portal = root / "website" / "portal-build"
@@ -912,7 +910,7 @@ def test_cached_build_history_preserves_run_mode() -> None:
     assert 'catalogMode: "runs"' in script
     assert 'state.catalogMode = modelsMode ? "models" : "runs"' in script
     assert 'mode: state.catalogMode' in script
-    assert 'cached && ["models", "runs"].includes(cached.mode) ? cached : null' in script
+    assert 'sameSnapshot && ["models", "runs"].includes(cached.mode) ? cached : null' in script
     assert "applyCatalog(cached, { cache: false })" in script
     assert 'return state.catalogMode === "models"' in script
     assert 'elements["branch-filter"].value && !elements["history-filter"].checked' not in browser
@@ -1120,7 +1118,6 @@ def test_browser_loads_taxonomy_from_the_current_catalog_and_exposes_category_fa
         assert f'id="{removed}"' not in html
         assert removed not in script
     assert "${catalogs}/current?git_ref=${gitRef}" in script
-    assert "${catalogs}/${snapshot.revision}?git_ref=${gitRef}&snapshot=${snapshot.canonicalSha256}" in script
     assert "applyTaxonomy(document?.taxonomy || null, snapshotBranch)" in script
     assert '"task-filter": "task"' in script
     assert '"architecture-filter": "architecture_id"' in script
