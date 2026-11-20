@@ -105,6 +105,11 @@ architectures:
     description: Segments an object through a video from a click or a box on one frame, with a memory of earlier frames.
     paradigm: transformer
     allowed_model_types: [vision]
+  efficientnet_lite:
+    display_name: EfficientNet-Lite
+    description: Classifies images with compound-scaled convolutional networks built for edge accelerators.
+    paradigm: cnn
+    allowed_model_types: [vision]
   gemma4:
     display_name: Gemma4
     description: Generates text and supports conversational tasks with text and multimodal inputs.

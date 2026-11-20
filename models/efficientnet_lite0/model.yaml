@@ -1,0 +1,84 @@
+display_name: EfficientNet-Lite0
+description: Classifies an image into one of the 1,000 ImageNet classes.
+model_type: vision
+tasks: [image_classification]
+
+modalities:
+  inputs: [image]
+  outputs: [class_scores]
+
+architecture: efficientnet_lite
+
+license:
+  spdx: Apache-2.0
+  redistribution: allowed
+  attribution: Derived from Google's EfficientNet-Lite0 ImageNet weights (tensorflow/tpu) as published in timm/tf_efficientnet_lite0.in1k, and distributed under Apache-2.0.
+
+upstream:
+  repository: https://huggingface.co/timm/tf_efficientnet_lite0.in1k
+  revision: e074755b39c3cd8ca77d917a7cfb62e70da6bf88
+  derived_from: https://github.com/tensorflow/tpu/tree/0a56e1e338d9b8022ef32f426643c91a1a5e6521/models/official/efficientnet/lite
+
+resources:
+  license:
+    # timm publishes the checkpoint under Apache-2.0; the weights come from Google's Apache-2.0 TensorFlow release.
+    source:
+      uri: https://raw.githubusercontent.com/huggingface/pytorch-image-models/c709c9a4a26af45d01221caadfdc6b00a9622630/LICENSE
+      sha256: 71b111620fa32c17a80ccd6db2da759d31a591e497d8b5f382174f59d1b59d49
+      size_bytes: 11343
+    install_path: licenses/LICENSE
+
+conversion:
+  source:
+    repository: timm/tf_efficientnet_lite0.in1k
+    revision: e074755b39c3cd8ca77d917a7cfb62e70da6bf88
+    main_file: model.safetensors
+    files:
+      model.safetensors: {sha256: 1b2a452450b5cf3f8f42da5b6214e71d5fda5666bef4dfae0699407e5bef13e1, size_bytes: 18802812}
+      config.json: {sha256: 7c006d122b46d5ada51651726636c56d1d1d379c67e4a586f66cbd19be0063f0, size_bytes: 569}
+
+compilation:
+  format: onnx
+  source: conversion
+
+calibrations:
+- id: imagenet-2012-cal
+  dataset: {id: imagenet-2012, variant: cal, sha256: e6c18b281f5ac5fc7cf6d36ef9a5f486ce95eb43ead99ee8523bd8162bc49a6f, size_bytes: 112710756}
+
+build_profiles:
+  w16a16:
+    components:
+      model:
+        parameters:
+          precision: w16a16
+          input_name: pixel_values
+          input_shape: [1, 3, 224, 224]
+
+  w8a8:
+    calibration_dataset: imagenet-2012-cal
+    components:
+      model:
+        parameters:
+          precision: w8a8
+          input_name: pixel_values
+          input_shape: [1, 3, 224, 224]
+          calibration_samples: 50
+
+numerical_fidelity:
+  status: diagnostic
+  dataset: {id: imagenet-2012, variant: cal, sha256: e6c18b281f5ac5fc7cf6d36ef9a5f486ce95eb43ead99ee8523bd8162bc49a6f, size_bytes: 112710756}
+  selection: {method: seeded_random_without_replacement, seed: 42, offset: 0, samples: 50}
+  outputs: [logits]
+
+accuracy:
+  datasets:
+  - {id: imagenet-2012, variant: val, sha256: 018bf95eb75b8b7f1d7766303cdecf3c45ecb02ccf4cf161122ae885c4d7a36f, size_bytes: 6666407650}
+
+performance: {}
+
+reference_metrics:
+- source: https://github.com/huggingface/pytorch-image-models/blob/c709c9a4a26af45d01221caadfdc6b00a9622630/results/results-imagenet.csv
+  dataset: {id: imagenet-2012, split: val}
+  conditions: 224x224, center crop 0.875, bicubic, FP32
+  note: timm's tf_efficientnet_lite0.in1k row, scored on all 50,000 validation images.
+  metrics: {top1_accuracy: 0.74846, top5_accuracy: 0.92180}
