@@ -1,0 +1,22 @@
+conversion:
+  run_tests: true
+compile:
+  run_tests: true
+accuracy:
+  run_tests: true
+  expected:
+    w16a16:
+      imagenet-2012-val:
+        top1_accuracy: 0.7941
+        top5_accuracy: 0.9475
+    w8a8:
+      imagenet-2012-val:
+        top1_accuracy: 0.7903
+        top5_accuracy: 0.9464
+performance:
+  run_tests: true
+  expected:
+    w16a16:
+      throughput_fps: 1103.3
+    w8a8:
+      throughput_fps: 2654.2
