@@ -294,6 +294,8 @@ SCRIPT_PYNEAT["PreprocessColorFormat"] = types.SimpleNamespace(
 )
 # A 4:3 COCO image letterboxes to 960x720 in the 1280x720 frame, with 160 grey columns on each side.
 SOURCE_SIZE, IMAGE_COLUMNS, FILL = (480, 640), slice(160, 1120), 114
+# A Market-1501 query image: a person crop, named <person>_c<camera>...
+MARKET_QUERY = "query/0001_c1s1_001051_00.jpg"
 # The ImageNet image a classifier benchmarks, by the variant of its accuracy dataset, as its workload names it.
 IMAGENET_SAMPLES = {"mini": "n01440764/ILSVRC2012_val_00000001.webp", "val": "val2012/ILSVRC2012_val_00000001.JPEG"}
 # A Scene Flow view is 960x540; a stereo script joins the pair side by side, left then right, unletterboxed.
@@ -312,7 +314,8 @@ def write_image(path, value, size=SOURCE_SIZE):
 def benchmark_dataset(root):
     """A dataset with the files each script samples from: COCO val2017, ImageNet's val2012 and ImageNet mini's val
     split, a DAVIS val sequence, an HPatches val sequence, DOTA's val images, Pittsburgh 30k, ADE20K's validation
-    images, and the Scene Flow test list. Only the second COCO image labels a person, so a pose script must pick it."""
+    images, a Market-1501 query image, and the Scene Flow test list. Only the second COCO image labels a person, so a
+    pose script must pick it."""
     write_image(root / STEREO_PAIR.format(view="left"), STEREO_LEFT, STEREO_VIEW)
     write_image(root / STEREO_PAIR.format(view="right"), STEREO_RIGHT, STEREO_VIEW)
     disparity = STEREO_PAIR.replace("frames_finalpass", "disparity").format(view="left").replace(".png", ".pfm")
@@ -326,6 +329,7 @@ def benchmark_dataset(root):
     write_image(root / "val/n01440764/ILSVRC2012_val_00000001.webp", 200)
     write_image(root / "val/images/P0003.jpg", 200)
     write_image(root / "val/v_scene/1.ppm", 200)
+    write_image(root / MARKET_QUERY, 200)
     write_image(root / "val/rgb_0001.jpg", 200)
     write_image(root / "test/rgb_0001.jpg", 200)
     write_image(root / "images/000/000000_pitch1_yaw1.jpg", 200)
@@ -514,7 +518,11 @@ def test_every_single_component_script_benchmarks_a_dataset_image(script, monkey
         else:
             assert options.preprocess.preset == "ImageNet"
         metadata = yaml.safe_load((script.parents[1] / "model.yaml").read_text(encoding="utf-8"))
-        assert IMAGENET_SAMPLES[metadata["accuracy"]["datasets"][0]["variant"]] in report["workload"]
+        if first_accuracy_dataset(script) == "market-1501":
+            # A re-identification model benchmarks a Market-1501 query person crop.
+            assert MARKET_QUERY in report["workload"]
+        else:
+            assert IMAGENET_SAMPLES[metadata["accuracy"]["datasets"][0]["variant"]] in report["workload"]
     assert list(report["components"]) == ["model"]
     assert report["components"]["model"]["mla_layer_stats"] == CORE_REPORT["mla_layer_stats"]
     assert report["components"]["model"]["mla_stage_stats"] == CORE_REPORT["mla_stage_stats"]

@@ -50,6 +50,11 @@ architectures:
     description: Detects objects described by text prompts in images.
     paradigm: cnn
     allowed_model_types: [vlm]
+  bot_reid:
+    display_name: BoT ReID
+    description: Encodes person crops into embeddings for re-identification with bag-of-tricks ResNet baselines.
+    paradigm: cnn
+    allowed_model_types: [vision]
   clip:
     display_name: CLIP
     description: Encodes images and text into shared embeddings for similarity search and classification.

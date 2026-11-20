@@ -1,0 +1,77 @@
+display_name: BoT ReID R50
+description: Turns a cropped person image into an embedding for matching the same person across cameras.
+model_type: vision
+tasks: [re_identification]
+
+modalities:
+  inputs: [image]
+  outputs: [embeddings]
+
+architecture: bot_reid
+
+license:
+  spdx: Apache-2.0
+  redistribution: allowed
+  attribution: >-
+    BoT (Bag of Tricks) ResNet-50 by JD AI Research's fast-reid, trained on Market-1501, distributed under
+    Apache-2.0.
+
+upstream:
+  repository: https://github.com/JDAI-CV/fast-reid
+  revision: 64861ea6c85122bbf8577c10bd7fc6e551495b3a
+  derived_from: https://github.com/michuanhaohao/reid-strong-baseline
+
+resources:
+  license:
+    # fast-reid publishes its weights as release files; its code repository carries the Apache-2.0 text.
+    source:
+      uri: https://raw.githubusercontent.com/JDAI-CV/fast-reid/64861ea6c85122bbf8577c10bd7fc6e551495b3a/LICENSE
+      sha256: 14a8a9a670fa989f040bc7a5d964fa7a478ffd7cb44407a9061303240d9e21df
+      size_bytes: 11347
+    install_path: licenses/LICENSE
+
+conversion:
+  source:
+    # fast-reid publishes its trained models only as GitHub release assets; Hugging Face has no official copy (the
+    # fast-reid repositories there are third-party re-uploads), so this pins the v0.1.1 release asset, the BoT(R50)
+    # Market-1501 model of fast-reid's model zoo. Tag v0.1.1 is the revision above.
+    uri: https://github.com/JDAI-CV/fast-reid/releases/download/v0.1.1/market_bot_R50.pth
+    sha256: 764fa8ca18117e2f52102791334c852d1c2e5e0b7c727e3f271c16893f4184aa
+    size_bytes: 300955418
+
+compilation:
+  format: onnx
+  source: conversion
+
+# One Market-1501 archive serves both stages: the training identities calibrate, and the query images are searched
+# in the gallery (bounding_box_test) for accuracy.
+calibrations:
+- id: market-1501-default
+  dataset: {id: market-1501, variant: default, sha256: 2fc8b14cf193ba338fb8937d548611714843dcb0c72933a6c0955e446d3b1259, size_bytes: 227514008}
+
+build_profiles:
+  w16a16:
+    components:
+      model:
+        parameters: {precision: w16a16}
+
+  # Full INT8, calibrated on 50 seeded training images: ReID mAP 0.8% below BF16 on a DevKit, with the same Rank-1,
+  # inside the 5% rule. A w8a16 build (INT8 weights, BF16 activations) measured mAP 0.863 at half w8a8's throughput,
+  # so it is not shipped.
+  w8a8:
+    calibration_dataset: market-1501-default
+    components:
+      model:
+        parameters: {precision: w8a8, calibration_samples: 50}
+
+accuracy:
+  datasets:
+  - {id: market-1501, variant: default, sha256: 2fc8b14cf193ba338fb8937d548611714843dcb0c72933a6c0955e446d3b1259, size_bytes: 227514008}
+
+performance: {}
+
+reference_metrics:
+- source: https://github.com/JDAI-CV/fast-reid/blob/64861ea6c85122bbf8577c10bd7fc6e551495b3a/MODEL_ZOO.md
+  dataset: {id: market-1501, split: query}
+  conditions: 256x128, BNNeck feature, cosine distance, no re-ranking or query expansion
+  metrics: {reid_map: 0.861, cmc_rank1: 0.944}

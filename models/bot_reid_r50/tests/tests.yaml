@@ -1,0 +1,22 @@
+conversion:
+  run_tests: true
+compile:
+  run_tests: true
+accuracy:
+  run_tests: true
+  expected:
+    w16a16:
+      market-1501-default:
+        reid_map: 0.8634
+        cmc_rank1: 0.9400
+    w8a8:
+      market-1501-default:
+        reid_map: 0.8564
+        cmc_rank1: 0.9400
+performance:
+  run_tests: true
+  expected:
+    w16a16:
+      throughput_fps: 728.9
+    w8a8:
+      throughput_fps: 1830.9
