@@ -62,3 +62,5 @@ select = ["E", "F", "I", "UP"]
 [tool.ruff.lint.per-file-ignores]
 # Compile and benchmark inputs: reformatting them reruns those stages. Clean them up with the model's next change.
 "models/yolo_world_*/scripts/{accuracy,calibration,clip,compile,performance,precision,surgery}.py" = ["E501", "I001"]
+# Vendored facebookresearch/vjepa2 code, kept as upstream wrote it; it is also a compile input.
+"models/vjepa2_1_vitb_16x256/scripts/vjepa2/**" = ["I001", "UP008", "UP032"]

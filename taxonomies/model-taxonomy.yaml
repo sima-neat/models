@@ -225,6 +225,11 @@ architectures:
     description: Labels every pixel of an image with hierarchical transformer encoders and lightweight decoders.
     paradigm: transformer
     allowed_model_types: [vision]
+  vjepa:
+    display_name: V-JEPA
+    description: Encodes video clips into spatiotemporal features with joint-embedding predictive transformers.
+    paradigm: transformer
+    allowed_model_types: [vision]
   siglip:
     display_name: SigLIP
     description: Encodes images and text into shared embeddings for similarity search and classification.
@@ -377,6 +382,9 @@ tasks:
     allowed_model_types: [vision]
   semantic_segmentation:
     display_name: Semantic Segmentation
+    allowed_model_types: [vision]
+  video_feature_extraction:
+    display_name: Video Feature Extraction
     allowed_model_types: [vision]
   video_object_segmentation:
     display_name: Video Object Segmentation

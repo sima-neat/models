@@ -362,6 +362,10 @@ def first_accuracy_dataset(script: Path) -> str | None:
     return datasets[0]["id"] if datasets else None
 
 
+# Video models with no accuracy dataset get no --dataset and benchmark a fixed clip their script builds.
+FIXED_CLIP_MODELS = {"vjepa2_1_vitb_16x256"}
+
+
 def performance_scripts(*, components: bool, accuracy: bool | None = None) -> list[Path]:
     """Benchmarked models' scripts: single-component ones run Model.benchmark, multi-component ones time their
     pipeline and take each component's MLA stats from its own Model.benchmark. accuracy selects the models that
@@ -599,6 +603,8 @@ def test_every_multi_component_script_keeps_cores_mla_stats(script, monkeypatch)
 
     pyneat = types.SimpleNamespace(Model=ScriptModel, BenchmarkOptions=BenchmarkOptions)
     monkeypatch.setitem(sys.modules, "pyneat", pyneat)
+    # A script may import a helper beside it, as it does when run from its directory.
+    monkeypatch.syspath_prepend(str(script.parent))
     monkeypatch.setitem(sys.modules, "onnxruntime", types.SimpleNamespace())
 
     layer_stats, stage_stats = runpy.run_path(str(script))["mla_stats"](Path("backbone.tar.gz"))
@@ -608,9 +614,10 @@ def test_every_multi_component_script_keeps_cores_mla_stats(script, monkeypatch)
 
 
 @pytest.mark.parametrize(
-    "script", [path for path in performance_scripts(components=True, accuracy=True)
-               if yaml.safe_load((path.parents[1] / "model.yaml").read_text())["performance"].get("scope")
-               != "components"],
+    "script",
+    [path for path in performance_scripts(components=True, accuracy=True)
+     if path.parents[1].name not in FIXED_CLIP_MODELS
+     and yaml.safe_load((path.parents[1] / "model.yaml").read_text())["performance"].get("scope") != "components"],
     ids=lambda path: path.parents[1].name,
 )
 def test_every_multi_component_script_feeds_its_backbone_a_dataset_frame(script, monkeypatch, tmp_path):
@@ -639,6 +646,26 @@ def test_every_multi_component_script_feeds_its_backbone_a_dataset_frame(script,
         assert options.preprocess.preset == "ImageNet"
     height, width = frame.array.shape[:2]
     assert (options.preprocess.input_max_width, options.preprocess.input_max_height) == (width, height)
+
+
+@pytest.mark.parametrize("model_name", sorted(FIXED_CLIP_MODELS))
+def test_every_fixed_clip_script_builds_the_same_prepared_clip(model_name, monkeypatch):
+    script = REPOSITORY / "models" / model_name / "scripts/performance.py"
+    monkeypatch.setitem(sys.modules, "pyneat", types.SimpleNamespace(
+        ModelOptions=ModelOptions, Tensor=Tensor, **SCRIPT_PYNEAT,
+    ))
+    monkeypatch.syspath_prepend(str(script.parent))
+    functions = runpy.run_path(str(script))
+
+    first, second = functions["synthetic_clip"](), functions["synthetic_clip"]()
+
+    assert first.ndim == 4 and str(first.dtype) == "float32"
+    assert (first == second).all()
+    assert first.std() > 0.1
+    options = functions["tensor_options"]()
+    assert options.preprocess.kind == "Tensor"
+    assert (options.preprocess.resize.enable, options.preprocess.color_convert.enable,
+            options.preprocess.normalize.enable) == ("Off", "Off", "Off")
 
 
 def test_model_code_uses_cores_mla_stats_names():
