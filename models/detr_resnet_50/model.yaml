@@ -1,5 +1,6 @@
 display_name: DETR ResNet-50
 description: The original DETR transformer detector with a ResNet-50 backbone, for COCO objects.
+example_app: https://developer.sima.ai/examples/app/object-detection%2Fdetr-object-detector
 model_type: vision
 tasks: [object_detection]
 

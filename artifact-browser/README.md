@@ -199,6 +199,7 @@ delegation.
 | `config.js` | The registry, environment, and view settings for a source preview. Assembly writes its own for a deployed build |
 | `environment.js` | The `env=prod` production preview and the `branches=0` branch policy |
 | `portal-shell.js` | Load and mount the shared Developer Portal header |
+| `analytics.js` | The cookie consent banner and consent-gated GA4 page views, shared with the developer docs |
 | `state.js` | Shared page state, configuration, and DOM element lookup |
 | `api.js` | Registry requests, caches, catalog build selection, and build profile order |
 | `branch-builds.js` | Which builds a branch shows, and grouping by workflow |
@@ -241,8 +242,9 @@ It also writes `component-pipelines.<revision>.json` from the `pipeline` field
 of each `model.yaml`, which draws the component order on a multi-component
 model page, `reference-metrics.<revision>.json` from each
 `reference_metrics`, `low-accuracy-variants.<revision>.json`, the variants
-the customer view leaves out, and `dataset-names.<revision>.json` from the `name`
-of each `datasets/<id>.yaml`; `preview.py` serves the same data from the checkout.
+the customer view leaves out, `dataset-names.<revision>.json` from the `name`
+of each `datasets/<id>.yaml`, and `example-apps.<revision>.json` from each
+`example_app`; `preview.py` serves the same data from the checkout.
 It copies `licenses.json` to `licenses.<revision>.json`. That file names each
 license and decides whether a model page offers downloads, and it sits in this
 directory so that a static file server serves it with the page.
@@ -413,6 +415,8 @@ and publishes it as run metadata.
 | `MODEL_BROWSER_ENVIRONMENT` | `staging`, `production` | `staging` | The registry API, the site origin, and the environment label |
 | `MODEL_REGISTRY_API_URL` | An HTTPS origin, or `http://localhost` for a preview | The selected environment's public registry | Another registry API |
 | `MODEL_HERO_CDN_BASE_URL` | An HTTPS URL, or empty | See [Hero image CDN](#hero-image-cdn) | Where hero images load from |
+| `MODEL_BROWSER_GA_MEASUREMENT_ID` | A GA4 measurement ID, or empty | The selected environment's Developer Center stream: `G-T1D371DW1K` for staging, `G-Y6YREB4EG5` for production | Where page views report. Empty disables analytics and the consent banner |
+| `MODEL_BROWSER_ANALYTICS_HOST` | A hostname | The selected environment's site host | The only host where analytics runs. Set `127.0.0.1` to test the banner on a local preview |
 
 The view and the environment are independent. Customer view hides contributor
 navigation, branch/compiler filters, build history and the Details section while
@@ -433,6 +437,16 @@ The staging default is the WAF-protected public staging registry at
 `GET` requests from the static app's origin. The separate
 `artifacts-registry.stg.neat.sima.ai` endpoint is reserved for IAM-signed
 publisher traffic and rejects direct public reads.
+
+Analytics follows the rest of the Developer Center. The browser and the developer
+docs share one cookie decision for the developer.sima.ai origin with the core
+documentation, stored in `localStorage` as `sima-developer-center-cookie-consent`.
+A visitor who already chose on another Developer Center page is not asked again.
+Without a stored decision, the page shows the consent banner. GA4 loads only after
+analytics is accepted, and a page view is sent on load, on each `pushState`
+navigation, and on Back and Forward; `replaceState` URL updates are not page views.
+**Cookie preferences** in the footer reopens the settings. Local previews and the
+smoke test run on another host, so they show no banner and send nothing.
 
 The assembled configuration file is named after a hash of its contents. Changing the
 view or the environment at one source revision therefore keeps the earlier settings

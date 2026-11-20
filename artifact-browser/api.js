@@ -335,6 +335,16 @@ function loadDatasetNames() {
   return datasetNames;
 }
 
+// The Apps portal page of an example application that runs each model, from `example_app` in model.yaml when
+// the portal is built. Without it the model page shows no application link, so a failed fetch is not an error.
+let exampleApps = null;
+function loadExampleApp(modelId) {
+  exampleApps ||= fetch(new URL("./example-apps.json", import.meta.url))
+    .then((response) => (response.ok ? response.json() : {}))
+    .catch(() => ({}));
+  return exampleApps.then((apps) => apps[modelId] || null);
+}
+
 // The licenses a model may declare, from licenses.json beside this module. Without the list the page
 // cannot tell whether a license permits redistribution, so it offers no download.
 let licenseList = null;
@@ -374,7 +384,7 @@ export async function loadVariant(anchor) {
   const runs = details.map((detail) => detail.summary.run);
   const packageRun = variantPackage(componentRuns);
   const fingerprints = await benchmarkFingerprints(runs, runProfile(anchor));
-  const [performance, accuracy, [packageSummary, packageTests], pipeline, reference, licenses, names] = await Promise.all([
+  const [performance, accuracy, [packageSummary, packageTests], pipeline, reference, licenses, names, exampleApp] = await Promise.all([
     loadBenchmarkRun("performance", fingerprints.performance),
     loadBenchmarkRun("accuracy", fingerprints.accuracy),
     packageRun ? loadPackageRun(packageRun.run_id) : [null, null],
@@ -382,12 +392,13 @@ export async function loadVariant(anchor) {
     loadReferenceMetrics(anchor.metadata?.model_id),
     loadLicenses(),
     loadDatasetNames(),
+    loadExampleApp(anchor.metadata?.model_id),
   ]);
   // readAccuracy names each dataset of the report from this list.
   const variant = {
     key, modelId: anchor.metadata?.model_id, profile: runProfile(anchor), anchor, runs, details, performance,
     accuracy: accuracy && { ...accuracy, datasetNames: names },
-    packageSummary, packageTests, requestedPackageId: packageRun?.run_id || null, pipeline, reference, licenses,
+    packageSummary, packageTests, requestedPackageId: packageRun?.run_id || null, pipeline, reference, licenses, exampleApp,
   };
   state.variantCache.set(key, variant);
   return variant;

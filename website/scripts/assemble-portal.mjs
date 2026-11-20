@@ -21,7 +21,7 @@ const fingerprintedAssets = [
   'app', 'state', 'audience', 'ui', 'metrics', 'api', 'catalog-view', 'compare-view', 'model-view', 'page-parts',
   'performance-section', 'execution-section', 'accuracy-section', 'download-dialog',
   'model-report', 'mla-layer-stats', 'mla-utilization', 'branch-builds', 'downloads', 'markdown', 'accuracy-metrics',
-  'brand', 'styles', 'config', 'portal-shell', 'hero-images', 'environment',
+  'brand', 'styles', 'config', 'portal-shell', 'hero-images', 'environment', 'analytics',
 ];
 const stylesheets = ['brand', 'styles'];
 const modules = fingerprintedAssets.filter((asset) => !stylesheets.includes(asset) && asset !== 'config');
@@ -77,7 +77,7 @@ function shipModelData(name, write) {
   }
   apiSource = apiSource.replace(`"${url}"`, `"./${file}"`);
 }
-for (const name of ['component-pipelines', 'reference-metrics', 'low-accuracy-variants', 'dataset-names']) {
+for (const name of ['component-pipelines', 'reference-metrics', 'low-accuracy-variants', 'dataset-names', 'example-apps']) {
   shipModelData(name, (file) => execFileSync(process.env.PYTHON || 'python3', [
     '-m', 'model_registry', name, '--repository', repository, '--output', file,
   ], {env: {...process.env, PYTHONPATH: join(repository, 'tools')}, stdio: 'inherit'}));

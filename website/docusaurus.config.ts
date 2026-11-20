@@ -30,7 +30,10 @@ const config: Config = {
     type: 'localStorage',
     namespace: false,
   },
-  clientModules: ['./src/clientModules/developer-portal.js'],
+  clientModules: ['./src/clientModules/developer-portal.js', './src/clientModules/analytics.js'],
+  customFields: {
+    analytics: portal.analytics,
+  },
 
   i18n: {
     defaultLocale: 'en',
@@ -126,6 +129,7 @@ const config: Config = {
             {label: 'Models repository', href: 'https://github.com/sima-neat/models'},
             {label: 'Dataset Registry', href: 'https://github.com/sima-neat/dataset'},
             {label: 'Report a documentation issue', href: 'https://github.com/sima-neat/models/issues/new'},
+            {html: '<button type="button" class="footer__link-item cookie-preferences-link" data-cookie-preferences>Cookie preferences</button>'},
           ],
         },
       ],

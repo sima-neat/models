@@ -122,6 +122,11 @@ The Task menu leaves out tasks with no comparison yet, such as the audio tasks. 
 
 On a phone, the section navigation shortens **Developer docs** to **Docs**.
 
+On the first visit, a cookie notice asks whether to allow optional Google Analytics
+cookies. The choice is shared with the rest of the Developer Center, so a visitor who
+already chose there is not asked again. The browser works either way, and
+**Cookie preferences** at the bottom of the page changes the choice later.
+
 ## The model page
 
 Selecting an individual model opens its page. The page is built to be read at a glance:
@@ -129,7 +134,9 @@ each section shows its key facts directly, and longer detail sits in a row
 marked with › that opens in place. The header places the model image beside its
 name, tags, and description in both UI modes; narrow screens stack them. The
 variant selector follows, and below it the download action with the validation
-and source-link icons. The tags name what holds for every variant:
+and source-link icons. A model whose `model.yaml` names an `example_app` also
+shows an application icon there, which opens that example on the Apps portal.
+The tags name what holds for every variant:
 tasks, model family, model type and license. The download dialog offers an outlined **Copy CLI command**
 button with a copy icon alongside browser downloads where available. The copied
 command names the selected branch in the developer view. In the customer view it

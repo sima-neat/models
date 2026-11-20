@@ -52,6 +52,14 @@ function originalModelLink(input = {}) {
   };
 }
 
+// The example application is the Apps portal page `example_app` names in model.yaml.
+function exampleAppLink(exampleApp) {
+  const url = trustedHttpsUrl(exampleApp);
+  if (!url) return "";
+  const label = "Open an example application that runs this model";
+  return `<a class="example-app-link" href="${escapeHtml(url.href)}" target="_blank" rel="noreferrer" aria-label="${label}" data-tooltip="${label}">${icons.apps}</a>`;
+}
+
 function sourceInputPanel(inputs) {
   if (!inputs.length) return "";
   const meta = inputs.map((input) => formatBytes(input.size_bytes)).join(" · ");
@@ -385,7 +393,7 @@ export function renderDetail(variant) {
     ${detailBuildSwitcher(variant)}
     <div class="detail-title-actions">
           ${downloadAction}
-          <div class="detail-links">${validated ? artifactValidationMark(allTests) : ""}${originalModel ? `<a class="original-model-link${originalModel.huggingFace ? "" : " external-model-link"}" href="${escapeHtml(originalModel.href)}" target="_blank" rel="noreferrer" aria-label="${escapeHtml(originalModel.label)}" data-tooltip="${escapeHtml(originalModel.label)}">${originalModel.huggingFace ? icons.huggingFace : icons.external}</a>` : ""}${sourceUrl ? `<a class="model-source-link" href="${escapeHtml(sourceUrl)}" target="_blank" rel="noreferrer" aria-label="${escapeHtml(sourceLabel)}" data-tooltip="${escapeHtml(sourceLabel)}">${icons.github}</a>` : ""}</div>
+          <div class="detail-links">${validated ? artifactValidationMark(allTests) : ""}${originalModel ? `<a class="original-model-link${originalModel.huggingFace ? "" : " external-model-link"}" href="${escapeHtml(originalModel.href)}" target="_blank" rel="noreferrer" aria-label="${escapeHtml(originalModel.label)}" data-tooltip="${escapeHtml(originalModel.label)}">${originalModel.huggingFace ? icons.huggingFace : icons.external}</a>` : ""}${sourceUrl ? `<a class="model-source-link" href="${escapeHtml(sourceUrl)}" target="_blank" rel="noreferrer" aria-label="${escapeHtml(sourceLabel)}" data-tooltip="${escapeHtml(sourceLabel)}">${icons.github}</a>` : ""}${exampleAppLink(variant.exampleApp)}</div>
     </div>
     ${compiledLimits ? `<dl class="key-grid">${compiledLimits}</dl>` : ""}
     ${sectionNavigation(sections)}

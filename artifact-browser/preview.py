@@ -36,7 +36,7 @@ from model_registry.benchmark_declarations import (  # noqa: E402
 from model_registry.compile_matrix import build_matrix  # noqa: E402
 from model_registry.conversion import apply_selection, conversion_fingerprint  # noqa: E402
 from model_registry.dependencies import resolve_benchmark_runtime, resolve_model_compiler  # noqa: E402
-from model_registry.documentation import load_model_documentation  # noqa: E402
+from model_registry.documentation import example_apps, load_model_documentation  # noqa: E402
 from model_registry.fingerprints import BENCHMARK_RUN_TYPES, benchmark_fingerprint  # noqa: E402
 from model_registry.model import (  # noqa: E402
     build_profile_for,
@@ -757,6 +757,8 @@ class PreviewHandler(SimpleHTTPRequestHandler):
             self._json(low_accuracy_variants(ROOT, _repository()["models"]))
         elif path == "/dataset-names.json":
             self._json(dataset_names(ROOT))
+        elif path == "/example-apps.json":
+            self._json(example_apps(_repository()["models"]))
         elif path == "/component-pipelines.json":
             # The unbuilt sources request this name; an assembled portal requests the file it ships.
             self._json(component_pipelines(_repository()["models"]))

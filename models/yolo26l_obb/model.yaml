@@ -2,6 +2,7 @@
 build-on-demand: true
 display_name: YOLO26l-obb
 description: A large YOLO26 oriented-box detector for the 15 DOTA aerial object classes.
+example_app: https://developer.sima.ai/examples/app/object-detection%2Fmulti-stream-obb-detector
 model_type: vision
 tasks: [oriented_object_detection]
 

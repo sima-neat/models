@@ -1,5 +1,6 @@
 display_name: ResNet-50
 description: Classifies an image into one of the 1,000 ImageNet classes.
+example_app: https://developer.sima.ai/examples/app/classification%2Fimage-classification-explorer
 model_type: vision
 tasks: [image_classification]
 
