@@ -200,6 +200,11 @@ architectures:
     description: Estimates depth by refining disparities between stereo image pairs.
     paradigm: cnn
     allowed_model_types: [vision]
+  regnet_y:
+    display_name: RegNetY
+    description: Classifies images with residual networks whose widths and depths follow a simple rule, with squeeze-and-excitation.
+    paradigm: cnn
+    allowed_model_types: [vision]
   resnet:
     display_name: ResNet
     description: Classifies images with residual convolutional networks.
