@@ -239,6 +239,30 @@ def publish(
     return calls, result
 
 
+@pytest.mark.parametrize("model_id", ["nemotron_3_5_asr_streaming_0_6b", "parakeet_tdt_0_6b_v3"])
+def test_publish_report_retains_asr_evidence(tmp_path: Path, model_id: str) -> None:
+    registered_build(tmp_path / "_compiled", model_id, "w8a16", ["model"])
+    output = tmp_path / "_performance"
+    evidence = {
+        "encoder-run": {"schema": "sima.neat.graph_run", "graph": {}},
+        "asr-timings": {"input": {"source": "fleurs-en-us-test"}, "unpaced_seconds": [1.0]},
+    }
+    for name, document in evidence.items():
+        write_json(output / f"{name}.json", document)
+    report = performance_report(["model"])
+    report["components"]["model"]["execution_plan"] = {
+        "status": "unavailable", "evidence": "encoder-run.json",
+    }
+    calls, _ = publish(tmp_path, model_id, "w8a16", "performance", report)
+    artifacts = {path.rsplit("/", 1)[-1]: body for _, path, body in calls if "/artifacts/" in path}
+    for name in evidence:
+        artifact = artifacts[name]
+        assert artifact["artifact_type"] == "benchmark-report"
+        assert artifact["media_type"] == "application/json"
+        assert artifact["sha256"] == hashlib.sha256((output / f"{name}.json").read_bytes()).hexdigest()
+        assert artifact["s3_key"].endswith(f"/{name}.json")
+
+
 def test_publish_report_publishes_one_whole_model_run_under_the_package_run(tmp_path: Path) -> None:
     builds = registered_build(tmp_path / "_compiled", "rf_detr_nano", "w8a8_w16a16", ["backbone", "decoder"])
     report = performance_report(["backbone", "decoder"])

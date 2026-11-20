@@ -463,6 +463,10 @@ performance: {}
 ```
 
 The optional `build_profiles` selects the measured profiles, as for `accuracy`.
+The optional `dataset` is a Dataset Registry pin (`id`, `variant`, `sha256`,
+`size_bytes`) for the performance input. Otherwise the runner reuses the
+profile's first accuracy dataset. A performance-only model can pin its input
+without declaring accuracy. Changing the pin invalidates performance, not compilation.
 The optional `scope` is `model` by default: one measurement of the whole model,
 including composed pipelines such as RF-DETR. Independent encoders declare:
 

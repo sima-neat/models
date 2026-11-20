@@ -7,7 +7,12 @@ from pathlib import Path
 
 import pytest
 import yaml
-from model_registry.fingerprints import ACCURACY_TOOLING, LLIMA_PERFORMANCE_TOOLING, PERFORMANCE_TOOLING
+from model_registry.fingerprints import (
+    ACCURACY_TOOLING,
+    LLIMA_PERFORMANCE_TOOLING,
+    PERFORMANCE_TOOLING,
+    SPEECH_ACCURACY_TOOLING,
+)
 
 from tests.test_compile_workflow import evaluate
 from tests.test_stage_plan import repository_without_w16a16_accuracy
@@ -345,9 +350,9 @@ def test_performance_runs_the_model_owned_script() -> None:
     assert '--target "$site" -r "$REQUIREMENTS"' in script
     assert 'PYTHONPATH="$REPOSITORY/tools:$site"' in script
     # The script picks its benchmark input from the model's first accuracy dataset, unpacked.
-    assert "model_registry resolve-devkit-accuracy" in script
+    assert "model_registry resolve-devkit-datasets" in script
     assert 'dataset=(--dataset "$name=$directory")' in script
-    assert script.index("resolve-devkit-accuracy") < script.index('scripts/performance.py"')
+    assert script.index("resolve-devkit-datasets") < script.index('scripts/performance.py"')
     assert "model_registry model-component-artifacts" in script
     assert script.index('scripts/performance.py"') < script.index("model_registry check-report")
 
@@ -615,7 +620,7 @@ def test_credentialed_devkit_steps_never_run_model_code() -> None:
             assert "AWS_" not in yaml.safe_dump(item.get("env", {})), item["name"]
 
     cache_script = (ROOT / "scripts" / "cache_accuracy_dataset.sh").read_text(encoding="utf-8")
-    assert "resolve-devkit-accuracy" in cache_script
+    assert "resolve-devkit-datasets" in cache_script
     for model_code in ("accuracy.py", "performance.py", "compile.py", "pip install"):
         assert model_code not in cache_script
 
@@ -851,6 +856,7 @@ def test_cleanup_removes_input_and_both_evidence_artifacts(tmp_path: Path) -> No
     ("tools/model_registry/model.py", "core", True),
     ("tools/model_report/generation_benchmark.py", "core", False),
     ("tools/model_report/generation_benchmark.py", "llima", True),
+    ("tools/model_report/speech.py", "core", True),
 ])
 def test_board_runs_require_the_measured_revisions_tooling(tmp_path, relative, backend, rejected) -> None:
     stage = load_workflow()["jobs"]["stage"]
@@ -858,7 +864,7 @@ def test_board_runs_require_the_measured_revisions_tooling(tmp_path, relative, b
     assert guard["run"] == 'scripts/require_source_board_tooling.sh _source "${{ steps.settings.outputs.backend }}"'
     assert stage["steps"].index(step(stage["steps"], "Resolve benchmark job settings")) < stage["steps"].index(guard)
     source = tmp_path / "_source"
-    for item in {*PERFORMANCE_TOOLING, *ACCURACY_TOOLING, *LLIMA_PERFORMANCE_TOOLING,
+    for item in {*PERFORMANCE_TOOLING, *ACCURACY_TOOLING, *LLIMA_PERFORMANCE_TOOLING, *SPEECH_ACCURACY_TOOLING,
                  "tools/model_registry/benchmark_declarations.py", "tools/model_registry/model.py"}:
         (source / item).parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / item, source / item)

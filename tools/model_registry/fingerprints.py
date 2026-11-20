@@ -11,7 +11,13 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .benchmark_declarations import ACCURACY_REQUIREMENTS, FP32_BASELINE_SCRIPT, PERFORMANCE_REQUIREMENTS, SCRIPTS
+from .benchmark_declarations import (
+    ACCURACY_REQUIREMENTS,
+    BENCHMARK_RUNTIME,
+    FP32_BASELINE_SCRIPT,
+    PERFORMANCE_REQUIREMENTS,
+    SCRIPTS,
+)
 from .dependencies import resolve_benchmark_runtime, resolve_model_compiler
 from .errors import ValidationError
 from .model import CONVERSION_FILES, SCRIPTS_DIR, build_profile_for, compile_invocations_for, load_and_validate_model
@@ -27,9 +33,9 @@ COMPILE_TOOLING = (
 
 _IGNORED_BUILD_PARTS = {".git", "__pycache__"}
 _IGNORED_BUILD_SUFFIXES = {".pyc", ".pyo"}
-# Conversion produces the pinned source, the benchmarks consume the MPK, and the FP32 baseline script runs the
-# source on a host; none changes compilation.
-NON_COMPILE_SCRIPTS = {*SCRIPTS.values(), FP32_BASELINE_SCRIPT, *CONVERSION_FILES}
+# Conversion produces the pinned source, the benchmarks and the runtime they share consume the MPK, and the FP32
+# baseline script runs the source on a host; none changes compilation.
+NON_COMPILE_SCRIPTS = {*SCRIPTS.values(), BENCHMARK_RUNTIME, FP32_BASELINE_SCRIPT, *CONVERSION_FILES}
 
 # Each benchmark stage's registry run type.
 BENCHMARK_RUN_TYPES = {"performance": "model_performance", "accuracy": "model_accuracy"}
@@ -56,6 +62,10 @@ ACCURACY_TOOLING = (
     "scripts/cache_accuracy_dataset.sh",
     "scripts/run_model_accuracy.sh",
 )
+# The shared transcript scorer, hashed only for models whose accuracy datasets require a speech metric, so a
+# scoring change reruns their accuracy and no other model's.
+SPEECH_METRICS = {"wer", "cer"}
+SPEECH_ACCURACY_TOOLING = ("tools/model_report/speech.py",)
 
 
 def _hash_files(digest: Any, root: Path, paths: set[Path] | list[Path]) -> None:
@@ -252,6 +262,13 @@ def benchmark_fingerprint(
     native = model["components"][0]["interface"]["format"] == "huggingface"
     if native and stage == "performance":
         required.extend(LLIMA_PERFORMANCE_TOOLING)
+    if stage == "accuracy" and any(
+        SPEECH_METRICS.intersection(dataset["required_metrics"]) for dataset in model[stage]["datasets"].values()
+    ):
+        required.extend(SPEECH_ACCURACY_TOOLING)
+    # Hashed only when present, so a model without a shared runtime keeps its fingerprints.
+    if (root / model_dir / BENCHMARK_RUNTIME).is_file():
+        required.append(f"{model_dir}/{BENCHMARK_RUNTIME}")
     runtime = resolve_benchmark_runtime(root)
     if not native:
         runtime.pop("llima", None)

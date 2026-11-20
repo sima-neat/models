@@ -48,6 +48,7 @@ models/<model-id>/
     requirements-performance.txt  # optional wheels for performance.py
     accuracy.py                   # accuracy stage, when model.yaml declares accuracy
     requirements-accuracy.txt     # optional wheels for accuracy.py
+    benchmark_runtime.py          # optional: the runtime performance.py and accuracy.py share
     convert.py                    # only when model.yaml declares a conversion
     requirements-convert.txt      # required with convert.py
     <helper>.py                   # model-specific surgery, calibration, or shared code
@@ -314,12 +315,13 @@ separate request. See [on-demand builds](#on-demand-builds).
 | conversion | the model's own conversion inputs: the upstream checkpoint, `conversion.outputs`, and `convert.py` with its requirements and the files it uses. No shared file is an input. See [when to run Convert again](conversion-artifacts.md#when-to-run-convert-again) |
 | compile (ONNX) | the model and profile IDs, the target, each component's ID and the source identity and layout, each component's `parameters`, the model's pinned `resources`, the profile's calibration pin, the `numerical_fidelity` section, compile/surgery code, the Model Compiler version, `scripts/run_model_compilation.sh`, the shared model loader, and the MLA stage simulation (`tools/model_registry/mla_stage_simulation.py`) |
 | compile (LLiMa) | checkpoint content hashes, the target, component graph `parameters`, and the pinned Model Compiler identity including its build revision |
-| performance | each component's compile run (plus its MPK digest for ONNX), the `performance` declaration, the optional `benchmark_baseline` and its compile fingerprint, `performance.py` and its requirements, shared benchmark tooling and runner scripts, and the Core/MoLE runtime pins |
-| accuracy | the compile run and MPK digest of every component, each `accuracy` dataset's name, pin, and the metrics its `datasets/<id>.yaml` requires for the model's tasks, `accuracy.py` and `requirements-accuracy.txt`, the shared benchmark tooling, `scripts/run_model_accuracy.sh`, `scripts/cache_accuracy_dataset.sh`, `scripts/install_dataset_registry.sh`, `tools/model_registry/runtime_files.py` (verified supporting-file inputs), and the DevKit runtime pin |
+| performance | each component's compile run (plus its MPK digest for ONNX), the `performance` declaration, the optional `benchmark_baseline` and its compile fingerprint, `performance.py` and its requirements, `benchmark_runtime.py` when present, shared benchmark tooling and runner scripts, and the Core/MoLE runtime pins |
+| accuracy | the compile run and MPK digest of every component, each `accuracy` dataset's name, pin, and the metrics its `datasets/<id>.yaml` requires for the model's tasks, `accuracy.py` and `requirements-accuracy.txt`, `benchmark_runtime.py` when present, the shared benchmark tooling, `scripts/run_model_accuracy.sh`, `scripts/cache_accuracy_dataset.sh`, `scripts/install_dataset_registry.sh`, `tools/model_registry/runtime_files.py` (verified supporting-file inputs), `tools/model_report/speech.py` when a dataset requires `wer` or `cer`, and the DevKit runtime pin |
 
 ONNX compile code includes every `.py` and `.sh` under `scripts/` except
-`performance.py`, `accuracy.py`, `fp32_baseline_accuracy.py`, `convert.py` and
-`requirements-convert.txt`.
+`performance.py`, `accuracy.py`, `benchmark_runtime.py`, `fp32_baseline_accuracy.py`, `convert.py` and
+`requirements-convert.txt`. A model whose two benchmark scripts run the model the same way keeps that shared
+code in `benchmark_runtime.py`, so changing it remeasures both stages without recompiling.
 The shared model loader, `tools/model_registry/model.py`, is an input to
 every ONNX compile fingerprint. The shared benchmark tooling is
 `BOARD_STAGE_TOOLING`: the benchmarking workflow, Core
@@ -339,6 +341,7 @@ is always benchmarked again.
 | a model's `resources`: a source pin or an `install_path` | that model's compilation, and the stages after it |
 | a model's tests, or `scripts/run_model_tests.sh` | nothing. The changed test runs the next time its stage runs. |
 | a model's `fp32_baseline_accuracy.py` | nothing; no stage runs it |
+| a model's `benchmark_runtime.py` | that model's performance and accuracy stages; no compilation |
 | a model's `performance.py`, its requirements, or `performance` declaration, including `scope` | that model's performance stages |
 | a profile's `benchmark_baseline` | that profile's performance; no compilation |
 | `accuracy.py`, its requirements, the `accuracy` datasets, or one of their pins | that model's accuracy stages |
@@ -348,6 +351,7 @@ is always benchmarked again.
 | `scripts/run_model_accuracy.sh`, `scripts/cache_accuracy_dataset.sh`, `scripts/install_dataset_registry.sh`, or `tools/model_registry/runtime_files.py` (verified supporting-file inputs) | every accuracy stage |
 | the Core runtime target, the benchmarking workflow, `tools/model_registry/neat_core.py`, `tools/model_report/__init__.py`, `schemas/model-report.schema.json`, or `report_publication.py` | every performance and accuracy stage |
 | the MoLE revision (`llima.install_target`) or `LLIMA_PERFORMANCE_TOOLING` in `fingerprints.py` | native LLM/VLM performance stages |
+| `tools/model_report/speech.py` (`SPEECH_ACCURACY_TOOLING` in `fingerprints.py`) | the accuracy stages of models whose accuracy datasets require `wer` or `cer` |
 | a source, a component's `parameters`, the profile's calibration, or `numerical_fidelity` | that model's affected builds, then their benchmarks |
 | an ONNX compile script or other ONNX compile input | that model's affected builds, then their benchmarks |
 | the Model Compiler pin | every build, then every benchmark |

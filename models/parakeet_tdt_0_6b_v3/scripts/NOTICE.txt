@@ -1,0 +1,7 @@
+Parakeet TDT 0.6B v3
+Original model: NVIDIA Corporation
+https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3
+Revision: 541d1f99c6b0c3cd0b11a95167540bb8edefd82b
+License: CC-BY-4.0 (https://creativecommons.org/licenses/by/4.0/)
+
+This package optimizes the encoder graph and quantizes encoder, predictor, and joiner weights.

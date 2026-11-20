@@ -12,7 +12,14 @@ from model_registry.compile_matrix import build_matrix
 from model_registry.conversion import conversion_fingerprint
 from model_registry.dependencies import resolve_model_compiler
 from model_registry.errors import ValidationError
-from model_registry.fingerprints import COMPILE_TOOLING, benchmark_fingerprint, compile_fingerprint
+from model_registry.fingerprints import (
+    ACCURACY_TOOLING,
+    COMPILE_TOOLING,
+    PERFORMANCE_TOOLING,
+    SPEECH_ACCURACY_TOOLING,
+    benchmark_fingerprint,
+    compile_fingerprint,
+)
 from model_registry.model import load_and_validate_model, load_models
 from model_registry.registry import RegistryPublicationError, publish_catalog
 
@@ -393,6 +400,27 @@ def _copy_repository(repository: Path, model_id: str) -> Path:
     return repository / "models" / model_id
 
 
+def test_only_speech_accuracy_reruns_when_the_transcript_scorer_changes(tmp_path: Path) -> None:
+    """A scoring change reruns the accuracy of models that must report WER or CER, and no other model's."""
+    model_dir = _copy_repository(tmp_path, "rf_detr_small")
+    detector = load_and_validate_model(model_dir, tmp_path / "schemas" / "model.schema.json")
+    transcriber = copy.deepcopy(detector)
+    for dataset in transcriber["accuracy"]["datasets"].values():
+        dataset["required_metrics"] = ["wer"]
+
+    def fingerprints() -> list[str]:
+        return [benchmark_fingerprint(tmp_path, model, "w8a8_w16a16", RF_DETR_BUILDS, "accuracy")
+                for model in (detector, transcriber)]
+
+    before = fingerprints()
+    scorer = tmp_path / "tools" / "model_report" / "speech.py"
+    scorer.write_text(scorer.read_text(encoding="utf-8") + "# newer\n", encoding="utf-8")
+    after = fingerprints()
+
+    assert after[0] == before[0]
+    assert after[1] != before[1]
+
+
 def test_accuracy_fingerprint_covers_the_model_datasets_and_their_requirements(tmp_path: Path) -> None:
     """Accuracy reruns when what the model must report on its datasets changes, and for nothing else there."""
     model_dir = _copy_repository(tmp_path, "rf_detr_small")
@@ -645,7 +673,7 @@ def test_compile_fingerprint_ignores_performance_and_accuracy_declarations(
     first = _fingerprint(model_repository, "alpha", "2.1.3")
 
     model = yaml.safe_load(manifest.read_text(encoding="utf-8"))
-    model["performance"] = {"scope": scope} if scope else {}
+    model["performance"] = {"scope": scope, "dataset": dict(DATASET)} if scope else {"dataset": dict(DATASET)}
     model["accuracy"] = {"datasets": [dict(DATASET)]}
     manifest.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
     (manifest.parent / "scripts" / "performance.py").write_text("report = model.benchmark()\n", encoding="utf-8")
@@ -828,6 +856,19 @@ def test_performance_scope_changes_performance_fingerprint_without_changing_accu
     assert benchmark_fingerprint(ROOT, model, "w8a8_w16a16", builds, "accuracy") == accuracy
 
 
+def test_performance_dataset_pin_changes_only_performance_fingerprint():
+    model = load_and_validate_model(ROOT / "models/rf_detr_small")
+    builds = {name: {"run_id": name, "artifact_sha256": "a" * 64} for name in ("backbone", "decoder")}
+    before = benchmark_fingerprint(ROOT, model, "w8a8_w16a16", builds, "performance")
+    accuracy = benchmark_fingerprint(ROOT, model, "w8a8_w16a16", builds, "accuracy")
+    model["performance"]["dataset"] = dict(DATASET)
+    changed = benchmark_fingerprint(ROOT, model, "w8a8_w16a16", builds, "performance")
+    assert changed != before
+    model["performance"]["dataset"]["sha256"] = "a" * 64
+    assert benchmark_fingerprint(ROOT, model, "w8a8_w16a16", builds, "performance") != changed
+    assert benchmark_fingerprint(ROOT, model, "w8a8_w16a16", builds, "accuracy") == accuracy
+
+
 def test_yolo26x_pose_requests_moderate_on_demand():
     model = load_and_validate_model(ROOT / "models/yolo26x_pose", SCHEMA)
     entries = build_matrix({"yolo26x_pose": model}, ["yolo26x_pose"])["include"]
@@ -850,3 +891,39 @@ def test_new_runner_classes_do_not_change_compile_fingerprint(model_repository, 
     path.write_text(yaml.safe_dump(authored, sort_keys=False))
     load_and_validate_model(path.parent, model_repository / "schemas/model.schema.json")
     assert _fingerprint(model_repository, "alpha", COMPILER_VERSION) == before
+
+
+@pytest.mark.parametrize("model_id", ["nemotron_3_5_asr_streaming_0_6b", "parakeet_tdt_0_6b_v3"])
+def test_asr_decoder_change_invalidates_both_benchmarks_but_not_compilation(
+    model_repository: Path, model_id: str
+) -> None:
+    target = model_repository / "models" / model_id
+    shutil.copytree(ROOT / "models" / model_id, target)
+    for relative in {*PERFORMANCE_TOOLING, *ACCURACY_TOOLING, *SPEECH_ACCURACY_TOOLING}:
+        path = model_repository / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(ROOT / relative, path)
+    model = load_and_validate_model(target)
+    conversions = {model_id: {
+        "conversion_fingerprint": conversion_fingerprint(model_repository, model), "sha256": "a" * 64,
+    }}
+    builds = {"model": {"run_id": "compiled", "artifact_sha256": "a" * 64}}
+
+    def fingerprints():
+        return (
+            compile_fingerprint(model_repository, model_id, "w8a16", "w8a16", "test", conversion_sources=conversions),
+            benchmark_fingerprint(model_repository, model, "w8a16", builds, "performance"),
+            benchmark_fingerprint(model_repository, model, "w8a16", builds, "accuracy"),
+        )
+
+    before_compile, before_performance, before_accuracy = fingerprints()
+    # performance.py and accuracy.py share the decoder through benchmark_runtime.py.
+    script = target / "scripts/benchmark_runtime.py"
+    original = script.read_text()
+    changed = original.replace("token = int(values[0].argmax())", "token = int(values[0].argmin())", 1)
+    assert changed != original  # Change the real decoder implementation, not just a benchmark wrapper.
+    script.write_text(changed)
+    after_compile, after_performance, after_accuracy = fingerprints()
+    assert after_compile == before_compile
+    assert after_performance != before_performance
+    assert after_accuracy != before_accuracy

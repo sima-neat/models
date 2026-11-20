@@ -21,6 +21,8 @@ BENCHMARK_STAGES = ("performance", "accuracy")
 SCRIPTS = {"performance": "scripts/performance.py", "accuracy": "scripts/accuracy.py"}
 # An optional host script that measures a reference_metrics entry with origin fp32_baseline; no stage runs it.
 FP32_BASELINE_SCRIPT = "scripts/fp32_baseline_accuracy.py"
+# An optional module performance.py and accuracy.py share to run the model; part of both benchmark stages.
+BENCHMARK_RUNTIME = "scripts/benchmark_runtime.py"
 ACCURACY_REQUIREMENTS = "scripts/requirements-accuracy.txt"
 PERFORMANCE_REQUIREMENTS = "scripts/requirements-performance.txt"
 DATASET_REQUIREMENTS_DIR = "datasets"

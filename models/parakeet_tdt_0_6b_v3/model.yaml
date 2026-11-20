@@ -1,0 +1,82 @@
+build-on-demand: true
+display_name: Parakeet TDT 0.6B v3
+description: Transcribes multilingual speech in overlapping buffered windows using a token-and-duration decoder.
+model_type: audio
+tasks:
+- automatic_speech_recognition
+modalities:
+  inputs:
+  - audio
+  outputs:
+  - text
+architecture: parakeet
+license:
+  spdx: CC-BY-4.0
+  redistribution: allowed
+  attribution: NVIDIA Parakeet TDT 0.6B v3 weights are distributed under Creative Commons Attribution 4.0.
+upstream:
+  repository: https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3
+  revision: 541d1f99c6b0c3cd0b11a95167540bb8edefd82b
+conversion:
+  outputs: [weights.pth]
+  source:
+    repository: nvidia/parakeet-tdt-0.6b-v3
+    revision: 541d1f99c6b0c3cd0b11a95167540bb8edefd82b
+    main_file: model.safetensors
+    files:
+      model.safetensors:
+        sha256: 3a2026366188c8c68598edbbff92f8d11590a08e0ae2e6775544e7b07d6a5e11
+        size_bytes: 2508311120
+      config.json:
+        sha256: e747b85e1bdfd300c8b8ac63bac8dd5221f8fe9bc275b48d06c735fcd6971b6e
+        size_bytes: 1153
+      generation_config.json:
+        sha256: b141de6ec6d7f982ece13f98f604e3fe1807ea9c0e839185d0ab7064604209d0
+        size_bytes: 289
+      processor_config.json:
+        sha256: 8346a93a3b987fa1dec57a78f045cd0817d21786589a5a096b41a57a446fd1d7
+        size_bytes: 392
+      tokenizer.json:
+        sha256: bd321b096832a3f270bd3b2a88823957920f1a5c5ada71114a26ea729d0cbe91
+        size_bytes: 1159960
+      tokenizer_config.json:
+        sha256: 0b2fe0037599ee335f0b972fa682bf0ece74e4ccfec755cb7daa3405d3d3e874
+        size_bytes: 290
+compilation:
+  format: onnx
+  source: conversion
+resources:
+  license:
+    # The checkpoint repository has no LICENSE file; this is SPDX's CC-BY-4.0 text.
+    source:
+      uri: https://raw.githubusercontent.com/spdx/license-list-data/31846481de7ea17d92f2f46fad76abe58b2e9bb0/text/CC-BY-4.0.txt
+      sha256: d557539df68e771cc1eedcc91d13f70fca930e508d11eedcafa4b15db49e3744
+      size_bytes: 17023
+    install_path: licenses/LICENSE
+build_profiles:
+  w8a16:
+    # The expensive class and on-demand market require the grant in sima-neat/vulcan#356.
+    runner_class: expensive
+    runner_market: on-demand
+    components:
+      model:
+        parameters:
+          precision: w8a16
+          left_seconds: 10
+          chunk_seconds: 2
+          right_seconds: 2
+pipeline:
+- cpu: 16 kHz audio to 128-bin log-mel features
+- component: model
+- cpu: INT8 ONNX predictor and joiner decode to text
+
+accuracy:
+  datasets:
+  - {id: fleurs, variant: en-us-test, sha256: c2b7984079a73f169b147f531699af5ffe0eb60bb071277ac9f4a455e786acb2, size_bytes: 289947446}
+
+performance:
+  dataset:
+    id: fleurs
+    variant: en-us-test
+    sha256: c2b7984079a73f169b147f531699af5ffe0eb60bb071277ac9f4a455e786acb2
+    size_bytes: 289947446

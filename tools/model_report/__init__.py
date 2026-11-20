@@ -89,6 +89,7 @@ def from_performance(
     telemetry: Any | None = None,
     mla_layer_stats: dict[str, dict[str, Any]] | None = None,
     mla_stage_stats: dict[str, dict[str, Any]] | None = None,
+    execution_plans: dict[str, dict[str, Any]] | None = None,
 ) -> Report:
     """A performance report from a Core ``BenchmarkReport`` of the whole model.
 
@@ -98,9 +99,15 @@ def from_performance(
     ``mla_layer_stats`` and ``mla_stage_stats``, in the shape Core saves them; otherwise all three come from
     ``benchmark``. Core reports 0 for a value it did not measure, and a metric it did not measure is absent
     from the report.
+
+    ``execution_plans`` overrides the default full-model plans when a custom route ran instead. It must
+    name every component. If Core cannot export a route, use a status/reason object and save the
+    actual Run JSON in the report's evidence instead of reporting a different route's plan.
     """
     if not models:
         raise ValueError("models must name at least one component")
+    if execution_plans is not None and execution_plans.keys() != models.keys():
+        raise ValueError("execution_plans must name exactly the measured components")
     with tempfile.TemporaryDirectory() as scratch:
         core_report = _saved(benchmark, Path(scratch) / CORE_REPORT_FILE)
         measured_telemetry = (
@@ -116,7 +123,10 @@ def from_performance(
             "telemetry": measured_telemetry,
             "components": {
                 component: {
-                    "execution_plan": json.loads(model.execution_plan().to_json()),
+                    "execution_plan": (
+                        json.loads(model.execution_plan().to_json())
+                        if execution_plans is None else execution_plans[component]
+                    ),
                     "mla_layer_stats": layer_stats[component],
                     "mla_stage_stats": stage_stats[component],
                 }

@@ -11,6 +11,8 @@ export const METRIC_DEFINITIONS = {
   latency_p95_ms: { label: "Latency p95", unit: "ms", digits: 2, scale: 1, direction: "lower" },
   latency_p99_ms: { label: "Latency p99", unit: "ms", digits: 2, scale: 1, direction: "lower" },
   throughput_fps: { label: "Throughput", unit: "inferences/s", digits: 1, scale: 1, direction: "higher" },
+  real_time_factor: { label: "Real-time factor", unit: "s/audio s", digits: 3, scale: 1, direction: "lower" },
+  time_to_first_text_ms: { label: "Time to first text", unit: "ms", digits: 2, scale: 1, direction: "lower" },
   avg_power_watts: { label: "SoM power", unit: "W", digits: 2, scale: 1, direction: "lower" },
   peak_power_watts: { label: "Peak SoM power", unit: "W", digits: 2, scale: 1, direction: "lower" },
   avg_mla_power_watts: { label: "MLA power", unit: "W", digits: 2, scale: 1, direction: "lower" },

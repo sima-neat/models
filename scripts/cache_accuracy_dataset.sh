@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Resolve each DevKit accuracy dataset of a build profile into the persistent NVMe cache.
+# Resolve a build profile's accuracy and performance datasets into the persistent NVMe cache.
 #
 # Usage: cache_accuracy_dataset.sh <model_dir> <build_profile>
 #
@@ -31,12 +31,12 @@ mkdir -p "$DATASET_CACHE" "$(dirname "$DATASET_LOCK")"
 started="$(mktemp)"
 trap 'rm -f "$started"' EXIT
 # The board-wide dataset lock run_model_accuracy.sh also takes, so concurrent jobs never download one archive twice.
-# One JSON line per dataset; none when the profile measures no accuracy.
+# One JSON line per dataset; none when the profile declares no benchmark datasets.
 results="$(flock --wait "$DATASET_LOCK_SECONDS" --close "$DATASET_LOCK" \
-  timeout --signal=TERM --kill-after=30s "$RESOLVE_TIMEOUT_SECONDS" "$REGISTRY_PYTHON" -m model_registry resolve-devkit-accuracy "$MODEL_DIR" \
+  timeout --signal=TERM --kill-after=30s "$RESOLVE_TIMEOUT_SECONDS" "$REGISTRY_PYTHON" -m model_registry resolve-devkit-datasets "$MODEL_DIR" \
   --build-profile "$BUILD_PROFILE_ID" --cache-dir "$DATASET_CACHE")"
 if [[ -z "$results" ]]; then
-  echo "$(basename "$MODEL_DIR") declares no DevKit accuracy for $BUILD_PROFILE_ID."
+  echo "$(basename "$MODEL_DIR") declares no benchmark dataset for $BUILD_PROFILE_ID."
   exit 0
 fi
 # Print one field of the JSON on stdin; the DevKit has no jq.
@@ -44,7 +44,7 @@ json_field() {
   "$REGISTRY_PYTHON" -c 'import json, sys; print(json.load(sys.stdin)[sys.argv[1]])' "$1"
 }
 {
-  echo "### Accuracy datasets"
+  echo "### Benchmark datasets"
   echo
   echo "| Dataset | Path | SHA-256 | Bytes | Cache |"
   echo "|---|---|---|---|---|"

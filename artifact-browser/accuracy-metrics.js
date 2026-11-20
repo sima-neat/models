@@ -61,6 +61,8 @@ export const ACCURACY_METRIC_LABELS = {
   abs_rel: "AbsRel",
   delta1: "δ1",
   miou: "mIoU",
+  wer: "WER",
+  cer: "CER",
 };
 
 // Accuracy metrics with non-default units, directions or display settings; matches metrics.json.
@@ -68,6 +70,8 @@ export const ACCURACY_METRIC_SCALES = {
   epe: { unit: "px", direction: "lower" },
   d1_all: { unit: "%", direction: "lower" },
   abs_rel: { unit: "ratio", direction: "lower", display: {unit: "", scale: 1} },
+  wer: { unit: "ratio", direction: "lower" },
+  cer: { unit: "ratio", direction: "lower" },
 };
 
 export function accuracyMetricLabel(name) {

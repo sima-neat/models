@@ -416,6 +416,41 @@ def test_resolve_devkit_accuracy_skips_a_profile_without_accuracy(monkeypatch, c
     assert capsys.readouterr().out == ""
 
 
+@pytest.mark.parametrize("stage", ["performance", "all"])
+def test_performance_dataset_without_accuracy(monkeypatch, tmp_path, capsys, stage):
+    pin = {"id": "fleurs", "variant": "en-us-test", "sha256": "a" * 64, "size_bytes": 123}
+    model = {"build_profiles": [{"id": "w8a16"}], "performance": {"dataset": pin}}
+    monkeypatch.setattr(cli, "load_and_validate_model", lambda *_: model)
+    calls = []
+    monkeypatch.setattr(cli, "resolve_dataset", lambda data, cache: calls.append(data) or tmp_path / "data.tgz")
+    assert main(["resolve-devkit-datasets", str(tmp_path), "--build-profile", "w8a16", "--stage", stage]) == 0
+    assert calls == [pin]
+    assert json.loads(capsys.readouterr().out)["name"] == "fleurs-en-us-test"
+
+
+def test_benchmark_datasets_deduplicate_shared_pins_and_reject_conflicts(monkeypatch, tmp_path, capsys):
+    pin = {"id": "fleurs", "variant": "en-us-test", "sha256": "a" * 64, "size_bytes": 123}
+    model = {"build_profiles": [{"id": "w8a16"}], "performance": {"dataset": dict(pin)},
+             "accuracy": {"datasets": {"fleurs-en-us-test": pin}}}
+    monkeypatch.setattr(cli, "load_and_validate_model", lambda *_: model)
+    calls = []
+    monkeypatch.setattr(cli, "resolve_dataset", lambda data, cache: calls.append(data) or tmp_path / "data.tgz")
+    args = ["resolve-devkit-datasets", str(tmp_path), "--build-profile", "w8a16"]
+    assert main(args) == 0
+    assert len(calls) == len(capsys.readouterr().out.splitlines()) == 1
+    model["performance"]["dataset"]["sha256"] = "b" * 64
+    assert main(args) == 2
+    assert "conflicting benchmark dataset pins" in capsys.readouterr().err
+    assert len(calls) == 1
+
+
+def test_performance_uses_first_accuracy_dataset_when_no_explicit_pin(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(cli, "resolve_dataset", lambda *_: tmp_path / "data.tgz")
+    assert main(["resolve-devkit-datasets", str(ROOT / "models/resnet_50"),
+                 "--build-profile", "w8a8", "--stage", "performance"]) == 0
+    assert json.loads(capsys.readouterr().out)["name"] == "imagenet-2012-val"
+
+
 def test_model_component_mpks_prints_one_component_mpk_per_line(monkeypatch, tmp_path: Path, capsys) -> None:
     calls = []
 

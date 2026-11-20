@@ -47,6 +47,8 @@ const DETAIL_CARDS = [
     ["Generation", ["decode_tps"], "Generated tokens per second, excluding the first token."],
     ["Draft contribution", ["draft_contribution_pct"], "Percentage of generated tokens accepted from the draft model."],
     ["Generation speedup", ["decode_speedup"], "Speculative generation rate / baseline generation rate.\nExcludes prompt processing and the first token."],
+    ["Real-time factor", ["real_time_factor"], "Processing seconds per second of audio, unpaced.\nBelow 1 is faster than real time."],
+    ["Time to first text", ["time_to_first_text_ms"], "Audio replayed at its real rate: first sample to first visible text,\nbuffering and lookahead included."],
     ["Throughput", ["throughput_fps"], "Inferences completed per second, several inputs in flight."],
     ["Latency (mean)", ["latency_avg_ms"], "Mean time for one inference."],
     ["Latency (p50 / p95 / p99)", ["latency_p50_ms", "latency_p95_ms", "latency_p99_ms"], "p50: 50% of inferences are faster.\np95: 95% are faster.\np99: 99% are faster."],
