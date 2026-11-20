@@ -351,6 +351,7 @@ is always benchmarked again.
 | `scripts/run_model_accuracy.sh`, `scripts/cache_accuracy_dataset.sh`, `scripts/install_dataset_registry.sh`, or `tools/model_registry/runtime_files.py` (verified supporting-file inputs) | every accuracy stage |
 | the Core runtime target, the benchmarking workflow, `tools/model_registry/neat_core.py`, `tools/model_report/__init__.py`, `schemas/model-report.schema.json`, or `report_publication.py` | every performance and accuracy stage |
 | the MoLE revision (`llima.install_target`) or `LLIMA_PERFORMANCE_TOOLING` in `fingerprints.py` | native LLM/VLM performance stages |
+| `tools/model_report/transcription_benchmark.py` (`TRANSCRIPTION_PERFORMANCE_TOOLING`) | the performance stages of speech recognition models such as Whisper |
 | `tools/model_report/speech.py` (`SPEECH_ACCURACY_TOOLING` in `fingerprints.py`) | the accuracy stages of models whose accuracy datasets require `wer` or `cer` |
 | a source, a component's `parameters`, the profile's calibration, or `numerical_fidelity` | that model's affected builds, then their benchmarks |
 | an ONNX compile script or other ONNX compile input | that model's affected builds, then their benchmarks |

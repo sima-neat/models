@@ -17,6 +17,7 @@ from .benchmark_declarations import (
     FP32_BASELINE_SCRIPT,
     PERFORMANCE_REQUIREMENTS,
     SCRIPTS,
+    transcription_benchmark,
 )
 from .dependencies import resolve_benchmark_runtime, resolve_model_compiler
 from .errors import ValidationError
@@ -66,6 +67,8 @@ ACCURACY_TOOLING = (
 # scoring change reruns their accuracy and no other model's.
 SPEECH_METRICS = {"wer", "cer"}
 SPEECH_ACCURACY_TOOLING = ("tools/model_report/speech.py",)
+# The GenAI server benchmark of native speech recognition models, hashed only into their performance fingerprints.
+TRANSCRIPTION_PERFORMANCE_TOOLING = ("tools/model_report/transcription_benchmark.py",)
 
 
 def _hash_files(digest: Any, root: Path, paths: set[Path] | list[Path]) -> None:
@@ -262,6 +265,8 @@ def benchmark_fingerprint(
     native = model["components"][0]["interface"]["format"] == "huggingface"
     if native and stage == "performance":
         required.extend(LLIMA_PERFORMANCE_TOOLING)
+    if stage == "performance" and transcription_benchmark(model):
+        required.extend(TRANSCRIPTION_PERFORMANCE_TOOLING)
     if stage == "accuracy" and any(
         SPEECH_METRICS.intersection(dataset["required_metrics"]) for dataset in model[stage]["datasets"].values()
     ):

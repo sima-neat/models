@@ -400,6 +400,30 @@ def _copy_repository(repository: Path, model_id: str) -> Path:
     return repository / "models" / model_id
 
 
+def test_only_speech_recognition_performance_reruns_when_the_genai_server_benchmark_changes(tmp_path: Path) -> None:
+    """Whisper's performance hashes the shared transcription benchmark; an LLM's does not."""
+    _copy_repository(tmp_path, "whisper_small")
+    shutil.copytree(ROOT / "models" / "qwen3_1_7b", tmp_path / "models" / "qwen3_1_7b")
+    builds = {"model": {"run_id": "compiled"}}
+    schema = tmp_path / "schemas" / "model.schema.json"
+    models = {model_id: load_and_validate_model(tmp_path / "models" / model_id, schema)
+              for model_id in ("whisper_small", "qwen3_1_7b")}
+
+    def fingerprints() -> dict[str, str]:
+        return {
+            model_id: benchmark_fingerprint(tmp_path, model, model["build_profiles"][0]["id"], builds, "performance")
+            for model_id, model in models.items()
+        }
+
+    before = fingerprints()
+    script = tmp_path / "tools" / "model_report" / "transcription_benchmark.py"
+    script.write_text(script.read_text(encoding="utf-8") + "# newer\n", encoding="utf-8")
+    after = fingerprints()
+
+    assert after["whisper_small"] != before["whisper_small"]
+    assert after["qwen3_1_7b"] == before["qwen3_1_7b"]
+
+
 def test_only_speech_accuracy_reruns_when_the_transcript_scorer_changes(tmp_path: Path) -> None:
     """A scoring change reruns the accuracy of models that must report WER or CER, and no other model's."""
     model_dir = _copy_repository(tmp_path, "rf_detr_small")

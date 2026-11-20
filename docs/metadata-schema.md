@@ -482,7 +482,8 @@ scopes write one report per build profile. Core reports must hold the metrics
 customers can copy and run with PyNeat; YAML does not duplicate them.
 
 LLMs and VLMs use [MoLE workloads](benchmarking.md#llima-text-and-image-performance)
-with TTFT and token rates.
+with TTFT and token rates. Whisper uses [Neat's GenAI server](benchmarking.md#llima-speech-recognition-performance)
+on FLEURS speech and reports Core metrics.
 
 See [Accuracy and fidelity](local-accuracy-development.md) and [DevKit
 performance](benchmarking.md) for the scripts and reports, and [what a change

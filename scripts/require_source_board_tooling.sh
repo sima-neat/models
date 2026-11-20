@@ -25,6 +25,7 @@ from model_registry.fingerprints import (
     LLIMA_PERFORMANCE_TOOLING,
     PERFORMANCE_TOOLING,
     SPEECH_ACCURACY_TOOLING,
+    TRANSCRIPTION_PERFORMANCE_TOOLING,
 )
 
 source = Path(sys.argv[1])
@@ -32,7 +33,7 @@ source = Path(sys.argv[1])
 tooling = {*PERFORMANCE_TOOLING, *ACCURACY_TOOLING, *SPEECH_ACCURACY_TOOLING,
            "tools/model_registry/benchmark_declarations.py", "tools/model_registry/model.py"}
 if sys.argv[2] == "llima":
-    tooling.update(LLIMA_PERFORMANCE_TOOLING)
+    tooling.update(LLIMA_PERFORMANCE_TOOLING, TRANSCRIPTION_PERFORMANCE_TOOLING)
 
 
 def content(path: Path) -> bytes | None:

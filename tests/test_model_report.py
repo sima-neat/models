@@ -249,7 +249,7 @@ def test_every_metric_names_its_stage_unit_direction_and_measurement():
 def test_the_package_needs_only_the_standard_library():
     probe = (
         "import sys, model_report, model_report.generation_benchmark, model_report.board_telemetry, "
-        "model_report.speech; "
+        "model_report.speech, model_report.transcription_benchmark; "
         "third_party = {name.partition('.')[0] for name in sys.modules} - set(sys.stdlib_module_names); "
         "print(sorted(third_party - {'model_report', '__main__'}))"
     )
