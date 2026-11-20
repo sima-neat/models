@@ -225,6 +225,11 @@ architectures:
     description: Labels every pixel of an image with hierarchical transformer encoders and lightweight decoders.
     paradigm: transformer
     allowed_model_types: [vision]
+  sesr:
+    display_name: SESR
+    description: Upscales images with small collapsible-linear-block super-resolution networks.
+    paradigm: cnn
+    allowed_model_types: [vision]
   siglip:
     display_name: SigLIP
     description: Encodes images and text into shared embeddings for similarity search and classification.

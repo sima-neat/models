@@ -60,6 +60,8 @@ export const ACCURACY_METRIC_LABELS = {
   d1_all: "D1-all",
   abs_rel: "AbsRel",
   delta1: "δ1",
+  psnr_y: "PSNR-Y",
+  ssim_y: "SSIM-Y",
   miou: "mIoU",
 };
 
@@ -68,6 +70,8 @@ export const ACCURACY_METRIC_SCALES = {
   epe: { unit: "px", direction: "lower" },
   d1_all: { unit: "%", direction: "lower" },
   abs_rel: { unit: "ratio", direction: "lower", display: {unit: "", scale: 1} },
+  psnr_y: { unit: "dB", direction: "higher" },
+  ssim_y: { unit: "ratio", direction: "higher", display: {unit: "", scale: 1} },
 };
 
 export function accuracyMetricLabel(name) {

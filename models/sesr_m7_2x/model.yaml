@@ -1,0 +1,95 @@
+display_name: SESR-M7 2x
+description: Doubles the resolution of an image with SESR's seven-block super-efficient network.
+model_type: vision
+tasks: [image_super_resolution]
+
+modalities:
+  inputs: [image]
+  outputs: [image]
+
+architecture: sesr
+
+license:
+  spdx: BSD-3-Clause
+  redistribution: allowed
+  attribution: >-
+    SESR (Bhardwaj et al., Arm) trained and released by Qualcomm Innovation Center in the AIMET Model Zoo under
+    BSD-3-Clause; the SESR architecture was first released in ARM-software/sesr under Apache-2.0.
+
+upstream:
+  repository: https://github.com/quic/aimet-model-zoo
+  revision: 59640d130992f984fe71339c27221aa6e3434aef
+  derived_from: https://github.com/ARM-software/sesr
+
+resources:
+  license:
+    # The AIMET Model Zoo ships its BSD-3-Clause license as a PDF, with a NOTICE file.
+    source:
+      uri: https://raw.githubusercontent.com/quic/aimet-model-zoo/59640d130992f984fe71339c27221aa6e3434aef/LICENSE.pdf
+      sha256: 84108626d972f0515840795b48042eda793362700c91dc42cbc91690f4e994a3
+      size_bytes: 161565
+    install_path: licenses/LICENSE.pdf
+  notice:
+    source:
+      uri: https://raw.githubusercontent.com/quic/aimet-model-zoo/59640d130992f984fe71339c27221aa6e3434aef/NOTICE.txt
+      sha256: e4f8ffb5240096d1d8d7a81bedb26c778338430688a8afc8826070c8f2cd763f
+      size_bytes: 26033
+    install_path: licenses/NOTICE
+
+conversion:
+  source:
+    # The AIMET Model Zoo publishes its trained SESR checkpoints only as release assets; Hugging Face has no copy of
+    # SESR-M7 (qualcomm/SESR-M5 is a different size), so this pins the official release asset.
+    uri: https://github.com/quic/aimet-model-zoo/releases/download/phase_2_february_artifacts/sesr_m7_2x_checkpoint_float32.pth.tar
+    sha256: e6ed847c2bae70652b9ca979be6e476b5720c8bf78a3b62201c843c5f955d0ed
+    size_bytes: 5018220
+
+compilation:
+  format: onnx
+  source: conversion
+
+# DIV2K's 80 bicubic-downscaled calibration images; the archive's 100 validation pairs score accuracy.
+calibrations:
+- id: div2k-mini
+  dataset: {id: div2k, variant: mini, sha256: 57495738ca32365a17d241e4b90ed4603b1a546062c9c98d85a3377108918794, size_bytes: 688646335}
+
+build_profiles:
+  w16a16:
+    components:
+      model:
+        parameters: {precision: w16a16}
+
+  # INT8 is within 0.1% of BF16 PSNR-Y on DIV2K, inside the 5% rule. Its network alone runs over twice as fast
+  # (175 us against 395 us on a DevKit), but the 720p pipeline around it measured slower than BF16's.
+  w8a8:
+    calibration_dataset: div2k-mini
+    components:
+      model:
+        parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 80}
+
+  # INT8 weights with BF16 activations compile and pass the 5% rule too, but score below w8a8 and run no faster
+  # than w16a16, so the profile is left out.
+  # w8a16:
+  #   components:
+  #     model:
+  #       parameters: {precision: w8a16}
+
+accuracy:
+  datasets:
+  - {id: div2k, variant: mini, sha256: 57495738ca32365a17d241e4b90ed4603b1a546062c9c98d85a3377108918794, size_bytes: 688646335}
+
+performance: {}
+
+reference_metrics:
+- origin: fp32_baseline
+  script: scripts/fp32_baseline_accuracy.py
+  dataset: {id: div2k, split: valid}
+  conditions: >-
+    FP32 ONNX; DIV2K's 100 validation images at 2x; overlapping 224x224 tiles with centres stitched; 8-bit output;
+    BT.601 luma with a 2-pixel border shaved.
+  metrics: {psnr_y: 35.2277, ssim_y: 0.93923}
+- source: https://github.com/quic/aimet-model-zoo/blob/59640d130992f984fe71339c27221aa6e3434aef/aimet_zoo_torch/sesr/SESR.md
+  dataset: {id: set14, split: test}
+  conditions: FP32, 2x, whole images, BT.601 luma, no border shaved
+  note: AIMET scores Set14, not DIV2K, so this is not directly comparable to the measured DIV2K scores.
+  metrics: {psnr_y: 32.66}

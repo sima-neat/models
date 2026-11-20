@@ -312,7 +312,8 @@ def write_image(path, value, size=SOURCE_SIZE):
 def benchmark_dataset(root):
     """A dataset with the files each script samples from: COCO val2017, ImageNet's val2012 and ImageNet mini's val
     split, a DAVIS val sequence, an HPatches val sequence, DOTA's val images, Pittsburgh 30k, ADE20K's validation
-    images, and the Scene Flow test list. Only the second COCO image labels a person, so a pose script must pick it."""
+    images, a DIV2K low-resolution image, and the Scene Flow test list. Only the second COCO image labels a person, so a
+    pose script must pick it."""
     write_image(root / STEREO_PAIR.format(view="left"), STEREO_LEFT, STEREO_VIEW)
     write_image(root / STEREO_PAIR.format(view="right"), STEREO_RIGHT, STEREO_VIEW)
     disparity = STEREO_PAIR.replace("frames_finalpass", "disparity").format(view="left").replace(".png", ".pfm")
@@ -327,6 +328,7 @@ def benchmark_dataset(root):
     write_image(root / "val/images/P0003.jpg", 200)
     write_image(root / "val/v_scene/1.ppm", 200)
     write_image(root / "val/rgb_0001.jpg", 200)
+    write_image(root / "DIV2K_valid_LR_bicubic/X2/0801x2.png", 200)
     write_image(root / "test/rgb_0001.jpg", 200)
     write_image(root / "images/000/000000_pitch1_yaw1.jpg", 200)
     # Under the archive's top folder, so that no other script's images/ glob finds it.
@@ -445,6 +447,12 @@ def test_every_single_component_script_benchmarks_a_dataset_image(script, monkey
             "Stretch" if test_split else "Letterbox", "ImageNet"
         )
         assert "rgb_0001.jpg" in report["workload"]
+    elif first_accuracy_dataset(script) == "div2k":
+        # A super-resolution model takes the frame letterboxed to its tile, scaled to [0, 1] without a preset.
+        assert_letterboxed_frame(frame)
+        assert options.preprocess.resize.mode == "Letterbox"
+        assert not hasattr(options.preprocess, "preset")
+        assert "0801x2.png" in report["workload"]
     elif getattr(options, "decode_type", "").startswith(("YoloV26", "YoloV8", "YoloX")):
         # Box decoders take a probability threshold, in [0, 1).
         assert_letterboxed_frame(frame)

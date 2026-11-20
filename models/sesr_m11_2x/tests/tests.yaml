@@ -1,0 +1,23 @@
+# Measured on a Modalix DevKit with this model's accuracy.py and performance.py; CI publishes the final values.
+conversion:
+  run_tests: true
+compile:
+  run_tests: true
+accuracy:
+  run_tests: true
+  expected:
+    w16a16:
+      div2k-mini:
+        psnr_y: 35.271
+        ssim_y: 0.93986
+    w8a8:
+      div2k-mini:
+        psnr_y: 35.134
+        ssim_y: 0.93779
+performance:
+  run_tests: true
+  expected:
+    w16a16:
+      throughput_fps: 317.64
+    w8a8:
+      throughput_fps: 228.75

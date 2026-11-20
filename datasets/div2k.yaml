@@ -1,0 +1,4 @@
+# DIV2K 2x super-resolution: luma PSNR and SSIM of the upscaled validation images, border shaved by the scale.
+name: DIV2K
+required_metrics:
+  image_super_resolution: [psnr_y, ssim_y]
