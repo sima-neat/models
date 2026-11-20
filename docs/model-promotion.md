@@ -100,7 +100,8 @@ or approve a build.
 Run **Promote model** again from `develop`, using `environment=production`,
 `target_branch=main`, and the same `deployment_id`. Fill in the model, profile and required reason,
 and leave `promotion_id` blank. Main requires its own maintainer approval.
-After the report shows `promoted`, check the selected download in Main.
+After the report shows `promoted`, check the selected download in Main. The build
+appears on developer.sima.ai after a maintainer next deploys the production browser.
 
 Main promotion reuses the same files. Publishing to Hugging Face is a separate
 release step.

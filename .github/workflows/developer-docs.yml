@@ -11,6 +11,9 @@ on:
       ui_mode:
         type: string
         default: ""
+      catalog_snapshot:
+        type: string
+        default: ""
   workflow_dispatch: {}
 
 permissions:
@@ -54,6 +57,11 @@ jobs:
 
       - name: Install registry tooling for portal assembly and the preview API
         run: python -m pip install .
+
+      - name: Pin the catalog snapshot of a production customer build
+        env:
+          MODEL_BROWSER_CATALOG_SNAPSHOT: ${{ inputs.catalog_snapshot }}
+        run: node website/scripts/pin-catalog-snapshot.mjs >> "$GITHUB_ENV"
 
       - name: Build unified Model Browser portal
         working-directory: website

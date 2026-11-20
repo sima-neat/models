@@ -910,7 +910,7 @@ def test_cached_build_history_preserves_run_mode() -> None:
     assert 'catalogMode: "runs"' in script
     assert 'state.catalogMode = modelsMode ? "models" : "runs"' in script
     assert 'mode: state.catalogMode' in script
-    assert 'cached && ["models", "runs"].includes(cached.mode) ? cached : null' in script
+    assert 'sameSnapshot && ["models", "runs"].includes(cached.mode) ? cached : null' in script
     assert "applyCatalog(cached, { cache: false })" in script
     assert 'return state.catalogMode === "models"' in script
     assert 'elements["branch-filter"].value && !elements["history-filter"].checked' not in browser
@@ -1117,7 +1117,9 @@ def test_browser_loads_taxonomy_from_the_current_catalog_and_exposes_category_fa
     for removed in ("model-type-filter", "paradigm-filter", "input-modality-filter"):
         assert f'id="{removed}"' not in html
         assert removed not in script
-    assert "/catalogs/current?git_ref=" in script
+    assert "${catalogs}/current?git_ref=${gitRef}" in script
+    # A pinned page reports a snapshot the registry no longer serves instead of showing an empty catalog.
+    assert "if (error.status !== 404 || config.catalogSnapshot) throw error;" in script
     assert "applyTaxonomy(document?.taxonomy || null, snapshotBranch)" in script
     assert '"task-filter": "task"' in script
     assert '"architecture-filter": "architecture_id"' in script

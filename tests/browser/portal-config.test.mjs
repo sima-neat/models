@@ -56,6 +56,23 @@ test('Deployment identity survives a staging preview of production data', async 
   assert.equal(portalConfig({MODEL_BROWSER_ENVIRONMENT: 'production'}).deploymentEnvironment, 'production');
 });
 
+test('A customer build carries the catalog snapshot it pins, and every other build reads the current catalog', () => {
+  const revision = 'a'.repeat(40);
+  const canonicalSha256 = 'b'.repeat(64);
+  const pinned = portalConfig({MODEL_BROWSER_UI_MODE: 'customer', MODEL_BROWSER_CATALOG_SNAPSHOT: `${revision}:${canonicalSha256}`});
+  assert.deepEqual(pinned.catalogSnapshot, {revision, canonicalSha256});
+  assert.equal(portalConfig({MODEL_BROWSER_UI_MODE: 'customer', MODEL_BROWSER_CATALOG_SNAPSHOT: ''}).catalogSnapshot, null);
+  assert.equal(portalConfig({}).catalogSnapshot, null);
+});
+
+test('A catalog snapshot names a full revision and hash, and pins only the customer view', () => {
+  const snapshot = `${'a'.repeat(40)}:${'b'.repeat(64)}`;
+  for (const malformed of ['a'.repeat(40), `${'a'.repeat(12)}:${'b'.repeat(64)}`, `${'A'.repeat(40)}:${'b'.repeat(64)}`, `${snapshot}\nX=1`]) {
+    assert.throws(() => portalConfig({MODEL_BROWSER_UI_MODE: 'customer', MODEL_BROWSER_CATALOG_SNAPSHOT: malformed}), /catalog snapshot must be/);
+  }
+  assert.throws(() => portalConfig({MODEL_BROWSER_CATALOG_SNAPSHOT: snapshot}), /only the customer view/);
+});
+
 test('Each environment reports to its own Developer Center GA4 stream on its own host', () => {
   const staging = portalConfig({});
   assert.deepEqual(staging.analytics, {measurementId: 'G-T1D371DW1K', host: 'developer-stg.sima.ai'});

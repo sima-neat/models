@@ -1,8 +1,18 @@
+// A catalog snapshot is written `<catalog_revision>:<canonical_sha256>`, the two values that name one registry snapshot.
+export function parseCatalogSnapshot(value) {
+  const match = /^([0-9a-f]{40}):([0-9a-f]{64})$/.exec(value);
+  if (!match) throw new Error(`A catalog snapshot must be <40-character revision>:<64-character sha256>, not ${value}`);
+  return {revision: match[1], canonicalSha256: match[2]};
+}
+
 // Every branch builds the developer view. A deployment or local preview names the customer audience explicitly.
 export function portalConfig(env = process.env) {
   const uiMode = env.MODEL_BROWSER_UI_MODE || 'developer';
   if (!['customer', 'developer'].includes(uiMode)) throw new Error(`Unsupported model browser UI mode: ${uiMode}`);
   const customer = uiMode === 'customer';
+  // A pinned customer page shows this snapshot instead of Main's current catalog (see pin-catalog-snapshot.mjs).
+  const catalogSnapshot = env.MODEL_BROWSER_CATALOG_SNAPSHOT ? parseCatalogSnapshot(env.MODEL_BROWSER_CATALOG_SNAPSHOT) : null;
+  if (catalogSnapshot && !customer) throw new Error('A catalog snapshot pins only the customer view.');
   const environment = env.MODEL_BROWSER_ENVIRONMENT || 'staging';
   if (!['staging', 'production'].includes(environment)) throw new Error(`Unsupported model browser environment: ${environment}`);
   const production = environment === 'production';
@@ -35,6 +45,7 @@ export function portalConfig(env = process.env) {
     environment: production ? 'Production' : 'Staging',
     allowProductionPreview: !production && apiBase.replace(/\/$/, '') === 'https://models-registry.stg.neat.sima.ai',
     defaultBranch: customer ? 'main' : 'develop',
+    catalogSnapshot,
     siteUrl,
     repository: {organization: 'sima-neat', name: 'models'},
   };

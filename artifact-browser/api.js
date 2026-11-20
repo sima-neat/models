@@ -165,10 +165,14 @@ export function writeCachedBranches() {
   }
 }
 
+// A pinned page reuses only a saved catalog of its own snapshot. One entry per page keeps storage from filling.
+const catalogSnapshotHash = config.catalogSnapshot?.canonicalSha256 ?? null;
+
 export function readCachedCatalog() {
   try {
     const cached = JSON.parse(localStorage.getItem(catalogCacheKey()));
-    return cached && ["models", "runs"].includes(cached.mode) ? cached : null;
+    const sameSnapshot = cached && (cached.snapshot ?? null) === catalogSnapshotHash;
+    return sameSnapshot && ["models", "runs"].includes(cached.mode) ? cached : null;
   } catch {
     return null;
   }
@@ -180,6 +184,7 @@ export function writeCachedCatalog() {
       ? { catalogDefinitions: state.catalogDefinitions }
       : { runs: state.runs, cursor: state.cursor, hasMore: state.hasMore };
     localStorage.setItem(catalogCacheKey(), JSON.stringify({
+      snapshot: catalogSnapshotHash,
       mode: state.catalogMode,
       taxonomy: state.taxonomy,
       ...payload,

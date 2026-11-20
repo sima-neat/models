@@ -154,8 +154,8 @@ async function loadRuns({ append = false, branch = elements["branch-filter"].val
     try {
       return await fetchCatalogDocument(snapshotBranch);
     } catch (error) {
-      // A branch has no catalog until its first orchestrator run publishes one.
-      if (error.status !== 404) throw error;
+      // A branch has no catalog until its first orchestrator run publishes one. A pinned snapshot always exists.
+      if (error.status !== 404 || config.catalogSnapshot) throw error;
       return null;
     }
   };

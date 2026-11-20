@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -33,6 +34,8 @@ def test_manual_frontend_deployment_is_independent_and_gated():
     assert jobs['build']['needs'] == jobs['resolve-vulcan-config']['needs'] == 'authorize'
     assert jobs['publish']['needs'] == ['authorize', 'resolve-vulcan-config', 'build']
     assert jobs['build']['with']['environment'] == '${{ inputs.environment }}'
+    assert jobs['build']['with']['catalog_snapshot'] == '${{ inputs.catalog_snapshot }}'
+    assert inputs['catalog_snapshot']['default'] == ''
     assert jobs['resolve-vulcan-config']['with']['vulcan_env'] == '${{ inputs.environment }}'
     publish = jobs['publish']['with']
     assert publish['s3_prefix'] == 'models'
@@ -70,6 +73,40 @@ def test_reusable_frontend_build_applies_environment_for_build_and_smoke():
     assert doc['on']['workflow_call']['inputs']['environment']['default'] == 'staging'
     assert doc['jobs']['build']['env']['MODEL_BROWSER_ENVIRONMENT'] == "${{ inputs.environment || 'staging' }}"
     assert doc['jobs']['build']['env']['MODEL_BROWSER_UI_MODE'] == '${{ inputs.ui_mode }}'
+
+
+def test_reusable_frontend_build_pins_the_catalog_snapshot_before_the_portal_build():
+    steps = workflow('developer-docs.yml')['jobs']['build']['steps']
+    runs = [step.get('run') for step in steps]
+    pin = runs.index('node website/scripts/pin-catalog-snapshot.mjs >> "$GITHUB_ENV"')
+    assert pin < runs.index('npm run build:portal')
+    assert steps[pin]['env'] == {'MODEL_BROWSER_CATALOG_SNAPSHOT': '${{ inputs.catalog_snapshot }}'}
+    assert 'if' not in steps[pin]
+
+
+def pin_catalog_snapshot(**settings):
+    env = {key: value for key, value in os.environ.items() if not key.startswith('MODEL_BROWSER_')}
+    return subprocess.run(['node', ROOT / 'website/scripts/pin-catalog-snapshot.mjs'], env={**env, **settings},
+                          capture_output=True, text=True)
+
+
+@pytest.mark.parametrize('environment, audience, pinned', [
+    ('production', 'customer', True), ('staging', 'customer', False), ('production', 'developer', False),
+])
+def test_only_a_production_customer_build_pins_a_catalog_snapshot(environment, audience, pinned):
+    # The registry is unreachable, so a build that pins fails and one that does not prints nothing.
+    result = pin_catalog_snapshot(MODEL_BROWSER_ENVIRONMENT=environment, MODEL_BROWSER_UI_MODE=audience,
+                                  MODEL_REGISTRY_API_URL='http://localhost:9')
+    assert result.stdout == ''
+    assert (result.returncode != 0) == pinned
+    assert ('Cannot pin the catalog snapshot' in result.stderr) == pinned
+
+
+def test_a_staging_build_rejects_a_requested_catalog_snapshot():
+    snapshot = f"{'a' * 40}:{'b' * 64}"
+    result = pin_catalog_snapshot(MODEL_BROWSER_UI_MODE='customer', MODEL_BROWSER_CATALOG_SNAPSHOT=snapshot)
+    assert result.returncode == 1
+    assert 'pins only a production customer build' in result.stderr
 
 
 @pytest.mark.parametrize('approver,attempt', [('someone-else',1), ('owner',2), ('',1)])
