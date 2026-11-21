@@ -32,7 +32,7 @@ is in [branch catalogs](branch-catalogs.md).
 
 | Job | Calls | Runs |
 | --- | --- | --- |
-| `package` | `model-registry-package.yml`, job `build` | `ruff check .`, `python -m pytest`, a collect-only pass over every model's stage-output tests, `packaging/model-registry/build.sh`, and `verify_package.sh` |
+| `package` | `model-registry-package.yml`, job `build` | `ruff check .`, `python -m pytest -n auto` (one worker per runner core), a collect-only pass over every model's stage-output tests, `packaging/model-registry/build.sh`, and `verify_package.sh` |
 | `portal` | `developer-docs.yml`, job `build` | `npm ci`, the TypeScript check, `npm run build:portal`, `node --test tests/browser/*.test.mjs`, and the Chromium smoke test |
 
 | `main-merge` | `main-merge-check.yml`, job `check`, only when the base branch is `main` | `scripts/check_main_merge.sh` with the pull request's head commit |
