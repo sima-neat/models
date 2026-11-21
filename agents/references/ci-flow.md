@@ -364,7 +364,7 @@ The manual workflow runs from `main` or `develop`. `authorize` waits on the
 with administrator bypass disabled, a first attempt, and an approval by the dispatching
 actor. Every later job also requires attempt 1 and the original actor, so a rerun cannot
 reuse an approval. The manual publish keeps files that the new site no longer has.
-[The browser README](../artifact-browser/README.md) owns the release and rollback steps.
+[The browser README](../../artifact-browser/README.md) owns the release and rollback steps.
 
 ## Other workflows
 

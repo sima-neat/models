@@ -63,3 +63,5 @@ select = ["E", "F", "I", "UP"]
 [tool.ruff.lint.per-file-ignores]
 # Compile and benchmark inputs: reformatting them reruns those stages. Clean them up with the model's next change.
 "models/yolo_world_*/scripts/{accuracy,calibration,clip,compile,performance,precision,surgery}.py" = ["E501", "I001"]
+# Copied unchanged from sima-neat/model-compiler at the commit in skills/neat-compile-model/source.json.
+"skills/neat-compile-model/scripts/quantize_compile.py" = ["E501", "I001", "UP009"]

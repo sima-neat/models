@@ -11,11 +11,11 @@ Two readers, both outside the team's daily context:
 - someone who adds or updates a model
 
 Neither reader has seen the CI internals. What CI, publication, and operations do belongs
-in `knowledge/`. A docs page states only the outcome the reader sees, such as "CI
+in `agents/references/`. A docs page states only the outcome the reader sees, such as "CI
 publishes the result after the merge".
 
 A docs page links only to other docs pages, to files a reader opens (a schema, a script,
-a model folder), and to external sites. It never links to `AGENTS.md`, `knowledge/`, or
+a model folder), and to external sites. It never links to `AGENTS.md`, `agents/`, or
 `design-doc/` (tested).
 
 ## Two page kinds

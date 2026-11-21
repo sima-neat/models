@@ -5,7 +5,7 @@ How CI schedules, publishes, and selects a build of a model that sets
 the catalog fields that carry on-demand state, and when a manual build does not publish.
 To promote or withdraw a finished candidate, follow
 [promotion operations](promotion-operations.md). The author's steps are in
-[On-demand builds](../docs/adding-a-model.md#on-demand-builds).
+[On-demand builds](../../docs/adding-a-model.md#on-demand-builds).
 
 A **candidate** is one complete build profile of an on-demand model: every compile run
 and package run of that profile, retained by Vulcan as a unit. Its `deployment_id`

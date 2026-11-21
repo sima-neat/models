@@ -1,0 +1,36 @@
+# Change map
+
+Each row is a change that is incomplete without the files beside it. Make them
+in the same commit.
+
+| When you change | Also change |
+|---|---|
+| what a stage depends on: a `model.yaml` field its fingerprint reads, or a shared file it runs | the fingerprint function or the `COMPILE_TOOLING`/`BOARD_STAGE_TOOLING`/`PERFORMANCE_TOOLING`/`ACCURACY_TOOLING` list in `fingerprints.py`, the tables in [what a change reruns](../docs/adding-a-model.md#9-know-what-a-change-reruns), and a test in `tests/test_compile_matrix.py` or `tests/test_stage_plan.py` |
+| an approved source host | its entry in `HTTPS_HOST_CHECKS` in `source.py`, accept and reject cases in `tests/test_source.py`, and the host table in [pin every input](../docs/adding-a-model.md#3-pin-every-input). This reruns no stage |
+| the set of model scripts a benchmark or conversion runs | `SCRIPTS` in `benchmark_declarations.py` or `CONVERSION_FILES` in `model.py`, which make up `NON_COMPILE_SCRIPTS` in `fingerprints.py` with `FP32_BASELINE_SCRIPT` |
+| how `performance.py` gets its input | `scripts/run_model_performance.sh`, the dataset steps in `vulcan-model-benchmarking.yml`, [Benchmark input](../docs/benchmarking.md#benchmark-input), and `tests/test_model_report.py` and `tests/test_benchmark_workflow.py` |
+| what a package holds besides MPKs: `resources` (pinned files with no `main_file`) or a compile's `runtime_files` | `package.py`, `candidates.py` and `runtime_files.py`, `validate_compile_outputs` in `artifact.py`, the compile fingerprint in `fingerprints.py`, `source_identity` in `source.py`, `resourceSource` in `model.schema.json`, [Packages and pipeline](../docs/metadata-schema.md#packages-and-pipeline), and `tests/test_package.py`, `tests/test_artifact.py`, `tests/test_compile_matrix.py` and `tests/test_source.py` |
+| a custom `performance.py` | start from the [canonical script](../docs/benchmarking.md#the-performance-script), and for a multi-component model the [multi-component script](../docs/benchmarking.md#multi-component-models): hand Core's `BenchmarkReport`, board telemetry, and each component's Model to `model_report.from_performance()` |
+| a metric: a Core benchmark reading or an accuracy score the registry should publish | a row in `tools/model_report/metrics.json` with its Vulcan measurement name (`registry_name`), and its entry in the browser's `metrics.js` or `accuracy-metrics.js`, and for a telemetry reading in `TELEMETRY_METRICS` in `model-report.js`, which tests keep in step. For a performance metric, its row in `DETAIL_CARDS` in `performance-section.js` when a Performance details card should show it, and the metric table in [benchmarking](../docs/benchmarking.md#workload-and-measurements) |
+| a `datasets/<id>.yaml` requirement | `dataset-requirements.schema.json` when its shape changes, and the `accuracy.py` and `tests.yaml` expectations of every model with that task that evaluates the dataset |
+| a dataset's `name` in `datasets/<id>.yaml` | nothing else: `model-registry dataset-names` ships it to the model browser, and no fingerprint reads it. A new dataset file needs one ([required accuracy metrics](../docs/datasets.md#required-accuracy-metrics)) |
+| a model's `example_app` | nothing else: `model-registry example-apps` ships it to the model browser, and no fingerprint reads it. Copy the address from the application's page on the Apps portal ([product identity](../docs/metadata-schema.md#product-identity-and-provenance)) |
+| a field of the model report | `schemas/model-report.schema.json`, `tools/model_report/__init__.py`, the checks in `report_publication.py`, and the browser code that reads the report |
+| a model's category: `model_type`, `tasks`, `modalities`, or the family in `architecture.id` | pick existing IDs from `taxonomies/model-taxonomy.yaml`. When none fits, add the entry there, with a `description` for a new architecture, and follow [Model categorization taxonomy](../docs/model-taxonomy.md) |
+| a model's `license` | set `spdx` to an ID in `artifact-browser/licenses.json`. When the upstream license is not listed, add it there, with `downloadable: false` if it forbids redistribution ([license](../docs/metadata-schema.md#license)) |
+| a downloadable ONNX model, its `upstream` pin, or its license | its `license` resource: the upstream license file pinned by commit and installed under `licenses/`, one resource per license the weights carry, and `--resources` in its `performance.py`. A resource is a compile input, so the pin recompiles the model ([license files in the package](../docs/metadata-schema.md#license-files-in-the-package)) |
+| the model folder layout | `MODEL_FOLDER_ENTRIES` in `model.py` and [the directory step](../docs/adding-a-model.md#2-create-the-directory) |
+| a model script | the model's test of that behavior under `tests/build/` or `tests/benchmark/` |
+| what a model converts, compiles, or measures on a DevKit | its `tests/tests.yaml` entries, their `expected` values, and the stage test files they run |
+| what a model detects, its input, its outputs, or its components | its `README.md` and `hero.png` ([model README](../docs/model-readme.md)) |
+| a README rule or the fixed `BUILDING_APPLICATIONS` or `GENAI_BUILDING_APPLICATIONS` text in `documentation.py` | [model README](../docs/model-readme.md), which quotes the rules and both texts, and the `README.md` of every model the change affects |
+| the layout of a model's `tests/` | `TESTS_DIR_ENTRIES` and `TEST_GROUPS` in `model_tests.py`, `schemas/model-tests.schema.json`, and [the tests step](../docs/adding-a-model.md#10-write-the-models-tests) |
+| how a stage runs its model tests or what they report | `scripts/run_model_tests.sh`, the stage's workflow step, and `TEST_OUTCOMES` in `model_tests.py` |
+| a `model-registry` command | `cli.py` (and `AUTHOR_COMMANDS` when authors run it), every workflow and script that calls it, `packaging/model-registry/install_model_registry_package.sh`, the docs, and `tests/test_cli.py` |
+| a module that only CI may run | the removal list in `packaging/model-registry/build.sh` |
+| a module's job, or a new module | the module map in [architecture](references/architecture.md) |
+| a published result's shape | its schema under `schemas/` and `artifact-browser/` |
+| a CI job, trigger, or concurrency rule | [CI flow](references/ci-flow.md), and the [after-merge section](../docs/contributing.md#after-merge-trusted-staging-automation) when the author sees a different outcome |
+| a module under `artifact-browser/` | `fingerprintedAssets` in `website/scripts/assemble-portal.mjs`, the module table in `artifact-browser/README.md`, and [the model browser page](../docs/model-browser.md) for a visible change |
+| a file under `docs/`, or the topics one covers | its row in the [index](../AGENTS.md#index), and `website/sidebars.ts` |
+| a file under `agents/` or `skills/`, or the topics one covers | for a file under `agents/` and for each `skills/*/SKILL.md`, its row in the [index](../AGENTS.md#index). For a file under a skill's `references/`, its link from that skill's `SKILL.md` |

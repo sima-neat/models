@@ -3,7 +3,7 @@
 The writing standard for `models/<model_id>/README.md`: who reads it, what each part must
 answer, and how to check it. Read it before you write or review a model README. The
 required frame, the limits, and the validator errors are in
-[the model README page](../docs/model-readme.md), and this file does not repeat them.
+[the model README page](../../docs/model-readme.md), and this file does not repeat them.
 
 ## Who reads a model README
 
@@ -124,9 +124,9 @@ a mistake in one of them.
 
 | Kind | README |
 |---|---|
-| Detector | [`yolo26n`](../models/yolo26n/README.md) |
-| Classifier | [`resnet_50`](../models/resnet_50/README.md) |
-| CPU step between two components | [`rf_detr_nano`](../models/rf_detr_nano/README.md) |
-| Outputs that need no decoding | [`dinov3_vit_b_16`](../models/dinov3_vit_b_16/README.md) |
-| Two inputs with their own preprocessing | [`clip_vit_b_16`](../models/clip_vit_b_16/README.md) |
-| Language model | [`qwen3_4b`](../models/qwen3_4b/README.md) |
+| Detector | [`yolo26n`](../../models/yolo26n/README.md) |
+| Classifier | [`resnet_50`](../../models/resnet_50/README.md) |
+| CPU step between two components | [`rf_detr_nano`](../../models/rf_detr_nano/README.md) |
+| Outputs that need no decoding | [`dinov3_vit_b_16`](../../models/dinov3_vit_b_16/README.md) |
+| Two inputs with their own preprocessing | [`clip_vit_b_16`](../../models/clip_vit_b_16/README.md) |
+| Language model | [`qwen3_4b`](../../models/qwen3_4b/README.md) |
