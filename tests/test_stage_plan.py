@@ -115,15 +115,17 @@ def test_main_takes_only_the_builds_develop_finished_at_the_head_fingerprints() 
     assert sources[0]["models"][0]["benchmark_fingerprints"] == {"p1": {"accuracy": "a" * 64}}
 
 
-def test_main_leaves_out_a_profile_develop_is_still_compiling() -> None:
+@pytest.mark.parametrize("replacement", ["k2", "newer"])
+def test_main_keeps_a_finished_build_while_develop_compiles_its_replacement(replacement: str) -> None:
+    """A push to develop between main's plan and its publication must not take away a build the plan reused."""
     develop = _source(("p1", "k1", "develop"), ("p2", "k2", "develop"))
     develop["pending_builds"] = [{"model_id": "x", "build_profile_id": "p2", "component_ids": ["model"],
-                                  "compile_fingerprint": "k2"}]
+                                  "compile_fingerprint": replacement}]
 
     sources = read_default_branch_builds(_develop_reader(develop), "https://registry.example.invalid", "main",
                                          MERGE_MATRIX)
 
-    assert set(_origins(sources[0])) == {("builds", "p1"), ("packages", "p1")}
+    assert set(_origins(sources[0])) == {("builds", "p1"), ("packages", "p1"), ("builds", "p2"), ("packages", "p2")}
 
 
 def test_main_keeps_its_own_entries_for_on_demand_models() -> None:

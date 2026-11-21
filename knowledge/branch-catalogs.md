@@ -113,16 +113,18 @@ profile that `develop` built at the head compile fingerprints. `plan_stages` and
 - `develop`'s builds win even when `main` holds its own builds of the same fingerprints.
   A benchmark fingerprint names the compile runs, so `main`'s own builds would have no
   results.
-- `main` compiles a profile that `develop` has not built or is still compiling. It never
-  waits for `develop`.
+- `main` compiles a profile that `develop` has not built at the head fingerprints. It
+  never waits for `develop`.
 - An on-demand profile keeps `main`'s own entry. The registry rejects a snapshot that
   replaces the builds of a profile promoted on that branch, and `develop`'s catalog holds
   builds that `main`'s promotion does not name.
 - Both callers take `develop`'s builds for a new revision only, like every base branch.
   A second run of the same commit keeps the builds its first snapshot listed.
-- The plan and the publication each read `develop`'s catalog. If `develop` starts
-  compiling a profile between the two reads, `main`'s snapshot can list it as pending
-  with no job compiling it. Re-run the orchestrator on `main` to compile it.
+- The plan and the publication each read `develop`'s catalog. A build stays in the
+  source while `develop` compiles its replacement, so a push to `develop` between the
+  two reads changes nothing. If `develop` finishes that replacement between them,
+  `main`'s snapshot can list the profile as pending with no job compiling it. Re-run
+  the orchestrator on `main` to compile it.
 
 A merge therefore changes customers' view only when `develop` is complete at the merged
 commit. The `main-merge` job of `Target Branch Checks` checks that on every pull request

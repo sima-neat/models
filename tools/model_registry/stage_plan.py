@@ -239,8 +239,9 @@ def read_default_branch_builds(
     The source holds each automatic build profile the default branch has built at the head compile
     fingerprints. Placed ahead of the production branch's own catalog, it makes a merge list the runs the
     default branch measured, so their results apply and nothing compiles again. An on-demand profile is
-    left out, because the registry rejects a snapshot that replaces the builds of a promoted profile. So
-    is a profile the default branch is still compiling, which the production branch compiles itself.
+    left out, because the registry rejects a snapshot that replaces the builds of a promoted profile. A
+    build stays in the source while the default branch compiles its replacement, so a push to the default
+    branch between this branch's plan and its publication does not take away a build the plan relied on.
     """
     if branch != PRODUCTION_BRANCH:
         return []
@@ -249,12 +250,11 @@ def read_default_branch_builds(
         return []
     document = _document(record)
     profiles = _profiles(document)
-    pending = _pending_fingerprints(document)
     on_demand = {entry["model_id"] for entry in matrix if entry.get("build_on_demand", False)}
     models: dict[str, dict[str, Any]] = {}
     for (model_id, profile_id), fingerprints in sorted(_head_fingerprints(matrix).items()):
         profile = profiles.get((model_id, profile_id))
-        if model_id in on_demand or profile is None or (model_id, profile_id) in pending:
+        if model_id in on_demand or profile is None:
             continue
         if not _carries_fingerprints({"builds": profile["builds"]}, fingerprints):
             continue
