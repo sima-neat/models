@@ -29,8 +29,11 @@ and repeat the source bias once per phase. Then shuffle phase channels into time
 -> Transpose NCHW-to-NHWC
 -> Reshape [N,1,(W+1)*stride,Cout]
 -> Transpose NHWC-to-NCHW
--> crop width to W*stride
+-> crop width to W*stride, starting at offset ceil(stride/2)
 ```
+
+The crop offset matters. The shuffled sequence is the unpadded transposed convolution, so a
+crop that starts at 0 shifts the output by `ceil(stride/2)` samples.
 
 The transpose pair is intentional. AFE converts the surrounding convolution
 region to NHWC, so the layout conversions are absorbed—"eaten" by compiler

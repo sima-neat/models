@@ -119,6 +119,9 @@ def main() -> int:
         return 0
 
     intermediate_path = output_path.with_suffix(".static.onnx")
+    if intermediate_path == input_path:
+        # Saving the intermediate here would overwrite the source, and cleanup would then delete it.
+        intermediate_path = output_path.with_suffix(".static.tmp.onnx")
     onnx.save(model, intermediate_path.as_posix())
 
     try:

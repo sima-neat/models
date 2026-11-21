@@ -121,6 +121,8 @@
 - **Guards:** Preserve comparison polarity and broadcasting. Reject nonbinary,
   inverted, probabilistic, NaN-bearing, or transformed masks; all-masked
   Softmax rows; and paths that mix positions.
+  For variant 1, keep `Where` unless every masked-out `data` element is proven finite:
+  `Where` returns 0 there, and `0 * inf` or `0 * NaN` is NaN.
 
 ## `reshape-shuffle-to-depthtospace`
 
