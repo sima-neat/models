@@ -20,3 +20,8 @@ jobs:
   portal:
     name: Check the model browser portal
     uses: ./.github/workflows/developer-docs.yml
+
+  main-merge:
+    name: Check the merge into main
+    if: github.base_ref == 'main'
+    uses: ./.github/workflows/main-merge-check.yml

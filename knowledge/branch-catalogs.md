@@ -19,6 +19,9 @@ at one revision. It may list builds that another branch compiled.
 | long-lived | `develop`, `main`, `release-*`, `integration/*` | its own catalog only. On its first push, the closest base branch that has a catalog. |
 | feature | every other branch | its own catalog, then each base branch's catalog, closest first |
 
+`main` is the one exception. Customers read its catalog, so a new revision of `main` first
+takes the builds `develop` finished ([merge into main](#merge-into-main)).
+
 ## Base branches
 
 Git does not record which branch another was cut from. The `select` job therefore runs
@@ -98,6 +101,33 @@ A feature branch that later merges `develop` does not repeat that work. It leave
 `develop` each profile `develop` is compiling and each benchmark whose fingerprint
 `develop`'s catalog records.
 
+## Merge into main
+
+`main` ships what `develop` built and measured. On a push to `main`,
+`read_default_branch_builds` reads `develop`'s catalog and returns each automatic build
+profile that `develop` built at the head compile fingerprints. `plan_stages` and
+`publish_catalog` put that source ahead of `main`'s own catalog, so:
+
+- `main`'s catalog lists the compile runs `develop` measured. Its benchmark fingerprints
+  equal `develop`'s, and the results `develop` published apply without a new measurement.
+- `develop`'s builds win even when `main` holds its own builds of the same fingerprints.
+  A benchmark fingerprint names the compile runs, so `main`'s own builds would have no
+  results.
+- `main` compiles a profile that `develop` has not built or is still compiling. It never
+  waits for `develop`.
+- An on-demand profile keeps `main`'s own entry. The registry rejects a snapshot that
+  replaces the builds of a profile promoted on that branch, and `develop`'s catalog holds
+  builds that `main`'s promotion does not name.
+- Both callers take `develop`'s builds for a new revision only, like every base branch.
+  A second run of the same commit keeps the builds its first snapshot listed.
+- The plan and the publication each read `develop`'s catalog. If `develop` starts
+  compiling a profile between the two reads, `main`'s snapshot can list it as pending
+  with no job compiling it. Re-run the orchestrator on `main` to compile it.
+
+A merge therefore changes customers' view only when `develop` is complete at the merged
+commit. The `main-merge` job of `Target Branch Checks` checks that on every pull request
+into `main` ([CI flow](ci-flow.md#the-merge-check-for-main)).
+
 ## Concurrent pushes
 
 - A newer push to the same ref cancels the running orchestrator with its compiles and
@@ -142,6 +172,8 @@ repeat visits.
 | Catalogs are per branch and runs are shared. | A branch can deliver a build it did not compile, and a new branch needs no copy of anything. |
 | The compile decision reads the catalog, and the benchmark decision reads runs. | The catalog pins which compile runs a branch delivers. A benchmark fingerprint already names those runs, so any matching run is a result for the same build. |
 | A long-lived branch reads only its own catalog. | A merge recompiles what it changed, so every automatic build `develop` delivers comes from a `develop` run. |
+| `main` takes `develop`'s finished automatic builds first. | Customers read `main`. Compiling and measuring every model again after each merge left it without results for about a day. |
+| `main` never waits for a build `develop` is compiling. | A pending entry on `main` that only `develop` can finish would stay if `develop` moved on. |
 | A feature branch leaves pending profiles and recorded benchmarks to its closest base branch. | The work a merge started on `develop` is not repeated on each branch that merges `develop`. |
 | Feature branches are never base branches. | Graph distance cannot tell a sibling from the branch both were cut from. |
 | Base branches seed a new revision only. | During a revision, a base branch could otherwise restore a package the revision withheld, or replace a published one when the base branch finishes rebuilding first. |

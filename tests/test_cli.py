@@ -52,6 +52,7 @@ def test_benchmark_job_scopes_baseline_and_timeout(model, profile, stages, backe
         "benchmark-job",
         "stage-registry-build",
         "plan-promoted-benchmarks",
+        "check-main-merge",
     ],
 )
 def test_author_cli_rejects_ci_only_commands(command: str, capsys: pytest.CaptureFixture[str]) -> None:
@@ -84,6 +85,26 @@ def test_promoted_benchmark_planning_command_reads_the_selected_catalog(monkeypa
     assert json.loads(capsys.readouterr().out) == {
         "source_branch": "main", "source_sha": "a" * 40, "include": [], "skipped": [],
     }
+
+
+@pytest.mark.parametrize(("blockers", "exit_code", "last_line"), [
+    ([], 0, "main takes every build and result from develop"),
+    (["x/w8a8 has no accuracy result on develop"], 1,
+     "blocked: main would compile or show fewer results after this merge"),
+])
+def test_main_merge_check_command_prints_each_reason_and_fails_on_a_blocker(
+    blockers, exit_code, last_line, monkeypatch, capsys,
+):
+    def find(repository, *, head, read, read_api_url):
+        assert (repository, head, read_api_url) == (ROOT, "a" * 40, "https://registry.example.invalid")
+        return {"blockers": blockers, "warnings": ["y/w8a8 is promoted to another build on develop"]}
+
+    monkeypatch.setattr(cli, "find_main_merge_blockers", find)
+    arguments = ["--repository", str(ROOT), "--head", "a" * 40, "--api-url", "https://registry.example.invalid"]
+    assert main(["check-main-merge", *arguments]) == exit_code
+    assert capsys.readouterr().out.splitlines() == [
+        "warning: y/w8a8 is promoted to another build on develop", *blockers, last_line,
+    ]
 
 
 @pytest.mark.parametrize("entrypoint", [main, cli.author_main])
