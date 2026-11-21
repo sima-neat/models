@@ -38,10 +38,16 @@ size = 640
 data = load(path, n)
 
 # Good
-calibration_samples = int(parameters["calibration_samples"])
-IMAGE_SIZE = 640
-samples = calibration_images(dataset, calibration_samples)
+IMAGE_SIZE = 640  # at the top of the module, with the other constants
+
+
+def compile_model(...):
+    calibration_samples = int(parameters["calibration_samples"])
+    samples = calibration_images(dataset, calibration_samples)
 ```
+
+A constant sits at the top of its module, after the imports, in upper case. A function body
+holds no bare number or string that a constant should name.
 
 A function that does work is named with a verb (`prepare_model`, `calibration_images`,
 `decode`). A constant is named for its role (`CALIBRATION_SEED`, `SCORE_THRESHOLD`), never for
