@@ -1,0 +1,28 @@
+conversion:
+  run_tests: true
+compile:
+  run_tests: true
+accuracy:
+  run_tests: true
+  expected:
+    w16a16:
+      coco-2017-val:
+        coco_mask_map: 0.4767
+        coco_mask_ap50: 0.8319
+        coco_mask_ap75: 0.4803
+        coco_mask_ap_small: 0.3936
+        coco_mask_ap_medium: 0.5457
+        coco_mask_ap_large: 0.6449
+        coco_mask_ar1: 0.3564
+        coco_mask_ar10: 0.5637
+        coco_mask_ar100: 0.5729
+        coco_mask_ar_small: 0.4693
+        coco_mask_ar_medium: 0.6104
+        coco_mask_ar_large: 0.6929
+performance:
+  run_tests: true
+  expected:
+    w16a16:
+      # The complete-image workload: Neat preprocessing, the encoder and decoder on the MLA, and the MobileSam
+      # BoxDecode masks (sima-neat/core#1355). Measured on a Modalix DevKit at 13.90 FPS, 96.9 ms per image.
+      throughput_fps: 13.9

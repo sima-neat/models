@@ -4,3 +4,5 @@ required_metrics:
   object_detection: [coco_map]
   instance_segmentation: [coco_mask_map]
   pose_estimation: [coco_keypoint_map]
+  # Masks from each object's ground-truth box as the prompt.
+  promptable_segmentation: [coco_mask_map]

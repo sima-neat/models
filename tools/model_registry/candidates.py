@@ -24,7 +24,7 @@ from .registry import (
     publish_compilations,
     publish_packages,
 )
-from .runtime_files import read_runtime_files
+from .runtime_files import copy_runtime_files, read_runtime_files
 from .stage_plan import read_current_catalog
 
 DEPLOYMENTS = "/v1/repositories/sima-neat/models/deployments"
@@ -205,12 +205,7 @@ def publish_candidate(
         if runtime_files:
             target_profile = compiled / model_id / build_profile_id
             shutil.copyfile(source_profile / "compile-outputs.json", target_profile / "compile-outputs.json")
-            for item in runtime_files:
-                destination = target_profile / item["path"]
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                if not destination.exists():
-                    _link_or_copy(str(source_profile / item["path"]), str(destination))
-            read_runtime_files(target_profile)
+            copy_runtime_files(source_profile, target_profile, copy_function=_link_or_copy)
         for name in PROFILE_RESULT_FILES:
             result_file = source / model_id / build_profile_id / name
             if result_file.is_file():

@@ -633,7 +633,7 @@ def test_accuracy_script_change_measures_accuracy_only(stage_repository: Path) -
 
 
 @pytest.mark.parametrize(
-    "relative", sorted(set(ACCURACY_TOOLING) - set(BOARD_STAGE_TOOLING) - {"scripts/run_model_accuracy.sh"})
+    "relative", sorted(set(ACCURACY_TOOLING) - set(PERFORMANCE_TOOLING) - {"scripts/run_model_accuracy.sh"})
 )
 def test_shared_accuracy_tooling_change_measures_accuracy_only(stage_repository: Path, relative: str) -> None:
     document = _published_catalog(stage_repository)
@@ -658,7 +658,7 @@ def test_artifact_verification_change_reruns_nothing(stage_repository: Path) -> 
     assert plan["benchmark"]["include"] == []
 
 
-def test_runtime_file_validation_change_measures_accuracy_only(stage_repository: Path) -> None:
+def test_runtime_file_validation_change_remeasures_both_board_stages(stage_repository: Path) -> None:
     document = _published_catalog(stage_repository)
     registry = FakeRegistry({BRANCH: document}, _published_runs(document))
     _edit(stage_repository, "../../tools/model_registry/runtime_files.py")
@@ -666,7 +666,9 @@ def test_runtime_file_validation_change_measures_accuracy_only(stage_repository:
     plan = _plan(stage_repository, registry)
 
     assert plan["compile"]["include"] == []
-    assert _selected(plan, "benchmark") == [("w8a16", ["accuracy"]), ("w8a8", ["accuracy"])]
+    assert _selected(plan, "benchmark") == [("w16a16", ["performance"]),
+                                             ("w8a16", ["performance", "accuracy"]),
+                                             ("w8a8", ["performance", "accuracy"])]
 
 
 def test_shared_compile_runner_change_compiles_every_build(stage_repository: Path) -> None:

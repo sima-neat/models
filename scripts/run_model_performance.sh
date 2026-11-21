@@ -86,6 +86,12 @@ if [[ -n "$resource_dir" ]]; then
   resources=(--resources "$resource_dir")
 fi
 
+# Derivatives declared by compilation share the same root with pinned resources. Verify and copy only those
+# supporting files, not component archives; a conflicting resource fails before any native benchmark begins.
+runtime_dir="$("$REGISTRY_PYTHON" -m model_registry model-runtime-directory "$COMPILED_DIR" \
+  --model "$MODEL_ID" --build-profile "$BUILD_PROFILE_ID" --output-dir "$WORK_DIR/resources")"
+if [[ -n "$runtime_dir" ]]; then resources=(--resources "$runtime_dir"); fi
+
 # Performance packages go in a folder beside PyNeat's environment, never into it, so its numpy stays in place.
 site="$WORK_DIR/site-packages"
 if [[ -f "$REQUIREMENTS" ]]; then

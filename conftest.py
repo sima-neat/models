@@ -10,6 +10,7 @@ commented out until it builds.
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import sys
@@ -212,3 +213,18 @@ def build_profile(request: pytest.FixtureRequest) -> str:
         outputs = json.loads((_given(request, "compiled") / "compile-outputs.json").read_text(encoding="utf-8"))
         return outputs["build_profile_id"]
     raise pytest.UsageError(f"build_profile needs --compiled, --accuracy or --performance: {request.node.nodeid}")
+
+
+@pytest.fixture
+def coco_source_images() -> tuple[Path, ...]:
+    """Three licensed real images for source parity, not a COCO accuracy estimate."""
+    directory = Path(__file__).resolve().parent / "tests/fixtures/coco_source_parity"
+    manifest = json.loads((directory / "attribution.json").read_text())
+    images = []
+    for row in manifest["images"]:
+        path = directory / row["file_name"]
+        content = path.read_bytes()
+        assert len(content) == row["bytes"]
+        assert hashlib.sha256(content).hexdigest() == row["sha256"]
+        images.append(path)
+    return tuple(images)

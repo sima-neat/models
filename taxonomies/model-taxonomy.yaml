@@ -220,6 +220,11 @@ architectures:
     description: Detects objects and outlines each instance with a segmentation mask using transformer-based detectors.
     paradigm: transformer
     allowed_model_types: [vision]
+  sam:
+    display_name: SAM
+    description: Segments the object at prompted points or boxes with promptable segment-anything models.
+    paradigm: transformer
+    allowed_model_types: [vision]
   segformer:
     display_name: SegFormer
     description: Labels every pixel of an image with hierarchical transformer encoders and lightweight decoders.
@@ -371,6 +376,9 @@ tasks:
     allowed_model_types: [vision]
   pose_estimation:
     display_name: Pose Estimation
+    allowed_model_types: [vision]
+  promptable_segmentation:
+    display_name: Promptable Segmentation
     allowed_model_types: [vision]
   re_identification:
     display_name: Re-Identification

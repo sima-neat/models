@@ -599,6 +599,8 @@ def test_every_multi_component_script_keeps_cores_mla_stats(script, monkeypatch)
 
     pyneat = types.SimpleNamespace(Model=ScriptModel, BenchmarkOptions=BenchmarkOptions)
     monkeypatch.setitem(sys.modules, "pyneat", pyneat)
+    # A script may import a helper beside it, as it does when run from its directory.
+    monkeypatch.syspath_prepend(str(script.parent))
     monkeypatch.setitem(sys.modules, "onnxruntime", types.SimpleNamespace())
 
     layer_stats, stage_stats = runpy.run_path(str(script))["mla_stats"](Path("backbone.tar.gz"))
@@ -617,9 +619,16 @@ def test_every_multi_component_script_feeds_its_backbone_a_dataset_frame(script,
     monkeypatch.setitem(sys.modules, "pyneat", types.SimpleNamespace(
         ModelOptions=ModelOptions, Tensor=Tensor, **SCRIPT_PYNEAT,
     ))
+    monkeypatch.syspath_prepend(str(script.parent))
     functions = runpy.run_path(str(script))
 
     image = functions["sample_image"](benchmark_dataset(tmp_path))
+    if "frame_tensor" not in functions:
+        # SAM requires CPU normalization followed by right/bottom padding, which Core's image preset cannot
+        # express. The model tests ensure this work, prompt encoding and final masks run inside timing.
+        frame = Tensor(functions["read_frame"](image), image_format="RGB")
+        assert_letterboxed_frame(frame)
+        return
     frame = functions["frame_tensor"](image)
 
     metadata = yaml.safe_load((script.parents[1] / "model.yaml").read_text(encoding="utf-8"))
@@ -639,6 +648,7 @@ def test_every_multi_component_script_feeds_its_backbone_a_dataset_frame(script,
         assert options.preprocess.preset == "ImageNet"
     height, width = frame.array.shape[:2]
     assert (options.preprocess.input_max_width, options.preprocess.input_max_height) == (width, height)
+
 
 
 def test_model_code_uses_cores_mla_stats_names():
