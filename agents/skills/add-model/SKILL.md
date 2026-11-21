@@ -11,6 +11,10 @@ between them. Before step 1, read [`rules.md`](../../rules.md),
 [`coding-style.md`](../../coding-style.md), and the [`change-map.md`](../../change-map.md) rows
 of every file the change will touch.
 
+Qualify locally first. Every push to a branch of this repository starts CI, which compiles
+and benchmarks each build whose fingerprint changed, so steps 8 to 11 finish before the first
+push and before each later one.
+
 ## Steps
 
 1. Decide what the product contains, as
@@ -70,12 +74,14 @@ of every file the change will touch.
     component instead. Run `scripts/run_model_accuracy.sh` for each build that declares accuracy. The step is done when each declared stage wrote
     `model-report.json` and passed its stage test, or its failure is recorded for the
     description.
-11. List the stages the change reruns, per model and build profile, with
+11. Before a push, list the stages the change reruns, per model and build profile, with
     [`rules.md` "Stages and fingerprints"](../../rules.md#stages-and-fingerprints) and [what a
     change reruns](../../../docs/adding-a-model.md#9-know-what-a-change-reruns). A model with
     `build-on-demand: true` builds only on request ([on-demand
-    builds](../../../docs/adding-a-model.md#on-demand-builds)). The step is done when every
-    changed file maps to a row of that table.
+    builds](../../../docs/adding-a-model.md#on-demand-builds)). When the list reaches beyond
+    the models the change is about, stop and warn as [`rules.md` "Before a
+    push"](../../rules.md#before-a-push) says. The step is done when every changed file maps to
+    a row of that table, and the user has approved any rerun beyond the changed models.
 12. List what the work taught, and place each lesson as [`rules.md` "Where a lesson
     goes"](../../rules.md#where-a-lesson-goes) says. The step is done when each lesson is
     written into its file, or the description records `Rule, skill, and knowledge updates: none`

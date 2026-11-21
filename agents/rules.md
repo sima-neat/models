@@ -39,6 +39,21 @@ depends on.
   the taxonomy, `docs/`, `agents/`, `skills/`, or `AGENTS.md`. Editing them reruns
   nothing.
 
+## Before a push
+
+Every push to a branch of this repository starts `Vulcan Model Orchestrator`, so a push spends
+compile runners and DevKit time for each build whose fingerprint changed.
+
+- Run each changed stage locally first: validation and tests, the compile in the pinned Model
+  Compiler, and the DevKit stages ([qualify locally](../docs/local-development.md)).
+- List what the push reruns from the changed files. Compare `compile_fingerprint` before and
+  after with `model-registry matrix --repository . --compiler-version <identity>` when unsure.
+- Stop and warn the user before a push whose reruns reach beyond the models the change is
+  about. That is any change to a file in a tooling list of `fingerprints.py`, to the compiler
+  pin, to the Core runtime target, or to `FINGERPRINT_VERSION` in `conversion.py`. The warning
+  names the file, the stages it reruns, and how many models they cover, and offers to move
+  that file to its own pull request. Push after the user approves.
+
 ## Rules no check catches
 
 Pull request CI passes when one of these is broken, and the failure shows up
