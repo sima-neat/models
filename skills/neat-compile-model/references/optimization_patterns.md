@@ -123,6 +123,9 @@
   Softmax rows; and paths that mix positions.
   For variant 1, keep `Where` unless every masked-out `data` element is proven finite:
   `Where` returns 0 there, and `0 * inf` or `0 * NaN` is NaN.
+  For variant 2, keep `Where` unless every unmasked score is proven far enough above the
+  finite minimum that a masked position still gets probability 0. An unmasked score at the
+  minimum ties with the masked ones and takes a share of their probability.
 
 ## `reshape-shuffle-to-depthtospace`
 
