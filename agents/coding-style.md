@@ -20,74 +20,65 @@ below assume those.
 ## How the code reads
 
 A violation is code a reader misreads or cannot follow. A name that only differs from the one
-you would pick is not one. Each pair below shows the same code twice, and code that matches a
-pair takes the shape of its good side. The good sides come from `models/yolo26n` and
-`models/rf_detr_nano`.
+you would pick is not one. Each pair below shows one piece of code twice, and code that matches
+a pair takes the shape of its good side.
 
 ### The main function reads as its steps
 
-A reader learns what the build does from `compile_model` alone. Each step is one line that
-names what it produces, and its detail lives in the helper of that name.
+A reader learns what the build does from `compile_model` alone. Extract a step when it has a
+name the reader would use, such as "read the build profile". Keep a line inline when a function
+name would only restate it.
 
 ```python
-# Bad: the steps are there, but the reader has to find where each one starts and ends.
+# Bad: the reader has to find where each step starts and ends.
 def compile_model(source: Path, output_dir: Path, profile_id: str, dataset: Path | None) -> Path:
     model = load_metadata(MODEL_DIR)
     profiles = [profile for profile in model["build_profiles"] if profile["id"] == profile_id]
     if len(profiles) != 1:
         raise ValueError(f"model.yaml declares no build profile {profile_id!r}")
     parameters = next(item["parameters"] for item in profiles[0]["components"] if item["id"] == COMPONENT_ID)
-    if parameters["precision"] == "w8a8":
-        quantization = QuantizationParams(calibration_method=HistogramMSEMethod(parameters["calibration_bins"]))
-        samples = calibration_images(dataset, int(parameters["calibration_samples"]))
-    else:
-        quantization = QuantizationParams(calibration_method=SkipCalibration())
-        samples = None
-    graph = prepare_model(source, output_dir / "graphs")
-    return _quantize_and_compile(graph, quantization, samples, output_dir)
-```
-
-```python
-# Good: five lines tell the whole build. Open a helper only for the step you care about.
-def compile_model(source: Path, output_dir: Path, profile_id: str, dataset: Path | None) -> Path:
-    parameters = _parameters(profile_id)                # the build profile from model.yaml
-    quantization = _quantization(parameters)            # formats and calibration method
-    samples = _calibration_samples(parameters, dataset) # None when the build skips calibration
-
-    graph = prepare_model(source, output_dir / "graphs")
-    return _quantize_and_compile(graph, quantization, samples, output_dir)
-```
-
-Both sides do the same work. Extract a step when it has a name the reader would use, such as
-"read the build profile". Keep a line inline when a function name would only restate it. This
-pair is shortened to show the shape.
-
-### A name says what the value is
-
-Name a value by its meaning, with its unit when it has one, in the terms `model.yaml` and the
-README use. A function that does work gets a verb or names what it returns. A constant sits at
-the top of its module, in upper case, named for its role.
-
-```python
-# Bad: d, n, x, and two bare values tell the reader nothing, and the error hides both counts.
-def sample(d: Path, n: int) -> list[str]:
-    names = [x for x in _image_names(d) if PurePosixPath(x).parent.name == "cal2017"]
-    if len(names) < n:
-        raise ValueError("not enough images")
-    return random.Random(20260930).sample(names, n)
+    precision = str(parameters["precision"])
+    ...
 ```
 
 ```python
 # Good
-CALIBRATION_SPLIT = "cal2017"
-CALIBRATION_SEED = 20260930
+def compile_model(source: Path, output_dir: Path, profile_id: str, dataset: Path | None) -> Path:
+    parameters = _parameters(profile_id)
+    precision = str(parameters["precision"])
+    quantization = _quantization(precision, calibration_bins)
+    ...
+```
 
+### A name says what the value is
 
-def calibration_names(dataset: Path, count: int) -> list[str]:
-    names = [name for name in _image_names(dataset) if PurePosixPath(name).parent.name == CALIBRATION_SPLIT]
-    if count < 1 or len(names) < count:
-        raise ValueError(f"cannot select {count} calibration images from {len(names)} {CALIBRATION_SPLIT} images")
-    return random.Random(CALIBRATION_SEED).sample(names, count)
+Name a value by its meaning, with its unit when it has one, in the terms `model.yaml` and the
+README use. A constant sits at the top of its module, in upper case, named for its role.
+
+```python
+# Bad
+size = 640
+num = int(parameters["calibration_samples"])
+data = calibration_images(dataset, num)
+```
+
+```python
+# Good
+IMAGE_SIZE = 640
+calibration_samples = int(parameters["calibration_samples"])
+samples = calibration_images(dataset, calibration_samples)
+```
+
+### An error names what it rejects and what it expected
+
+```python
+# Bad
+raise ValueError("not enough images")
+```
+
+```python
+# Good
+raise ValueError(f"cannot select {count} calibration images from {len(names)} {CALIBRATION_SPLIT} images")
 ```
 
 ### Each fact has one owner
@@ -97,13 +88,20 @@ def calibration_names(dataset: Path, count: int) -> list[str]:
 
 ```python
 # Bad: compile.py repeats what surgery.py defines, and the two copies drift.
-INPUT = "images"
 INPUT_SHAPE = [1, 3, 640, 640]
 ```
 
 ```python
 # Good
 from surgery import INPUT, INPUT_SHAPE
+```
+
+A DevKit script cannot import `surgery.py`, because the DevKit has no `onnx`. It restates the
+value and names its owner:
+
+```python
+# Good, in accuracy.py or performance.py
+STRIDES = (8, 16, 32)  # same as surgery.STRIDES
 ```
 
 ### A condition tests the fact the branch depends on
@@ -123,64 +121,12 @@ if "calibration_samples" in parameters:
     samples = calibration_images(dataset, int(parameters["calibration_samples"]))
 ```
 
-### Each precision states its own settings
-
-One `QuantizationParams` call per precision sets every field that build needs.
-
-```python
-# Bad: both builds share one chain, so no single place shows what w8a16 gets.
-config = default_quantization.with_weight_quantization(int8_weights)
-if precision == "w8a8":
-    config = config.with_calibration(HistogramMSEMethod(calibration_bins))
-else:
-    config = config.with_activation_quantization(bfloat16_scheme()).with_calibration(SkipCalibration())
-return config.with_per_token_quant(precision == "w8a16")
-```
-
-```python
-# Good
-if precision == "w8a8":
-    return QuantizationParams(
-        calibration_method=HistogramMSEMethod(calibration_bins),
-        activation_quantization_scheme=quantization_scheme(asymmetric=True, per_channel=False, bits=8),
-        weight_quantization_scheme=quantization_scheme(asymmetric=False, per_channel=True, bits=8),
-        biascorr_type=BiasCorrectionType.REGULAR,
-    )
-if precision == "w8a16":
-    return QuantizationParams(
-        calibration_method=SkipCalibration(),
-        activation_quantization_scheme=bfloat16_scheme(),
-        weight_quantization_scheme=quantization_scheme(asymmetric=False, per_channel=True, bits=8),
-        # Each token's activations get their own INT8 scale before an INT8-weight operation.
-        per_token_quant=True,
-    )
-```
-
-### A build without calibration passes no data
-
-```python
-# Bad: a zero image satisfies quantize(), and the build reads as calibrated.
-if precision == "w8a8":
-    samples = calibration_images(dataset, calibration_samples)
-else:
-    samples = np.zeros((1, IMAGE_SIZE, IMAGE_SIZE, 3), dtype=np.float32)
-calibration_data = convert_data_generator_to_iterable(DataGenerator({InputName(INPUT): samples}))
-```
-
-```python
-# Good
-calibration_data = None
-if precision == "w8a8":
-    samples = calibration_images(dataset, calibration_samples)
-    calibration_data = convert_data_generator_to_iterable(DataGenerator({InputName(INPUT): samples}))
-```
-
 ### A comment leads with its point
 
 Write a comment where a reader new to the model would stop and ask what a value is for or why
 a step is there. Say first what the value or step does, then the reason. Put the evidence, a
-number or a source, beside the value it explains. Use plain words. One line when it fits, two when the reason needs them.
-Leave code that reads on its own without one.
+number or a source, beside the value it explains. Use plain words. One line when it fits, two
+when the reason needs them. Leave code that reads on its own without one.
 
 ```python
 # Bad: no comment where one is needed. The reader cannot tell what -7.0 does.
@@ -258,7 +204,9 @@ not declare, and a helper a copy from another model left unused. A test alone do
 - One function, `_parameters` or `_component_parameters`, reads the build profile from
   `model.yaml` with `load_model` and raises for an undeclared profile.
 - One function turns a component's parameters into `QuantizationParams`, with one branch per
-  precision. Only a component whose parameters set `calibration_samples` receives calibration
+  precision, as [quantization in
+  `compile.py`](../skills/neat-compile-model/references/model-recipe.md#quantization-in-compilepy)
+  shows. Only a component whose parameters set `calibration_samples` receives calibration
   data. The others use `SkipCalibration()`.
 - The compiler works in `tempfile.TemporaryDirectory(prefix=f"{MODEL_ID}-",
   dir=os.environ.get("RUNNER_TEMP"))`. Only the files the interface lists reach

@@ -227,6 +227,56 @@ its components in one invocation named after it. The recipe does this:
 - It never downloads undeclared data. Download, checksum, MPK validation, and
   publication stay in shared tooling, out of model code.
 
+### Quantization in `compile.py`
+
+One `QuantizationParams` call per precision sets every field that build needs, so a reader sees
+a build's settings in one place.
+
+```python
+# Bad: both builds share one chain, so no single place shows what w8a16 gets.
+config = default_quantization.with_weight_quantization(int8_weights)
+if precision == "w8a8":
+    config = config.with_calibration(HistogramMSEMethod(calibration_bins))
+else:
+    config = config.with_activation_quantization(bfloat16_scheme()).with_calibration(SkipCalibration())
+return config.with_per_token_quant(precision == "w8a16")
+```
+
+```python
+# Good
+if precision == "w8a8":
+    return QuantizationParams(
+        calibration_method=HistogramMSEMethod(calibration_bins),
+        activation_quantization_scheme=quantization_scheme(asymmetric=True, per_channel=False, bits=8),
+        weight_quantization_scheme=quantization_scheme(asymmetric=False, per_channel=True, bits=8),
+        biascorr_type=BiasCorrectionType.REGULAR,
+    )
+if precision == "w8a16":
+    return QuantizationParams(
+        calibration_method=SkipCalibration(),
+        activation_quantization_scheme=bfloat16_scheme(),
+        weight_quantization_scheme=quantization_scheme(asymmetric=False, per_channel=True, bits=8),
+        per_token_quant=True,
+    )
+raise ValueError(f"unsupported precision: {precision}")
+```
+
+A build that skips calibration passes no data. A placeholder makes the build read as calibrated.
+
+```python
+# Bad: a zero image stands in for calibration data.
+samples = np.zeros((1, IMAGE_SIZE, IMAGE_SIZE, 3), dtype=np.float32)
+calibration_data = convert_data_generator_to_iterable(DataGenerator({InputName(INPUT): samples}))
+```
+
+```python
+# Good
+calibration_data = None
+if "calibration_samples" in parameters:
+    samples = calibration_images(dataset, int(parameters["calibration_samples"]))
+    calibration_data = convert_data_generator_to_iterable(DataGenerator({InputName(INPUT): samples}))
+```
+
 ## Reproduce a published model
 
 [Getting started](https://github.com/sima-neat/models/blob/main/docs/getting-started.md)
