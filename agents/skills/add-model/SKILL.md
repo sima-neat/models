@@ -11,9 +11,9 @@ between them. Before step 1, read [`rules.md`](../../rules.md),
 [`coding-style.md`](../../coding-style.md), and the [`change-map.md`](../../change-map.md) rows
 of every file the change will touch.
 
-Qualify locally first. Every push to a branch of this repository starts CI, which compiles
-and benchmarks each build whose fingerprint changed, so steps 8 to 11 finish before the first
-push and before each later one.
+Keep the change inside the model's folder. A shared file such as
+`scripts/run_model_compilation.sh` is an input of every model, so an edit to it reruns models
+this work has nothing to do with ([`rules.md` "Before a push"](../../rules.md#before-a-push)).
 
 ## Steps
 
@@ -78,8 +78,8 @@ push and before each later one.
     [`rules.md` "Stages and fingerprints"](../../rules.md#stages-and-fingerprints) and [what a
     change reruns](../../../docs/adding-a-model.md#9-know-what-a-change-reruns). A model with
     `build-on-demand: true` builds only on request ([on-demand
-    builds](../../../docs/adding-a-model.md#on-demand-builds)). When the list reaches beyond
-    the models the change is about, stop and warn as [`rules.md` "Before a
+    builds](../../../docs/adding-a-model.md#on-demand-builds)). When the list holds a
+    model the change is not about, stop and say so as [`rules.md` "Before a
     push"](../../rules.md#before-a-push) says. The step is done when every changed file maps to
     a row of that table, and the user has approved any rerun beyond the changed models.
 12. List what the work taught, and place each lesson as [`rules.md` "Where a lesson

@@ -41,18 +41,18 @@ depends on.
 
 ## Before a push
 
-Every push to a branch of this repository starts `Vulcan Model Orchestrator`, so a push spends
-compile runners and DevKit time for each build whose fingerprint changed.
+A push reruns each build whose fingerprint changed. Some files are fingerprint inputs of every
+model: `scripts/run_model_compilation.sh` and the other entries of `COMPILE_TOOLING`,
+`BOARD_STAGE_TOOLING`, `PERFORMANCE_TOOLING`, and `ACCURACY_TOOLING` in `fingerprints.py`, the
+compiler pin, the Core runtime target, and `FINGERPRINT_VERSION` in `conversion.py`. An edit to
+one of them, even a comment made while working on one model, recompiles or remeasures models
+the pull request has nothing to do with.
 
-- Run each changed stage locally first: validation and tests, the compile in the pinned Model
-  Compiler, and the DevKit stages ([qualify locally](../docs/local-development.md)).
-- List what the push reruns from the changed files. Compare `compile_fingerprint` before and
-  after with `model-registry matrix --repository . --compiler-version <identity>` when unsure.
-- Stop and warn the user before a push whose reruns reach beyond the models the change is
-  about. That is any change to a file in a tooling list of `fingerprints.py`, to the compiler
-  pin, to the Core runtime target, or to `FINGERPRINT_VERSION` in `conversion.py`. The warning
-  names the file, the stages it reruns, and how many models they cover, and offers to move
-  that file to its own pull request. Push after the user approves.
+- Before each push, list the changed files and check each against those inputs.
+- When one matches, say so before pushing, in these terms: the file, the stages it reruns, and
+  that it reruns all models or how many, beyond the models the pull request is about. Push
+  after the user approves, or move that file to its own pull request.
+- The pull request description states the same under `Reruns`.
 
 ## Rules no check catches
 
