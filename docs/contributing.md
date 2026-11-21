@@ -119,17 +119,16 @@ Give reviewers enough evidence to reproduce and assess the contribution:
 
 - model purpose, upstream project, immutable revision, and conversion history;
 - license and redistribution assessment;
-- source, calibration, fidelity, and accuracy dataset identities and hashes;
 - components, build profiles, packages, and any model-specific surgery or compiler workarounds;
-- exact local commands and pass/fail summaries for each build's compilation,
-  MPK verification, fidelity report, performance stage, and accuracy stage;
-- the pinned Model Compiler, DevKit platform, Core, and dataset versions used;
+- which stages you ran locally for each build and whether each passed:
+  compilation, MPK verification, fidelity report, performance, and accuracy;
 - known limitations, unsupported combinations, and follow-up work.
 
 Link the model's tracking issue, upstream model card or conversion pull
-request, and Dataset Registry change when new data was introduced. Keep the
-machine-readable local results available for review; screenshots alone are not
-reproducible evidence.
+request, and Dataset Registry change when new data was introduced. `model.yaml`
+and `deps/manifest.json` already pin every input hash and tool version, so the
+description does not repeat them. Keep the machine-readable local results
+available for review. Screenshots alone are not reproducible evidence.
 
 ## Publication boundary
 

@@ -13,8 +13,8 @@ reran, and what nobody checked. Write for that reader:
   left out. A new model gets every line.
 - Use the words of the model's README. Give a number with its unit, and a link with a short
   label where a bare URL or hash would run long.
-- Keep each line to one fact a reviewer acts on. Evidence the reviewer only looks up, such as
-  commands and file hashes, goes in the folded `Local checks` block.
+- Keep each line to one fact a reviewer acts on. Commands, file hashes, and tool versions
+  stay out, because the repository already pins them.
 - Leave out how the work went, what was tried, and anything the diff already shows.
 
 ## Steps
@@ -63,21 +63,15 @@ Results from commit <sha>.
 ## Not verified
 <What did not run, and why.>
 
-<details><summary>Local checks</summary>
-
-- Versions: Model Compiler <version>, DevKit platform <version>, Core <version>
-- Inputs: <source file or dataset ID> sha256 <hash>
-- `<exact command>`: <passed or failed>
-
-</details>
+Tested locally: <the stages that passed, and any that failed or did not run>
 
 Rule, skill, and knowledge updates: <file and lesson, or none with the reason>
 Refs #<issue>
 ````
 
-One `Inputs` item per source file and dataset, and one command item per local run. Add a
-`Links:` line above `Refs` only when the change has a conversion pull request or a Dataset
-Registry change.
+Add a `Links:` line above `Refs` only when the change has a conversion pull request or a
+Dataset Registry change. Input hashes, tool versions, and the commands that ran stay out:
+`model.yaml` and `deps/manifest.json` pin the first two, and the runner scripts fix the third.
 
 A family that shares one recipe gets one block headed by every model ID. Its table has one row
 per `<model_id>/<profile>`, and a field that differs per size gives each size's value on its
@@ -98,7 +92,7 @@ line.
 | Accuracy | the published value of the first metric `datasets/<id>.yaml` requires for the model's task, on its first accuracy dataset, with the digits `tools/model_report/metrics.json` gives |
 | Benchmark time | the durations of the `Measure performance on DevKit` and `Measure accuracy on DevKit` steps of the build's `Benchmark on DevKit` job, as `<performance> + <accuracy>`. No registry run records them. The job's own duration adds the DevKit setup: tooling, the dataset cache, and Core ([benchmark workflow](../../references/ci-flow.md#benchmark-workflow)). |
 | Reruns | [`rules.md` "Stages and fingerprints"](../../rules.md#stages-and-fingerprints) and [what a change reruns](../../../docs/adding-a-model.md#9-know-what-a-change-reruns), per model and build profile, with the input that causes each. When a shared file reruns models the pull request is not about, the line opens with that: the file, the stages, and all models or how many ([`rules.md` "Before a push"](../../rules.md#before-a-push)) |
-| Local checks | the versions the local runs used, which `deps/manifest.json` pins as `model-compiler.version`, `platform-version`, and `neat-core.install_target`. Each source file and dataset the runs read, with its `sha256` in `model.yaml`. Each local command exactly as run, with its result: compile, `verify-artifact`, the compile tests, performance, and accuracy. The compile line also names the fidelity report when `model.yaml` declares `numerical_fidelity`. |
+| Tested locally | the stages run before the push and the result of each: compile, `verify-artifact`, the compile tests, performance, and accuracy |
 | Links | the conversion pull request when the change converts, and the Dataset Registry change when it adds data |
 
 [CI flow](../../references/ci-flow.md) and [publication](../../references/publication.md) say
@@ -202,17 +196,7 @@ yolo26n `w8a8` compile, performance, and accuracy, because `calibration_samples`
 ## Not verified
 `w8a8` performance and accuracy on a second DevKit.
 
-<details><summary>Local checks</summary>
-
-- Versions: Model Compiler 3.0.0.2, DevKit platform 3.0.1, Core v0.6.2
-- Inputs: coco-2017-cal sha256 54c64d84122eba371ac014d7b43849a461551c2e6c5c430b5ead90ec1dec12b1
-- Inputs: coco-2017-val sha256 a40de1caf42b47c5a8976eb97efe3c83f3a41337c4d16d318eb15d65c293f2da
-- `scripts/run_model_compilation.sh models/yolo26n w8a8 w8a8 build`: passed
-- `model-registry verify-artifact build/yolo26n/w8a8/model`: passed
-- `scripts/run_model_tests.sh compile models/yolo26n build/yolo26n/w8a8`: passed
-- `scripts/run_model_accuracy.sh models/yolo26n w8a8 build results/accuracy`: passed
-
-</details>
+Tested locally: compile, artifact verification, compile tests, and accuracy passed for `w8a8`.
 
 Rule, skill, and knowledge updates: none, because the change applies the existing calibration guidance.
 Refs #<issue>
