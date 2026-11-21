@@ -175,6 +175,32 @@ if precision == "w8a8":
     calibration_data = convert_data_generator_to_iterable(DataGenerator({InputName(INPUT): samples}))
 ```
 
+### A comment says what the code cannot
+
+Write a comment where a reader would otherwise stop and ask why: a chosen value, a step that
+looks wrong but is right, or a fact from upstream or the compiler. Keep it to one or two lines,
+name the reason or its source, and describe the code as it is now. Leave code that reads on its
+own without one.
+
+```python
+# Bad: the comments repeat the code, and the one value that needs a reason has none.
+# Number of detections to keep
+TOP_K = 300
+# The score threshold
+SCORE_THRESHOLD = 0.001
+LOGIT_FLOOR = -7.0
+```
+
+```python
+# Good
+# Ultralytics' end-to-end selection and validation settings: the best 300 anchor/class pairs scoring above 0.001.
+TOP_K = 300
+SCORE_THRESHOLD = 0.001
+# sigmoid(-7) is about 0.00091, below SCORE_THRESHOLD, so a logit at or below LOGIT_FLOOR is never kept and the
+# decoder skips its sigmoid.
+LOGIT_FLOOR = -7.0
+```
+
 ### Every branch, option, and constant is reached
 
 Each one runs from this model's entry point. Remove a branch for a precision `model.yaml` does
