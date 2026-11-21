@@ -20,75 +20,113 @@ below assume those.
 ## How the code reads
 
 A violation is code a reader misreads or cannot follow. A name that only differs from the one
-you would pick is not one. Each pair below shows a rule on model code, and code that matches a
-pair takes the shape of its good side.
+you would pick is not one. Each pair below shows the same code twice, and code that matches a
+pair takes the shape of its good side. The good sides come from `models/yolo26n` and
+`models/rf_detr_nano`.
 
-**The main function reads as its steps.** `compile_model` in `yolo26n` runs top to bottom: read
-the profile, build the quantization, load the calibration data, import, quantize, compile. Each
-step is one call whose name says what it does, so the reader follows the build without opening
-the helpers. Keep a line inline when a function name would only restate it.
+### The main function reads as its steps
 
-**A name says what the value is, with its unit.** Use the term `model.yaml` and the README
-already use, and one term per concept.
+Each step of `compile_model` is one call whose name says what it does. Keep a line inline only
+when a function name would restate it.
 
 ```python
-# Bad: the reader must open the callers to learn what these hold.
-n = int(cfg["samples"])
-size = 640
-data = load(path, n)
-
-# Good
-IMAGE_SIZE = 640  # at the top of the module, with the other constants
-
-
-def compile_model(...):
-    calibration_samples = int(parameters["calibration_samples"])
-    samples = calibration_images(dataset, calibration_samples)
+# Bad: the reader works through a lookup before reaching the build.
+model = load_metadata(MODEL_DIR)
+profiles = [profile for profile in model["build_profiles"] if profile["id"] == profile_id]
+if len(profiles) != 1:
+    raise ValueError(f"model.yaml declares no build profile {profile_id!r}")
+parameters = next(item["parameters"] for item in profiles[0]["components"] if item["id"] == COMPONENT_ID)
 ```
 
-A constant sits at the top of its module, after the imports, in upper case. A function body
-holds no bare number or string that a constant should name.
+```python
+# Good
+parameters = _parameters(profile_id)
+```
 
-A function that does work is named with a verb (`prepare_model`, `calibration_images`,
-`decode`). A constant is named for its role (`CALIBRATION_SEED`, `SCORE_THRESHOLD`), never for
-its value.
+### A name says what the value is
 
-**Each fact has one owner.** `model.yaml` owns build parameters, `surgery.py` owns the component
-interface, and `calibration.py` owns preprocessing and sample selection. Other scripts import
-the value.
+Name a value by its meaning, with its unit when it has one, in the terms `model.yaml` and the
+README use. A function that does work gets a verb or names what it returns. A constant sits at
+the top of its module, in upper case, named for its role.
 
 ```python
-# Bad: compile.py restates the interface, and the two copies drift.
+# Bad: d, n, x, and two bare values tell the reader nothing, and the error hides both counts.
+def sample(d: Path, n: int) -> list[str]:
+    names = [x for x in _image_names(d) if PurePosixPath(x).parent.name == "cal2017"]
+    if len(names) < n:
+        raise ValueError("not enough images")
+    return random.Random(20260930).sample(names, n)
+```
+
+```python
+# Good
+CALIBRATION_SPLIT = "cal2017"
+CALIBRATION_SEED = 20260930
+
+
+def calibration_names(dataset: Path, count: int) -> list[str]:
+    names = [name for name in _image_names(dataset) if PurePosixPath(name).parent.name == CALIBRATION_SPLIT]
+    if count < 1 or len(names) < count:
+        raise ValueError(f"cannot select {count} calibration images from {len(names)} {CALIBRATION_SPLIT} images")
+    return random.Random(CALIBRATION_SEED).sample(names, count)
+```
+
+### Each fact has one owner
+
+`model.yaml` owns build parameters, `surgery.py` owns the component interface, and
+`calibration.py` owns preprocessing and sample selection. Other scripts import the value.
+
+```python
+# Bad: compile.py repeats what surgery.py defines, and the two copies drift.
+INPUT = "images"
 INPUT_SHAPE = [1, 3, 640, 640]
-
-# Good
-from surgery import INPUT, INPUT_SHAPE, OUTPUT_SHAPES, OUTPUTS
 ```
 
-**A condition tests the fact the branch depends on.** A model name or a count that stands in
-for the fact breaks when the next model is added.
+```python
+# Good
+from surgery import INPUT, INPUT_SHAPE
+```
+
+### A condition tests the fact the branch depends on
+
+A component ID, a model name, or a count that stands in for the fact breaks when the next
+component or model is added.
 
 ```python
-# Bad: the branch is about calibration, and the test is about which model this is.
-if MODEL_ID == "yolo26n" and profile_id != "w16a16":
-    samples = calibration_images(dataset, count)
-
-# Good
-if precision == "w8a8":
+# Bad: the branch is about calibration, and the test is about which component this is.
+if component_id == "backbone":
     samples = calibration_images(dataset, int(parameters["calibration_samples"]))
 ```
 
-**Each precision states its own settings.** One `QuantizationParams` call per precision sets the
-fields that build needs. A reader sees every choice without tracing a shared chain of
-overrides.
+```python
+# Good
+if "calibration_samples" in parameters:
+    samples = calibration_images(dataset, int(parameters["calibration_samples"]))
+```
+
+### Each precision states its own settings
+
+One `QuantizationParams` call per precision sets every field that build needs.
 
 ```python
-# Bad: every build inherits defaults the reader cannot see, and a later line undoes one.
-config = default_quantization.with_activation_quantization(bfloat16_scheme())
-...
+# Bad: both builds share one chain, so no single place shows what w8a16 gets.
+config = default_quantization.with_weight_quantization(int8_weights)
+if precision == "w8a8":
+    config = config.with_calibration(HistogramMSEMethod(calibration_bins))
+else:
+    config = config.with_activation_quantization(bfloat16_scheme()).with_calibration(SkipCalibration())
 return config.with_per_token_quant(precision == "w8a16")
+```
 
+```python
 # Good
+if precision == "w8a8":
+    return QuantizationParams(
+        calibration_method=HistogramMSEMethod(calibration_bins),
+        activation_quantization_scheme=quantization_scheme(asymmetric=True, per_channel=False, bits=8),
+        weight_quantization_scheme=quantization_scheme(asymmetric=False, per_channel=True, bits=8),
+        biascorr_type=BiasCorrectionType.REGULAR,
+    )
 if precision == "w8a16":
     return QuantizationParams(
         calibration_method=SkipCalibration(),
@@ -99,19 +137,29 @@ if precision == "w8a16":
     )
 ```
 
-**No stand-in data.** A build that needs no calibration passes none. A placeholder makes the
-build read as calibrated.
+### A build without calibration passes no data
 
 ```python
-# Bad
-samples = np.zeros((1, IMAGE_SIZE, IMAGE_SIZE, 3), dtype=np.float32)
-
-# Good
-calibration_data = None  # stays None for a build that uses SkipCalibration()
+# Bad: a zero image satisfies quantize(), and the build reads as calibrated.
+if precision == "w8a8":
+    samples = calibration_images(dataset, calibration_samples)
+else:
+    samples = np.zeros((1, IMAGE_SIZE, IMAGE_SIZE, 3), dtype=np.float32)
+calibration_data = convert_data_generator_to_iterable(DataGenerator({InputName(INPUT): samples}))
 ```
 
-**Every branch, option, and constant runs from this model's entry point.** Remove what a copy
-from another model left unreached. A test alone does not reach it.
+```python
+# Good
+calibration_data = None
+if precision == "w8a8":
+    samples = calibration_images(dataset, calibration_samples)
+    calibration_data = convert_data_generator_to_iterable(DataGenerator({InputName(INPUT): samples}))
+```
+
+### Every branch, option, and constant is reached
+
+Each one runs from this model's entry point. Remove a branch for a precision `model.yaml` does
+not declare, and a helper a copy from another model left unused. A test alone does not reach it.
 
 ## Every script
 
