@@ -13,7 +13,7 @@ import boto3
 import pytest
 from botocore.exceptions import ClientError
 from model_registry.compile_matrix import build_matrix
-from model_registry.dependencies import resolve_model_compiler
+from model_registry.dependencies import resolve_catalog_inputs, resolve_model_compiler
 from model_registry.errors import ValidationError
 from model_registry.fingerprints import benchmark_fingerprint, compile_fingerprint
 from model_registry.model import load_model, load_models
@@ -2056,3 +2056,9 @@ def test_retained_build_restores_declared_package_runtime_files(tmp_path):
         "path": "model/tokenizer.json", "sha256": hashlib.sha256(b'{"version":"1.0"}').hexdigest(),
     }]
     assert not (profile / "unrelated.txt").exists()
+
+
+def test_catalog_names_the_platform_and_core_release_of_the_manifest() -> None:
+    document = build_catalog_snapshot(repository=ROOT, branch="develop", git_sha="a" * 40, incremental=True)
+
+    assert document["catalog_inputs"] == resolve_catalog_inputs(ROOT)

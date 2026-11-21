@@ -95,3 +95,22 @@ def resolve_benchmark_runtime(repository: str | Path) -> dict[str, Any]:
             raise ValidationError("llima.install_target must pin a runtime build revision")
         runtime["llima"] = llima
     return runtime
+
+
+def resolve_catalog_inputs(repository: str | Path) -> dict[str, str] | None:
+    """The platform and Neat Core release this checkout's results were measured with, as the registry names
+    them. None when the manifest pins a Core branch, whose results belong to no release."""
+    runtime = resolve_benchmark_runtime(repository)
+    release = re.fullmatch(r"core@v(\d+\.\d+\.\d+)", runtime["neat_core"]["install_target"])
+    revision = _load_manifest(repository)["neat-core"].get("revision")
+    if release is None:
+        if revision is not None:
+            raise ValidationError("neat-core.revision applies only to a Core release pin")
+        return None
+    if not isinstance(revision, str) or re.fullmatch(r"[0-9a-f]{40}", revision) is None:
+        raise ValidationError("neat-core.revision must be the full commit of the pinned Core release")
+    return {
+        "platform_version": runtime["devkit"]["platform_version"],
+        "neat_core_version": release.group(1),
+        "neat_core_revision": revision,
+    }

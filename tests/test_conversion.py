@@ -727,6 +727,7 @@ def test_targeted_plan_publishes_catalog_with_unselected_conversion(
     monkeypatch.setenv("GITHUB_SHA", "a" * 40)
     monkeypatch.setattr(stage_plan, "read_catalog_sources", lambda *args: (None, []))
     monkeypatch.setattr(publication, "resolve_model_compiler", lambda root: {"identity": "test", "version": "test"})
+    monkeypatch.setattr(publication, "resolve_catalog_inputs", lambda root: None)
     client = Registry()
     result = stage_plan.plan_stages(repository, compiler_version="test", read=client.read,
                                    read_api_url="https://registry.test", branch="feature",

@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 import pytest
-from model_registry.dependencies import resolve_benchmark_runtime, resolve_model_compiler
+from model_registry.dependencies import resolve_benchmark_runtime, resolve_catalog_inputs, resolve_model_compiler
 from model_registry.errors import ValidationError
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -26,7 +26,7 @@ def test_repository_benchmark_runtime_uses_source_revision_package() -> None:
 
     runtime = resolve_benchmark_runtime(ROOT)
     assert runtime["devkit"] == {**manifest["devkit"], "platform_version": manifest["platform-version"]}
-    assert runtime["neat_core"] == manifest["neat-core"]
+    assert runtime["neat_core"] == {"install_target": manifest["neat-core"]["install_target"]}
     assert runtime["llima"] == manifest["llima"]
     assert "benchmarker" not in runtime
 
@@ -116,3 +116,50 @@ def test_missing_model_compiler_dependency_fails(tmp_path: Path) -> None:
 
     with pytest.raises(ValidationError, match="must define model-compiler"):
         resolve_model_compiler(tmp_path)
+
+
+def _manifest_with_core(tmp_path: Path, core: dict[str, object]) -> Path:
+    manifest = json.loads((ROOT / "deps" / "manifest.json").read_text(encoding="utf-8"))
+    manifest["neat-core"] = core
+    path = tmp_path / "deps" / "manifest.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+    return tmp_path
+
+
+def test_catalog_inputs_name_the_platform_and_the_core_release(tmp_path: Path) -> None:
+    revision = "b1f9556caec1897cbc4bfc7df5cdc699cad370ec"
+    repository = _manifest_with_core(tmp_path, {"install_target": "core@v0.6.2", "revision": revision})
+    manifest = json.loads((ROOT / "deps" / "manifest.json").read_text(encoding="utf-8"))
+
+    assert resolve_catalog_inputs(repository) == {
+        "platform_version": manifest["platform-version"],
+        "neat_core_version": "0.6.2",
+        "neat_core_revision": revision,
+    }
+
+
+def test_a_core_branch_pin_has_no_catalog_inputs(tmp_path: Path) -> None:
+    assert resolve_catalog_inputs(_manifest_with_core(tmp_path, {"install_target": "core@develop"})) is None
+
+
+@pytest.mark.parametrize("revision", [None, "b1f9556caec1", "B1F9556CAEC1897CBC4BFC7DF5CDC699CAD370EC"])
+def test_a_core_release_pin_requires_its_full_commit(tmp_path: Path, revision: object) -> None:
+    core = {"install_target": "core@v0.6.2", **({} if revision is None else {"revision": revision})}
+
+    with pytest.raises(ValidationError, match="neat-core.revision must be the full commit"):
+        resolve_catalog_inputs(_manifest_with_core(tmp_path, core))
+
+
+def test_a_core_branch_pin_rejects_a_revision(tmp_path: Path) -> None:
+    core = {"install_target": "core@develop", "revision": "b1f9556caec1897cbc4bfc7df5cdc699cad370ec"}
+
+    with pytest.raises(ValidationError, match="applies only to a Core release pin"):
+        resolve_catalog_inputs(_manifest_with_core(tmp_path, core))
+
+
+def test_the_core_revision_changes_no_benchmark_runtime(tmp_path: Path) -> None:
+    pinned = _manifest_with_core(tmp_path / "a", {"install_target": "core@v0.6.2", "revision": "0" * 40})
+    other = _manifest_with_core(tmp_path / "b", {"install_target": "core@v0.6.2", "revision": "1" * 40})
+
+    assert resolve_benchmark_runtime(pinned) == resolve_benchmark_runtime(other)

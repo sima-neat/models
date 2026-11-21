@@ -168,6 +168,7 @@ A catalog is one document per branch and revision. `build_catalog_snapshot` in
 | `models[].packages[]` | `package_id`, `build_profile_id`, `run_id`, `artifact_sha256`, `size_bytes`, `package_fingerprint`, `component_run_ids` |
 | `models[].build_on_demand`, `build_requirements` | on-demand models only ([on-demand builds](on-demand-builds.md)) |
 | `pending_builds[]` | each build the revision still has to compile, with its compile fingerprint |
+| `catalog_inputs` | `platform_version`, `neat_core_version`, and `neat_core_revision` from `deps/manifest.json`, when it pins a Core release. The registry publishes a catalog as a platform and Core version only when it carries them |
 
 The registry adds `approved_deployments` and `branch_deployments` itself. A snapshot may
 omit them and may not carry another branch's.
