@@ -29,6 +29,7 @@ dev = [
   "opencv-python-headless>=4.10,<5",
   "Pillow>=10,<13",
   "pytest>=8,<9",
+  "pytest-xdist>=3.6,<4",
   "ruff==0.17.4",
 ]
 

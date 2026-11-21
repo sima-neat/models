@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import copy
+import functools
 import hashlib
 import json
 import os
@@ -71,8 +73,18 @@ def _validate_entries(entries: dict[str, Any], field: str, allowed_fields: set[s
 def load_taxonomy(path: str | Path) -> dict[str, Any]:
     taxonomy_path = Path(path).expanduser().resolve()
     try:
-        value = yaml.safe_load(taxonomy_path.read_text(encoding="utf-8"))
-    except (OSError, yaml.YAMLError) as exc:
+        text = taxonomy_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ValidationError(f"{taxonomy_path}: could not load taxonomy: {exc}") from exc
+    return copy.deepcopy(_parse_taxonomy(taxonomy_path, text))
+
+
+@functools.lru_cache(maxsize=8)
+def _parse_taxonomy(taxonomy_path: Path, text: str) -> dict[str, Any]:
+    """Parse and validate the taxonomy once per file content: every model of a repository validates against it."""
+    try:
+        value = yaml.safe_load(text)
+    except yaml.YAMLError as exc:
         raise ValidationError(f"{taxonomy_path}: could not load taxonomy: {exc}") from exc
     taxonomy = _mapping(value, "<root>")
     expected = {"model_types", "modalities", "architecture_paradigms", "architectures", "tasks"}
