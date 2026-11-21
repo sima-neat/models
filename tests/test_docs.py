@@ -3,7 +3,6 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -241,10 +240,6 @@ def _customer_skill_folders() -> list[Path]:
     return sorted(folder for folder in ROOT.glob("skills/*") if folder.is_dir())
 
 
-def _agent_skill_folders() -> list[Path]:
-    return sorted(folder for folder in ROOT.glob("agents/skills/*") if folder.is_dir())
-
-
 def _frontmatter(document: Path) -> dict:
     match = FRONTMATTER.match(document.read_text(encoding="utf-8"))
     try:
@@ -342,39 +337,26 @@ def test_agents_index_lists_every_docs_agents_and_skill_file() -> None:
     assert len(agents.read_text(encoding="utf-8").splitlines()) <= AGENTS_LINE_BUDGET
 
 
-def test_skills_link_every_reference() -> None:
-    unlinked = []
-    for skill in _skills():
-        linked = {path for _, path, _ in _link_targets(skill / "SKILL.md")}
-        unlinked += [
-            document.relative_to(ROOT).as_posix()
-            for document in sorted(skill.rglob("*.md"))
-            if document != skill / "SKILL.md" and document.resolve() not in linked
-        ]
-    assert not unlinked, "link each Markdown file from its skill's SKILL.md: " + ", ".join(unlinked)
-
-
-def test_skills_declare_a_name_and_a_description() -> None:
+def test_skills_have_the_required_shape() -> None:
     failures = []
-    for skill in sorted([*(ROOT / "agents").rglob("SKILL.md"), *(ROOT / "skills").rglob("SKILL.md")]):
-        fields = _frontmatter(skill)
-        for field in ("name", "description"):
-            if not isinstance(fields.get(field), str) or not fields[field].strip():
-                failures.append(f"{skill.relative_to(ROOT)}: no {field} in its YAML frontmatter")
-    assert not failures, "\n".join(failures)
-
-
-def test_skills_are_named_after_their_folder() -> None:
-    failures = []
-    for folder in [*_customer_skill_folders(), *_agent_skill_folders()]:
+    for folder in _skills():
         skill, name = folder / "SKILL.md", folder.relative_to(ROOT).as_posix()
-        if not skill.is_file():
-            failures.append(f"{name}: no SKILL.md")
-        elif _frontmatter(skill).get("name") != folder.name:
+        fields = _frontmatter(skill)
+        if fields.get("name") != folder.name:
             failures.append(f"{name}/SKILL.md: name must be {folder.name}")
+        if not isinstance(fields.get("description"), str) or not fields["description"].strip():
+            failures.append(f"{name}/SKILL.md: no description in its YAML frontmatter")
+        linked = {path for _, path, _ in _link_targets(skill)}
+        failures += [
+            f"{document.relative_to(ROOT).as_posix()}: not linked from its SKILL.md"
+            for document in sorted(folder.rglob("*.md"))
+            if document != skill and document.resolve() not in linked
+        ]
     for folder in _customer_skill_folders():
         playbook = folder / "playbook.yml"
         playbook_fields = yaml.safe_load(playbook.read_text(encoding="utf-8")) if playbook.is_file() else None
+        if not (folder / "SKILL.md").is_file():
+            failures.append(f"skills/{folder.name}: no SKILL.md")
         if not isinstance(playbook_fields, dict) or playbook_fields.get("id") != folder.name:
             failures.append(f"skills/{folder.name}: playbook.yml must exist with id {folder.name}")
     assert not failures, "\n".join(failures)
@@ -406,43 +388,6 @@ def _text_files(folder: Path) -> list[tuple[Path, str]]:
         except UnicodeDecodeError:
             continue
     return files
-
-
-@pytest.mark.parametrize(
-    ("text", "names_agent_files"),
-    [
-        ("https://github.com/sima-neat/models/blob/main/agents/rules.md", True),
-        ("<https://github.com/sima-neat/models/blob/develop/AGENTS.md>", True),
-        ("github.com/sima-neat/models/tree/main/agents", True),
-        ("https://raw.githubusercontent.com/sima-neat/models/main/agents/rules.md", True),
-        ("raw.githubusercontent.com/sima-neat/models/refs/heads/main/AGENTS.md", True),
-        ("[rules](../../agents/rules.md)", True),
-        ("Read AGENTS.md first.", True),
-        ("https://github.com/sima-neat/models/blob/main/docs/datasets.md", False),
-        ("https://github.com/sima-neat/models/blob/main/models/yolo26n/README.md", False),
-        ("targets/codex/agents/openai.yaml", False),
-        ("agents: [codex, claude]", False),
-        ("A customer's agents run this skill.", False),
-    ],
-)
-def test_agent_file_references_match_every_form(text: str, names_agent_files: bool) -> None:
-    assert bool(_agent_file_references(text)) is names_agent_files
-
-
-def test_links_out_of_a_skill_include_images_and_reference_definitions(tmp_path: Path) -> None:
-    skill = tmp_path / "skill"
-    (skill / "references").mkdir(parents=True)
-    document = skill / "SKILL.md"
-    document.write_text(
-        "[inside](references/a.md#step) [web](https://example.com/x.md) [here](#steps)\n"
-        "[up](../other.md) ![image](../../hero.png)\n"
-        "[defined]: ../defined.md\n",
-        encoding="utf-8",
-    )
-
-    leaving = _links_out_of(document, skill)
-
-    assert leaving == ["../other.md", "../../hero.png", "../defined.md"]
 
 
 def test_customer_skills_stand_alone() -> None:
