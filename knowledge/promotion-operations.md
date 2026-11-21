@@ -192,7 +192,9 @@ requirements and to get its own approval.
 The metadata run publishes main's definitions and documentation with `publish-catalog
 --branch main --base-branches main`. It compiles, benchmarks, and approves nothing, and
 it never copies develop's definitions. The script fails when the `main` checkout has
-uncommitted changes.
+uncommitted changes. When it is the first publication of a `main` revision, it lists
+develop's finished automatic builds, as an orchestrator run on `main` does
+([merge into main](branch-catalogs.md#merge-into-main)).
 
 The run sets no `MODEL_REGISTRY_CONVERSIONS`, so `_catalog_models` in `registry.py` defers
 every conversion-backed model. Such a model keeps its previous catalog entry with its old

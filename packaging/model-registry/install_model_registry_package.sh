@@ -51,7 +51,7 @@ for command in validate validate-models fetch fetch-calibration fetch-fidelity-d
   }
 done
 # Promotion (including --target-branch main) remains CI-only in the full tooling.
-for command in promotion package conversion-entrypoint publish-conversion publish publish-candidate publish-branch-deployment publish-report publish-catalog stage-registry-build benchmark-job; do
+for command in promotion package conversion-entrypoint publish-conversion publish publish-candidate publish-branch-deployment publish-report publish-catalog stage-registry-build benchmark-job check-main-merge; do
   if "${MODEL_REGISTRY_BIN}" "${command}" --help >/dev/null 2>&1; then
     echo "Installed author CLI unexpectedly exposes CI command: ${command}" >&2
     exit 1

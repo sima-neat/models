@@ -84,7 +84,7 @@ marked CI only from the author package.
 | `model.py` | Loading and validating `model.yaml` and the model folder (`load_models`). Expanding it into components, build profiles with their one compile invocation, and the `default` package. MPK file names (`mpk_filename`). |
 | `compile_matrix.py` | The compile matrix: one entry per compile invocation, with its compile fingerprint and the benchmark stages that measure it (`build_matrix`). |
 | `fingerprints.py` | `compile_fingerprint`, `benchmark_fingerprint`, the shared files each one hashes, and each benchmark's run type. |
-| `stage_plan.py` | Which builds compile and which benchmarks run (`plan_stages`), the registry reads that decision needs, base-branch resolution, and the merge of source catalogs. |
+| `stage_plan.py` | Which builds compile and which benchmarks run (`plan_stages`), the registry reads that decision needs, base-branch resolution, the merge of source catalogs, and the check that `main` can take a merge from `develop` without compiling (`find_main_merge_blockers`). |
 | `conversion.py` | The conversion fingerprint, declared outputs, bundles, conversion publication, the saved selection a plan records, and exact downloads. |
 | `registry_http.py` | The signed HTTP transport, and registry reads that sign only the configured IAM API. |
 | `registry.py` (CI only) | Publishing compile runs, packages with their fidelity report and MLA stage simulation, model documentation, and the branch catalog. Restoring a published build for a benchmark. |

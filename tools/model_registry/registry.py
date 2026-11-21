@@ -46,7 +46,12 @@ from .registry_http import read_registry_json_authenticated as _public_registry_
 from .runner_approval import runner_provenance
 from .runtime_files import restore_runtime_files
 from .source import source_identity
-from .stage_plan import merge_catalog_sources, read_catalog_sources, read_current_catalog
+from .stage_plan import (
+    merge_catalog_sources,
+    read_catalog_sources,
+    read_current_catalog,
+    read_default_branch_builds,
+)
 from .taxonomy import (
     TAXONOMY_RELATIVE_PATH,
     canonical_taxonomy_document,
@@ -1135,7 +1140,10 @@ def publish_catalog(
         # could restore a deliberately withheld package, or replace a published one
         # when a base branch finishes rebuilding before this branch does.
         # Apply the same revision boundary when carrying deferred conversion entries.
-        sources = sources[:1] if continuing_revision else sources
+        # The production branch's new revision takes the default branch's finished builds first.
+        sources = sources[:1] if continuing_revision else [
+            *read_default_branch_builds(read, read_api_url, branch, matrix), *sources,
+        ]
         previous = merge_catalog_sources(sources, matrix)
         deferred = set(deferred_models)
         if deferred:

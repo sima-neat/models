@@ -147,6 +147,9 @@ A pull request runs `Target Branch Checks` on the merge result:
   and reject the committed files described above
 - the `model-registry` package build
 - the model browser build and its checks
+- for a pull request into `main`, a check that `develop` has built and measured
+  everything `main` will show. It reads the registry and prints each missing build
+  or result. A maintainer re-runs it once those exist.
 
 A pull request never compiles a model, measures it on a DevKit, or publishes a
 result. Those steps run only after a push to this repository.
