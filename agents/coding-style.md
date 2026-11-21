@@ -178,8 +178,8 @@ if precision == "w8a8":
 ### A comment leads with its point
 
 Write a comment where a reader new to the model would stop and ask what a value is for or why
-a step is there. Say first what the value or step does, then the reason, then the evidence: a
-number or a source. Use plain words. One line when it fits, two when the reason needs them.
+a step is there. Say first what the value or step does, then the reason. Put the evidence, a
+number or a source, beside the value it explains. Use plain words. One line when it fits, two when the reason needs them.
 Leave code that reads on its own without one.
 
 ```python
@@ -195,10 +195,9 @@ LOGIT_FLOOR = -7.0
 ```
 
 ```python
-# Good: what it does, why, then the number.
+# Good: what it does and why sit above the value, and the number sits beside it.
 # The decoder skips logits at or below this floor. They can never reach SCORE_THRESHOLD:
-# sigmoid(-7) is about 0.0009.
-LOGIT_FLOOR = -7.0
+LOGIT_FLOOR = -7.0  # sigmoid(-7) is about 0.0009.
 ```
 
 ### Every branch, option, and constant is reached
