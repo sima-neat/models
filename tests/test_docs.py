@@ -203,7 +203,7 @@ def test_docs_keep_author_tools_separate_from_ci_publication() -> None:
 MODELS_REPOSITORY_LINK = re.compile(r"https://github\.com/sima-neat/models/(?:blob|tree|edit)/[^/]+/([^)\s]+)")
 INTERNAL_TREES = ("AGENTS.md", "agents/", "design-doc/")
 # AGENTS.md is loaded into every agent session, so its length is a cost on every task.
-AGENTS_LINE_BUDGET = 130
+AGENTS_LINE_BUDGET = 155
 FRONTMATTER = re.compile(r"\A---\n(.*?)\n---\n", re.DOTALL)
 # A reference to the files written for agents in this repository: agents/ or AGENTS.md at the start of the path of
 # a GitHub or raw GitHub URL of this repository, with or without its scheme, or as a relative path such as

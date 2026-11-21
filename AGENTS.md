@@ -82,6 +82,43 @@ These names are exceptions, because a file format or another system owns them:
 | add a section to the model page, move browser code between modules, or hide something from customers | [agents/references/model-browser.md](agents/references/model-browser.md) | which module draws what, the import rule for page sections, the audience facts in `audience.js`, and the steps to hide a part from the customer view |
 | change `artifact-browser/` or `website/` | [artifact-browser/README.md](artifact-browser/README.md), [artifact-browser/DESIGN.md](artifact-browser/DESIGN.md) | the code map, the rules for changing the browser, checks before a push, deployment, design context |
 
+## Keep these files true
+
+`AGENTS.md`, `agents/`, `skills/`, and `docs/` improve with every piece of work, whether or not
+it ends in a pull request.
+
+- **Correct:** when the work shows a statement in one of them is wrong or out of date, fix it
+  in the same change. Fix it when a file, a compile output, or a measurement proves it.
+  Otherwise report it to the user and leave the text.
+- **Add:** when the work establishes something new, write it where
+  [where a lesson goes](agents/rules.md#where-a-lesson-goes) places it. That holds for a
+  graph rewrite or compile option as much as for a rule, a script convention, a CI behavior,
+  or a step in the docs.
+- **Keep it general and short:** one or two sentences, as a rule with its condition: when X,
+  do Y, because Z. Name the condition and no model. A fact about one decode type, operator,
+  or option is stated for that thing exactly.
+- **Edit before adding:** extend or correct an existing statement first. Add a new one only
+  when none covers the case.
+
+`skills/neat-compile-model` and `skills/neat-benchmark-model` matter most, because customers'
+agents act on them without anyone to ask. Every change that compiles, rewrites a graph, or
+measures a model ends by asking what it learned about operators, graph surgery, quantization,
+compilation, or measurement, and writes each answer into that skill's `references/`. A change
+that learned nothing says so with the reason.
+
+This repository is public, and `skills/` ships to customers. Write only what a reader outside
+SiMa could check: this repository, a public SiMa repository or documentation page, the
+installed Model Compiler's output, or a measurement on a DevKit. A lesson never contains:
+
+- a customer's name, model, data, or request
+- compiler or runtime source that is not public, including its file paths, function names,
+  and internal option names
+- internal hosts, addresses, runners by name, credentials, or private links
+- unreleased products, versions, or plans
+- a person's name
+
+When a lesson cannot be written without one of these, leave it out and tell the user.
+
 ## Contributing
 
 Follow [agents/skills/add-model/SKILL.md](agents/skills/add-model/SKILL.md) for a model
