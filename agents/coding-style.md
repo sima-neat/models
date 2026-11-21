@@ -175,11 +175,12 @@ if precision == "w8a8":
     calibration_data = convert_data_generator_to_iterable(DataGenerator({InputName(INPUT): samples}))
 ```
 
-### A comment is short and says what the reader needs
+### A comment leads with its point
 
 Write a comment where a reader new to the model would stop and ask what a value is for or why
-a step is there. One short line in plain words: what it is, then the reason. Leave code that
-reads on its own without one.
+a step is there. Say first what the value or step does, then the reason, then the evidence: a
+number or a source. Use plain words. One line when it fits, two when the reason needs them.
+Leave code that reads on its own without one.
 
 ```python
 # Bad: no comment where one is needed. The reader cannot tell what -7.0 does.
@@ -187,21 +188,18 @@ LOGIT_FLOOR = -7.0
 ```
 
 ```python
-# Bad: correct, but the reader has to work through it to find the point.
+# Bad: every fact is right, but the arithmetic comes first and the point comes last.
 # sigmoid(-7) is about 0.00091, below SCORE_THRESHOLD, so a logit at or below LOGIT_FLOOR is never kept and the
 # decoder skips its sigmoid.
 LOGIT_FLOOR = -7.0
 ```
 
 ```python
-# Good
-TOP_K = 300              # detections kept per image, as upstream validates
-SCORE_THRESHOLD = 0.001  # lowest score kept, as upstream validates
-LOGIT_FLOOR = -7.0       # logits below this can never pass SCORE_THRESHOLD, so they are skipped
+# Good: what it does, why, then the number.
+# The decoder skips logits at or below this floor. They can never reach SCORE_THRESHOLD:
+# sigmoid(-7) is about 0.0009.
+LOGIT_FLOOR = -7.0
 ```
-
-A reason that needs more than one line belongs in the function's docstring or beside the
-parameter in `model.yaml`.
 
 ### Every branch, option, and constant is reached
 
