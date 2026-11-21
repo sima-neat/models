@@ -17,6 +17,96 @@ exports and what `surgery.py` rewrites, where board-only code lives, how the ben
 stand alone, how scripts read conversion output names, and how DevKit tests import. The rules
 below assume those.
 
+## How the code reads
+
+A violation is code a reader misreads or cannot follow. A name that only differs from the one
+you would pick is not one. Each pair below shows a rule on model code, and code that matches a
+pair takes the shape of its good side.
+
+**The main function reads as its steps.** `compile_model` in `yolo26n` runs top to bottom: read
+the profile, build the quantization, load the calibration data, import, quantize, compile. Each
+step is one call whose name says what it does, so the reader follows the build without opening
+the helpers. Keep a line inline when a function name would only restate it.
+
+**A name says what the value is, with its unit.** Use the term `model.yaml` and the README
+already use, and one term per concept.
+
+```python
+# Bad: the reader must open the callers to learn what these hold.
+n = int(cfg["samples"])
+size = 640
+data = load(path, n)
+
+# Good
+calibration_samples = int(parameters["calibration_samples"])
+IMAGE_SIZE = 640
+samples = calibration_images(dataset, calibration_samples)
+```
+
+A function that does work is named with a verb (`prepare_model`, `calibration_images`,
+`decode`). A constant is named for its role (`CALIBRATION_SEED`, `SCORE_THRESHOLD`), never for
+its value.
+
+**Each fact has one owner.** `model.yaml` owns build parameters, `surgery.py` owns the component
+interface, and `calibration.py` owns preprocessing and sample selection. Other scripts import
+the value.
+
+```python
+# Bad: compile.py restates the interface, and the two copies drift.
+INPUT_SHAPE = [1, 3, 640, 640]
+
+# Good
+from surgery import INPUT, INPUT_SHAPE, OUTPUT_SHAPES, OUTPUTS
+```
+
+**A condition tests the fact the branch depends on.** A model name or a count that stands in
+for the fact breaks when the next model is added.
+
+```python
+# Bad: the branch is about calibration, and the test is about which model this is.
+if MODEL_ID == "yolo26n" and profile_id != "w16a16":
+    samples = calibration_images(dataset, count)
+
+# Good
+if precision == "w8a8":
+    samples = calibration_images(dataset, int(parameters["calibration_samples"]))
+```
+
+**Each precision states its own settings.** One `QuantizationParams` call per precision sets the
+fields that build needs. A reader sees every choice without tracing a shared chain of
+overrides.
+
+```python
+# Bad: every build inherits defaults the reader cannot see, and a later line undoes one.
+config = default_quantization.with_activation_quantization(bfloat16_scheme())
+...
+return config.with_per_token_quant(precision == "w8a16")
+
+# Good
+if precision == "w8a16":
+    return QuantizationParams(
+        calibration_method=SkipCalibration(),
+        activation_quantization_scheme=bfloat16_scheme(),
+        weight_quantization_scheme=quantization_scheme(asymmetric=False, per_channel=True, bits=8),
+        # Each token's activations get their own INT8 scale before an INT8-weight operation.
+        per_token_quant=True,
+    )
+```
+
+**No stand-in data.** A build that needs no calibration passes none. A placeholder makes the
+build read as calibrated.
+
+```python
+# Bad
+samples = np.zeros((1, IMAGE_SIZE, IMAGE_SIZE, 3), dtype=np.float32)
+
+# Good
+calibration_data = None  # stays None for a build that uses SkipCalibration()
+```
+
+**Every branch, option, and constant runs from this model's entry point.** Remove what a copy
+from another model left unreached. A test alone does not reach it.
+
 ## Every script
 
 - The module docstring opens with one sentence that says what the script does to which model:
