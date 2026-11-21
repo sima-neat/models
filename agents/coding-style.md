@@ -26,22 +26,41 @@ pair takes the shape of its good side. The good sides come from `models/yolo26n`
 
 ### The main function reads as its steps
 
-Each step of `compile_model` is one call whose name says what it does. Keep a line inline only
-when a function name would restate it.
+A reader learns what the build does from `compile_model` alone. Each step is one line that
+names what it produces, and its detail lives in the helper of that name.
 
 ```python
-# Bad: the reader works through a lookup before reaching the build.
-model = load_metadata(MODEL_DIR)
-profiles = [profile for profile in model["build_profiles"] if profile["id"] == profile_id]
-if len(profiles) != 1:
-    raise ValueError(f"model.yaml declares no build profile {profile_id!r}")
-parameters = next(item["parameters"] for item in profiles[0]["components"] if item["id"] == COMPONENT_ID)
+# Bad: the steps are there, but the reader has to find where each one starts and ends.
+def compile_model(source: Path, output_dir: Path, profile_id: str, dataset: Path | None) -> Path:
+    model = load_metadata(MODEL_DIR)
+    profiles = [profile for profile in model["build_profiles"] if profile["id"] == profile_id]
+    if len(profiles) != 1:
+        raise ValueError(f"model.yaml declares no build profile {profile_id!r}")
+    parameters = next(item["parameters"] for item in profiles[0]["components"] if item["id"] == COMPONENT_ID)
+    if parameters["precision"] == "w8a8":
+        quantization = QuantizationParams(calibration_method=HistogramMSEMethod(parameters["calibration_bins"]))
+        samples = calibration_images(dataset, int(parameters["calibration_samples"]))
+    else:
+        quantization = QuantizationParams(calibration_method=SkipCalibration())
+        samples = None
+    graph = prepare_model(source, output_dir / "graphs")
+    return _quantize_and_compile(graph, quantization, samples, output_dir)
 ```
 
 ```python
-# Good
-parameters = _parameters(profile_id)
+# Good: five lines tell the whole build. Open a helper only for the step you care about.
+def compile_model(source: Path, output_dir: Path, profile_id: str, dataset: Path | None) -> Path:
+    parameters = _parameters(profile_id)                # the build profile from model.yaml
+    quantization = _quantization(parameters)            # formats and calibration method
+    samples = _calibration_samples(parameters, dataset) # None when the build skips calibration
+
+    graph = prepare_model(source, output_dir / "graphs")
+    return _quantize_and_compile(graph, quantization, samples, output_dir)
 ```
+
+Both sides do the same work. Extract a step when it has a name the reader would use, such as
+"read the build profile". Keep a line inline when a function name would only restate it. This
+pair is shortened to show the shape.
 
 ### A name says what the value is
 
