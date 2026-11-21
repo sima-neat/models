@@ -1,0 +1,89 @@
+display_name: V-JEPA 2.1 ViT-B 16x256
+description: Encodes a 16-frame video clip into spatio-temporal patch features with Meta's self-supervised V-JEPA 2.1.
+model_type: vision
+tasks: [video_feature_extraction]
+
+modalities:
+  inputs: [video]
+  outputs: [embeddings]
+
+architecture: vjepa
+
+license:
+  spdx: MIT
+  redistribution: allowed
+  attribution: V-JEPA 2.1 by Meta Platforms, Inc. and affiliates, distributed under the MIT License.
+
+upstream:
+  repository: https://huggingface.co/mnmly/vjepa2.1-vit-base-384
+  revision: ee3ee8b2a67ed07ca2aa0eb1b95593e1bc16613d
+  derived_from: https://github.com/facebookresearch/vjepa2/tree/204698b45b3712590f06245fbfba32d3be539812
+
+resources:
+  license:
+    source:
+      uri: https://huggingface.co/mnmly/vjepa2.1-vit-base-384/resolve/ee3ee8b2a67ed07ca2aa0eb1b95593e1bc16613d/LICENSE
+      sha256: cf9b17822d1fcd4ff32ccbe14183386fb3adf6f2ff92dc184130823f7fc28173
+      size_bytes: 1087
+    install_path: licenses/LICENSE
+
+conversion:
+  # Every tensor equals the ema_encoder of Meta's vjepa2_1_vitb_dist_vitG_384.pt, the weights upstream's hub entry
+  # vjepa2_1_vit_base_384 loads; Meta publishes that file outside Hugging Face only.
+  source:
+    uri: hf://models/mnmly/vjepa2.1-vit-base-384@ee3ee8b2a67ed07ca2aa0eb1b95593e1bc16613d/model.safetensors
+    sha256: e89509a1d64dbd117b17d5c32a1d0b1892d3698d75249e4a001cb490ca7e4017
+    size_bytes: 347347384
+
+compilation:
+  format: onnx
+  source:
+    uri: https://artifacts.stg.neat.sima.ai/models-onnx/vjepa2_1_vitb_16x256/35ea4accc8e9956bacf9b0531a193b45bdcb09f9eb7478cdaac494829aa535ba/40903717415-1/model.onnx
+    sha256: 35ea4accc8e9956bacf9b0531a193b45bdcb09f9eb7478cdaac494829aa535ba
+    size_bytes: 357943586
+  # The 12 transformer blocks run as three parts of four, compiled apart, since the whole encoder needs more memory
+  # to compile than a CI runner has.
+  components: [encoder_0, encoder_1, encoder_2]
+
+calibrations:
+- id: coco-2017-cal
+  dataset: {id: coco-2017, variant: cal, sha256: 54c64d84122eba371ac014d7b43849a461551c2e6c5c430b5ead90ec1dec12b1, size_bytes: 187510866}
+
+build_profiles:
+  w16a16:
+    components:
+      encoder_0:
+        parameters: {precision: w16a16}
+      encoder_1:
+        parameters: {precision: w16a16}
+      encoder_2:
+        parameters: {precision: w16a16}
+
+  w8a16:
+    # INT8 weights with BF16 activations, except the MLP, query/key/value and attention-output operations, whose
+    # activations are INT8: 8.0 clips/s on a DevKit against 6.6 with BF16 activations throughout, at cosine 0.967 with
+    # float32. The attention Einsums stay BF16 (INT8 made them slower and failed the 5% rule together), and so does the
+    # Softmax (INT8 alone gave cosine 0.57). The whole-INT8-activation build reached only cosine 0.776.
+    calibration_dataset: coco-2017-cal
+    components:
+      encoder_0:
+        parameters: {precision: w8a16, int8_operations: [mlp, qkv, out], calibration_bins: 1024, calibration_samples: 8}
+      encoder_1:
+        parameters: {precision: w8a16, int8_operations: [mlp, qkv, out], calibration_bins: 1024, calibration_samples: 8}
+      encoder_2:
+        parameters: {precision: w8a16, int8_operations: [mlp, qkv, out], calibration_bins: 1024, calibration_samples: 8}
+
+pipeline:
+- {cpu: "Resize each frame's shorter side to 256, centre-crop to 256x256, normalize, stack tubelets"}
+- {component: encoder_0}
+- {component: encoder_1}
+- {component: encoder_2}
+
+# Scored against the float32 ONNX on pan clips across COCO images, since the registry has no video dataset.
+numerical_fidelity:
+  status: diagnostic
+  dataset: {id: coco-2017, variant: val, sha256: a40de1caf42b47c5a8976eb97efe3c83f3a41337c4d16d318eb15d65c293f2da, size_bytes: 898368520}
+  selection: {method: seeded_random_without_replacement, seed: 42, offset: 0, samples: 8}
+  outputs: [features]
+
+performance: {}
