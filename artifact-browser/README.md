@@ -128,6 +128,8 @@ visitor can see.
   the markup is built. Page code never tests the audience itself.
   Three customer-view rules live outside that list: `styles.css` hides `.developer-only`
   markup and the branch and compiler tags, and `environment.js` keeps customers on Main.
+  `styles.css` also shows the Compiler filter to customers when the version filters are
+  shown.
 - Give each section of the model page its own module: `performance-section.js`,
   `execution-section.js`, and `accuracy-section.js`. A section module never imports
   `model-view.js` or another section. Markup that sections share goes in
@@ -203,6 +205,7 @@ delegation.
 | `state.js` | Shared page state, configuration, and DOM element lookup |
 | `api.js` | Registry requests, caches, catalog build selection, and build profile order |
 | `branch-builds.js` | Which builds a branch shows, and grouping by workflow |
+| `catalog-versions.js` | The published Platform and Neat Core versions, the selected one, and its URL parameters |
 | `catalog-view.js` | Model and family cards, the table, build history, search, and filters |
 | `hero-images.js` | Hero image URLs, and retries from the CDN to the registry API |
 | `audience.js` | What the customer and the developer view each show |

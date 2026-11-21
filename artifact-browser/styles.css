@@ -55,6 +55,8 @@
 :root[data-ui-mode="customer"] .developer-only,
 :root[data-ui-mode="customer"] .detail-tag-branch,
 :root[data-ui-mode="customer"] .detail-tag-compiler { display: none; }
+/* The customer view shows the Compiler filter when the registry lists published versions. */
+:root[data-ui-mode="customer"][data-version-filters="1"] .filter-drawer label:has(#compiler-filter) { display: grid; }
 html { min-height: 100%; background: var(--canvas); }
 body { min-width: 320px; min-height: 100vh; margin: 0; color: var(--ink); background: var(--canvas); font-family: var(--font-body); font-size: 1rem; line-height: 1.5; font-kerning: normal; -webkit-font-smoothing: antialiased; }
 button, input, select { font: inherit; }
@@ -143,6 +145,7 @@ main { width: min(1240px, 100%); margin: 0 auto; padding: 0 clamp(16px, 4vw, 48p
 .results-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
 .results-summary { min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
 .results-summary .text-button { padding: 0; }
+.catalog-notice { margin: 0 0 16px; color: var(--ink); font-size: 16px; }
 .result-count { margin: 0; color: var(--ink-soft); font-size: 0.9375rem; font-variant-numeric: tabular-nums; }
 .catalog-layout-toggle { display: inline-flex; gap: 3px; padding: 3px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
 .catalog-layout-toggle[hidden] { display: none; }

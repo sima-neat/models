@@ -1,8 +1,9 @@
 import { heroImageSources } from "./hero-images.js";
 // Registry API requests, local caches, and catalog build selection.
-import { deploymentCatalog, runProfile, variantBuildKey, variantBuildRuns, withoutProfiles } from "./branch-builds.js";
+import { allPages, deploymentCatalog, runProfile, variantBuildKey, variantBuildRuns, withoutProfiles } from "./branch-builds.js";
 import { BENCHMARK_RUN_TYPES, customerPerformanceReport } from "./model-report.js";
 import { config, shows, DEFAULT_BRANCH, branchSelectionEnabled, state, elements, categoryFilters } from "./state.js";
+import { selectionId } from "./catalog-versions.js";
 
 // The registry answers 429 while all of its readers are busy, so those requests wait and try again.
 const BUSY_RETRY_DELAYS_MS = [500, 1000, 2000];
@@ -26,14 +27,16 @@ export async function api(path) {
   return payload;
 }
 
-// Keep resolved reports by stage and fingerprint so Table, Compare, and model pages share their requests.
+// Keep resolved reports by catalog version, stage and fingerprint so Table, Compare, and model pages share
+// their requests.
 const benchmarkRuns = new Map();
 
 function loadBenchmarkRun(stage, fingerprint) {
   if (!fingerprint) return null;
-  const key = `${stage}:${fingerprint}`;
+  const selection = selectionId();
+  const key = `${selection || "latest"}:${stage}:${fingerprint}`;
   if (!benchmarkRuns.has(key)) {
-    const pending = fetchBenchmarkRun(stage, fingerprint).then((result) => {
+    const pending = fetchBenchmarkRun(stage, fingerprint, selection).then((result) => {
       if (!result) benchmarkRuns.delete(key);
       return result;
     }, (error) => {
@@ -45,9 +48,10 @@ function loadBenchmarkRun(stage, fingerprint) {
   return benchmarkRuns.get(key);
 }
 
-async function fetchBenchmarkRun(stage, benchmarkFingerprint) {
+async function fetchBenchmarkRun(stage, benchmarkFingerprint, selection) {
   const repo = state.repository;
   const query = new URLSearchParams({ run_type: BENCHMARK_RUN_TYPES[stage], fingerprint: benchmarkFingerprint });
+  if (selection) query.set("selection_id", selection);
   let resolved;
   try {
     ({ run: resolved } = await api(`/v1/repositories/${encodeURIComponent(repo.organization)}/${encodeURIComponent(repo.name)}/resolve?${query}`));
@@ -114,7 +118,8 @@ function catalogCacheKey() {
   const search = branchSnapshot ? "" : elements.search.value.trim();
   const compiler = branchSnapshot ? "any" : elements["compiler-filter"].value || "any";
   const audience = shows.lowAccuracyVariants ? "developer" : "customer";
-  return `sima-neat-model-catalog:v6:${audience}:${state.apiBase}:${repo.organization}/${repo.name}:${history}:${branch}:${compiler}:${search}:${JSON.stringify(categories)}`;
+  const version = selectionId() || "latest";
+  return `sima-neat-model-catalog:v7:${audience}:${state.apiBase}:${repo.organization}/${repo.name}:${history}:${branch}:${version}:${compiler}:${search}:${JSON.stringify(categories)}`;
 }
 
 function branchCatalogCacheKey() {
@@ -376,8 +381,14 @@ export async function loadBenchmarkResults(model, profile) {
   return { performance, accuracy, reference };
 }
 
-export async function loadVariant(anchor) {
+// A variant is kept per catalog version, because its benchmark results are that version's.
+export function variantCacheKey(anchor) {
   const key = variantBuildKey(anchor);
+  return selectionId() ? `${selectionId()}:${key}` : key;
+}
+
+export async function loadVariant(anchor) {
+  const key = variantCacheKey(anchor);
   if (state.variantCache.has(key)) return state.variantCache.get(key);
   const componentRuns = await variantRuns(anchor);
   const details = await mapWithConcurrency(componentRuns, 6, (run) => loadRunDetail(run.id));
@@ -446,6 +457,45 @@ function fullPackageForRun(run) {
   if (!model || !profile) return null;
   return (model.packages || []).find((item) => item.build_profile_id === profile
     && item.component_run_ids?.[run.metadata?.component_id] === run.id) || null;
+}
+
+// The registry's list of the catalog models a compiler built, kept per catalog source and compiler. The
+// source is the selected version, or for Latest the default branch.
+const compilerModels = new Map();
+
+function loadCompilerModels(compiler) {
+  const repo = state.repository;
+  const source = selectionId() ? { selection_id: selectionId() } : { git_ref: `refs/heads/${DEFAULT_BRANCH}` };
+  const query = new URLSearchParams({ ...source, toolchain_version: compiler, limit: "200" });
+  const key = String(query);
+  if (!compilerModels.has(key)) {
+    const pending = allPages(api, `/v1/repositories/${encodeURIComponent(repo.organization)}/${encodeURIComponent(repo.name)}/models`, query, "models");
+    pending.catch(() => compilerModels.delete(key));
+    compilerModels.set(key, pending);
+  }
+  return compilerModels.get(key);
+}
+
+// `model` with the compiler of each build the registry lists for it in `listed`. A deployment the registry
+// matched by its compiler requirement gets `compiler` on its artifacts.
+function withCompilers(model, listed, compiler) {
+  const compilers = new Map((listed.builds || []).map((build) => [build.run_id, build.toolchain_version]));
+  const builds = (model.builds || []).map((build) => (
+    compilers.has(build.run_id) ? { ...build, toolchain_version: compilers.get(build.run_id) } : build));
+  const deployments = (field) => model[field] && Object.fromEntries(Object.entries(model[field]).map(([profile, selection]) => {
+    const required = listed[field]?.[profile]?.requirements || listed.build_requirements?.[profile];
+    return [profile, required?.compiler_version === compiler
+      ? { ...selection, artifacts: (selection.artifacts || []).map((artifact) => ({ ...artifact, toolchain_version: compiler })) }
+      : selection];
+  }));
+  return { ...model, builds, approved_deployments: deployments("approved_deployments"), branch_deployments: deployments("branch_deployments") };
+}
+
+// A catalog document names no compiler for its builds. This asks the registry which models `compiler` built
+// and marks their builds, so the compiler filter keeps those models and, within each, the matching variants.
+export async function catalogWithCompiler(catalogModels, compiler) {
+  const listed = new Map((await loadCompilerModels(compiler)).map((model) => [model.model_id, model]));
+  return catalogModels.map((model) => (listed.has(model.model_id) ? withCompilers(model, listed.get(model.model_id), compiler) : model));
 }
 
 export function compilerFilteredBuilds(model) {

@@ -23,6 +23,18 @@ navigation. It also leaves out the board's Linux memory, MLA Utilization, the
 developer view keeps all of them. Selecting a branch in the developer view changes
 the catalog, not the view.
 
+The customer view has three filters the developer view lacks: **Platform**, **Neat
+Core** and **Compiler**. They appear when the registry lists its published versions.
+Platform opens on **Latest**, which is the Main catalog. Choosing a platform shows the
+catalog published for it, and Neat Core then lists the Neat Core versions published
+for that platform. The platform's default Neat Core is selected first. Compiler lists
+the compilers that built the shown catalog and keeps only the models and variants
+built with the chosen one. The page address carries the three choices as
+`platform_version`, `core_version` and `compiler`, so a link opens the same catalog,
+model page or comparison. A link to a version that is no longer published opens
+Latest and says so. A link to a model that the chosen version does not hold opens the
+catalog with one sentence that names the model and the version.
+
 The customer view also leaves out a variant whose accuracy falls more than 8% below
 the source model's score. The comparison uses the FP32 baseline when the model has
 one, and otherwise the score its authors published for the same dataset split. A
@@ -95,7 +107,8 @@ build, because none of them is part of a fingerprint.
 The search field matches model, build-profile, and component names and the taxonomy
 labels and family descriptions. Task and model family filters sit beside the cards. Developer view also
 shows Branch, Compiler and Build history directly in the filter panel. Customer
-view keeps only Task and Model family. Category filters list the values the
+view keeps Task and Model family, and adds Platform, Neat Core and Compiler when the
+registry lists its published versions. Category filters list the values the
 loaded builds use and are hidden when fewer than two remain. Selecting a task
 narrows Model family to the families with that task, and selecting a family
 narrows Task to that family's tasks; developer controls
@@ -140,7 +153,9 @@ The tags name what holds for every variant:
 tasks, model family, model type and license. The download dialog offers an outlined **Copy CLI command**
 button with a copy icon alongside browser downloads where available. The copied
 command names the selected branch in the developer view. In the customer view it
-names no branch, because `sima-cli` downloads from `main` by default. A package dialog names the model, summarizes the variant
+names no branch, because `sima-cli` downloads from `main` by default. With a
+platform chosen, it adds `--platform-version` and `--core-version` for the chosen
+version. A package dialog names the model, summarizes the variant
 and size, and shows a quiet filename block and license line with a **Download**
 action, in both views. Dialogs and action buttons use softly rounded corners.
 The model's License section retains attribution in both views. Dialog actions

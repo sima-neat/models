@@ -89,9 +89,10 @@ export function startDownloads(downloads, document) {
 }
 
 // Quote catalog values as shell arguments; branch names can contain shell metacharacters.
-// Without a branch the command downloads from main, the sima-cli default.
-export function modelDownloadCommand(modelId, profile, branch, staging = false) {
+// Without a branch the command downloads from main, the sima-cli default. `version` is the selected catalog
+// version, or null for Latest.
+export function modelDownloadCommand(modelId, profile, branch, staging = false, version = null) {
   const quote = value => /^[a-zA-Z0-9_./-]+$/.test(String(value)) ? String(value)
     : "'" + String(value).replaceAll("'", "'\"'\"'") + "'";
-  return `sima-cli models download --id ${quote(modelId)} --variant ${quote(profile)}${branch ? ` --branch ${quote(branch)}` : ""}${staging ? " --stg" : ""}`;
+  return `sima-cli models download --id ${quote(modelId)} --variant ${quote(profile)}${branch ? ` --branch ${quote(branch)}` : ""}${version ? ` --platform-version ${quote(version.platform_version)} --core-version ${quote(version.neat_core_version)}` : ""}${staging ? " --stg" : ""}`;
 }

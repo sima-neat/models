@@ -2,7 +2,7 @@ import { startAnalytics } from "./analytics.js";
 import { installHeroImageRecovery } from "./hero-images.js";
 import { mountDeveloperPortal } from "./portal-shell.js";
 import {
-  allPages, branchModels, catalogBuildRuns, runProfile, variantBuildKey, variantBuilds,
+  allPages, branchModels, catalogBuildRuns, runProfile, variantBuilds,
 } from "./branch-builds.js";
 import {
   config, shows, branchSelectionEnabled, DEFAULT_BRANCH, CATEGORY_QUERY_FIELDS, state, elements, categoryFilters,
@@ -13,10 +13,14 @@ import {
   api, audienceCatalog, snapshotModels, readBranchPreference, writeBranchPreference, readCachedBranches, readCachedCatalog,
   writeCachedBranches,
   runFromCatalogBuild, loadRunDetail, variantPackage, loadVariant, loadPackageRun, loadHistoricalCatalogModel,
-  selectedCatalogBuild,
+  selectedCatalogBuild, variantCacheKey, catalogWithCompiler,
 } from "./api.js";
 import {
-  populateCategoryFilters, fetchCatalogDocument, applyTaxonomy, activeFilterCount, setFilterDrawer,
+  linkedCompiler, loadCatalogVersions, selectLinkedVersion, selectVersion, selectedVersion, selectionId,
+  versionFiltersAvailable, writeVersionParams,
+} from "./catalog-versions.js";
+import {
+  populateCategoryFilters, populateVersionFilters, fetchCatalogDocument, applyTaxonomy, activeFilterCount, setFilterDrawer,
   updateFilterIndicators, applyCatalog, loadBranches, renderRuns, renderCatalogLoading,
 } from "./catalog-view.js";
 import {
@@ -57,6 +61,58 @@ function writeHistoryUrl() {
   if (elements["history-filter"].checked) url.searchParams.set("history", "1");
   else url.searchParams.delete("history");
   history.replaceState({}, "", url);
+}
+
+// The selected catalog version and compiler stay in the address while the reader moves between pages.
+function writeVersionUrl(url) {
+  if (versionFiltersAvailable()) writeVersionParams(url, elements["compiler-filter"].value);
+}
+
+function showCatalogNotice(message) {
+  elements["catalog-notice"].textContent = message;
+  elements["catalog-notice"].hidden = !message;
+}
+
+// With the version filters, the registry says which builds of `catalogModels` the chosen compiler made. When
+// it cannot, the compiler choice is cleared.
+async function withChosenCompiler(catalogModels) {
+  const compiler = elements["compiler-filter"].value;
+  if (!versionFiltersAvailable() || !compiler) return catalogModels;
+  try {
+    return await catalogWithCompiler(catalogModels, compiler);
+  } catch (error) {
+    if (elements["compiler-filter"].value !== compiler) return catalogModels;
+    elements["compiler-filter"].value = "";
+    replaceVersionUrl();
+    updateFilterIndicators();
+    showToast(`The compiler filter is temporarily unavailable. ${error.message}`, true);
+    return catalogModels;
+  }
+}
+
+function replaceVersionUrl() {
+  const url = new URL(location.href);
+  writeVersionUrl(url);
+  history.replaceState({}, "", url);
+}
+
+// Empties the catalog while another branch or version loads, so the page never lists the one it left.
+function emptyCatalog() {
+  state.models = [];
+  state.runs = [];
+  state.compileRuns = [];
+  state.packageRuns = [];
+  state.catalogDefinitions = [];
+  state.catalogLoaded = false;
+  renderCatalogLoading();
+}
+
+function resetCatalog() {
+  state.selectedId = null;
+  state.selectedVariantKey = null;
+  showCatalogNotice("");
+  emptyCatalog();
+  showEmptyDetail();
 }
 
 function setTheme(theme) {
@@ -108,6 +164,7 @@ async function selectRun(runId, { updateUrl = true, expand = false } = {}) {
     state.documentationRequestId += 1;
   }
   state.selectedId = runId;
+  showCatalogNotice("");
   if (expand) state.openDisclosures.add(`component:${runId}`);
   if (catalogRun?.metadata?.model_id) state.activeProfileByModel.set(catalogRun.metadata.model_id, runProfile(catalogRun));
   renderRuns();
@@ -115,7 +172,7 @@ async function selectRun(runId, { updateUrl = true, expand = false } = {}) {
   if (updateUrl && catalogRun) writeVariantUrl(catalogRun);
   try {
     const anchor = (await loadRunDetail(runId)).summary.run;
-    const cached = state.variantCache.has(variantBuildKey(anchor));
+    const cached = state.variantCache.has(variantCacheKey(anchor));
     const variant = await loadVariant(anchor);
     const currentPackage = variantPackage(variant.runs);
     // A cached variant may gain package context later; avoid retrying a fetch from this selection.
@@ -190,7 +247,7 @@ async function loadRuns({ append = false, branch = elements["branch-filter"].val
       return allPages(api, `${base}/runs`, query, "runs");
     })) : null;
     const document = await fetchSnapshot();
-    const catalogDefinitions = document ? await audienceCatalog(snapshotModels(document)) : [];
+    const catalogDefinitions = await withChosenCompiler(document ? await audienceCatalog(snapshotModels(document)) : []);
     if (requestId !== state.runsRequestId) return;
     applyTaxonomy(document?.taxonomy || null, snapshotBranch);
     const payload = { mode: "models", catalogDefinitions };
@@ -233,6 +290,7 @@ async function initialize() {
   elements["history-filter"].checked = shows.buildHistory && link.get("history") === "1";
   state.selectedId = shows.buildHistory ? link.get("run") : null;
   if (!shows.compilerFilter) elements["compiler-filter"].value = "";
+  showCatalogNotice("");
   const compareLink = link.get("view") === "compare";
   // Other pages keep the picks, so returning to Compare finds them.
   if (compareLink) state.comparePicks = picksFromUrl(link);
@@ -292,6 +350,22 @@ async function initialize() {
   }
   if (navigationId !== state.navigationId) return;
 
+  if (shows.versionFilters) {
+    const repo = state.repository;
+    await loadCatalogVersions(api, `/v1/repositories/${encodeURIComponent(repo.organization)}/${encodeURIComponent(repo.name)}`,
+      `refs/heads/${DEFAULT_BRANCH}`);
+    if (navigationId !== state.navigationId) return;
+    const shownSelection = selectionId();
+    const published = selectLinkedVersion(link);
+    if (selectionId() !== shownSelection) emptyCatalog();
+    if (versionFiltersAvailable()) {
+      populateVersionFilters(linkedCompiler(link));
+      // A version or compiler the registry no longer lists leaves the address.
+      replaceVersionUrl();
+    }
+    if (!published) showToast("That version is no longer published. Showing Latest.");
+  }
+
   const cached = readCachedCatalog();
   const cachedBranches = readCachedBranches();
   if (cachedBranches) state.availableBranches = cachedBranches;
@@ -301,6 +375,7 @@ async function initialize() {
     applyCatalog(cached, { cache: false });
   }
 
+  let catalogFailed = false;
   try {
     if (!branchSelectionEnabled) state.availableBranches = [DEFAULT_BRANCH];
     const branchResult = await Promise.resolve(!branchSelectionEnabled ? undefined : loadBranches()).then(
@@ -327,6 +402,7 @@ async function initialize() {
     if (navigationId !== state.navigationId) return;
     // The registry did answer, with an error: show the snapshot it could not refresh, or the error itself.
     state.catalogLoaded = true;
+    catalogFailed = !cached;
     if (cached) {
       renderRuns();
       showToast(error.message, true);
@@ -344,6 +420,13 @@ async function initialize() {
   const linkedRun = Boolean(state.selectedId);
   if (!linkedRun && linkedVariant) {
     state.selectedId = latestVariantRun(linkedVariant)?.id || null;
+    const version = selectedVersion();
+    if (!state.selectedId && version && !catalogFailed
+      && !state.catalogDefinitions.some((model) => model.model_id === linkedVariant.modelId)) {
+      showEmptyDetail();
+      showCatalogNotice(`${linkedVariant.modelId} is not published for Platform ${version.platform_version} with Neat Core ${version.neat_core_version}.`);
+      return;
+    }
     if (!state.selectedId) {
       const branch = elements["branch-filter"].value || "any branch";
       elements["detail-pane"].innerHTML = errorPanel(`No completed ${variantLabel(linkedVariant.profile)} build of ${linkedVariant.modelId} was found on ${branch}.`, "Variant not found", { closable: true });
@@ -411,16 +494,7 @@ elements["branch-filter"].addEventListener("change", async () => {
   state.preferredBranch = elements["branch-filter"].value;
   state.urlBranch = true;
   writeBranchPreference(state.preferredBranch);
-  state.selectedId = null;
-  state.selectedVariantKey = null;
-  state.models = [];
-  state.runs = [];
-  state.compileRuns = [];
-  state.packageRuns = [];
-  state.catalogDefinitions = [];
-  state.catalogLoaded = false;
-  renderCatalogLoading();
-  showEmptyDetail();
+  resetCatalog();
   const url = new URL(location.href);
   url.searchParams.set("branch", state.preferredBranch);
   deletePageParams(url);
@@ -433,8 +507,37 @@ elements["branch-filter"].addEventListener("change", async () => {
     elements["result-list"].setAttribute("aria-busy", "false");
   }
 });
+// Opens the catalog of a published version, or Latest when `platform` is empty. An empty `core` selects the
+// platform's default Neat Core.
+async function chooseVersion(platform, core = "") {
+  state.navigationId += 1;
+  selectVersion(platform, core);
+  populateVersionFilters();
+  resetCatalog();
+  const url = new URL(location.href);
+  deletePageParams(url);
+  writeVersionUrl(url);
+  history.pushState({}, "", url);
+  try {
+    await loadRuns({ branch: state.preferredBranch });
+  } catch (error) {
+    elements["result-list"].innerHTML = errorPanel(error.message);
+    elements["result-list"].setAttribute("aria-busy", "false");
+  }
+}
+elements["platform-filter"].addEventListener("change", () => chooseVersion(elements["platform-filter"].value));
+elements["core-filter"].addEventListener("change", () => chooseVersion(elements["platform-filter"].value, elements["core-filter"].value));
 elements["compiler-filter"].addEventListener("change", async () => {
   updateFilterIndicators();
+  if (versionFiltersAvailable()) {
+    replaceVersionUrl();
+    const compiler = elements["compiler-filter"].value;
+    const shown = state.catalogDefinitions;
+    const catalogDefinitions = await withChosenCompiler(shown);
+    // A newer compiler or version choice owns the catalog by now.
+    if (state.catalogDefinitions !== shown || ![compiler, ""].includes(elements["compiler-filter"].value)) return;
+    state.catalogDefinitions = catalogDefinitions;
+  }
   if (branchSnapshotMode() && catalogMode()) {
     state.models = branchModels(state.compileRuns, state.packageRuns, state.catalogDefinitions,
       elements["compiler-filter"].value);
@@ -488,14 +591,20 @@ elements["clear-filters"].addEventListener("click", async () => {
   state.preferredBranch = resetBranch;
   state.urlBranch = true;
   writeBranchPreference(state.preferredBranch);
+  if (selectionId()) {
+    selectVersion("");
+    resetCatalog();
+  }
+  elements["compiler-filter"].value = "";
+  if (versionFiltersAvailable()) populateVersionFilters();
   const resetUrl = new URL(location.href);
   resetUrl.searchParams.set("branch", resetBranch);
   deletePageParams(resetUrl);
+  writeVersionUrl(resetUrl);
   history.pushState({}, "", resetUrl);
   state.selectedId = null;
   state.selectedVariantKey = null;
   showEmptyDetail();
-  elements["compiler-filter"].value = "";
   elements["history-filter"].checked = false;
   Object.keys(CATEGORY_QUERY_FIELDS).forEach((elementId) => {
     elements[elementId].value = "";

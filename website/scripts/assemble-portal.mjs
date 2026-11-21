@@ -18,7 +18,7 @@ const revision = (
 ).slice(0, 12);
 
 const fingerprintedAssets = [
-  'app', 'state', 'audience', 'ui', 'metrics', 'api', 'catalog-view', 'compare-view', 'model-view', 'page-parts',
+  'app', 'state', 'audience', 'ui', 'metrics', 'api', 'catalog-versions', 'catalog-view', 'compare-view', 'model-view', 'page-parts',
   'performance-section', 'execution-section', 'accuracy-section', 'download-dialog',
   'model-report', 'mla-layer-stats', 'mla-utilization', 'branch-builds', 'downloads', 'markdown', 'accuracy-metrics',
   'brand', 'styles', 'config', 'portal-shell', 'hero-images', 'environment', 'analytics',

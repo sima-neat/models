@@ -26,7 +26,7 @@ app.js  (routing, events)
 
 | Module | Holds | Main exports |
 | --- | --- | --- |
-| `audience.js` | the list of what only the developer view shows | `audienceFacts` |
+| `audience.js` | the list of what only one view shows | `audienceFacts` |
 | `state.js` | shared page state, configuration, and the audience facts of this build | `shows`, `state`, `elements` |
 | `model-view.js` | the model page: header, variants, overview, component rows, Details, license, the loading skeleton, and the error panel | `renderDetail`, `detailSkeleton`, `errorPanel` |
 | `performance-section.js` | Performance: the tiles, `DETAIL_CARDS`, power rails, the CSV, and the generative benchmark | `performanceSummary`, `generativeBenchmark` |
@@ -48,7 +48,8 @@ above when it belongs to the model page.
 
 The build selects one audience through `uiMode`: `customer` on `main`, `developer`
 elsewhere (`website/scripts/portal-config.mjs`). The customer view is the developer view
-without some parts. `audienceFacts` in `audience.js` names each of those parts once:
+without some parts, and with the version filters. `audienceFacts` in `audience.js` names
+each of those parts once:
 
 ```js
 export function audienceFacts(uiMode) {
@@ -71,13 +72,13 @@ const raw = shows.rawResult ? `<button ...>Raw result</button>` : "";
 | developer | `true` | `true` | the Raw result button is drawn |
 | customer | `false` | `false` | the button is left out |
 
-Every fact equals `developer` because nothing is customer-only. A part that only
-customers see would be a line such as `customerNotice: !developer`.
+Every fact but one equals `developer`. `versionFilters` is `!developer`, because only
+customers see the version filters.
 
 | Fact | What only the developer view shows |
 | --- | --- |
 | `buildHistory` | build history, and a link to one registry run |
-| `compilerFilter` | the compiler filter of the catalog |
+| `compilerFilter` | the compiler filter that lists the compilers of the branch's builds |
 | `buildDetails` | the Details section of a model page: components, build provenance, package and source inputs |
 | `measurementSource` | the commit and workflow that measured a result |
 | `rawResult` | the model report as the registry stores it |
@@ -88,9 +89,42 @@ customers see would be a line such as `customerNotice: !developer`.
 | `lowAccuracyVariants` | variants whose accuracy falls more than 8% below the source model's reference score. `api.js` removes them from the catalog when the fact is false |
 | `commandBranch` | the `--branch` option in the copied CLI command. The customer command names no branch and downloads from `main` |
 
+| Fact | What only the customer view shows |
+| --- | --- |
+| `versionFilters` | the Platform, Neat Core and Compiler filters of the catalog |
+
 Three customer-view rules live outside this list, and the header of `audience.js` names
 them. `styles.css` hides `.developer-only` markup, and the branch and compiler tags.
-`environment.js` keeps customers on Main.
+`environment.js` keeps customers on Main. `styles.css` also shows the Compiler filter to
+customers when the version filters are shown.
+
+### Catalog versions
+
+`catalog-versions.js` owns the published versions, the selected one, and the URL
+parameters `platform_version`, `core_version` and `compiler`. Other modules ask it.
+
+- `app.js` loads the registry's list once, when `shows.versionFilters` is true. The
+  list comes from `GET .../models/filters`. When that request fails, the page has no
+  version filters and reads the registry as before.
+- A version is one `selections` entry of that list. The Platform and Neat Core
+  filters are built from those entries, never from the top-level version arrays.
+- With a version selected, `selectionId()` returns its ID. The catalog read and each
+  benchmark `/resolve` read then send `selection_id`. The catalog read sends it in
+  place of `git_ref`.
+- Every cache that holds catalog or benchmark data has the selection ID in its key:
+  the saved catalog, the benchmark results, and the variants in `state.variantCache`.
+- A catalog document names no compiler for its builds. When a customer chooses a
+  compiler, `catalogWithCompiler` in `api.js` reads
+  `GET .../models?toolchain_version=<compiler>&limit=200` with `selection_id`, or with
+  `git_ref` of Main for Latest, and follows `next_cursor`. It copies each listed build's
+  `toolchain_version` onto the catalog's builds, so the existing compiler filter keeps
+  the matching models and variants. The answer is kept per source and compiler. A
+  failed request shows a toast and clears the compiler choice.
+- The customer view never loads the branch's run history for this. That stays behind
+  `shows.catalogRunMetadata`.
+
+A new registry read that depends on the catalog must send `selectionId()` when it is
+set, and a new cache must put it in its key.
 
 ### Hide something new from customers
 

@@ -11,6 +11,10 @@ import {
   api, writeBranchPreference, writeCachedBranches, writeCachedCatalog,
   runFromCatalogBuild, profileGroups, activeModelBuild, documentationHeroUrl, documentationHeroFallbackUrl, loadBenchmarkResults, mapWithConcurrency,
 } from "./api.js";
+import {
+  compilerVersions, coreVersions, platformVersions, publishedSelections, selectedVersion, selectionId,
+  versionFiltersAvailable,
+} from "./catalog-versions.js";
 
 // A filter lists only the values the loaded builds use, labeled from the taxonomy.
 function filterOptions(section, values, emptyLabel) {
@@ -56,11 +60,13 @@ export function setCategoryFiltersDisabled(disabled) {
   });
 }
 
+// The current catalog of `branch`, or the frozen catalog of the selected version.
 export async function fetchCatalogDocument(branch) {
   const repo = state.repository;
-  const payload = await api(
-    `/v1/repositories/${encodeURIComponent(repo.organization)}/${encodeURIComponent(repo.name)}/catalogs/current?git_ref=${encodeURIComponent(`refs/heads/${branch}`)}`,
-  );
+  const repository = `/v1/repositories/${encodeURIComponent(repo.organization)}/${encodeURIComponent(repo.name)}`;
+  const payload = await api(selectionId()
+    ? `${repository}/catalogs/current?selection_id=${encodeURIComponent(selectionId())}`
+    : `${repository}/catalogs/current?git_ref=${encodeURIComponent(`refs/heads/${branch}`)}`);
   const document = payload.catalog?.document;
   if (!Array.isArray(document?.models)) throw new Error("The registry did not return a model catalog.");
   return document;
@@ -76,6 +82,7 @@ export function applyTaxonomy(taxonomy, branch) {
 export function activeFilterCount() {
   return [
     elements["branch-filter"].value && elements["branch-filter"].value !== DEFAULT_BRANCH,
+    selectionId(),
     elements["history-filter"].checked,
     elements["compiler-filter"].value,
     ...Object.values(categoryFilters()),
@@ -215,18 +222,51 @@ function filteredModels() {
   });
 }
 
+function versionOptions(values) {
+  return values.map((value) => `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`).join("");
+}
+
+// The version filters list the compilers of the shown catalog version; without them the filter lists the
+// compilers of the loaded builds and keeps the selected one.
+function populateCompilerFilter(selectedCompiler) {
+  const compilers = [...new Set(versionFiltersAvailable() ? compilerVersions() : [
+    selectedCompiler,
+    ...state.compileRuns.map((run) => run.toolchain_version),
+    ...state.runs.map((run) => run.toolchain_version),
+  ].filter(Boolean))].sort().reverse();
+  elements["compiler-filter"].innerHTML = `<option value="">Any version</option>${versionOptions(compilers)}`;
+  elements["compiler-filter"].value = compilers.includes(selectedCompiler) ? selectedCompiler : "";
+}
+
+// Platform, Neat Core and Compiler, from the versions the registry publishes. Neat Core lists the versions
+// published for the selected platform, and is disabled for Latest.
+export function populateVersionFilters(selectedCompiler = elements["compiler-filter"].value) {
+  const version = selectedVersion();
+  const platforms = platformVersions(publishedSelections());
+  const platform = elements["platform-filter"];
+  const core = elements["core-filter"];
+  platform.innerHTML = `<option value="">Latest</option>${versionOptions(platforms)}`;
+  platform.value = version?.platform_version || "";
+  core.innerHTML = version
+    ? versionOptions(coreVersions(publishedSelections(), version.platform_version))
+    : `<option value="">Latest</option>`;
+  core.value = version?.neat_core_version || "";
+  core.disabled = !version;
+  [platform, core].forEach((element) => {
+    element.closest("label").hidden = !platforms.length;
+  });
+  // styles.css shows the Compiler filter to customers under this attribute.
+  document.documentElement.dataset.versionFilters = versionFiltersAvailable() ? "1" : "0";
+  populateCompilerFilter(selectedCompiler);
+  updateFilterIndicators();
+}
+
 function populateFilters({ persistBranchFallback = false } = {}) {
   const selectedCompiler = elements["compiler-filter"].value;
   const preferredBranch = branchSelectionEnabled ? state.preferredBranch ?? DEFAULT_BRANCH : DEFAULT_BRANCH;
   const branches = !branchSelectionEnabled ? [DEFAULT_BRANCH] : state.urlBranch && preferredBranch && !state.availableBranches.includes(preferredBranch)
     ? [...state.availableBranches, preferredBranch].sort() : state.availableBranches;
-  const compilers = [...new Set([
-    selectedCompiler,
-    ...state.compileRuns.map((run) => run.toolchain_version),
-    ...state.runs.map((run) => run.toolchain_version),
-  ].filter(Boolean))].sort().reverse();
   elements["branch-filter"].innerHTML = `<option value="">All branches</option>${branches.map((value) => `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`).join("")}`;
-  elements["compiler-filter"].innerHTML = `<option value="">Any version</option>${compilers.map((value) => `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`).join("")}`;
   const selectedBranch = preferredBranch === "" || branches.includes(preferredBranch)
     ? preferredBranch
     : branches.includes(DEFAULT_BRANCH) ? DEFAULT_BRANCH : "";
@@ -235,7 +275,7 @@ function populateFilters({ persistBranchFallback = false } = {}) {
     state.preferredBranch = selectedBranch;
     writeBranchPreference(selectedBranch);
   }
-  elements["compiler-filter"].value = compilers.includes(selectedCompiler) ? selectedCompiler : "";
+  populateCompilerFilter(selectedCompiler);
   populateCategoryFilters();
   updateFilterIndicators();
 }
