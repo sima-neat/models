@@ -4,8 +4,8 @@ How the model browser's code is organized: which module draws what, and how one 
 serves the customer view and the developer view. Read it before you add a section to the
 model page, move code between modules under `artifact-browser/`, or hide something from
 customers. The rules, checks, and deployment steps are in
-[the browser README](../artifact-browser/README.md). What a visitor sees is in
-[the model browser page](../docs/model-browser.md).
+[the browser README](../../artifact-browser/README.md). What a visitor sees is in
+[the model browser page](../../docs/model-browser.md).
 
 ## Module layout
 
@@ -37,7 +37,7 @@ app.js  (routing, events)
 
 A section module never imports `model-view.js` or another section, so the model page has
 no import cycle. Markup that two sections need goes in `page-parts.js`. The README's
-[module table](../artifact-browser/README.md#how-the-page-is-built) lists every module of
+[module table](../../artifact-browser/README.md#how-the-page-is-built) lists every module of
 the browser, including the catalog, Compare, and report readers.
 
 When you add a module, add it to `fingerprintedAssets` in
@@ -99,6 +99,6 @@ them. `styles.css` hides `.developer-only` markup, and the branch and compiler t
 2. Test `shows.<fact>` where the markup is built. Page code never reads `uiMode` or tests
    the audience itself.
 3. Add the fact to the table above, and describe the visible difference in
-   [the model browser page](../docs/model-browser.md).
+   [the model browser page](../../docs/model-browser.md).
 4. Run the checks in the README for both audiences: `MODEL_BROWSER_UI_MODE=customer` and
    the default `developer`.

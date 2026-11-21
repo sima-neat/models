@@ -41,19 +41,22 @@ The product name is Model Browser. Commands, code, and paths keep `model-registr
 
 ```text
 .github/workflows/         every workflow (ci-flow.md)
+agents/                    for agents working in this repository, never shipped: rules.md,
+                           change-map.md, coding-style.md, skills/, and references/, which
+                           explains tooling, CI, publication, and operations
 artifact-browser/          the model browser app, preview.py, licenses.json, fixtures
 config/                    model-browser-deployment-environment.json: protection settings of
                            the GitHub environment that gates manual browser deployment
 datasets/                  <dataset id>.yaml: the accuracy metrics each task must report
 deps/                      manifest.json: platform, Model Compiler, Core, and LLiMa pins
 docs/                      the published site, for people who reproduce or add a model
-knowledge/                 how tooling, CI, publication, and operations work
 models/<model_id>/         model.yaml, README.md, hero.png, scripts/, tests/
 packaging/model-registry/  build, installer, and checks for the author package
 schemas/                   JSON Schemas: model, model tests, dataset requirements, package
                            manifest, model report, numerical fidelity, MLA stage
                            simulation, licenses
 scripts/                   one runner script per stage, and CI helper scripts
+skills/                    skills for customers' agents, which sima-cli ships alone
 taxonomies/                model-taxonomy.yaml: model categories and display labels
 tests/                     repository-wide tests, browser tests in tests/browser/, fixtures
 tools/model_registry/      the model-registry command and the shared lifecycle code
@@ -148,7 +151,7 @@ the truth for what each fingerprint hashes:
 | benchmark | Each component's compile run ID, plus its MPK SHA-256 for an ONNX build. The stage's `model.yaml` declaration without `build_profiles`. For accuracy it includes the metrics each dataset's `datasets/<id>.yaml` requires for the model's tasks. The stage script and its optional requirements file. `PERFORMANCE_TOOLING` or `ACCURACY_TOOLING`, plus `LLIMA_PERFORMANCE_TOOLING` for LLiMa performance. The DevKit runtime pins. A performance fingerprint adds the profile's `benchmark_baseline` with that baseline's compile fingerprint. |
 | conversion | `conversion.source`, `conversion.outputs`, `FINGERPRINT_VERSION`, and the model's conversion files under `scripts/`. No shared file. |
 
-[What a change reruns](../docs/adding-a-model.md#9-know-what-a-change-reruns) lists each
+[What a change reruns](../../docs/adding-a-model.md#9-know-what-a-change-reruns) lists each
 kind of change and the stages it reruns. Keep it in step with the code.
 
 Rules for changing what a stage depends on:

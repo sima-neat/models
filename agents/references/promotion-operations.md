@@ -5,7 +5,7 @@ promote a candidate to develop or main, check, cancel, reject, or withdraw a req
 recover a failed run. Read it before you operate or change
 `.github/workflows/model-promotion.yml`, `scripts/model_promotion.py`, or
 `tools/model_registry/promotions.py`. The requester's steps are in
-[Promote a model](../docs/model-promotion.md). How a candidate is built is in
+[Promote a model](../../docs/model-promotion.md). How a candidate is built is in
 [on-demand builds](on-demand-builds.md).
 
 ## What promotion does

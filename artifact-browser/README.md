@@ -111,8 +111,8 @@ supported by this browser** instead of guessing at an incompatible structure.
 ## Rules for changing the browser
 
 Read [DESIGN.md](DESIGN.md), [How the page is built](#how-the-page-is-built), and
-[model browser code](../knowledge/model-browser.md) before you change a file here. Update
-[docs/model-browser.md](../docs/model-browser.md) in the same change as anything a
+[model browser code](../agents/references/model-browser.md) before you change a file here.
+Update [docs/model-browser.md](../docs/model-browser.md) in the same change as anything a
 visitor can see.
 
 **Page structure**
@@ -354,8 +354,8 @@ cards or replace a selection. Develop and Main show approved selections.
 Completed candidates also remain in build history.
 Approved package membership comes from the profile's `build_requirements`. Only
 packages covering every shown component are offered as full-model downloads.
-[knowledge/on-demand-builds.md](../knowledge/on-demand-builds.md) defines these
-catalog fields.
+[agents/references/on-demand-builds.md](../agents/references/on-demand-builds.md)
+defines these catalog fields.
 
 The following confirmation flow applies to archive deployments, including
 previously published LLiMa ZIPs.
@@ -466,8 +466,8 @@ The frontend build and publication always use staging, independently of
 `VULCAN_ENV` and the selected model build/registry environment. The separate
 `resolve-staging-browser-config` job resolves the bucket, publisher role, KMS key,
 and CloudFront distribution from the shared staging Vulcan configuration.
-[knowledge/ci-flow.md](../knowledge/ci-flow.md#model-browser-publication) lists the
-jobs of both publication paths.
+[agents/references/ci-flow.md](../agents/references/ci-flow.md#model-browser-publication)
+lists the jobs of both publication paths.
 
 Every push and pull request builds the developer view,
 so staging always shows it after a push to Main or Develop. Only a manual

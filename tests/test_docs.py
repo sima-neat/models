@@ -3,6 +3,9 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pytest
+import yaml
+
 ROOT = Path(__file__).resolve().parents[1]
 MARKDOWN_LINK = re.compile(r"(?<!!)\[[^]]+\]\(([^)]+)\)")
 
@@ -193,13 +196,27 @@ def test_docs_keep_author_tools_separate_from_ci_publication() -> None:
         assert command not in author_guides
 
 
-# The structure of the documentation: docs/ is the public site, knowledge/ explains the tooling and CI, and
-# AGENTS.md indexes both. knowledge/writing-docs.md states these rules for writers.
+# The structure of the documentation, one reader per tree: docs/ is the public site for people, agents/ serves
+# agents working in this repository, and skills/ serves customers' agents and ships alone. AGENTS.md indexes all
+# three. agents/rules.md states the rules for skills/, and agents/references/writing-docs.md the rules for docs/.
 
 MODELS_REPOSITORY_LINK = re.compile(r"https://github\.com/sima-neat/models/(?:blob|tree|edit)/[^/]+/([^)\s]+)")
-INTERNAL_TREES = ("AGENTS.md", "knowledge/", "design-doc/")
+INTERNAL_TREES = ("AGENTS.md", "agents/", "design-doc/")
 # AGENTS.md is loaded into every agent session, so its length is a cost on every task.
-AGENTS_LINE_BUDGET = 260
+AGENTS_LINE_BUDGET = 130
+FRONTMATTER = re.compile(r"\A---\n(.*?)\n---\n", re.DOTALL)
+# A reference to the files written for agents in this repository: agents/ or AGENTS.md at the start of the path of
+# a GitHub or raw GitHub URL of this repository, with or without its scheme, or as a relative path such as
+# agents/rules.md or ../../AGENTS.md. A folder named agents inside another path, such as targets/codex/agents/, is
+# not one.
+AGENT_FILE_REFERENCE = re.compile(
+    r"(?:(?:https?://)?(?:www\.)?github\.com/sima-neat/models/(?:blob|tree|edit|raw)/[^/\s]+/"
+    r"|(?:https?://)?raw\.githubusercontent\.com/sima-neat/models/(?:refs/heads/)?[^/\s]+/)"
+    r"(?:agents(?![\w.-])|AGENTS\.md)"
+    r"|(?<![\w./-])(?:\.\./)*(?:agents/|AGENTS\.md)"
+)
+# The target of a Markdown link or image, inline as ](target) or in a reference definition as [label]: target.
+MARKDOWN_TARGET = re.compile(r"\]\(\s*<?([^)\s>]+)|^ {0,3}\[[^]]+\]:\s*<?([^\s>]+)", re.MULTILINE)
 
 
 def _documents() -> list[Path]:
@@ -208,9 +225,33 @@ def _documents() -> list[Path]:
         ROOT / "AGENTS.md",
         ROOT / "website" / "README.md",
         *sorted((ROOT / "docs").glob("*.md")),
-        *sorted((ROOT / "knowledge").glob("*.md")),
+        *sorted((ROOT / "agents").rglob("*.md")),
+        *sorted((ROOT / "skills").rglob("*.md")),
         *sorted((ROOT / "artifact-browser").glob("*.md")),
     ]
+
+
+def _skills() -> list[Path]:
+    """Each skill folder: those for agents in this repository under agents/skills/, and customers' under skills/."""
+    skills = [*ROOT.glob("agents/skills/*/SKILL.md"), *ROOT.glob("skills/*/SKILL.md")]
+    return sorted(skill.parent for skill in skills)
+
+
+def _customer_skill_folders() -> list[Path]:
+    return sorted(folder for folder in ROOT.glob("skills/*") if folder.is_dir())
+
+
+def _agent_skill_folders() -> list[Path]:
+    return sorted(folder for folder in ROOT.glob("agents/skills/*") if folder.is_dir())
+
+
+def _frontmatter(document: Path) -> dict:
+    match = FRONTMATTER.match(document.read_text(encoding="utf-8"))
+    try:
+        fields = yaml.safe_load(match.group(1)) if match else None
+    except yaml.YAMLError as error:
+        raise AssertionError(f"{document.relative_to(ROOT)}: the frontmatter is not YAML: {error}") from error
+    return fields if isinstance(fields, dict) else {}
 
 
 def _prose(text: str) -> str:
@@ -287,18 +328,134 @@ def test_site_pages_do_not_link_to_agent_or_maintainer_files() -> None:
     assert not failures, "docs/ is the public site and stands on its own:\n" + "\n".join(failures)
 
 
-def test_agents_index_lists_every_docs_and_knowledge_file() -> None:
+def test_agents_index_lists_every_docs_agents_and_skill_file() -> None:
     agents = ROOT / "AGENTS.md"
     indexed = {path for _, path, _ in _link_targets(agents)}
     pages = [page for page in sorted((ROOT / "docs").glob("*.md")) if page.name != "README.md"]
     missing = [
         page.relative_to(ROOT).as_posix()
-        for page in [*pages, *sorted((ROOT / "knowledge").glob("*.md"))]
-        if page not in indexed
+        for page in [*pages, *sorted((ROOT / "agents").rglob("*.md")), *sorted(ROOT.glob("skills/*/SKILL.md"))]
+        if page.resolve() not in indexed
     ]
 
     assert not missing, "add an index row to AGENTS.md for: " + ", ".join(missing)
     assert len(agents.read_text(encoding="utf-8").splitlines()) <= AGENTS_LINE_BUDGET
+
+
+def test_skills_link_every_reference() -> None:
+    unlinked = []
+    for skill in _skills():
+        linked = {path for _, path, _ in _link_targets(skill / "SKILL.md")}
+        unlinked += [
+            document.relative_to(ROOT).as_posix()
+            for document in sorted(skill.rglob("*.md"))
+            if document != skill / "SKILL.md" and document.resolve() not in linked
+        ]
+    assert not unlinked, "link each Markdown file from its skill's SKILL.md: " + ", ".join(unlinked)
+
+
+def test_skills_declare_a_name_and_a_description() -> None:
+    failures = []
+    for skill in sorted([*(ROOT / "agents").rglob("SKILL.md"), *(ROOT / "skills").rglob("SKILL.md")]):
+        fields = _frontmatter(skill)
+        for field in ("name", "description"):
+            if not isinstance(fields.get(field), str) or not fields[field].strip():
+                failures.append(f"{skill.relative_to(ROOT)}: no {field} in its YAML frontmatter")
+    assert not failures, "\n".join(failures)
+
+
+def test_skills_are_named_after_their_folder() -> None:
+    failures = []
+    for folder in [*_customer_skill_folders(), *_agent_skill_folders()]:
+        skill, name = folder / "SKILL.md", folder.relative_to(ROOT).as_posix()
+        if not skill.is_file():
+            failures.append(f"{name}: no SKILL.md")
+        elif _frontmatter(skill).get("name") != folder.name:
+            failures.append(f"{name}/SKILL.md: name must be {folder.name}")
+    for folder in _customer_skill_folders():
+        playbook = folder / "playbook.yml"
+        playbook_fields = yaml.safe_load(playbook.read_text(encoding="utf-8")) if playbook.is_file() else None
+        if not isinstance(playbook_fields, dict) or playbook_fields.get("id") != folder.name:
+            failures.append(f"skills/{folder.name}: playbook.yml must exist with id {folder.name}")
+    assert not failures, "\n".join(failures)
+
+
+def _agent_file_references(text: str) -> list[str]:
+    """Each place the text names agents/ or AGENTS.md of this repository."""
+    return [match.group(0) for match in AGENT_FILE_REFERENCE.finditer(text)]
+
+
+def _links_out_of(document: Path, folder: Path) -> list[str]:
+    """Each relative Markdown link or image in the document, code blocks included, whose file is outside folder."""
+    leaving = []
+    for match in MARKDOWN_TARGET.finditer(document.read_text(encoding="utf-8")):
+        target = match.group(1) or match.group(2)
+        path = target.partition("#")[0]
+        if path and "://" not in path and not path.startswith("mailto:"):
+            if not (document.parent / path).resolve().is_relative_to(folder.resolve()):
+                leaving.append(target)
+    return leaving
+
+
+def _text_files(folder: Path) -> list[tuple[Path, str]]:
+    """Each file under folder that reads as UTF-8 text, with its text. A binary file names no path."""
+    files = []
+    for path in sorted(path for path in folder.rglob("*") if path.is_file()):
+        try:
+            files.append((path, path.read_text(encoding="utf-8")))
+        except UnicodeDecodeError:
+            continue
+    return files
+
+
+@pytest.mark.parametrize(
+    ("text", "names_agent_files"),
+    [
+        ("https://github.com/sima-neat/models/blob/main/agents/rules.md", True),
+        ("<https://github.com/sima-neat/models/blob/develop/AGENTS.md>", True),
+        ("github.com/sima-neat/models/tree/main/agents", True),
+        ("https://raw.githubusercontent.com/sima-neat/models/main/agents/rules.md", True),
+        ("raw.githubusercontent.com/sima-neat/models/refs/heads/main/AGENTS.md", True),
+        ("[rules](../../agents/rules.md)", True),
+        ("Read AGENTS.md first.", True),
+        ("https://github.com/sima-neat/models/blob/main/docs/datasets.md", False),
+        ("https://github.com/sima-neat/models/blob/main/models/yolo26n/README.md", False),
+        ("targets/codex/agents/openai.yaml", False),
+        ("agents: [codex, claude]", False),
+        ("A customer's agents run this skill.", False),
+    ],
+)
+def test_agent_file_references_match_every_form(text: str, names_agent_files: bool) -> None:
+    assert bool(_agent_file_references(text)) is names_agent_files
+
+
+def test_links_out_of_a_skill_include_images_and_reference_definitions(tmp_path: Path) -> None:
+    skill = tmp_path / "skill"
+    (skill / "references").mkdir(parents=True)
+    document = skill / "SKILL.md"
+    document.write_text(
+        "[inside](references/a.md#step) [web](https://example.com/x.md) [here](#steps)\n"
+        "[up](../other.md) ![image](../../hero.png)\n"
+        "[defined]: ../defined.md\n",
+        encoding="utf-8",
+    )
+
+    leaving = _links_out_of(document, skill)
+
+    assert leaving == ["../other.md", "../../hero.png", "../defined.md"]
+
+
+def test_customer_skills_stand_alone() -> None:
+    failures = []
+    skills = ROOT / "skills"
+    for document, text in _text_files(skills):
+        name = document.relative_to(ROOT).as_posix()
+        failures += [f"{name} names {reference}" for reference in _agent_file_references(text)]
+        if document.suffix == ".md":
+            parts = document.relative_to(skills).parts
+            folder = skills / parts[0] if len(parts) > 1 else skills
+            failures += [f"{name} -> {target}" for target in _links_out_of(document, folder)]
+    assert not failures, "skills/ ships alone, so link only its own files and public URLs:\n" + "\n".join(failures)
 
 
 def test_site_pages_open_with_a_title_and_an_introduction() -> None:
