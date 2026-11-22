@@ -10,7 +10,12 @@ from pathlib import Path
 
 import pytest
 import yaml
-from model_registry.fingerprints import ACCURACY_TOOLING, LLIMA_PERFORMANCE_TOOLING, PERFORMANCE_TOOLING
+from model_registry.fingerprints import (
+    ACCURACY_TOOLING,
+    FRAME_TOOLING,
+    LLIMA_PERFORMANCE_TOOLING,
+    PERFORMANCE_TOOLING,
+)
 
 from tests.test_compile_workflow import evaluate
 from tests.test_stage_plan import repository_without_w16a16_accuracy
@@ -97,6 +102,8 @@ def test_benchmark_inputs_outlive_long_speculative_runs():
     assert jobs["benchmark"]["timeout-minutes"] == "${{ fromJSON(needs.stage.outputs.timeout_minutes) }}"
     assert stage["outputs"]["timeout_minutes"] == "${{ steps.settings.outputs.timeout_minutes }}"
     assert jobs["benchmark"]["env"]["BENCHMARK_BACKEND"] == "${{ needs.stage.outputs.benchmark_backend }}"
+    assert jobs["benchmark"]["env"]["BENCHMARK_RUNNER"] == "${{ needs.stage.outputs.benchmark_runner }}"
+    assert stage["outputs"]["benchmark_runner"] == "${{ steps.settings.outputs.runner }}"
     settings = step(stage["steps"], "Resolve benchmark job settings")
     reader = step(stage["steps"], "Configure authenticated production registry reads")
     assert stage["steps"].index(settings) < stage["steps"].index(reader)
@@ -350,29 +357,27 @@ def test_performance_runs_the_model_owned_script() -> None:
     assert script.index('scripts/performance.py"') < script.index("model_registry check-report")
 
 
-@pytest.mark.parametrize("extra_wheels", [True, False])
-def test_performance_dependencies_are_isolated_and_cleaned(tmp_path: Path, extra_wheels: bool) -> None:
+def performance_runner(tmp_path: Path, performance_script: str, *, settings: str = "core pyneat",
+                       extra_wheels: bool = False) -> tuple[Path, Path, Path]:
+    """Run run_model_performance.sh on a fixture model with stand-in tools.
+
+    settings is the backend and runner the script reads from model.yaml. Returns the report folder, the scratch
+    folder, and the file that records a pip call.
+    """
     scripts = tmp_path / "repository/models/fixture/scripts"
     scripts.mkdir(parents=True)
     if extra_wheels:
         (scripts / "requirements-performance.txt").write_text("benchmark_wheel==1.0\n")
-    (scripts / "performance.py").write_text(
-        "import argparse, json, os\nfrom pathlib import Path\n"
-        "p=argparse.ArgumentParser(); p.add_argument('--mpk'); p.add_argument('--output'); a=p.parse_args()\n"
-        "if os.environ['EXTRA_WHEELS']=='true':\n"
-        "    from benchmark_wheel import value\n"
-        "else: value=0\n"
-        "Path(a.output, 'model-report.json').write_text(json.dumps({'value':value}))\n"
-    )
+    (scripts / "performance.py").write_text(performance_script)
     binaries = tmp_path / "bin"
     binaries.mkdir()
     python = binaries / "python"
     python.write_text(
         f"#!{sys.executable}\nimport json, os, sys\nfrom pathlib import Path\n"
         "if sys.argv[1:3]==['-m','model_registry']:\n"
-        "    if sys.argv[3]=='model-component-artifacts': print('model=fixture_mpk.tar.gz')\n"
+        "    if sys.argv[3]=='model-component-artifacts': print('model=build/fixture_mpk.tar.gz')\n"
         "elif sys.argv[1:2]==['-c'] and 'from model_registry.model import load_model' in sys.argv[2]:\n"
-        "    print('core')\n"
+        f"    print({settings!r})\n"
         "elif sys.argv[1:3]==['-m','pip']:\n"
         "    Path(os.environ['PIP_CALL']).write_text(json.dumps(sys.argv[1:]))\n"
         "    site=Path(sys.argv[sys.argv.index('--target')+1]); site.mkdir(parents=True)\n"
@@ -396,6 +401,23 @@ def test_performance_dependencies_are_isolated_and_cleaned(tmp_path: Path, extra
         [ROOT / "scripts/run_model_performance.sh", scripts.parent, "profile", tmp_path / "compiled", output],
         env=env, check=True, capture_output=True, text=True,
     )
+    return output, work, pip_call
+
+
+@pytest.mark.parametrize("extra_wheels", [True, False])
+def test_performance_dependencies_are_isolated_and_cleaned(tmp_path: Path, extra_wheels: bool) -> None:
+    output, work, pip_call = performance_runner(
+        tmp_path,
+        "import argparse, json, os\nfrom pathlib import Path\n"
+        "p=argparse.ArgumentParser(); p.add_argument('--mpk'); p.add_argument('--output'); a=p.parse_args()\n"
+        "if os.environ['EXTRA_WHEELS']=='true':\n"
+        "    from benchmark_wheel import value\n"
+        "else: value=0\n"
+        "Path(a.output, 'model-report.json').write_text(json.dumps({'value':value}))\n",
+        extra_wheels=extra_wheels,
+    )
+    scripts = tmp_path / "repository/models/fixture/scripts"
+
     assert json.loads((output / "model-report.json").read_text())["value"] == (42 if extra_wheels else 0)
     assert not work.exists()
     assert pip_call.exists() == extra_wheels
@@ -404,6 +426,18 @@ def test_performance_dependencies_are_isolated_and_cleaned(tmp_path: Path, extra
         assert "--no-deps" in arguments and "--only-binary=:all:" in arguments
         assert arguments[arguments.index("--target") + 1] == str(work / "site-packages")
         assert arguments[arguments.index("-r") + 1] == str(scripts / "requirements-performance.txt")
+
+
+def test_performance_gives_pyneat_the_deployment_folder_of_a_speech_model(tmp_path: Path) -> None:
+    output, _, _ = performance_runner(
+        tmp_path,
+        "import argparse, json\nfrom pathlib import Path\n"
+        "p=argparse.ArgumentParser(); p.add_argument('--deployment'); p.add_argument('--output'); a=p.parse_args()\n"
+        "Path(a.output, 'model-report.json').write_text(json.dumps({'deployment':a.deployment}))\n",
+        settings="llima pyneat",
+    )
+
+    assert json.loads((output / "model-report.json").read_text()) == {"deployment": "build/deployment"}
 
 
 @pytest.mark.parametrize("installed", [None, "0.6.0+develop.abcfe372a575", "0.6.0+develop.111111111111", "broken"])
@@ -502,7 +536,7 @@ def test_benchmarks_run_only_when_requested() -> None:
     for name in ("Install trusted dataset tooling", "Configure dataset reader credentials",
                  "Cache the accuracy dataset on NVMe"):
         assert step(steps, name)["if"] == (
-            "env.BENCHMARK_BACKEND == 'core' && (steps.stages.outputs.accuracy == 'true' || "
+            "env.BENCHMARK_RUNNER == 'pyneat' && (steps.stages.outputs.accuracy == 'true' || "
             "steps.stages.outputs.performance == 'true')"
         ), name
 
@@ -544,7 +578,7 @@ def test_each_benchmark_runs_and_publishes_on_its_own_outcome() -> None:
     )
     mole = step(benchmark["steps"], "Install selected MoLE")
     assert mole["if"] == (
-        "${{ !cancelled() && steps.core.outcome == 'success' && env.BENCHMARK_BACKEND == 'llima' }}"
+        "${{ !cancelled() && steps.core.outcome == 'success' && env.BENCHMARK_RUNNER == 'mole' }}"
     )
     assert mole["run"] == 'scripts/install_mole_benchmark_runtime.sh "$BENCHMARK_RUNTIME"'
     assert mole["env"] == {
@@ -977,6 +1011,10 @@ def test_the_devkit_downloads_the_build_files_without_credentials() -> None:
 def test_the_devkit_removes_the_build_files_and_datasets_however_the_job_ends(tmp_path: Path) -> None:
     benchmark = load_workflow()["jobs"]["benchmark"]
     cleanup = benchmark["steps"][-1]
+    # A killed language-model benchmark leaves its Sentinel recording active; the job stops it however it ends.
+    recording = step(benchmark["steps"], "Stop a Sentinel recording the benchmark left active")
+    assert recording["if"] == "always() && env.BENCHMARK_RUNNER == 'mole'"
+    assert "from model_report.board_telemetry import stop_active_recording; stop_active_recording()" in recording["run"]
 
     assert cleanup["name"] == "Remove the build files and datasets from the DevKit"
     assert cleanup["if"] == "always()"
@@ -1173,6 +1211,8 @@ def test_cleanup_removes_input_and_both_evidence_artifacts(tmp_path: Path) -> No
     ("tools/model_registry/model.py", "core", True),
     ("tools/model_report/generation_benchmark.py", "core", False),
     ("tools/model_report/generation_benchmark.py", "llima", True),
+    ("tools/model_inputs/frame.py", "core", True),
+    ("tools/model_inputs/frame.py", "llima", False),
 ])
 def test_board_runs_require_the_measured_revisions_tooling(tmp_path, relative, backend, rejected) -> None:
     stage = load_workflow()["jobs"]["stage"]
@@ -1180,7 +1220,7 @@ def test_board_runs_require_the_measured_revisions_tooling(tmp_path, relative, b
     assert guard["run"] == 'scripts/require_source_board_tooling.sh _source "${{ steps.settings.outputs.backend }}"'
     assert stage["steps"].index(step(stage["steps"], "Resolve benchmark job settings")) < stage["steps"].index(guard)
     source = tmp_path / "_source"
-    for item in {*PERFORMANCE_TOOLING, *ACCURACY_TOOLING, *LLIMA_PERFORMANCE_TOOLING,
+    for item in {*PERFORMANCE_TOOLING, *ACCURACY_TOOLING, *LLIMA_PERFORMANCE_TOOLING, FRAME_TOOLING,
                  "tools/model_registry/benchmark_declarations.py", "tools/model_registry/model.py"}:
         (source / item).parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / item, source / item)
@@ -1264,8 +1304,13 @@ def test_report_command_publishes_both_stages_to_selected_registry(tmp_path, env
     assert all('--compiled-dir _compiled ' in call for call in calls)
 
 
-def accuracy_runner(tmp_path: Path, *, supporting_files: bool = False, samples: int | None = None) -> list[str]:
-    """Run run_model_accuracy.sh on clip_vit_b_16/w8a16 with stand-in tools; return accuracy.py's arguments."""
+def accuracy_runner(
+    tmp_path: Path, *, supporting_files: bool = False, samples: int | None = None, deployment: bool = False
+) -> list[str]:
+    """Run run_model_accuracy.sh on clip_vit_b_16/w8a16 with stand-in tools; return accuracy.py's arguments.
+
+    With deployment, the build is a deployment folder beside its manifest, as a speech model is packaged.
+    """
     import hashlib
     import io
     import tarfile
@@ -1279,6 +1324,10 @@ def accuracy_runner(tmp_path: Path, *, supporting_files: bool = False, samples: 
         asset.write_text("{}")
         manifest["runtime_files"] = [{"path": asset.name, "sha256": hashlib.sha256(asset.read_bytes()).hexdigest()}]
     (profile / "compile-outputs.json").write_text(json.dumps(manifest))
+    artifacts = "image_encoder=image.tar.gz\ntext_encoder=text.tar.gz"
+    if deployment:
+        (profile / "deployment").mkdir()
+        artifacts = f"model={profile / 'deployment-manifest.json'}"
     dataset = tmp_path / "dataset.tgz"
     with tarfile.open(dataset, "w:gz") as archive:
         info = tarfile.TarInfo("val2012/image.JPEG")
@@ -1297,8 +1346,8 @@ elif command == 'unpack-shared-dataset':
     sys.exit(1)
 elif command == 'resolve-accuracy-dataset':
     print({str(dataset)!r})
-elif command == 'model-component-mpks':
-    print('image_encoder=image.tar.gz\\ntext_encoder=text.tar.gz')
+elif command == 'model-component-artifacts':
+    print({artifacts!r})
 elif command != 'check-report':
     raise AssertionError(command)
 ''')
@@ -1336,6 +1385,14 @@ def test_accuracy_runner_passes_only_verified_local_resources(tmp_path, supporti
     # Unpacked under the runner's scratch folder, looking through the archive's single top-level directory.
     dataset = tmp_path / "scratch/datasets/imagenet-2012-val/val2012"
     assert arguments[arguments.index("--dataset") + 1] == f"imagenet-2012-val={dataset}"
+
+
+def test_accuracy_runner_passes_a_deployment_folder_in_place_of_mpks(tmp_path):
+    arguments = accuracy_runner(tmp_path, deployment=True)
+
+    assert "--mpk" not in arguments
+    deployment = tmp_path / "compiled with spaces/clip_vit_b_16/w8a16/deployment"
+    assert arguments[arguments.index("--deployment") + 1] == str(deployment)
 
 
 @pytest.mark.parametrize("samples", [None, 500])

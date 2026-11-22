@@ -201,8 +201,9 @@ Runs on a GitHub-hosted runner.
    `source_sha` must be a full commit SHA.
 2. It checks out the tooling at the workflow revision and the source revision in `_source`
    as data.
-3. `model-registry benchmark-job` prints the backend (`core` or `llima`) and the DevKit
-   job's timeout: 45 minutes, 90 for LLiMa performance, and 4320 for a speculative profile
+3. `model-registry benchmark-job` prints the backend (`core` for MPKs or `llima` for a
+   deployment folder), the runner (`mole` for a deployment that generates text, `pyneat` for
+   every other model, a speech deployment included), and the DevKit job's timeout: 45 minutes, 90 for LLiMa performance, and 4320 for a speculative profile
    with a `benchmark_baseline`.
 4. `scripts/require_source_board_tooling.sh` fails when the workflow revision and the
    source revision differ in a file the benchmark fingerprints hash. The newer push then
@@ -231,7 +232,7 @@ with `-datasets` appended, `DATASET_DIR` ([benchmark input](../../docs/benchmark
    credentials. It verifies each file against the staged SHA-256 and size, retries a failed
    or cut-off transfer through a fresh link, and restores runtime files from the package
    archive ([staging a published build](publication.md#staging-a-published-build)).
-5. For the `core` backend it installs the Dataset Registry wheel, assumes the dataset
+5. For the `pyneat` runner it installs the Dataset Registry wheel, assumes the dataset
    reader role, and runs `scripts/cache_accuracy_dataset.sh`, which refuses to run when the
    NVMe is not mounted. The script unpacks every dataset into `DATASET_DIR` through
    `scripts/unpack_benchmark_datasets.sh`, so the stages later need no credentials and read
@@ -241,7 +242,7 @@ with `-datasets` appended, `DATASET_DIR` ([benchmark input](../../docs/benchmark
    `Dataset Registry`.
 6. `model-registry ensure-neat-core --repository _source --environment production`
    prepares Core.
-7. For the `llima` backend, `scripts/install_mole_benchmark_runtime.sh` installs MoLE from
+7. For the `mole` runner, `scripts/install_mole_benchmark_runtime.sh` installs MoLE from
    the LLiMa pin and reuses a matching installation on the NVMe.
 8. `scripts/run_model_performance.sh` measures performance. It needs steps 4 and 6, and
    step 5 or step 7.
@@ -250,7 +251,10 @@ with `-datasets` appended, `DATASET_DIR` ([benchmark input](../../docs/benchmark
     stage on `model-report.json` and writes `passed`, `failed`, or `skipped` to
     `test-status.txt`.
 11. The job uploads `performance-…` and `accuracy-…` evidence, also after a failure.
-12. The last step removes `_compiled`, the scratch folder, and `DATASET_DIR`, however the
+12. For the `mole` runner, a step that runs however the job ends stops a Sentinel recording
+    the benchmark left active. The benchmark stops its own recording when it finishes, fails,
+    or is terminated; this step covers one that was killed.
+13. The last step removes `_compiled`, the scratch folder, and `DATASET_DIR`, however the
     job ends. A cancellation GitHub forces skips it. The next job's checkout then removes
     `_compiled`, and the two NVMe folders stay.
 
@@ -269,7 +273,7 @@ floating target fails the job. Both paths print the PyNeat version and the insta
 packages. Core artifacts come from production whatever the registry environment is. A
 non-production Core index needs `--artifacts-base-url` or `NEAT_ARTIFACTS_BASE_URL`.
 
-`run_model_performance.sh` does this for the `core` backend:
+`run_model_performance.sh` does this for a model with MPKs:
 
 1. lists the MPKs with `model-component-artifacts`
 2. takes the first accuracy dataset from `DATASET_DIR` with
@@ -283,11 +287,14 @@ non-production Core index needs `--artifacts-base-url` or `NEAT_ARTIFACTS_BASE_U
 6. runs `performance.py` and copies its output to `performance.log`
 7. runs `check-report`, which validates the report and writes `environment.json`
 
-For the `llima` backend it skips steps 2 to 4 and passes `--deployment`, plus `--baseline`
-when the staged input holds `benchmark-baseline.json`.
+For the `mole` runner it skips steps 2 to 4 and passes `--deployment`, plus `--baseline`
+when the staged input holds `benchmark-baseline.json`. A speech model is a deployment
+folder that PyNeat measures: it keeps steps 2 to 4 and passes `--deployment` with the
+dataset in place of the MPKs.
 
 `run_model_accuracy.sh` takes every declared dataset from `DATASET_DIR` with the same script.
-It lists the MPKs with `model-component-mpks`, passes the build's `runtime_files` folder as
+It lists the build with `model-component-artifacts` and passes each MPK as `--mpk`, or
+`--deployment` for a build that is a deployment folder. It passes the build's `runtime_files` folder as
 `--resources` when the compile declared any, and passes `--limit` when `model.yaml` sets
 `accuracy.samples`. It installs `scripts/requirements-accuracy.txt`, runs `accuracy.py`,
 and runs `check-report`.

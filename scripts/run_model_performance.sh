@@ -48,16 +48,20 @@ json_field() {
   "$REGISTRY_PYTHON" -c 'import json, sys; print(json.load(sys.stdin)[sys.argv[1]])' "$1"
 }
 
-backend="$("$REGISTRY_PYTHON" -c '
+# backend is how the build is packaged: "llima" for a deployment folder, "core" for MPKs. runner is the Python
+# that measures it: "mole" for a deployment that generates text, "pyneat" for every other model.
+read -r backend runner < <("$REGISTRY_PYTHON" -c '
 import sys
+from model_registry.benchmark_declarations import benchmark_runner
 from model_registry.model import load_model
-print("llima" if load_model(sys.argv[1])["components"][0]["interface"]["format"] == "huggingface" else "core")
-' "$MODEL_DIR")"
+model = load_model(sys.argv[1])
+print("llima" if model["components"][0]["interface"]["format"] == "huggingface" else "core", benchmark_runner(model))
+' "$MODEL_DIR")
 
 # The script takes the first accuracy dataset as <name>=<path> and picks its input from it. A model without an
 # accuracy dataset gets none.
 dataset=()
-if [[ "$backend" == core ]]; then
+if [[ "$runner" == pyneat ]]; then
 resolution="$("$(dirname "${BASH_SOURCE[0]}")/unpack_benchmark_datasets.sh" "$MODEL_DIR" "$BUILD_PROFILE_ID" \
   "$DATASET_DIR" --first)"
 if [[ -n "$resolution" ]]; then
@@ -109,8 +113,9 @@ if (( cpu_frequency_khz != CPU_FREQUENCY_KHZ )); then
 fi
 
 mkdir -p "$OUTPUT_DIR"
-if [[ "$backend" == llima ]]; then
-  deployment="$(dirname "${inputs[0]#*=}")/deployment"
+# Where a build that is packaged as a deployment folder keeps it: beside its manifest.
+deployment="$(dirname "${inputs[0]#*=}")/deployment"
+if [[ "$runner" == mole ]]; then
   export HF_HOME="${HF_HOME:-/media/nvme/huggingface}"
   baseline=()
   if [[ -f "$COMPILED_DIR/benchmark-baseline.json" ]]; then
@@ -118,6 +123,10 @@ if [[ "$backend" == llima ]]; then
   fi
   PYTHONPATH="$REPOSITORY/tools" PYTHONDONTWRITEBYTECODE=1 "$LLIMA_MOLE_PYTHON" "$MODEL_DIR/scripts/performance.py" \
     --deployment "$deployment" "${baseline[@]}" --output "$OUTPUT_DIR" 2>&1 | tee "$OUTPUT_DIR/performance.log"
+elif [[ "$backend" == llima ]]; then
+  # A speech model is a deployment folder that PyNeat's speech server runs.
+  PYTHONPATH="$REPOSITORY/tools:$site" PYTHONDONTWRITEBYTECODE=1 "$PYNEAT_PYTHON" "$MODEL_DIR/scripts/performance.py" \
+    --deployment "$deployment" "${dataset[@]}" --output "$OUTPUT_DIR" 2>&1 | tee "$OUTPUT_DIR/performance.log"
 else
   PYTHONPATH="$REPOSITORY/tools:$site" PYTHONDONTWRITEBYTECODE=1 "$PYNEAT_PYTHON" "$MODEL_DIR/scripts/performance.py" \
     "${mpks[@]}" "${dataset[@]}" "${resources[@]}" --output "$OUTPUT_DIR" 2>&1 | tee "$OUTPUT_DIR/performance.log"

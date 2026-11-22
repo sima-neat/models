@@ -23,7 +23,7 @@ from urllib.parse import quote
 from jsonschema import Draft202012Validator
 from model_report import CORE_REPORT_FILE, METRICS, REPORT_FILE, REQUIRED_PERFORMANCE_METRICS, accuracy_value_error
 
-from .benchmark_declarations import benchmarked_profiles
+from .benchmark_declarations import benchmark_runner, benchmarked_profiles
 from .dependencies import resolve_benchmark_runtime
 from .errors import ValidationError
 from .fetch import sha256_file
@@ -206,13 +206,14 @@ def check_report(
             measured = report["datasets"][name]["metrics"]
             _check_metrics(f"{report_path}: {name}", stage, measured, dataset["required_metrics"])
         return report
-    native = model["components"][0]["interface"]["format"] == "huggingface"
-    if native:
+    # A speech model is packaged like a language model, and PyNeat measures it, so it reports like a vision model.
+    generates_text = benchmark_runner(model) == "mole"
+    if generates_text:
         from model_report import telemetry_metrics
         from model_report.generation_benchmark import validate_report
 
         if "generation" not in report:
-            raise ValidationError(f"{report_path}: a native LLiMa performance report needs generation workloads")
+            raise ValidationError(f"{report_path}: a text generation performance report needs generation workloads")
         try:
             validate_report(report["generation"])
         except ValueError as exc:
@@ -236,7 +237,7 @@ def check_report(
                 raise ValidationError("generation report does not use the declared benchmark baseline")
         return report
     if "generation" in report:
-        raise ValidationError(f"{report_path}: generation workloads require a native LLiMa model")
+        raise ValidationError(f"{report_path}: generation workloads require a model that generates text")
     scope = model["performance"].get("scope", "model")
     if report.get("scope", "model") != scope:
         raise ValidationError(f"{report_path}: performance scope must be {scope}")

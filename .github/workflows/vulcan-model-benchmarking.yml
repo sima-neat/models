@@ -177,6 +177,7 @@ jobs:
       vulcan_config: ${{ inputs.vulcan_config || toJSON(needs.resolve-vulcan-config.outputs) }}
       devkit_runner: ${{ inputs.devkit_runner || toJSON(needs.resolve-benchmark-runner.outputs) }}
       benchmark_backend: ${{ steps.settings.outputs.backend }}
+      benchmark_runner: ${{ steps.settings.outputs.runner }}
       timeout_minutes: ${{ steps.settings.outputs.timeout_minutes }}
     steps:
       - name: Validate the benchmark request
@@ -305,6 +306,8 @@ jobs:
       SOURCE_BRANCH: ${{ needs.stage.outputs.source_branch }}
       SOURCE_SHA: ${{ inputs.source_sha }}
       BENCHMARK_BACKEND: ${{ needs.stage.outputs.benchmark_backend }}
+      # Which Python measures the model: mole for a deployment that generates text, pyneat for every other model.
+      BENCHMARK_RUNNER: ${{ needs.stage.outputs.benchmark_runner }}
       SIMA_CLI_AUTO_ACCEPT_UPDATE: "1"
       # One orchestrator run benchmarks many builds under the same run ID, so each build gets its own scratch.
       WORK_DIR: /media/nvme/neat-tests/model-benchmark-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.model_id }}-${{ inputs.build_profile_id }}
@@ -395,7 +398,7 @@ jobs:
 
       - name: Install trusted dataset tooling
         # Both stages read the accuracy dataset: accuracy scores it, and performance benchmarks a sample of it.
-        if: env.BENCHMARK_BACKEND == 'core' && (steps.stages.outputs.accuracy == 'true' || steps.stages.outputs.performance == 'true')
+        if: env.BENCHMARK_RUNNER == 'pyneat' && (steps.stages.outputs.accuracy == 'true' || steps.stages.outputs.performance == 'true')
         env:
           DATASET_REGISTRY_ENVIRONMENT: ${{ inputs.environment != 'default' && inputs.environment || vars.VULCAN_ENV || 'staging' }}
         run: |
@@ -403,7 +406,7 @@ jobs:
 
       - name: Configure dataset reader credentials
         id: dataset-credentials
-        if: env.BENCHMARK_BACKEND == 'core' && (steps.stages.outputs.accuracy == 'true' || steps.stages.outputs.performance == 'true')
+        if: env.BENCHMARK_RUNNER == 'pyneat' && (steps.stages.outputs.accuracy == 'true' || steps.stages.outputs.performance == 'true')
         uses: aws-actions/configure-aws-credentials@v6
         with:
           aws-region: ${{ fromJSON(needs.stage.outputs.vulcan_config).dataset_aws_region }}
@@ -414,7 +417,7 @@ jobs:
 
       - name: Cache the accuracy dataset on NVMe
         id: dataset-cache
-        if: env.BENCHMARK_BACKEND == 'core' && (steps.stages.outputs.accuracy == 'true' || steps.stages.outputs.performance == 'true')
+        if: env.BENCHMARK_RUNNER == 'pyneat' && (steps.stages.outputs.accuracy == 'true' || steps.stages.outputs.performance == 'true')
         env:
           AWS_ACCESS_KEY_ID: ${{ steps.dataset-credentials.outputs.aws-access-key-id }}
           AWS_SECRET_ACCESS_KEY: ${{ steps.dataset-credentials.outputs.aws-secret-access-key }}
@@ -433,7 +436,7 @@ jobs:
 
       - name: Install selected MoLE
         id: mole
-        if: ${{ !cancelled() && steps.core.outcome == 'success' && env.BENCHMARK_BACKEND == 'llima' }}
+        if: ${{ !cancelled() && steps.core.outcome == 'success' && env.BENCHMARK_RUNNER == 'mole' }}
         env:
           SIMA_MOLE_VENV_PATH: /media/nvme/llima/mole-venv
           PIP_CACHE_DIR: /media/nvme/llima/pip-cache
@@ -489,6 +492,13 @@ jobs:
           path: _accuracy/
           if-no-files-found: error
           retention-days: 14
+
+      # A benchmark that was killed while it measured cannot stop its own Sentinel recording, and the recording
+      # would stay active for the next benchmark on this DevKit.
+      - name: Stop a Sentinel recording the benchmark left active
+        if: always() && env.BENCHMARK_RUNNER == 'mole'
+        run: >-
+          "$REGISTRY_PYTHON" -c 'from model_report.board_telemetry import stop_active_recording; stop_active_recording()'
 
       # The build files and unpacked datasets fill the board's NVMe, so remove them however the job ends.
       - name: Remove the build files and datasets from the DevKit

@@ -27,15 +27,19 @@ def test_author_parser_exposes_only_supported_model_contributor_commands() -> No
     assert set(subcommands.choices) == cli.AUTHOR_COMMANDS
 
 
-@pytest.mark.parametrize("model,profile,stages,backend,baseline,timeout", [
-    ("resnet_50", "w8a8", "performance,accuracy", "core", "false", "45"),
-    ("qwen3_5_0_8b", "w4a16", "performance", "llima", "false", "90"),
-    ("gemma_4_e2b_it_mtp", "w4a16", "performance", "llima", "true", "4320"),
-    ("gemma_4_e2b_it_mtp", "w4a16", "accuracy", "llima", "false", "45"),
+@pytest.mark.parametrize("model,profile,stages,backend,runner,baseline,timeout", [
+    ("resnet_50", "w8a8", "performance,accuracy", "core", "pyneat", "false", "45"),
+    ("qwen3_5_0_8b", "w4a16", "performance", "llima", "mole", "false", "90"),
+    ("gemma_4_e2b_it_mtp", "w4a16", "performance", "llima", "mole", "true", "4320"),
+    ("gemma_4_e2b_it_mtp", "w4a16", "accuracy", "llima", "mole", "false", "45"),
+    # A speech model is packaged as a deployment folder, and PyNeat measures it.
+    ("whisper_small", "w8a16", "accuracy", "llima", "pyneat", "false", "45"),
 ])
-def test_benchmark_job_scopes_baseline_and_timeout(model, profile, stages, backend, baseline, timeout, capsys):
+def test_benchmark_job_scopes_baseline_and_timeout(model, profile, stages, backend, runner, baseline, timeout, capsys):
     assert main(["benchmark-job", str(ROOT / "models" / model), "--build-profile", profile, "--stages", stages]) == 0
-    assert capsys.readouterr().out == f"backend={backend}\nneeds_baseline={baseline}\ntimeout_minutes={timeout}\n"
+    assert capsys.readouterr().out == (
+        f"backend={backend}\nrunner={runner}\nneeds_baseline={baseline}\ntimeout_minutes={timeout}\n"
+    )
 
 
 @pytest.mark.parametrize(

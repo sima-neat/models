@@ -45,11 +45,17 @@ if [[ -z "$resolutions" ]]; then
   exit 0
 fi
 
-# The script takes each MPK as <component>=<path>.
-listed="$("$REGISTRY_PYTHON" -m model_registry model-component-mpks "$COMPILED_DIR" \
+# The script takes each MPK as <component>=<path>, or the deployment folder of a model that is packaged as one.
+listed="$("$REGISTRY_PYTHON" -m model_registry model-component-artifacts "$COMPILED_DIR" \
   --repository "$REPOSITORY" --model "$MODEL_ID" --build-profile "$BUILD_PROFILE_ID")"
-mpks=()
-while IFS= read -r input; do mpks+=(--mpk "$input"); done <<< "$listed"
+first="${listed%%$'\n'*}"
+deployment="$(dirname "${first#*=}")/deployment"
+build=()
+if [[ -d "$deployment" ]]; then
+  build=(--deployment "$deployment")
+else
+  while IFS= read -r input; do build+=(--mpk "$input"); done <<< "$listed"
+fi
 
 # Supporting files travel with the compiled package and are verified before the model script reads them.
 resources=()
@@ -79,7 +85,7 @@ if [[ -f "$REQUIREMENTS" ]]; then
     --target "$site" -r "$REQUIREMENTS"
 fi
 
-PYTHONPATH="$REPOSITORY/tools:$site" PYTHONDONTWRITEBYTECODE=1 "$PYNEAT_PYTHON" "$SCRIPT" "${mpks[@]}" \
+PYTHONPATH="$REPOSITORY/tools:$site" PYTHONDONTWRITEBYTECODE=1 "$PYNEAT_PYTHON" "$SCRIPT" "${build[@]}" \
   "${datasets[@]}" "${resources[@]}" "${limit[@]}" --output "$OUTPUT_DIR" 2>&1 | tee "$OUTPUT_DIR/accuracy.log"
 "$REGISTRY_PYTHON" -m model_registry check-report "$OUTPUT_DIR" --repository "$REPOSITORY" \
   --stage accuracy --model "$MODEL_ID" --build-profile "$BUILD_PROFILE_ID"

@@ -9,7 +9,13 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 from .artifact import record_compile_outputs, validate_compile_outputs, verify_artifact, verify_mpk
-from .benchmark_declarations import BENCHMARK_STAGES, benchmarked_profiles, dataset_names, reference_metrics_by_model
+from .benchmark_declarations import (
+    BENCHMARK_STAGES,
+    benchmark_runner,
+    benchmarked_profiles,
+    dataset_names,
+    reference_metrics_by_model,
+)
 from .compile_matrix import build_matrix
 from .dependencies import resolve_benchmark_runtime, resolve_model_compiler
 from .documentation import example_apps, load_model_documentation
@@ -789,6 +795,7 @@ def _benchmark_job(args: argparse.Namespace) -> int:
     )
     baseline = performance and bool(profile.get("benchmark_baseline"))
     print(f"backend={'llima' if native else 'core'}")
+    print(f"runner={benchmark_runner(model)}")
     print(f"needs_baseline={str(baseline).lower()}")
     print(f"timeout_minutes={4320 if native and baseline else 90 if native and performance else 45}")
     return 0
