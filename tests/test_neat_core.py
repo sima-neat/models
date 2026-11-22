@@ -139,16 +139,39 @@ def test_identity_or_republished_dependency_mismatch_installs(setup, capsys, sec
     _assert_reporting(setup)
 
 
-def test_an_assumed_channel_is_named_in_the_install_reason(setup, capsys):
-    setup.status["components"]["core"].update({
-        "channel": "main", "channelAssumed": True, "tag": None, "version": "0.6.2",
-        "provenance": {"vulcanEnvironment": "prod", "vulcanRef": "v0.6.2"},
-    })
+RELEASE_PACKAGE = {"channel": "main", "channelAssumed": True, "tag": None, "version": "0.6.2",
+                   "provenance": {"vulcanEnvironment": "prod", "vulcanRef": "v0.6.2"}}
+
+
+def test_a_release_package_that_records_the_pinned_ref_and_no_commit_skips_install(setup, capsys):
+    setup.target = f"core@v0.6.2:{TAG}"
+    setup.status["components"]["core"] = dict(RELEASE_PACKAGE)
 
     setup.ensure()
 
-    _assert_install_reason(capsys, "installed Core 0.6.2 names no channel and tag, pinned develop; its build record "
-                                   "names ref v0.6.2 and spec missing in environment prod")
+    assert _installer_calls(setup) == []
+    assert f"NEAT core already installed (v0.6.2/{TAG}). Skipping install." in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("target,changed,reason", [
+    ("v0.6.2", {"provenance": {"vulcanEnvironment": "prod", "vulcanRef": "v0.6.1"}},
+     "installed Core 0.6.2 names no channel and tag, and its build record names ref v0.6.1, pinned v0.6.2"),
+    ("v0.6.2", {"provenance": {"vulcanEnvironment": "prod"}},
+     "installed Core 0.6.2 names no channel and tag, and its build record names ref missing, pinned v0.6.2"),
+    ("v0.6.2", {"version": "0.6.3"},
+     "installed Core 0.6.3 names no channel and tag, and its build record names ref v0.6.2, pinned v0.6.2"),
+    ("main", {"provenance": {"vulcanEnvironment": "prod", "vulcanRef": "main"}},
+     "installed Core 0.6.2 names no channel and tag, and its build record names ref main, pinned main"),
+    ("v0.6.2", {"provenance": {"vulcanEnvironment": "stg", "vulcanRef": "v0.6.2"}},
+     "installed Core environment is stg, pinned prod"),
+])
+def test_a_release_package_that_differs_from_the_pin_installs(setup, capsys, target, changed, reason):
+    setup.target = f"core@{target}:{TAG}"
+    setup.status["components"]["core"] = {**RELEASE_PACKAGE, **changed}
+
+    setup.ensure()
+
+    assert capsys.readouterr().out.splitlines()[:1] == [f"Installing NEAT core ({target}/{TAG}): {reason}."]
 
 
 @pytest.mark.parametrize("metadata,reason", [

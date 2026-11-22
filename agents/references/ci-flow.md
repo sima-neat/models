@@ -258,7 +258,10 @@ with `-datasets` appended, `DATASET_DIR` ([benchmark input](../../docs/benchmark
 `core@develop` to the published tag once, then compares `neat --json` with that artifact's
 metadata. Installation is skipped only when the Core channel, tag, and artifact environment
 match, and the installed Runner and Scheduler versions equal the Debian versions in the
-artifact's checksum-verified `resolved-deps-manifest.json`. Any missing or unreadable value
+artifact's checksum-verified `resolved-deps-manifest.json`. A release package records its
+ref and no commit, so `neat --json` reports an assumed channel and no tag for it. For such a
+package the recorded ref must equal the pinned channel and name the installed version
+(`v<version>`), and the tag is not compared. Any missing or unreadable value
 installs with `sima-cli neat install --env production --type minimal`, after one
 `Installing NEAT core (<channel>/<tag>): <reason>.` line that names the first value that
 differed, with its installed and pinned values, or the step that could not be read. An unresolved

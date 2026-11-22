@@ -68,18 +68,20 @@ def installed_mismatch(
 
     core = _component(status, "core")
     provenance = core.get("provenance") if isinstance(core.get("provenance"), dict) else {}
-    channel, installed_tag, installed_environment = (
+    channel, installed_tag, installed_environment, ref = (
         value.strip() if isinstance(value, str) else None
-        for value in (core.get("channel"), core.get("tag"), provenance.get("vulcanEnvironment"))
+        for value in (core.get("channel"), core.get("tag"), provenance.get("vulcanEnvironment"),
+                      provenance.get("vulcanRef"))
     )
-    if channel not in {branch, branch.replace("/", "-").replace(" ", "-")}:
-        if core.get("channelAssumed") is not True:
-            return f"installed Core channel is {_shown(channel)} and tag is {_shown(installed_tag)}, pinned {branch}"
-        # `neat` assumes a channel when the installed package's build record gives it no channel and tag.
-        return (f"installed Core {_shown(core.get('version'))} names no channel and tag, pinned {branch}; its build "
-                f"record names ref {_shown(provenance.get('vulcanRef'))} and spec "
-                f"{_shown(provenance.get('vulcanSpec'))} in environment {_shown(installed_environment)}")
-    if installed_tag != tag:
+    if core.get("channelAssumed") is True:
+        # A release package records its ref and no commit, so `neat` reports an assumed channel and no tag. With no
+        # tag to compare, the recorded ref must be the pinned channel and name the installed version.
+        if not ref == branch == f"v{core.get('version')}":
+            return (f"installed Core {_shown(core.get('version'))} names no channel and tag, and its build record "
+                    f"names ref {_shown(ref)}, pinned {branch}")
+    elif channel not in {branch, branch.replace("/", "-").replace(" ", "-")}:
+        return f"installed Core channel is {_shown(channel)} and tag is {_shown(installed_tag)}, pinned {branch}"
+    elif installed_tag != tag:
         return f"installed Core tag is {_shown(installed_tag)}, pinned {tag}"
     if ENVIRONMENTS.get(installed_environment) != environment:
         return f"installed Core environment is {_shown(installed_environment)}, pinned {environment}"
