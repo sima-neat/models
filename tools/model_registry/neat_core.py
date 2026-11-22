@@ -73,7 +73,10 @@ def installed_mismatch(
         for value in (core.get("channel"), core.get("tag"), provenance.get("vulcanEnvironment"))
     )
     if channel not in {branch, branch.replace("/", "-").replace(" ", "-")}:
-        return f"installed Core channel is {_shown(channel)}, pinned {branch}"
+        # `neat` assumes a channel when the installed package names none; the tag tells the two cases apart.
+        assumed = " (assumed)" if core.get("channelAssumed") is True else ""
+        return (f"installed Core channel is {_shown(channel)}{assumed} and tag is {_shown(installed_tag)}, "
+                f"pinned {branch}")
     if installed_tag != tag:
         return f"installed Core tag is {_shown(installed_tag)}, pinned {tag}"
     if ENVIRONMENTS.get(installed_environment) != environment:

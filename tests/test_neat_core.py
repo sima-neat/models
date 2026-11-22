@@ -87,7 +87,7 @@ def _assert_install_reason(capsys, reason):
 
 
 UNVERIFIED_DEPENDENCIES = "the published dependency manifest could not be verified"
-NO_CHANNEL = "installed Core channel is missing, pinned develop"
+NO_CHANNEL = "installed Core channel is missing and tag is missing, pinned develop"
 
 
 @pytest.mark.parametrize("branch,channel,version", [
@@ -117,7 +117,7 @@ def test_matching_state_skips_install_and_still_reports(setup, capsys, branch, c
 
 
 @pytest.mark.parametrize("section,key,value,reason", [
-    ("core", "channel", "other", "installed Core channel is other, pinned develop"),
+    ("core", "channel", "other", f"installed Core channel is other and tag is {TAG}, pinned develop"),
     ("core", "tag", "abcdef123456", f"installed Core tag is abcdef123456, pinned {TAG}"),
     ("core", "provenance", {"vulcanEnvironment": "stg"}, "installed Core environment is stg, pinned prod"),
     ("core", "provenance", None, "installed Core environment is missing, pinned prod"),
@@ -137,6 +137,14 @@ def test_identity_or_republished_dependency_mismatch_installs(setup, capsys, sec
     ]]
     _assert_install_reason(capsys, reason)
     _assert_reporting(setup)
+
+
+def test_an_assumed_channel_is_named_in_the_install_reason(setup, capsys):
+    setup.status["components"]["core"].update({"channel": "main", "channelAssumed": True, "tag": None})
+
+    setup.ensure()
+
+    _assert_install_reason(capsys, "installed Core channel is main (assumed) and tag is missing, pinned develop")
 
 
 @pytest.mark.parametrize("metadata,reason", [
