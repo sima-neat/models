@@ -142,12 +142,12 @@ it:
 
 | Script and argument | What it reads |
 | --- | --- |
-| `compile.py --dataset` | A directory or a `.tar.gz` archive. It takes the `.jpg`, `.jpeg`, and `.webp` images in a folder named `cal2017` and picks 50 of them with a fixed seed. |
+| `compile.py --dataset` | A directory or a `.tar.gz` archive. It takes the `.jpg`, `.jpeg`, and `.webp` images in a folder named `cal2017` and picks 20 of them with a fixed seed. |
 | `performance.py --dataset coco-2017-val=<directory>` | The `.jpg` images in `<directory>/val2017/`. It picks one with a fixed seed. |
 | `accuracy.py --dataset coco-2017-val=<directory>` | `<directory>/val2017/` and `<directory>/annotations/instances_val2017.json`. It scores every image the annotation file lists. |
 
 The COCO 2017 validation download uses the `val2017` and `annotations` names. `cal2017`
-is not part of the COCO download. Create it and copy at least 50 COCO images into it,
+is not part of the COCO download. Create it and copy at least 20 COCO images into it,
 taken from outside `val2017`, so that calibration and evaluation use different images.
 Point `calibration` at the directory that holds `cal2017`:
 
@@ -198,7 +198,7 @@ PYTHONPATH=tools python models/yolo26n/scripts/compile.py \
 `compile.py` works in three parts:
 
 1. It rewrites the graph with `surgery.py`, which cuts YOLO26n at its raw detection heads, before the box decode. A model without `surgery.py` compiles the ONNX as it is.
-2. It quantizes the graph. The `w8a8` build profile uses 50 calibration images to choose its INT8 ranges.
+2. It quantizes the graph. The `w8a8` build profile uses 20 calibration images to choose its INT8 ranges.
 3. It writes one MPK per model component. An MPK is the archive a DevKit runs.
 
 `PYTHONPATH=tools` lets `compile.py` import the `model_registry` package from your clone,
@@ -313,14 +313,15 @@ component.
 against the annotations. It prints its progress every 250 images. It ends with one JSON
 line that holds each score, and writes `results/accuracy/model-report.json`.
 
-Add `--limit 100` for a first trial on 100 images. Compare only a full run with the
-published scores.
+Add `--limit 100` for a first trial on 100 images. A trial does not compare with the
+model page.
 
 Other models differ here:
 
 - A model without `scripts/accuracy.py` has no accuracy stage. Skip this step.
 - A model without `scripts/requirements-accuracy.txt` needs no `pip` command.
 - A model with several components takes one `--mpk <component>=<archive>` per component.
+- When a model's `model.yaml` sets `accuracy.samples`, CI scores at most that many samples of each dataset. Pass the same number as `--limit` to compare with the model page.
 - [Accuracy and fidelity](local-accuracy-development.md) describes the arguments of `accuracy.py`.
 
 ### 9. Compare with the model page
@@ -376,12 +377,12 @@ describes that run.
 | `python3.12: command not found` | `scripts/run_model_conversion.sh` starts the conversion with `python3.12`. | Install Python 3.12, or set `CONVERSION_PYTHON` to its path. |
 | `FileExistsError` from `convert.py` or `compile.py` | The output directory exists. Both scripts create it themselves. | Delete the directory, or name a new one. |
 | `No module named 'afe'` | The command does not run in the Model Compiler environment. | Activate the Model Compiler environment, then run the command again. In the Neat SDK, run `activate-model-compiler`. |
-| `model.yaml declares no build profile` or `expected exactly one build profile` | `--build-profile` names a variant that `model.yaml` does not declare. | Pass a name from `build_profiles`, as step 2 describes. |
+| `unknown build profile: <name>` | `--build-profile` names a variant that `model.yaml` does not declare. | Pass a name from `build_profiles`, as step 2 describes. |
 | `model.yaml declares numerical_fidelity; pass --fidelity-dataset` | The model measures numerical fidelity during the compile. | Pass `--fidelity-dataset` with the dataset that `numerical_fidelity.dataset` names. |
 | `No module named 'model_registry'` | `PYTHONPATH` lacks `tools`, or the command runs outside the repository root. | Run the command from the repository root with `PYTHONPATH=tools`. |
 | `the INT8 build requires --dataset from dataset-registry` | `compile.py` ran for `w8a8` without `--dataset`. | Pass the calibration archive or directory from step 3. |
-| `cannot select 50 calibration images from 0 cal2017 images` | The calibration input has no folder named `cal2017`, or the folder holds fewer than 50 images. | Put at least 50 images in a folder named `cal2017`. |
-| `--model must be the verified ONNX from the conversion workflow` | The `--model` path does not end in `.onnx`. | Pass `build/yolo26n/onnx/model.onnx`. |
+| `cannot select 20 calibration images from 0 cal2017 images` | The calibration input has no folder named `cal2017`, or the folder holds fewer than 20 images. | Put at least 20 images in a folder named `cal2017`. |
+| `--model must be the verified ONNX source, not <path>` | The `--model` path does not end in `.onnx`. | Pass `build/yolo26n/onnx/model.onnx`. |
 | `has no images under val2017/` | The dataset directory does not hold `val2017/` directly. | Pass the folder that contains `val2017/` and `annotations/`. |
 | `No module named 'model_report'` | `PYTHONPATH` lacks `tools`, or the command runs outside the folder that holds `tools/`. | Run from `/media/nvme/neat-tests/yolo26n` with `PYTHONPATH=tools`. |
 | `No module named 'faster_coco_eval'` | The accuracy packages are missing, or `PYTHONPATH` lacks `site-packages`. | Run both commands of step 8 from the same folder. |

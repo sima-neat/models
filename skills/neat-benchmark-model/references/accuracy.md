@@ -54,7 +54,8 @@ folders, that folder is the dataset directory to pass.
 | `--output <directory>` | where the report goes |
 
 Existing scripts also accept `--limit <images>` to evaluate a subset for a
-quick check. CI never passes it, so compare only a run without it. Optional
+quick check. CI passes it only when `model.yaml` sets `accuracy.samples`, so
+compare a run with the same limit, or none when the field is unset. Optional
 `scripts/requirements-accuracy.txt` pins extra wheels, which install into a
 separate folder beside PyNeat's environment and never into it. A script that
 imports another file under `scripts/`, such as ResNet-50's `calibration.py`,

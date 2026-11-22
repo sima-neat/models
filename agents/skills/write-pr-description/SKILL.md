@@ -170,10 +170,10 @@ appears, because the model already exists. The numbers are illustrative.
 
 ````markdown
 ## Summary
-Doubles the calibration images of the yolo26n `w8a8` build from 50 to 100, which raises its COCO mAP by 0.002.
+Doubles the calibration images of the yolo26n `w8a8` build from 10 to 20, which raises its COCO mAP by 0.002.
 
 ## yolo26n
-- **Quantization:** `w8a8` now calibrates on 100 coco-2017-cal images (was 50). `w8a16` and `w16a16` are unchanged.
+- **Quantization:** `w8a8` now calibrates on 20 coco-2017-cal images (was 10). `w8a16` and `w16a16` are unchanged.
 
 ```text
 How does an input become a result in yolo26n?

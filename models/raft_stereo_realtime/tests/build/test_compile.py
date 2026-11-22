@@ -5,17 +5,19 @@ import json
 import tarfile
 from collections.abc import Callable
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 import numpy as np
 import onnx
 import pytest
+from model_registry.errors import ValidationError
 from model_registry.model import load_model as load_metadata
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[4]
 MODEL_DIR = ROOT / "models" / "raft_stereo_realtime"
-# Floors under the published w16a16 fidelity on the 8 fidelity pairs: cosine 0.99983, mean absolute error 0.176 px.
+# Floors under the w16a16 fidelity published on 8 fidelity pairs, cosine 0.99983 and mean absolute error 0.176 px.
+# They apply to the 5 pairs model.yaml selects.
 FIDELITY_FLOORS = {"w16a16": {"cosine_similarity": 0.999, "mean_absolute_error": 0.25}}
 
 
@@ -285,16 +287,64 @@ def test_mpk_audit_requires_one_mla_segment_and_the_stereo_interface(
             compile_module.audit_mpk(archive)
 
 
+def test_fidelity_compares_the_quantized_disparity_with_the_onnx_source(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    load_script: Callable[[str], ModuleType],
+) -> None:
+    compile_module = load_script("compile")
+    fidelity = load_metadata(MODEL_DIR)["numerical_fidelity"]
+    pairs = [("a/left.png", "a/right.png", "a/disparity.pfm"), ("b/left.png", "b/right.png", "b/disparity.pfm")]
+    # Two side-by-side frames of 2x2 views, valued 1 and 2, whose left views' true disparity is 4 px everywhere.
+    frames = np.stack([np.full((2, 4, 3), value, np.float32) for value in (1.0, 2.0)])
+    truths = np.full((2, 2, 2), 4.0, np.float32)
+    onnx_inputs = []
+
+    class Session:
+        def __init__(self, path: str, providers: list[str]) -> None:
+            pass
+
+        def run(self, outputs: list[str], feeds: dict[str, np.ndarray]) -> list[np.ndarray]:
+            onnx_inputs.append(feeds["stereo"].shape)
+            return [np.full((1, 1, 2, 2), feeds["stereo"][0, 0, 0, 0], np.float32)]
+
+    def execute(inputs: dict, use_jax: bool) -> list[np.ndarray]:
+        # The quantized graph returns the disparity channels-last, with its last pixel 1 px above the ONNX's.
+        (frame,) = inputs.values()
+        disparity = np.full((1, 2, 2, 1), frame[0, 0, 0, 0], np.float32)
+        disparity[0, 1, 1, 0] += 1
+        return [disparity]
+
+    monkeypatch.setattr(compile_module, "selected_pairs", lambda dataset, seed, offset, samples: pairs)
+    monkeypatch.setattr(compile_module, "read_pairs", lambda dataset, selected: (frames, truths))
+    monkeypatch.setattr(compile_module, "ort", SimpleNamespace(InferenceSession=Session))
+
+    report = compile_module.measure_fidelity(
+        tmp_path / "model.onnx", SimpleNamespace(execute=execute), tmp_path / "cal.tgz", fidelity, "w16a16"
+    )
+
+    assert onnx_inputs == [(1, 3, 2, 4)] * 2
+    assert (report["model_id"], report["build_profile_id"], report["samples"]) == ("raft_stereo_realtime", "w16a16", 2)
+    (metric,) = report["metrics"]
+    assert metric["name"] == "disparity"
+    assert metric["max_absolute_error"] == 1.0
+    assert metric["mean_absolute_error"] == 0.25
+    # Each pair's EPE against the true 4 px: 3 and 2 px for the ONNX, 2.75 and 1.75 px for the quantized graph.
+    assert "Scene Flow EPE on the 2 fidelity pairs: 2.500 px ONNX, 2.250 px quantized (-10.0%)" in caplog.text
+
+
 def test_compile_reads_the_declared_build_parameters(load_script: Callable[[str], ModuleType]) -> None:
     compile_module = load_script("compile")
+    model_dir, component_id = compile_module.MODEL_DIR, compile_module.COMPONENT_ID
 
-    assert compile_module._parameters("w16a16") == {
+    assert compile_module.component_parameters(model_dir, "w16a16", component_id) == {
         "precision": "w16a16",
         "calibration_bins": 2048,
         "calibration_samples": 4,
     }
-    with pytest.raises(ValueError, match="no build profile"):
-        compile_module._parameters("w32a32")
+    with pytest.raises(ValidationError, match="unknown build profile: w32a32"):
+        compile_module.component_parameters(model_dir, "w32a32", component_id)
     with pytest.raises(ValueError, match="unsupported precision"):
         compile_module._quantization({"precision": "w4a16", "calibration_bins": 2048})
 

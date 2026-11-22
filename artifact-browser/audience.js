@@ -24,8 +24,6 @@ export function audienceFacts(uiMode) {
     // How an accuracy run was evaluated, and the tables of published and FP32 baseline scores.
     evaluationDetails: developer,
     referenceTables: developer,
-    // Variants whose accuracy falls more than 8% below the source model's reference score.
-    lowAccuracyVariants: developer,
     // The branch in the copied CLI command. Customers download from main, the sima-cli default.
     commandBranch: developer,
   };

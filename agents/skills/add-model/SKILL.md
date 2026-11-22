@@ -35,8 +35,10 @@ this work has nothing to do with ([`rules.md` "Before a push"](../../rules.md#be
    conversion](../../../docs/conversion-artifacts.md#publish-a-conversion)). The step is done
    when the conversion tests pass and a published conversion matches the current conversion
    inputs.
-4. Write `surgery.py`, `calibration.py`, and `compile.py` as `coding-style.md` describes. Judge
-   each rewrite and each quantization choice with
+4. Write `surgery.py`, `calibration.py`, and `compile.py` as `coding-style.md` describes.
+   `compile.py` imports the shared helpers from `model_registry.compile_script` and keeps its
+   recipe, and each component calibrates on at most 20 samples, as [`rules.md`
+   "Compile"](../../rules.md#compile) says. Judge each rewrite and each quantization choice with
    [`neat-compile-model`](../../../skills/neat-compile-model/SKILL.md). The step is done when
    each rewrite has a purpose the description can state under `Surgery`, and each choice away
    from the compiler default has its comment. An LLM or VLM writes `compile.sh` as [LLiMa
@@ -51,7 +53,11 @@ this work has nothing to do with ([`rules.md` "Before a push"](../../rules.md#be
 6. Write the tests and `tests/tests.yaml` as [the tests
    step](../../../docs/adding-a-model.md#10-write-the-models-tests) and `coding-style.md`
    "Tests" describe. A measurement stage with no published report to take values from sets
-   `run_tests: false` and a `skip_reason`. The step is done when
+   `run_tests: false` and a `skip_reason`. When `model-registry validate` fails a profile whose
+   expected accuracy is more than 8% below its reference score, comment the profile out as
+   [comment out a variant far below its reference
+   score](../../../docs/adding-a-model.md#comment-out-a-variant-far-below-its-reference-score)
+   describes. The step is done when
    `python -m pytest models/<model_id>/tests` passes and each behavior the change adds or
    changes has a test.
 7. Write or update the README and hero as [model README](../../../docs/model-readme.md) and

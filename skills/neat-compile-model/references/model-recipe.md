@@ -188,8 +188,11 @@ is one example.
 - Calibration feeds quantization: the compiler runs sample images to choose the
   INT8 value ranges. It is not accuracy evidence.
 - Only a profile with a `calibration_dataset` needs it. In YOLO26n, `w8a8`
-  calibrates on 50 images from a folder named `cal2017`, and `w16a16` and
+  calibrates on 20 images from a folder named `cal2017`, and `w16a16` and
   `w8a16` take no calibration dataset.
+- Each sample adds compile time. The Models repository keeps a component's
+  `calibration_samples` at 20 or fewer. `model-registry validate` rejects a
+  `numerical_fidelity` selection of more than 5 samples.
 - The recipe calibrates the first component on the profile's calibration
   dataset and later components on its outputs.
 - Results match the published ones only when calibration reads the same
@@ -213,7 +216,20 @@ its components in one invocation named after it. The recipe does this:
 - It builds only a declared build profile, and stops with an error that names
   any other.
 - It reads its build profile from `model.yaml`. In the Models repository it
-  uses `model_registry.model.load_model`.
+  uses `component_parameters` from `model_registry.compile_script`. That module
+  also parses this command line (`parse_arguments`), reads the MPK manifest
+  (`read_mpk_manifest`), and lays out the fidelity report (`fidelity_report`),
+  so the recipe does not copy them. The recipe itself stays in `compile.py`:
+  quantization, the compile call, calibration, graph surgery, running the
+  source and the quantized graph for fidelity, and the MPK audit. A recipe
+  whose step differs from a helper keeps its own code, such as one that takes
+  a checkpoint like `weights.pth` as `--model` and parses its own command line.
+- It passes `Model.compile` an extra keyword argument only when the compiler
+  reads that argument and the value differs from its default. In Model
+  Compiler 3.0.0.2, `Model.compile` takes extra keyword arguments through
+  `**kwargs` and raises no error for one it never reads, so a leftover argument
+  looks like a setting and changes nothing. For example, 77 Models recipes
+  passed `deployable=True`, which that compiler reads nowhere.
 - It rewrites the graph with `surgery.py` and quantizes it. It then writes
   exactly one `<model-id>_<profile-id>_mpk.tar.gz` under
   `<output-dir>/<component-id>/` for each component, by passing
@@ -291,7 +307,7 @@ variant. Run each command from the root of a clone of the Models repository.
 
 1. Pick a build profile declared in `models/yolo26n/model.yaml`.
 2. Get the calibration images. Without SiMa access, create a folder named
-   `cal2017` with at least 50 COCO images from outside `val2017`, and set
+   `cal2017` with at least 20 COCO images from outside `val2017`, and set
    `calibration` to the directory that holds it. On SiMa's private network or
    VPN, with Dataset Registry access as
    [Datasets](https://github.com/sima-neat/models/blob/main/docs/datasets.md#set-up-artifactory-access-first)
@@ -340,9 +356,9 @@ instead.
 | `No module named 'afe'` | Activate the Model Compiler environment. In the Neat SDK, run `activate-model-compiler`. |
 | `No module named 'model_registry'` | Run from the repository root with `PYTHONPATH=tools`. |
 | `FileExistsError` from `convert.py` or `compile.py` | Delete the output directory, or name a new one. |
-| `model.yaml declares no build profile` or `expected exactly one build profile` | Pass a name from `build_profiles`. |
+| `unknown build profile` or `model.yaml declares no build profile` | Pass a name from `build_profiles`. |
 | `the INT8 build requires --dataset from dataset-registry` | Pass the calibration archive or directory. |
-| `cannot select 50 calibration images from 0 cal2017 images` | Put at least 50 images in a folder named `cal2017`. |
+| `cannot select 20 calibration images from 0 cal2017 images` | Put at least 20 images in a folder named `cal2017`. |
 | `model.yaml declares numerical_fidelity; pass --fidelity-dataset` | Pass the dataset that `numerical_fidelity.dataset` names. |
 | `yolo26n: resolve conversion with plan-stages before compilation` | Pass your own ONNX to `compile.py` with `--model`. |
 

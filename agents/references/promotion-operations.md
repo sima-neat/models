@@ -228,6 +228,28 @@ Dispatch **Promote model** from `develop` with the operation, the existing
 - Cancel an abandoned pending request explicitly. Changing the workflow does not cancel
   it.
 
+### When a promoted profile leaves `model.yaml`
+
+When a change comments out or removes a profile that has a promoted build, `withdraw` each
+of its promotions, on `develop` and on `main`, with that promotion's environment and
+`target_branch`. Do it before the customer portal is deployed, because the customer view
+lists `main`'s promoted builds and nothing else takes this one out:
+
+- The repository never writes or removes an approval. A catalog snapshot carries no
+  `approved_deployments` or `branch_deployments` of its own (`SERVER_OWNED_SELECTIONS` in
+  `registry.py`), and the registry fills them in.
+- A run that defers a conversion-backed model, such as the Main metadata run, keeps that
+  model's previous catalog entry ([promote the same candidate to
+  main](#promote-the-same-candidate-to-main)).
+- The browser lists every profile whose approval the registry returns, declared or not
+  (`deploymentCatalog` in `artifact-browser/branch-builds.js`).
+- `check-main-merge` does not ask whether a promoted profile is still declared
+  (`find_main_merge_blockers` in `stage_plan.py`), so it does not block the merge into
+  `main` on it.
+
+What the registry does with an approval whose profile is no longer declared is not
+verified here. Check the target catalog after the withdrawal.
+
 ## Recover a failed run
 
 | Situation | Action |

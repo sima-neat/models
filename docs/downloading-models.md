@@ -4,7 +4,7 @@ At the end of this page you have a model package on your machine, and you have r
 its measured results in the terminal. Use it when you want a model from the
 [Model Browser](https://developer.sima.ai/models/) without opening the browser.
 
-The examples use RF-DETR Nano (`rf_detr_nano`) and its `w8a8_w16a16` variant. A
+The examples use RF-DETR Nano (`rf_detr_nano`) and its `w8a16_w16a16` variant. A
 variant is one build profile of a model.
 
 ## Before you start
@@ -27,8 +27,8 @@ variant is one build profile of a model.
    sima-cli models list -q rf_detr_nano
    ```
 
-   You see `RF-DETR Nano (rf_detr_nano) — 1 variant`. Press Enter to select it, then
-   select the variant.
+   You see RF-DETR Nano (`rf_detr_nano`) with the number of its variants. Press Enter
+   to select it, then select the variant.
 
 2. Read the model card. It shows the model's details, the files of its package with
    their sizes and SHA-256 values, and its validation, accuracy, and benchmark results.
@@ -44,13 +44,13 @@ variant is one build profile of a model.
    in lowercase.
 
    ```bash
-   sima-cli models download --id rf_detr_nano --variant w8a8_w16a16
+   sima-cli models download --id rf_detr_nano --variant w8a16_w16a16
    ```
 
    You see the path of the package:
 
    ```text
-   Downloaded to models/rf_detr_nano/w8a8_w16a16/rf_detr_nano_w8a8_w16a16_default.zip
+   Downloaded to models/rf_detr_nano/w8a16_w16a16/rf_detr_nano_w8a16_w16a16_default.zip
    ```
 
    The ZIP holds one MPK per model component and the model's license file. An LLM, a
@@ -60,7 +60,7 @@ variant is one build profile of a model.
    `<model id>/<variant>/` under that folder.
 
    ```bash
-   sima-cli models download --id rf_detr_nano --variant w8a8_w16a16 --output ~/neat-models
+   sima-cli models download --id rf_detr_nano --variant w8a16_w16a16 --output ~/neat-models
    ```
 
 ## Use another branch
@@ -89,7 +89,7 @@ sima-cli models branches
 | Message | Cause | Fix |
 |---|---|---|
 | `Model 'lightstereo_s' is not downloadable: The LicenseRef-OpenStereo-Academic license does not permit redistribution.` | The model's license forbids redistribution. | Rebuild the model from its scripts. See [Getting started](getting-started.md). |
-| `No completed model build found for model 'rf_detr_nano', variant 'W8A8_W16A16'.` | The model ID or the variant ID does not match a build on that branch. | Copy both IDs from `sima-cli models list`. Write the variant ID in lowercase. |
+| `No completed model build found for model 'rf_detr_nano', variant 'W8A16_W16A16'.` | The model ID or the variant ID does not match a build on that branch. | Copy both IDs from `sima-cli models list`. Write the variant ID in lowercase. |
 | `No published model catalog for branch 'my-branch'` | The branch has no catalog. | Run `sima-cli models branches` and choose a listed branch. |
 | `Destination already exists: ... Use --force to replace it.` | You downloaded this package before. | Add `--force` to replace it, or use another `--output` folder. |
 | `was blocked by the registry CDN (HTTP 403)` | The registry may be limiting your requests. | Wait a few minutes, then run the command again. |

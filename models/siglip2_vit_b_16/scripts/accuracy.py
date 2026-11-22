@@ -322,7 +322,7 @@ def main(argv: list[str] | None = None) -> int:
         required=True,
         help="package root containing text_encoder/tokenizer.json and token_embeddings.npy",
     )
-    parser.add_argument("--limit", type=int, help="measure the first images only (local runs only)")
+    parser.add_argument("--limit", type=int, help="measure the first images only")
     args = parser.parse_args(argv)
     dataset_id, dataset_dir = args.dataset.split("=", 1)
     dataset = Path(dataset_dir)

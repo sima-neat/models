@@ -42,6 +42,9 @@ model-registry --version
 model-registry --help
 ```
 
+Install it again after you pull new changes. A model's `compile.py` imports
+helpers from this package, and an older package does not have them.
+
 The installer finds an active Model Compiler virtual environment, a Model
 Compiler installed with the NEAT SDK, or the standard standalone installation.
 For a custom location, name the environment explicitly:
@@ -317,7 +320,8 @@ Keep the report and log outside Git.
 
 `scripts/run_model_performance.sh <model-dir> <profile-id> <output-root>
 <result-directory>` runs the stage the way CI does against a local compile
-output: it also resolves and extracts the dataset, sets the MLA and CPU
+output: it also takes the dataset from the DevKit's dataset store
+([benchmark input](benchmarking.md#benchmark-input)), sets the MLA and CPU
 clocks, and runs `model-registry check-report`. It needs a full `model-registry`
 install from this checkout (`python -m pip install .`) with Dataset Registry,
 named by `REGISTRY_PYTHON`, a mounted NVMe at `/media/nvme`, and passwordless
@@ -367,6 +371,7 @@ When this checklist passes, continue to [Submit for review](contributing.md).
 
 | Failure | What to check |
 | --- | --- |
+| `No module named 'model_registry.compile_script'` | The installed `model-registry` is older than the model's `compile.py`. [Install it again](#install-the-contributor-tool). |
 | `unknown model id(s)` | Pass the folder name under `models/`. The folder name is the model ID, and `model.yaml` does not repeat it. |
 | Unknown or incompatible taxonomy ID | Select an ID from the canonical taxonomy or propose a reviewed taxonomy change. |
 | `source.sha256` or size mismatch | Hash and measure the exact immutable bytes addressed by `source.uri`. |

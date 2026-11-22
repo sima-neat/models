@@ -1,9 +1,9 @@
 """Classical Model Compiler build: BF16 CLIP and a mostly INT8 image detector.
 
 CLIP uses SkipCalibration and no calibration samples. Only detector INT8
-activation ranges are calibrated, using 64 images from the pinned Dataset
-Registry COCO calibration archive with all 80 COCO prompts. The build profile
-declares the detector calibration method and BF16 regions.
+activation ranges are calibrated, on images from the pinned Dataset Registry
+COCO calibration archive with all 80 COCO prompts. The build profile declares
+the detector's calibration sample count, calibration method, and BF16 regions.
 """
 import argparse
 import json

@@ -105,7 +105,7 @@ def main() -> None:
     parser.add_argument("--mpk", action="append", required=True, help="model=<archive>")
     parser.add_argument("--dataset", required=True, help=f"{DATASET}=<directory>")
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--limit", type=int, help="seeded image sample, for local runs only")
+    parser.add_argument("--limit", type=int, help="seeded image sample")
     args = parser.parse_args()
     mpks = [value.split("=", 1) for value in args.mpk]
     if len(mpks) != 1 or len(mpks[0]) != 2 or mpks[0][0] != "model":

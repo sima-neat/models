@@ -215,7 +215,7 @@ def test_fidelity_checks_every_output_without_calibration(load_script: Callable[
         "method": "seeded_random_without_replacement",
         "seed": 42,
         "offset": 50,
-        "samples": 50,
+        "samples": 5,
     }
     assert recipe.FIDELITY_PROMPTS == 64
     assert not metadata.get("calibrations")

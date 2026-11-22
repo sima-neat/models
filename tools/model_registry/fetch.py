@@ -3,26 +3,42 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import random
 import shutil
 import ssl
 import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import asdict, dataclass
 from http.client import HTTPException
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, BinaryIO
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 import certifi
 
-from .errors import FetchError
+from .errors import FetchError, ValidationError
+from .registry_http import read_registry_json_authenticated
 from .source import SourceSpec, redact_url, source_identity
 
 OpenUrl = Callable[..., BinaryIO]
 Sleeper = Callable[[float], None]
+ReadRequest = Callable[[str], dict[str, Any]]
+DownloadRequest = Callable[[str], bytes]
+
+# The stage job's list of a staged build profile's files, which the DevKit downloads by compile run.
+BUILD_FILES = "build-files.json"
+# The receipt naming the ordinary deployment a speculative profile is benchmarked against, at the staged root.
+BENCHMARK_BASELINE = "benchmark-baseline.json"
+# Attempts per registry download, each with a link the registry signs for it.
+REGISTRY_DOWNLOAD_ATTEMPTS = 5
+# HTTP statuses a registry download retries: a signed link that expired during an earlier attempt (403), throttling
+# (429), and a gateway that dropped the transfer (502 to 504).
+RETRIED_DOWNLOAD_STATUSES = frozenset({403, 429, 502, 503, 504})
 
 
 class _SizeMismatch(FetchError):
@@ -289,6 +305,46 @@ def _resolve_with_dataset_registry(dataset: dict[str, Any], cache_dir: Path | No
     return path
 
 
+# The index at the root of the DevKit pool's shared dataset archive share, and the prefix of each archive key it
+# lists. A key without the prefix is the archive's path below the index.
+SHARED_ARCHIVE_INDEX = "_release.json"
+SHARED_ARCHIVE_KEY_PREFIX = "datasets/artifactory/"
+
+
+def copy_shared_dataset(dataset: dict[str, Any], shared_archives: Path, copy_dir: Path) -> Path | None:
+    """Copy a pinned dataset archive from the DevKit pool's shared dataset archive share and verify it.
+
+    The share's index lists each archive with its SHA-256 and size, so the pin, never the dataset's name, finds
+    the archive. Returns the verified copy in ``copy_dir``, or None when the share cannot give the pinned
+    archive. A machine without the share returns None quietly. Any other miss says why in one line on stderr.
+    """
+    # Follow a link at the share's path once, so the index and the archive come from one folder even when the link
+    # moves meanwhile.
+    root = shared_archives.resolve()
+    index = root / SHARED_ARCHIVE_INDEX
+    if not index.is_file():
+        return None
+    label = f"{dataset['id']} {dataset['variant']}"
+    try:
+        archives = json.loads(index.read_text(encoding="utf-8"))["archives"]
+        key = next((item["key"] for item in archives
+                    if item["sha256"] == dataset["sha256"] and item["size"] == dataset["size_bytes"]), None)
+        if key is None:
+            print(f"The shared dataset archive share does not hold {label}. Resolving it through the Dataset "
+                  "Registry.", file=sys.stderr)
+            return None
+        if not key.startswith(SHARED_ARCHIVE_KEY_PREFIX):
+            raise ValueError(f"archive key {key!r} does not start with {SHARED_ARCHIVE_KEY_PREFIX}")
+        archive = root / key.removeprefix(SHARED_ARCHIVE_KEY_PREFIX)
+        copy = copy_dir / archive.name
+        shutil.copyfile(archive, copy)
+        return _verify_dataset(copy, dataset)
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, FetchError) as exc:
+        print(f"The shared dataset archive share cannot give {label} ({exc}). Resolving it through the Dataset "
+              "Registry.", file=sys.stderr)
+        return None
+
+
 def read_registry_json(url: str) -> dict[str, Any]:
     try:
         with urlopen(Request(url, headers={"User-Agent": "sima-neat-model-registry/0.1"}), timeout=30) as response:
@@ -312,3 +368,174 @@ def read_registry_json(url: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise FetchError(f"artifact registry endpoint did not return an object: {url}")
     return value
+
+
+@dataclass(frozen=True)
+class BuildFile:
+    """One registry file of a staged build: its path under the profile folder and the compile or package run
+    artifact that holds it."""
+
+    path: str
+    run_id: str
+    artifact: str
+    sha256: str
+    size_bytes: int
+
+
+def download_build_file(read: ReadRequest, api_url: str, profile_dir: Path, item: BuildFile,
+                        download: DownloadRequest | None = None) -> Path:
+    """Download one build file to its path under ``profile_dir`` and return that path. The file is kept only when
+    its bytes have the item's SHA-256 and size.
+
+    Each attempt reads the artifact from the registry again, so it downloads through a freshly signed link and only
+    while the registry still records the item's SHA-256 and size. A failed or cut-off transfer is retried. A
+    registry record that differs, a longer download, and a complete download with another SHA-256 are not.
+    """
+    destination = _build_file_path(profile_dir, item.path)
+    artifact_url = f"{api_url}/v1/runs/{item.run_id}/artifacts/{item.artifact}"
+    # Every build of an orchestrator run downloads at once, so a throttled or dropped transfer is expected.
+    for attempt in range(1, REGISTRY_DOWNLOAD_ATTEMPTS + 1):
+        url = _registered_download_url(read, artifact_url, item)
+        try:
+            _download_registry_file_once(url, destination, item, download)
+            return destination
+        except (_TransferError, _SizeMismatch) as exc:
+            refused = isinstance(exc.__cause__, HTTPError) and exc.__cause__.code not in RETRIED_DOWNLOAD_STATUSES
+            if refused or attempt == REGISTRY_DOWNLOAD_ATTEMPTS:
+                raise FetchError(f"could not download {item.path} after {attempt} attempt(s): {exc}") from exc
+        time.sleep(2 ** (attempt - 1) + random.uniform(0, 1))
+    raise AssertionError("unreachable")
+
+
+def _registered_download_url(read: ReadRequest, artifact_url: str, item: BuildFile) -> str:
+    """The download link the registry signs now for the artifact, which must still have the item's SHA-256 and
+    size."""
+    response = read(artifact_url)
+    registered = response.get("artifact") if isinstance(response, dict) else None
+    if (not isinstance(registered, dict) or registered.get("sha256") != item.sha256
+            or registered.get("size_bytes") != item.size_bytes
+            or not isinstance(registered.get("download_url"), str)):
+        raise ValidationError(f"{artifact_url} does not record the SHA-256 and size staged for {item.path}")
+    return registered["download_url"]
+
+
+def _download_registry_file_once(url: str, destination: Path, item: BuildFile,
+                                 download: DownloadRequest | None) -> None:
+    """Stream one download into a temporary file beside ``destination``, and replace ``destination`` with it only
+    when it is complete and has the item's SHA-256."""
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    digest = hashlib.sha256()
+    size = 0
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=destination.parent, delete=False) as output:
+            temporary = Path(output.name)
+            for chunk in _stream_download(url, download):
+                size += len(chunk)
+                if size > item.size_bytes:
+                    raise ValidationError(f"{destination.name}: download exceeds its declared size")
+                output.write(chunk)
+                digest.update(chunk)
+        if size < item.size_bytes:
+            raise _SizeMismatch(f"the download ended after {size} of {item.size_bytes} bytes")
+        if digest.hexdigest() != item.sha256:
+            raise ValidationError(f"{destination.name}: download failed SHA-256 verification")
+        temporary.replace(destination)
+    except (OSError, HTTPException) as exc:
+        raise _TransferError(str(exc)) from exc
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def _stream_download(url: str, download: DownloadRequest | None) -> Iterator[bytes]:
+    """Yield the body served at ``url`` in chunks, or the bytes an injected ``download`` returns for it."""
+    if download is not None:
+        yield download(url)
+        return
+    request = Request(url, headers={"User-Agent": "sima-neat-model-registry/0.1"})
+    with urlopen(request, timeout=120) as response:
+        yield from iter(lambda: response.read(1024 * 1024), b"")
+
+
+@dataclass(frozen=True)
+class StagedBuildFiles:
+    """What the DevKit downloads for a staged build profile: the registry the stage job read, every file the
+    benchmark reads, and the package whose runtime files the profile restores when the compile declared any."""
+
+    api_url: str
+    files: tuple[BuildFile, ...]
+    runtime_package: BuildFile | None = None
+
+    def write(self, profile_dir: Path) -> None:
+        (profile_dir / BUILD_FILES).write_text(json.dumps(asdict(self), indent=2, sort_keys=True) + "\n",
+                                               encoding="utf-8")
+
+    @classmethod
+    def read(cls, profile_dir: Path) -> StagedBuildFiles:
+        path = profile_dir / BUILD_FILES
+        try:
+            document = json.loads(path.read_text(encoding="utf-8"))
+            package = document.get("runtime_package")
+            return cls(
+                api_url=document["api_url"].rstrip("/"),
+                files=tuple(BuildFile(**item) for item in document["files"]),
+                runtime_package=BuildFile(**package) if package else None,
+            )
+        except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
+            raise ValidationError(f"could not read the staged build files {path}: {exc}") from exc
+
+
+def download_build(compiled_dir: str | Path, model_id: str, build_profile_id: str, *,
+                   read: ReadRequest | None = None, download: DownloadRequest | None = None) -> dict[str, int]:
+    """Download every file of a staged build profile, and of its staged benchmark baseline, by compile run.
+
+    The registry must still record each file with the SHA-256 and size the stage job staged, and the downloaded
+    bytes must match them. Runtime files are restored from their package archive, which is then removed.
+    Returns the number of files downloaded per ``<model>/<profile>``.
+    """
+    root = Path(compiled_dir).expanduser().resolve()
+    profiles = [(model_id, build_profile_id)]
+    baseline = root / BENCHMARK_BASELINE
+    if baseline.is_file():
+        identity = json.loads(baseline.read_text(encoding="utf-8"))
+        profiles.append((identity["model_id"], identity["build_profile_id"]))
+    return {
+        f"{model}/{profile}": _download_staged_profile(root / model / profile, read or read_registry_json_authenticated,
+                                                       download)
+        for model, profile in profiles
+    }
+
+
+def _download_staged_profile(profile_dir: Path, read: ReadRequest, download: DownloadRequest | None) -> int:
+    staged = StagedBuildFiles.read(profile_dir)
+
+    def fetch(item: BuildFile) -> Path:
+        return download_build_file(read, staged.api_url, profile_dir, item, download)
+
+    # The largest files start first, so the four transfers end close together.
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        list(executor.map(fetch, sorted(staged.files, key=lambda item: item.size_bytes, reverse=True)))
+    if staged.runtime_package is None:
+        return len(staged.files)
+
+    from .runtime_files import restore_runtime_files
+
+    archive = fetch(staged.runtime_package)
+    outputs = json.loads((profile_dir / "compile-outputs.json").read_text(encoding="utf-8"))
+    restore_runtime_files(archive, outputs["runtime_files"], profile_dir)
+    archive.unlink()
+    return len(staged.files) + 1
+
+
+def _build_file_path(profile_dir: Path, relative: str) -> Path:
+    """Resolve a staged file path inside its profile folder, through no symbolic link."""
+    posix = PurePosixPath(relative)
+    if not posix.parts or posix.is_absolute() or ".." in posix.parts or posix.as_posix() != relative:
+        raise ValidationError(f"unsafe staged build file path: {relative!r}")
+    path = profile_dir
+    for part in posix.parts:
+        path = path / part
+        if path.is_symlink():
+            raise ValidationError(f"unsafe staged build file path: {relative!r}")
+    return path

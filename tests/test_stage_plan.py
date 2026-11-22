@@ -633,7 +633,7 @@ def test_accuracy_script_change_measures_accuracy_only(stage_repository: Path) -
 
 
 @pytest.mark.parametrize(
-    "relative", sorted(set(ACCURACY_TOOLING) - set(BOARD_STAGE_TOOLING) - {"scripts/run_model_accuracy.sh"})
+    "relative", sorted(set(ACCURACY_TOOLING) - set(PERFORMANCE_TOOLING) - {"scripts/run_model_accuracy.sh"})
 )
 def test_shared_accuracy_tooling_change_measures_accuracy_only(stage_repository: Path, relative: str) -> None:
     document = _published_catalog(stage_repository)
@@ -644,6 +644,48 @@ def test_shared_accuracy_tooling_change_measures_accuracy_only(stage_repository:
 
     assert plan["compile"]["include"] == []
     assert _selected(plan, "benchmark") == [("w8a16", ["accuracy"]), ("w8a8", ["accuracy"])]
+
+
+def test_shared_dataset_unpack_change_measures_both_stages(stage_repository: Path) -> None:
+    document = _published_catalog(stage_repository)
+    registry = FakeRegistry({BRANCH: document}, _published_runs(document))
+    _edit(stage_repository, "../../scripts/unpack_benchmark_datasets.sh")
+
+    plan = _plan(stage_repository, registry)
+
+    # Both stages read the datasets that one script unpacks for the job.
+    assert plan["compile"]["include"] == []
+    assert _selected(plan, "benchmark") == [
+        ("w16a16", ["performance"]),
+        ("w8a16", ["performance", "accuracy"]),
+        ("w8a8", ["performance", "accuracy"]),
+    ]
+
+
+def _set_accuracy_samples(repository: Path, samples: int) -> None:
+    model_yaml = repository / "models" / PLAN_MODEL / "model.yaml"
+    model = yaml.safe_load(model_yaml.read_text(encoding="utf-8"))
+    model["accuracy"]["samples"] = samples
+    model_yaml.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
+
+
+def test_accuracy_sample_cap_measures_accuracy_only(stage_repository: Path) -> None:
+    document = _published_catalog(stage_repository)
+    registry = FakeRegistry({BRANCH: document}, _published_runs(document))
+    _set_accuracy_samples(stage_repository, 500)
+
+    plan = _plan(stage_repository, registry)
+
+    # A capped evaluation is another measurement, so the accuracy results rerun and performance stays.
+    assert plan["compile"]["include"] == []
+    assert _selected(plan, "benchmark") == [("w8a16", ["accuracy"]), ("w8a8", ["accuracy"])]
+
+
+def test_accuracy_sample_cap_must_be_positive(stage_repository: Path) -> None:
+    _set_accuracy_samples(stage_repository, 0)
+
+    with pytest.raises(ValidationError, match="samples"):
+        load_models(stage_repository)
 
 
 def test_artifact_verification_change_reruns_nothing(stage_repository: Path) -> None:

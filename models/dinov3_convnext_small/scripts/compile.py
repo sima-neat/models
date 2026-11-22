@@ -14,10 +14,8 @@ import json
 import logging
 import math
 import os
-import tarfile
 import tempfile
-from dataclasses import dataclass
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -34,6 +32,7 @@ from afe.apis.loaded_net import load_model
 from afe.apis.model import L2CachingMode
 from afe.load.importers.general_importer import onnx_source
 from calibration import load_images, select_names
+from model_registry.compile_script import component_parameters, fidelity_report, read_mpk_manifest
 from model_registry.conversion import conversion_outputs
 from model_registry.model import load_model as load_metadata
 from surgery import INPUT, INTERFACE, OUTPUTS, export_network
@@ -43,14 +42,6 @@ MODEL_ID = MODEL_DIR.name
 COMPONENT_ID = "model"
 # MPK manifests record each public tensor's size in bytes; the MPK keeps the ONNX float32 interface.
 INPUT_BYTES = {INPUT: math.prod(INTERFACE[INPUT]) * 4}
-
-
-def _parameters(metadata: dict[str, Any], profile_id: str) -> dict[str, Any]:
-    profiles = [item for item in metadata["build_profiles"] if item["id"] == profile_id]
-    if len(profiles) != 1:
-        raise ValueError(f"expected exactly one build profile named {profile_id!r}")
-    (binding,) = [item for item in profiles[0]["components"] if item["id"] == COMPONENT_ID]
-    return binding["parameters"]
 
 
 def _quantization(precision: str) -> QuantizationParams:
@@ -87,26 +78,9 @@ def quantize(source: Path, profile_id: str, precision: str) -> Any:
         raise RuntimeError(f"Model Compiler failed to quantize {MODEL_ID} {profile_id}") from error
 
 
-def _read_mpk_manifest(archive: Path) -> tuple[list[str], dict[str, Any]]:
-    with tarfile.open(archive, "r:gz") as stream:
-        members = stream.getmembers()
-        for member in members:
-            path = PurePosixPath(member.name)
-            if path.is_absolute() or ".." in path.parts or member.issym() or member.islnk():
-                raise RuntimeError(f"unsafe MPK member: {member.name}")
-        names = [member.name for member in members]
-        manifests = [name for name in names if name.endswith("_mpk.json")]
-        if len(manifests) != 1:
-            raise RuntimeError(f"expected one MPK manifest, found {manifests}")
-        source = stream.extractfile(manifests[0])
-        if source is None:
-            raise RuntimeError(f"cannot read MPK manifest: {manifests[0]}")
-        return names, json.load(source)
-
-
 def audit_mpk(archive: Path) -> None:
     """Require one MLA plugin, no CPU plugins and the model's input."""
-    names, manifest = _read_mpk_manifest(archive)
+    names, manifest = read_mpk_manifest(archive)
     elfs = [name for name in names if name.endswith(".elf")]
     shared_objects = [name for name in names if name.endswith(".so") or ".so." in name]
     plugins = manifest.get("plugins", [])
@@ -132,7 +106,6 @@ def compile_model(quantized: Any, component_dir: Path) -> Path:
             log_level=logging.INFO,
             tessellate_parameters=None,
             l2_caching_mode=L2CachingMode.NONE,
-            deployable=True,
             # Not the compiler's default (False); no build of this recipe was measured without it.
             layer_norm_use_fp32_intermediates=True,
         )
@@ -146,49 +119,6 @@ def compile_model(quantized: Any, component_dir: Path) -> Path:
     return archives[0]
 
 
-@dataclass
-class _OutputError:
-    """Running sums of one output's error against the reference ONNX, over every fidelity image."""
-
-    name: str
-    count: int = 0
-    dot: float = 0.0
-    expected_squared: float = 0.0
-    actual_squared: float = 0.0
-    error_squared: float = 0.0
-    error_absolute: float = 0.0
-    max_absolute_error: float = 0.0
-
-    def add(self, expected: np.ndarray, actual: np.ndarray) -> None:
-        expected = np.asarray(expected, dtype=np.float64)
-        actual = np.asarray(actual, dtype=np.float64)
-        if expected.shape != actual.shape:
-            raise RuntimeError(f"{self.name} shape mismatch: {expected.shape} != {actual.shape}")
-        if not np.isfinite(expected).all() or not np.isfinite(actual).all():
-            raise RuntimeError(f"{self.name} contains non-finite values")
-        error = actual - expected
-        absolute = np.abs(error)
-        self.count += expected.size
-        self.dot += float(np.dot(expected.ravel(), actual.ravel()))
-        self.expected_squared += float(np.sum(np.square(expected)))
-        self.actual_squared += float(np.sum(np.square(actual)))
-        self.error_squared += float(np.sum(np.square(error)))
-        self.error_absolute += float(np.sum(absolute))
-        self.max_absolute_error = max(self.max_absolute_error, float(np.max(absolute)))
-
-    def summary(self) -> dict[str, Any]:
-        expected_rms = max(np.sqrt(self.expected_squared / self.count), np.finfo(np.float64).eps)
-        norm = np.sqrt(self.expected_squared * self.actual_squared)
-        cosine = self.dot / norm if norm else float(self.expected_squared == self.actual_squared)
-        return {
-            "name": self.name,
-            "cosine_similarity": float(np.clip(cosine, -1.0, 1.0)),
-            "normalized_rmse": float(np.sqrt(self.error_squared / self.count) / expected_rms),
-            "mean_absolute_error": float(self.error_absolute / self.count),
-            "max_absolute_error": self.max_absolute_error,
-        }
-
-
 def measure_fidelity(
     reference: Path, quantized: Any, dataset: Path, fidelity: dict[str, Any], profile_id: str
 ) -> dict[str, Any]:
@@ -196,29 +126,27 @@ def measure_fidelity(
     selection = fidelity["selection"]
     names = select_names(dataset, int(selection["seed"]), int(selection["offset"]), int(selection["samples"]))
     session = ort.InferenceSession(str(reference), providers=["CPUExecutionProvider"])
-    errors = [_OutputError(name) for name in fidelity["outputs"]]
+    compared = []
     for image in load_images(dataset, names):
         expected = dict(zip(OUTPUTS, session.run(list(OUTPUTS), {INPUT: image.transpose(2, 0, 1)[None]})))
         # The compiler takes the image channels-last. The outputs' shapes differ, so each is matched by its shape.
         executed = quantized.execute(inputs={InputName(INPUT): image[None]}, use_jax=True)
         outputs = {np.asarray(output).shape: np.asarray(output) for output in executed}
-        for error in errors:
-            shape = tuple(INTERFACE[error.name])
+        sample = {}
+        for name in fidelity["outputs"]:
+            shape = tuple(INTERFACE[name])
             if shape not in outputs:
-                raise RuntimeError(f"the quantized graph returned no {error.name} of shape {shape}: {list(outputs)}")
-            error.add(expected[error.name], outputs[shape])
-    return {
-        "schema_version": 1,
-        "model_id": MODEL_ID,
-        "build_profile_id": profile_id,
-        "status": fidelity["status"],
-        "reference": "Reference ONNX, timm's network with the exact GELU (ONNX Runtime)",
-        "candidate": "Quantized AFE graph (JAX execute)",
-        "dataset": {key: fidelity["dataset"][key] for key in ("id", "variant", "sha256")},
-        "selection": selection,
-        "samples": len(names),
-        "metrics": [error.summary() for error in errors],
-    }
+                raise RuntimeError(f"the quantized graph returned no {name} of shape {shape}: {list(outputs)}")
+            sample[name] = (expected[name], outputs[shape])
+        compared.append(sample)
+    return fidelity_report(
+        MODEL_ID,
+        profile_id,
+        fidelity,
+        compared,
+        reference="Reference ONNX, timm's network with the exact GELU (ONNX Runtime)",
+        candidate="Quantized AFE graph (JAX execute)",
+    )
 
 
 def main() -> int:
@@ -237,9 +165,8 @@ def main() -> int:
         parser.error(f"--model must be the converted weights.pth, not {weights}")
     _, reference_name = conversion_outputs(MODEL_DIR)
     reference = weights.with_name(reference_name)
-    metadata = load_metadata(MODEL_DIR)
-    precision = str(_parameters(metadata, args.build_profile)["precision"])
-    fidelity = metadata["numerical_fidelity"]
+    precision = str(component_parameters(MODEL_DIR, args.build_profile, COMPONENT_ID)["precision"])
+    fidelity = load_metadata(MODEL_DIR)["numerical_fidelity"]
     output_dir = args.output_dir.expanduser().resolve()
     with tempfile.TemporaryDirectory(prefix=f"{MODEL_ID}-onnx-", dir=os.environ.get("RUNNER_TEMP")) as temporary:
         source = export_network(weights, reference, Path(temporary) / "model.onnx")

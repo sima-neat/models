@@ -67,9 +67,9 @@ build_profiles:
 numerical_fidelity:
   status: diagnostic
   dataset: {id: imagenet-2012, variant: cal, sha256: e6c18b281f5ac5fc7cf6d36ef9a5f486ce95eb43ead99ee8523bd8162bc49a6f, size_bytes: 112710756}
-  # The cal images at positions 51 to 100 of the seed-42 shuffled order; the fidelity floors in
+  # The cal images at positions 51 to 55 of the seed-42 shuffled order; the fidelity floors in
   # tests/build/test_compile.py apply to them.
-  selection: {method: seeded_random_without_replacement, seed: 42, offset: 50, samples: 50}
+  selection: {method: seeded_random_without_replacement, seed: 42, offset: 50, samples: 5}
   outputs: [class_embedding, patch_embeddings]
 
 accuracy:

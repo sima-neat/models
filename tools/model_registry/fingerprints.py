@@ -22,6 +22,7 @@ from .source import source_identity
 COMPILE_TOOLING = (
     "scripts/run_model_compilation.sh",
     "tools/model_registry/model.py",
+    "tools/model_registry/compile_script.py",
     "tools/model_registry/mla_stage_simulation.py",
 )
 
@@ -42,7 +43,11 @@ BOARD_STAGE_TOOLING = (
     "schemas/model-report.schema.json",
     "tools/model_registry/report_publication.py",
 )
-PERFORMANCE_TOOLING = (*BOARD_STAGE_TOOLING, "scripts/run_model_performance.sh")
+PERFORMANCE_TOOLING = (
+    *BOARD_STAGE_TOOLING,
+    "scripts/unpack_benchmark_datasets.sh",
+    "scripts/run_model_performance.sh",
+)
 LLIMA_PERFORMANCE_TOOLING = (
     "tools/model_report/generation_benchmark.py",
     "tools/model_report/board_telemetry.py",
@@ -54,6 +59,7 @@ ACCURACY_TOOLING = (
     "tools/model_registry/runtime_files.py",
     "scripts/install_dataset_registry.sh",
     "scripts/cache_accuracy_dataset.sh",
+    "scripts/unpack_benchmark_datasets.sh",
     "scripts/run_model_accuracy.sh",
 )
 

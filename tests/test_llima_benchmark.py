@@ -354,6 +354,55 @@ def test_declared_baseline_stages_its_deployment_and_records_the_compilation(mon
     assert receipt["deployment"] == "gemma_4_e2b_it_textonly/w4a16/model/deployment"
 
 
+def test_speculative_target_and_its_baseline_download_by_compile_run(monkeypatch, tmp_path):
+    import hashlib
+
+    from model_registry import registry
+    from model_registry.fetch import BuildFile, StagedBuildFiles, download_build
+
+    api = "https://registry.example.invalid"
+    reads, objects = {}, {}
+
+    def staged_deployment(model_id, run_id, paths):
+        """Stage a LLiMa deployment as stage-registry-build does: its file list, no file."""
+        files = []
+        for index, path in enumerate(paths):
+            payload = f"{model_id}/{path}".encode()
+            digest = hashlib.sha256(payload).hexdigest()
+            artifact = f"file-{index}"
+            files.append(BuildFile(f"model/deployment/{path}", run_id, artifact, digest, len(payload)))
+            reads[f"{api}/v1/runs/{run_id}/artifacts/{artifact}"] = {"artifact": {
+                "sha256": digest, "size_bytes": len(payload), "download_url": f"https://objects.invalid/{digest}",
+            }}
+            objects[f"https://objects.invalid/{digest}"] = payload
+        profile = tmp_path / model_id / "w4a16"
+        profile.mkdir(parents=True)
+        StagedBuildFiles(api, tuple(files)).write(profile)
+
+    def stage(**kwargs):
+        staged_deployment(kwargs["model_id"], "ordinary-run", ["devkit/vlm_config.json", "elf_files/language.elf"])
+        return {"count": 1, "outputs": [{"component_id": "model", "run_id": "ordinary-run",
+                                         "artifact_sha256": "a" * 64}]}
+
+    # The target's single component holds the draft beside the target, so one file list covers both.
+    staged_deployment("gemma_4_e2b_it_textonly_mtp", "target-run",
+                      ["devkit/vlm_config.json", "elf_files/language.elf", "draft/elf_files/draft.elf"])
+    monkeypatch.setattr(registry, "stage_catalog_build", stage)
+    registry.stage_benchmark_baseline(repository=ROOT, output_dir=tmp_path,
+        model_id="gemma_4_e2b_it_textonly_mtp", build_profile_id="w4a16", api_url=api)
+
+    counts = download_build(tmp_path, "gemma_4_e2b_it_textonly_mtp", "w4a16", read=reads.__getitem__,
+                            download=objects.__getitem__)
+
+    assert counts == {"gemma_4_e2b_it_textonly_mtp/w4a16": 3, "gemma_4_e2b_it_textonly/w4a16": 2}
+    target = tmp_path / "gemma_4_e2b_it_textonly_mtp/w4a16/model/deployment"
+    draft = b"gemma_4_e2b_it_textonly_mtp/draft/elf_files/draft.elf"
+    assert (target / "draft/elf_files/draft.elf").read_bytes() == draft
+    receipt = json.loads((tmp_path / "benchmark-baseline.json").read_text())
+    baseline = tmp_path / receipt["deployment"]
+    assert (baseline / "elf_files/language.elf").read_bytes() == b"gemma_4_e2b_it_textonly/elf_files/language.elf"
+
+
 @pytest.mark.parametrize("skip_bfcl", [False, True])
 def test_speculative_publication_registers_both_models_and_per_dataset_counts(tmp_path, skip_bfcl):
     import hashlib

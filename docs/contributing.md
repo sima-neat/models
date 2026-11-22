@@ -184,6 +184,12 @@ model with `build-on-demand: true` but compiles it only on request. See
 The workflow runs on every push to this repository, not only on a merge. When
 you push your branch here, CI compiles and benchmarks its changed builds too.
 
+A merge never stops a run that is already working. When another merge to
+`develop` is still running, yours waits for it and then starts. When several
+merges arrive while one runs, only the newest waits. It holds the changes of
+the ones it replaced. On your own branch, a newer push stops the running run
+and starts again, keeping the builds and results the stopped run published.
+
 Follow the run in the repository's Actions tab. Each build has its own compile
 job and benchmark jobs, grouped under the build's name. A successful compile
 does not by itself mean the benchmark succeeded, so check each build's
@@ -197,7 +203,10 @@ When a stage fails:
 - A failed benchmark test still publishes its report, with test status
   `failed`, and then fails the run. Fix the script, or update `expected` in
   `tests/tests.yaml` when a reviewed change moved the value ([set up
-  `tests/tests.yaml`](adding-a-model.md#set-up-teststestsyaml)).
+  `tests/tests.yaml`](adding-a-model.md#set-up-teststestsyaml)). When the new
+  value is more than 8% below the reference score, comment the profile out
+  instead ([comment out a variant far below its reference
+  score](adding-a-model.md#comment-out-a-variant-far-below-its-reference-score)).
 - When the failure is not in your model's files, tell a maintainer.
 
 Each fix is a focused change to `model.yaml`, the recipe, or a script, with
@@ -225,4 +234,8 @@ If CI exposes a model-specific failure after the merge, update the recipe or
 `model.yaml` with reproducible evidence and tests. To withhold a build profile
 that does not work, comment it out in `model.yaml`, so that CI neither
 compiles nor benchmarks it. Do that only after the profile is proven unusable,
-not as a shortcut around an unresolved failure.
+not as a shortcut around an unresolved failure. A profile whose accuracy is
+more than 8% below its reference score counts as unusable, as [comment out a
+variant far below its reference
+score](adding-a-model.md#comment-out-a-variant-far-below-its-reference-score)
+describes.

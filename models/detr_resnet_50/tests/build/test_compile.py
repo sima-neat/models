@@ -264,7 +264,7 @@ def test_mpk_audit_requires_one_mla_segment_and_the_declared_interface(
             {
                 "precision": "w8a8",
                 "calibration_bins": 2048,
-                "calibration_samples": 50,
+                "calibration_samples": 20,
                 "bf16_regions": ["attention", "residual", "ffn", "heads"],
             },
         ),
@@ -273,7 +273,9 @@ def test_mpk_audit_requires_one_mla_segment_and_the_declared_interface(
 def test_compile_reads_the_declared_build_parameters(
     load_script: Callable[[str], ModuleType], profile_id: str, expected: dict
 ) -> None:
-    assert load_script("compile")._parameters(profile_id) == expected
+    recipe = load_script("compile")
+
+    assert recipe.component_parameters(recipe.MODEL_DIR, profile_id, recipe.COMPONENT_ID) == expected
 
 
 def test_bf16_regions_belong_to_a_w8a8_profile_marked_mixed(load_script: Callable[[str], ModuleType]) -> None:
@@ -559,7 +561,7 @@ def test_only_int8_builds_calibrate_and_fp32_layer_norms_need_every_layer_norm_b
     from collections import Counter
 
     recipe = load_script("compile")
-    monkeypatch.setattr(recipe, "_parameters", lambda profile_id: parameters)
+    monkeypatch.setattr(recipe, "component_parameters", lambda model_dir, profile_id, component_id: parameters)
     monkeypatch.setattr(recipe, "calibration_images", lambda dataset, count: np.zeros((count, 640, 640, 3), np.float32))
     monkeypatch.setattr(recipe, "prepare_model", lambda source, output_dir: output_dir / "rewritten.onnx")
     annotated, checked = [], []

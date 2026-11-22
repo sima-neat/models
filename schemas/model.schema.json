@@ -125,7 +125,10 @@
           "properties": {
             "method": {"const": "seeded_random_without_replacement"},
             "seed": {"type": "integer", "minimum": 0}, "offset": {"type": "integer", "minimum": 0},
-            "samples": {"type": "integer", "minimum": 1}
+            "samples": {
+              "description": "The fidelity samples scripts/compile.py compares. At most 5, because the compile runs the source and the quantized graph on each one.",
+              "type": "integer", "minimum": 1, "maximum": 5
+            }
           }
         },
         "outputs": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}}
@@ -136,6 +139,10 @@
       "type": "object", "additionalProperties": false, "required": ["datasets"],
       "properties": {
         "datasets": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/dataset"}},
+        "samples": {
+          "description": "Optional cap on the samples scripts/accuracy.py evaluates on each dataset, passed as --limit. Omitted, it evaluates every sample.",
+          "type": "integer", "minimum": 1
+        },
         "build_profiles": {"$ref": "#/$defs/profileIds"}
       }
     },

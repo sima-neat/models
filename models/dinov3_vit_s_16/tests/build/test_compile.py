@@ -8,17 +8,20 @@ import tarfile
 from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
+from unittest.mock import MagicMock
 
 import numpy as np
 import onnx
 import pytest
+from model_registry.errors import ValidationError
 from PIL import Image
 
 MODEL_DIR = Path(__file__).resolve().parents[2]
-# The least cosine with reference.onnx a build keeps on the 50 fidelity images, per output. Model Compiler
-# 3.0.0.dev0+develop.2291 measured the least output on all 50 at w16a16 0.99974, w8a16 0.99703; CI
-# compiles with Model Compiler 3.0.0.2. A floor allows twice the measured loss, 1 - cosine, when measured on all 50
-# images and three times when measured on fewer, rounded down to three decimals.
+# The least cosine with reference.onnx a build keeps on the 5 fidelity images, per output. Model Compiler
+# 3.0.0.dev0+develop.2291 measured the least output on the 50 cal images at positions 51 to 100 of the seed-42 shuffled
+# order, whose first 5 are the fidelity images: w16a16 0.99974, w8a16 0.99703; CI compiles with Model Compiler 3.0.0.2.
+# A floor allows twice the measured loss, 1 - cosine, when measured on all 50 images and three times when measured on
+# fewer, rounded down to three decimals.
 FIDELITY_FLOORS = {"w16a16": 0.999, "w8a16": 0.994}
 
 
@@ -217,13 +220,14 @@ def test_compile_reads_each_declared_build_profile(load_script: Callable[[str], 
     metadata = recipe.load_metadata(recipe.MODEL_DIR)
 
     for profile in metadata["build_profiles"]:
-        assert recipe._parameters(metadata, profile["id"]) == {"precision": profile["id"]}
+        parameters = recipe.component_parameters(recipe.MODEL_DIR, profile["id"], recipe.COMPONENT_ID)
+        assert parameters == {"precision": profile["id"]}
         # BF16 activations take no calibration images.
         assert "calibration" not in profile["components"][0]
     assert metadata["numerical_fidelity"]["outputs"] == list(recipe.OUTPUTS)
     assert {profile["id"] for profile in metadata["build_profiles"]} == set(FIDELITY_FLOORS)
-    with pytest.raises(ValueError, match="exactly one build profile named 'w32a32'"):
-        recipe._parameters(metadata, "w32a32")
+    with pytest.raises(ValidationError, match="unknown build profile: w32a32"):
+        recipe.component_parameters(recipe.MODEL_DIR, "w32a32", recipe.COMPONENT_ID)
 
 
 def test_bf16_activations_skip_calibration(
@@ -302,19 +306,42 @@ def test_a_compiler_failure_fails_the_build(tmp_path: Path, load_script: Callabl
         recipe.compile_model(Quantized(), tmp_path / "model")
 
 
-def test_fidelity_error_sums_match_the_metrics_over_all_samples(load_script: Callable[[str], ModuleType]) -> None:
+def test_fidelity_compares_the_quantized_embeddings_with_reference_onnx(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, load_script: Callable[[str], ModuleType]
+) -> None:
     recipe = load_script("compile")
-    error = recipe._OutputError("class_embedding")
-    error.add(np.asarray([[1.0, 0.0]]), np.asarray([[1.0, 0.0]]))
-    error.add(np.asarray([[0.0, 2.0]]), np.asarray([[0.0, 1.0]]))
-    summary = error.summary()
+    fidelity = recipe.load_metadata(recipe.MODEL_DIR)["numerical_fidelity"]
+    image_values = (1.0, 2.0)
+    images = np.stack([np.full((224, 224, 3), value, np.float32) for value in image_values])
+    reference_inputs = []
 
-    assert summary["name"] == "class_embedding"
-    assert summary["cosine_similarity"] == pytest.approx(3 / np.sqrt(5 * 2))
-    assert summary["max_absolute_error"] == pytest.approx(1.0)
-    assert summary["mean_absolute_error"] == pytest.approx(0.25)
-    with pytest.raises(RuntimeError, match="shape mismatch"):
-        error.add(np.zeros((1, 2)), np.zeros((1, 3)))
+    class Session:
+        def __init__(self, path: str, providers: list[str]) -> None:
+            pass
+
+        def run(self, outputs: list[str], feeds: dict[str, np.ndarray]) -> list[np.ndarray]:
+            reference_inputs.append(feeds["pixel_values"].shape)
+            return [np.full(recipe.OUTPUTS[name], feeds["pixel_values"][0, 0, 0, 0], np.float32) for name in outputs]
+
+    quantized = MagicMock()
+    # The outputs come back out of order, and measure_fidelity matches them by shape. Each image's patch embeddings
+    # come back 1 too high.
+    quantized.execute.side_effect = [
+        [np.full(recipe.OUTPUTS["patch_embeddings"], value + 1), np.full(recipe.OUTPUTS["class_embedding"], value)]
+        for value in image_values
+    ]
+    monkeypatch.setattr(recipe, "select_names", lambda dataset, seed, offset, samples: ["a.JPEG", "b.JPEG"])
+    monkeypatch.setattr(recipe, "load_images", lambda dataset, names: images)
+    monkeypatch.setattr(recipe, "ort", MagicMock(InferenceSession=Session))
+
+    report = recipe.measure_fidelity(tmp_path / "reference.onnx", quantized, tmp_path / "cal", fidelity, "w8a16")
+
+    assert reference_inputs == [(1, 3, 224, 224)] * 2
+    assert report["model_id"] == "dinov3_vit_s_16"
+    assert (report["build_profile_id"], report["samples"]) == ("w8a16", 2)
+    class_embedding, patch_embeddings = report["metrics"]
+    assert (class_embedding["name"], class_embedding["max_absolute_error"]) == ("class_embedding", 0.0)
+    assert (patch_embeddings["name"], patch_embeddings["mean_absolute_error"]) == ("patch_embeddings", 1.0)
 
 
 def test_audit_requires_one_mla_plugin_no_cpu_plugin_and_the_input(

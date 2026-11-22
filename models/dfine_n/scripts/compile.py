@@ -10,7 +10,6 @@ evaluation is the task gate.
 
 from __future__ import annotations
 
-import argparse
 import json
 import logging
 import math
@@ -40,6 +39,7 @@ from afe.core.configs import QuantizationPrecision
 from afe.core.utils import convert_data_generator_to_iterable
 from afe.load.importers.general_importer import onnx_source
 from calibration import decoder_inputs, load_images, select_images, to_afe_layout
+from model_registry.compile_script import parse_arguments
 from model_registry.fetch import sha256_file
 from model_registry.model import load_model as load_metadata
 from sima_utils.data.data_generator import DataGenerator
@@ -66,7 +66,7 @@ def calibrates(parameters):
     return "calibration_samples" in parameters
 
 
-def component_parameters(metadata, profile_id):
+def _component_parameters(metadata, profile_id):
     """Each component's build parameters, as model.yaml declares them."""
     profiles = [profile for profile in metadata["build_profiles"] if profile["id"] == profile_id]
     if len(profiles) != 1:
@@ -373,7 +373,7 @@ def calibration_images(parameters, dataset, fidelity_dataset, selection):
 
 def compile_model(source, profile, dataset, fidelity_dataset, output_dir):
     metadata = load_metadata(MODEL_DIR)
-    parameters = component_parameters(metadata, profile)
+    parameters = _component_parameters(metadata, profile)
     selection = metadata["numerical_fidelity"]["selection"]
     calibration_names = calibration_images(parameters, dataset, fidelity_dataset, selection)
     evaluation_names = select_images(fidelity_dataset, selection["seed"], selection["offset"], selection["samples"])
@@ -430,26 +430,10 @@ def compile_model(source, profile, dataset, fidelity_dataset, output_dir):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model", type=Path, required=True)
-    parser.add_argument("--build-profile", required=True)
-    parser.add_argument("--compile-invocation", required=True)
-    parser.add_argument("--dataset", type=Path, help="calibration images; required when a component calibrates")
-    parser.add_argument("--fidelity-dataset", type=Path, required=True)
-    parser.add_argument("--output-dir", type=Path, required=True)
-    args = parser.parse_args()
-    if args.compile_invocation != args.build_profile:
-        parser.error("a build profile compiles in one invocation named after it")
-    for path in (args.model, args.dataset, args.fidelity_dataset):
-        if path is not None and not path.exists():
-            parser.error(f"input does not exist: {path}")
+    arguments = parse_arguments(__doc__, MODEL_DIR)
     logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
     compile_model(
-        args.model.resolve(),
-        args.build_profile,
-        args.dataset.resolve() if args.dataset else None,
-        args.fidelity_dataset.resolve(),
-        args.output_dir.resolve(),
+        arguments.model, arguments.build_profile, arguments.dataset, arguments.fidelity_dataset, arguments.output_dir
     )
     return 0
 

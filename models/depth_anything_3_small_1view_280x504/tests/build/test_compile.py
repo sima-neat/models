@@ -1,11 +1,13 @@
 """Static input, quantization, projection equivalence and real compiled-package contracts."""
 
 import json
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
 import pytest
+from model_registry.errors import ValidationError
 from model_registry.model import load_model
 
 
@@ -15,6 +17,48 @@ def test_model_uses_a_single_uncalibrated_w8a16_profile(model_dir):
     assert not model["calibrations"]
     assert "calibration" not in model["build_profiles"][0]["components"][0]
     assert model["architecture"]["id"] == "depth_anything_3"
+
+
+def test_compile_reads_the_declared_build_parameters(load_script):
+    recipe = load_script("compile")
+
+    parameters = recipe.component_parameters(recipe.MODEL_DIR, "w8a16", recipe.COMPONENT_ID)
+
+    assert parameters == {"precision": "w8a16", "input_shape": [1, 3, 280, 504]}
+
+
+def test_compile_rejects_an_undeclared_build_profile(load_script):
+    recipe = load_script("compile")
+
+    with pytest.raises(ValidationError, match="unknown build profile: w32a32"):
+        recipe.component_parameters(recipe.MODEL_DIR, "w32a32", recipe.COMPONENT_ID)
+
+
+@pytest.mark.parametrize(
+    ("source", "invocation", "message"),
+    [
+        ("model.onnx", "model", "a build profile compiles in one invocation named after it"),
+        ("weights.pth", "w8a16", "--model must be the verified ONNX source"),
+    ],
+)
+def test_compile_main_rejects_an_invocation_the_runner_would_not_make(
+    load_script, tmp_path, monkeypatch, capsys, source, invocation, message
+):
+    recipe = load_script("compile")
+    (tmp_path / source).touch()
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["compile.py", "--model", str(tmp_path / source), "--output-dir", str(tmp_path / "out"),
+         "--build-profile", "w8a16", "--compile-invocation", invocation],
+    )
+
+    with pytest.raises(SystemExit) as stopped:
+        recipe.main()
+
+    assert stopped.value.code == 2
+    assert message in capsys.readouterr().err
+    assert not (tmp_path / "out").exists()
 
 
 def test_preprocessing_preserves_rgb_and_applies_imagenet_normalization(load_script):

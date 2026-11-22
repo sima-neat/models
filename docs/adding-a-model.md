@@ -211,20 +211,21 @@ scripts/compile.py --model <verified-source> --output-dir <new-directory> \
 
 `--model` is the verified source. The runner passes `--dataset` when the
 profile names a calibration and `--fidelity-dataset` when `model.yaml`
-declares `numerical_fidelity`. The recipe:
+declares `numerical_fidelity`. The recipe does this:
 
-- reads its effective build profile with `model_registry.model.load_model`, so
-  dataset names and omitted defaults reach execution consistently;
-- writes exactly one `<model-id>_<profile-id>_mpk.tar.gz` under
+- It reads each component's `parameters` from `model.yaml` with
+  `component_parameters` from `model_registry.compile_script`, so that it
+  compiles with the values the compile fingerprint covers.
+- It writes exactly one `<model-id>_<profile-id>_mpk.tar.gz` under
   `<output-dir>/<component-id>/` for each component, by passing
-  `<model-id>_<profile-id>` to the compiler as the model name; a profile with
-  several components adds `_<component-id>` to both;
-- writes `fidelity.json` in `<output-dir>` when `model.yaml` declares
-  `numerical_fidelity`;
-- for several components, also writes `<output-dir>/compile-outputs.json`
+  `<model-id>_<profile-id>` to the compiler as the model name. A profile with
+  several components adds `_<component-id>` to both.
+- It writes `fidelity.json` in `<output-dir>` when `model.yaml` declares
+  `numerical_fidelity`.
+- For several components, it also writes `<output-dir>/compile-outputs.json`
   with `outputs` (each component's MPK path and SHA-256) and `derived_graphs`
-  (each component's derived graph SHA-256); and
-- never downloads undeclared data.
+  (each component's derived graph SHA-256).
+- It never downloads undeclared data.
 
 For a single-component model, `scripts/run_model_compilation.sh` writes
 `compile-outputs.json` when the recipe does not. It also writes
@@ -232,6 +233,21 @@ For a single-component model, `scripts/run_model_compilation.sh` writes
 and latency for each MLA stage. Keep download, checksum, MPK validation, and
 publication code out of model code. The shared tooling under `tools/` does
 that work.
+
+`model_registry.compile_script` holds the formats every ONNX recipe shares.
+Import them instead of copying them:
+
+| Function | What it does |
+| --- | --- |
+| `parse_arguments(__doc__, MODEL_DIR)` | Parses the command line above when `--model` is an `.onnx` file. It stops when the compile invocation is not the build profile, a path does not exist, or `--fidelity-dataset` is missing while `model.yaml` declares `numerical_fidelity`. |
+| `component_parameters(MODEL_DIR, profile_id, component_id)` | Returns one component's parameters in a build profile, and fails for a profile or component `model.yaml` does not declare. |
+| `read_mpk_manifest(archive)` | Returns an MPK's member names and its manifest, and refuses a link or a path outside the archive. |
+| `fidelity_report(model_id, profile_id, fidelity, compared, reference=..., candidate=...)` | Computes each output's agreement over the compared samples and lays out `fidelity.json`. |
+
+The recipe stays in `compile.py`: quantization, the compile call, calibration,
+graph surgery, running the source and the quantized graph for fidelity, and the
+MPK audit. A recipe that takes a checkpoint such as `weights.pth` as `--model`
+parses its own command line.
 
 A build compiles on the default runner unless its profile sets `runner_class`
 or `runner_market`. They default independently to `default` and `spot`. A
@@ -312,16 +328,17 @@ separate request. See [on-demand builds](#on-demand-builds).
 | Stage | Fingerprint inputs |
 | --- | --- |
 | conversion | the model's own conversion inputs: the upstream checkpoint, `conversion.outputs`, and `convert.py` with its requirements and the files it uses. No shared file is an input. See [when to run Convert again](conversion-artifacts.md#when-to-run-convert-again) |
-| compile (ONNX) | the model and profile IDs, the target, each component's ID and the source identity and layout, each component's `parameters`, the model's pinned `resources`, the profile's calibration pin, the `numerical_fidelity` section, compile/surgery code, the Model Compiler version, `scripts/run_model_compilation.sh`, the shared model loader, and the MLA stage simulation (`tools/model_registry/mla_stage_simulation.py`) |
+| compile (ONNX) | the model and profile IDs, the target, each component's ID and the source identity and layout, each component's `parameters`, the model's pinned `resources`, the profile's calibration pin, the `numerical_fidelity` section, compile/surgery code, the Model Compiler version, `scripts/run_model_compilation.sh`, the shared model loader, the shared compile helpers (`tools/model_registry/compile_script.py`), and the MLA stage simulation (`tools/model_registry/mla_stage_simulation.py`) |
 | compile (LLiMa) | checkpoint content hashes, the target, component graph `parameters`, and the pinned Model Compiler identity including its build revision |
-| performance | each component's compile run (plus its MPK digest for ONNX), the `performance` declaration, the optional `benchmark_baseline` and its compile fingerprint, `performance.py` and its requirements, shared benchmark tooling and runner scripts, and the Core/MoLE runtime pins |
-| accuracy | the compile run and MPK digest of every component, each `accuracy` dataset's name, pin, and the metrics its `datasets/<id>.yaml` requires for the model's tasks, `accuracy.py` and `requirements-accuracy.txt`, the shared benchmark tooling, `scripts/run_model_accuracy.sh`, `scripts/cache_accuracy_dataset.sh`, `scripts/install_dataset_registry.sh`, `tools/model_registry/runtime_files.py` (verified supporting-file inputs), and the DevKit runtime pin |
+| performance | each component's compile run (plus its MPK digest for ONNX), the `performance` declaration, the optional `benchmark_baseline` and its compile fingerprint, `performance.py` and its requirements, shared benchmark tooling and runner scripts, including `scripts/unpack_benchmark_datasets.sh`, and the Core/MoLE runtime pins |
+| accuracy | the compile run and MPK digest of every component, each `accuracy` dataset's name, pin, and the metrics its `datasets/<id>.yaml` requires for the model's tasks, `accuracy.samples`, `accuracy.py` and `requirements-accuracy.txt`, the shared benchmark tooling, `scripts/run_model_accuracy.sh`, `scripts/unpack_benchmark_datasets.sh`, `scripts/cache_accuracy_dataset.sh`, `scripts/install_dataset_registry.sh`, `tools/model_registry/runtime_files.py` (verified supporting-file inputs), and the DevKit runtime pin |
 
 ONNX compile code includes every `.py` and `.sh` under `scripts/` except
 `performance.py`, `accuracy.py`, `fp32_baseline_accuracy.py`, `convert.py` and
 `requirements-convert.txt`.
 The shared model loader, `tools/model_registry/model.py`, is an input to
-every ONNX compile fingerprint. The shared benchmark tooling is
+every ONNX compile fingerprint, and so are the shared compile helpers,
+`tools/model_registry/compile_script.py`. The shared benchmark tooling is
 `BOARD_STAGE_TOOLING`: the benchmarking workflow, Core
 installation/reuse checks in `tools/model_registry/neat_core.py`,
 `tools/model_report/__init__.py`, `schemas/model-report.schema.json`, and
@@ -341,10 +358,11 @@ is always benchmarked again.
 | a model's `fp32_baseline_accuracy.py` | nothing; no stage runs it |
 | a model's `performance.py`, its requirements, or `performance` declaration, including `scope` | that model's performance stages |
 | a profile's `benchmark_baseline` | that profile's performance; no compilation |
-| `accuracy.py`, its requirements, the `accuracy` datasets, or one of their pins | that model's accuracy stages |
+| `accuracy.py`, its requirements, `accuracy.samples`, the `accuracy` datasets, or one of their pins | that model's accuracy stages |
 | a task's entry in `datasets/<id>.yaml` | the accuracy stages of models with that task that evaluate the dataset |
 | `accuracy.build_profiles`, a new `datasets/` file, or an entry for a task no such model has | nothing; a newly benchmarked profile runs because it has no run yet |
 | `scripts/run_model_performance.sh` | every performance stage |
+| `scripts/unpack_benchmark_datasets.sh` | every performance and accuracy stage |
 | `scripts/run_model_accuracy.sh`, `scripts/cache_accuracy_dataset.sh`, `scripts/install_dataset_registry.sh`, or `tools/model_registry/runtime_files.py` (verified supporting-file inputs) | every accuracy stage |
 | the Core runtime target, the benchmarking workflow, `tools/model_registry/neat_core.py`, `tools/model_report/__init__.py`, `schemas/model-report.schema.json`, or `report_publication.py` | every performance and accuracy stage |
 | the MoLE revision (`llima.install_target`) or `LLIMA_PERFORMANCE_TOOLING` in `fingerprints.py` | native LLM/VLM performance stages |
@@ -353,6 +371,7 @@ is always benchmarked again.
 | the Model Compiler pin | every build, then every benchmark |
 | `scripts/run_model_compilation.sh` | ONNX builds, then their benchmarks |
 | the shared model loader | ONNX builds, then their benchmarks |
+| `tools/model_registry/compile_script.py` | ONNX builds, then their benchmarks |
 | `tools/model_registry/mla_stage_simulation.py` | ONNX builds, then their benchmarks |
 | LLiMa scripts, registry helpers, checkpoint repository name, job count, logging or runner class/market | no LLiMa compilation |
 
@@ -493,7 +512,61 @@ new compiler or a faster script, in the same pull request or right after its
 reports publish. No fingerprint reads `tests/`, so editing `tests.yaml` reruns
 nothing; the new values apply the next time the stage runs. To apply them
 now, dispatch `Vulcan Model Orchestrator` with `models` set to the model and
-`force_rebuild_all`, which recompiles and remeasures it.
+`force_rebuild_all`, which recompiles and remeasures it. When the new value is
+more than 8% below the reference score, comment the profile out instead, as the
+next section describes.
+
+### Comment out a variant far below its reference score
+
+A build profile ships only when its accuracy is at most 8% below the source
+model's [reference score](concepts.md#reference-score), relative to that score.
+The reference score is the model's FP32 baseline on the dataset. Without one,
+it is the score its authors published for the split the model evaluates. The
+check uses the first metric of that reference score that `expected` names. A
+dataset with no such reference score passes. Every model uses this limit,
+`ACCURACY_ALLOWED_REFERENCE_DROP` in `tools/model_registry/model_tests.py`.
+
+Two checks apply it:
+
+- `model-registry validate` and `model-registry validate-models` fail when a
+  declared profile's `expected` accuracy is further below the reference score.
+  Loading a model does not apply this check, so staging, planning, publication,
+  and promotion still read a branch revision that declares such a profile.
+- The DevKit accuracy test fails when the measured accuracy is further below
+  the reference score, even when it passes against `expected`.
+
+YOLO26l `w8a8` expects a COCO val2017 mAP of 0.4877, and its authors published
+0.544. With `w8a8` declared, `model-registry validate models/yolo26l` prints
+this and exits with status 2:
+
+```text
+error: <repository>/models/yolo26l/tests/tests.yaml: accuracy.expected.w8a8.coco-2017-val: coco_map 0.4877 is below the reference 0.544 by more than 8%; comment the w8a8 profile out in model.yaml
+```
+
+When either check fails, comment the profile out in `model.yaml`, so that CI
+neither compiles nor benchmarks it. Commenting a profile out does not withdraw a
+promoted build of it, and the model browser keeps listing that build while its
+promotion stands. Ask a maintainer to withdraw it on both `develop` and `main`
+([withdraw a promoted build](model-promotion.md#withdraw-a-promoted-build)).
+
+Above the commented-out profile, write a comment that gives the metric, both
+values, and the gap. Name any setting the measurement used that the profile no
+longer shows, such as the calibration samples here:
+
+```yaml
+build_profiles:
+  # No w8a8: its COCO val2017 mAP of 0.4877, measured with 50 calibration samples, is 10.3% below the
+  # published 0.544, more than the 8% that model-registry validate allows. compile.py keeps its recipe.
+  # w8a8:
+  #   calibration_dataset: coco-2017-cal
+  #   components:
+  #     model:
+  #       parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 20}
+```
+
+Leave the profile's entries in `tests/tests.yaml`. Validation does not check
+the values of a profile `model.yaml` leaves out. Commenting a profile out
+reruns nothing for the model's other profiles.
 
 ### Run the tests locally
 

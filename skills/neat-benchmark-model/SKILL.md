@@ -120,7 +120,8 @@ describes.
    `requirements-accuracy.txt` needs no `pip` command. `--limit <images>` gives a
    quick trial on a subset. Done when `results/accuracy/model-report.json` holds
    a result for each dataset, with every metric that dataset requires, from a
-   run without `--limit`.
+   run without `--limit`, or with `--limit` set to `accuracy.samples` when the
+   model's `model.yaml` sets it, because CI passes that number.
 
 6. **Compare with a baseline.** The baseline is the published model page, the
    expected values in the model's `tests/tests.yaml`, or an earlier run of your

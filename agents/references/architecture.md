@@ -90,7 +90,7 @@ marked CI only from the author package.
 | `stage_plan.py` | Which builds compile and which benchmarks run (`plan_stages`), the registry reads that decision needs, base-branch resolution, the merge of source catalogs, and the check that `main` can take a merge from `develop` without compiling (`find_main_merge_blockers`). |
 | `conversion.py` | The conversion fingerprint, declared outputs, bundles, conversion publication, the saved selection a plan records, and exact downloads. |
 | `registry_http.py` | The signed HTTP transport, and registry reads that sign only the configured IAM API. |
-| `registry.py` (CI only) | Publishing compile runs, packages with their fidelity report and MLA stage simulation, model documentation, and the branch catalog. Restoring a published build for a benchmark. |
+| `registry.py` (CI only) | Publishing compile runs, packages with their fidelity report and MLA stage simulation, model documentation, and the branch catalog. Staging a published build's receipts and file list for a benchmark (`stage-registry-build`). |
 | `candidates.py` (CI only) | On-demand candidates: publication, run binding, finalization, and selection in a feature catalog. |
 | `promotions.py` (CI only) | Promotion requests, decisions, receipts, and the benchmark reference refresh after a promotion. |
 | `report_publication.py` (CI only) | Checking a `model-report.json` against `model.yaml` (`check_report`) and publishing one benchmark run (`publish_report`). |
@@ -98,15 +98,16 @@ marked CI only from the author package.
 | `benchmark_declarations.py` | The `performance` and `accuracy` declarations: benchmarked profiles, stage scripts, required metrics, `reference_metrics` validation, and the dataset names the model browser shows. |
 | `artifact.py` | `compile-outputs.json` validation, MPK and LLiMa deployment verification, the LLiMa reproduction recipe, and deployment file indexes. |
 | `runtime_files.py` | Path and checksum validation of a compile's `runtime_files`, and their restoration from a package ZIP. |
+| `compile_script.py` | The registry formats a model's `compile.py` shares: its command line (`parse_arguments`), one component's build parameters (`component_parameters`), the MPK member names and manifest (`read_mpk_manifest`), and the numerical fidelity report's metrics and layout (`fidelity_report`). It runs in the Model Compiler environment and is in `COMPILE_TOOLING`. |
 | `mla_stage_simulation.py` | The simulator's operation counts and latency for each MLA stage (`simulate-mla-stages`). |
 | `package.py` | Assembling a profile's `default` package from MPKs, pinned `resources`, and `runtime_files`, or from a complete LLiMa deployment folder. |
 | `dependencies.py` | Resolving the Model Compiler and DevKit runtime pins in `deps/manifest.json`. |
-| `fetch.py` | Verified downloads, the cache, dataset resolution, and unsigned registry reads. |
+| `fetch.py` | Verified downloads, the cache, dataset resolution through the Dataset Registry or the DevKit pool's shared dataset archive share (`copy_shared_dataset`), unsigned registry reads, and the DevKit's download of a staged build by compile run (`download-build`). |
 | `source.py` | The approved source hosts (`HTTPS_HOST_CHECKS`), source identity, and URL redaction. |
 | `taxonomy.py` | Loading the taxonomy and validating a model's categories. |
 | `documentation.py` | Loading and validating a model's README and hero image, and the example application page the model browser links. |
 | `runner_approval.py` | Authorizing requested compile runner classes and markets, and selecting the runner audit fields a compile run records. |
-| `model_tests.py` | Each model's test files and `tests/tests.yaml`, the comparison of a report with its expected values, the test outcomes, and the variants the model browser hides for low accuracy. |
+| `model_tests.py` | Each model's test files and `tests/tests.yaml`, the comparison of a report with its expected values and of measured accuracy with the reference score, the reference rule for expected accuracy that `validate` and `validate-models` apply (`require_reference_accuracy`), and the test outcomes. |
 | `errors.py` | The error types every module raises. |
 
 `__init__.py` exports the loaders and error types, `__main__.py` runs `cli.main`, and

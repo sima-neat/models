@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import argparse
 import json
 import logging
 import math
@@ -28,6 +27,7 @@ from afe.core.utils import convert_data_generator_to_iterable
 from afe.ir.tensor_type import ScalarType
 from afe.load.importers.general_importer import onnx_source
 from calibration import HEIGHT, WIDTH, calibration_samples, fidelity_names, preprocess_image, read_images
+from model_registry.compile_script import component_parameters, fidelity_report, parse_arguments
 from model_registry.model import load_model as load_metadata
 from sima_utils.data.data_generator import DataGenerator
 from surgery import prepare_model
@@ -36,15 +36,6 @@ LOG = logging.getLogger("depth_anything_v2_small.compile")
 MODEL_DIR = Path(__file__).resolve().parents[1]
 MODEL_ID = "depth_anything_v2_small"
 COMPONENT_ID = "model"
-
-
-def _parameters(variant_id: str) -> dict[str, Any]:
-    metadata = load_metadata(MODEL_DIR)
-    matches = [item for item in metadata["build_profiles"] if item["id"] == variant_id]
-    if len(matches) != 1:
-        raise ValueError(f"expected exactly one build profile named {variant_id!r}")
-    (component,) = matches[0]["components"]
-    return component["parameters"]
 
 
 def quantization(precision: str) -> QuantizationParams:
@@ -88,7 +79,7 @@ def audit_mpk(archive: Path) -> None:
 
 
 def compile_model(source: Path, component_dir: Path, variant_id: str, dataset: Path | None) -> AfeModel:
-    parameters = _parameters(variant_id)
+    parameters = component_parameters(MODEL_DIR, variant_id, COMPONENT_ID)
     precision = parameters["precision"]
     bf16_regions = parameters.get("bf16_regions", [])
     if bf16_regions and precision != "w8a8":
@@ -120,7 +111,7 @@ def compile_model(source: Path, component_dir: Path, variant_id: str, dataset: P
         quantized = load_model(importer, target=gen2_target).quantize(
             calibration_data=data, quantization_config=config, model_name=model_name
         )
-        quantized.compile(output_path=str(component_dir), deployable=True)
+        quantized.compile(output_path=str(component_dir))
     except SystemExit as error:
         # The compiler can report a fatal error through SystemExit(0).
         raise RuntimeError(f"Model Compiler failed for {model_name}") from error
@@ -137,83 +128,40 @@ def measure_fidelity(
     source: Path, candidate: AfeModel, dataset: Path, config: dict[str, Any], variant_id: str
 ) -> dict[str, Any]:
     """Compare the quantized graph's relative depth with the ONNX source on the declared validation images."""
-    input_name = _parameters(variant_id)["input_name"]
+    input_name = component_parameters(MODEL_DIR, variant_id, COMPONENT_ID)["input_name"]
     selection = config["selection"]
     names = fidelity_names(dataset, int(selection["seed"]), int(selection["offset"]), int(selection["samples"]))
     images = read_images(dataset, names)
     reference = ort.InferenceSession(str(source), providers=["CPUExecutionProvider"])
-    totals = {"count": 0, "dot": 0.0, "expected": 0.0, "actual": 0.0, "error": 0.0, "absolute": 0.0, "max": 0.0}
+    compared = []
     for name in names:
         sample = preprocess_image(images[name])
-        expected = reference.run(None, {input_name: sample.transpose(2, 0, 1)[None]})[0].astype(np.float64)
+        expected = reference.run(None, {input_name: sample.transpose(2, 0, 1)[None]})[0]
         outputs = candidate.execute(inputs={InputName(input_name): sample[None]}, use_jax=True)
-        actual = np.asarray(outputs[0], dtype=np.float64).reshape(expected.shape)
-        if not (np.isfinite(expected).all() and np.isfinite(actual).all()):
-            raise RuntimeError(f"depth for {name} contains non-finite values")
-        error = actual - expected
-        totals["count"] += expected.size
-        totals["dot"] += float(np.dot(expected.ravel(), actual.ravel()))
-        totals["expected"] += float(np.sum(expected**2))
-        totals["actual"] += float(np.sum(actual**2))
-        totals["error"] += float(np.sum(error**2))
-        totals["absolute"] += float(np.sum(np.abs(error)))
-        totals["max"] = max(totals["max"], float(np.max(np.abs(error))))
-    count = totals["count"]
-    expected_rms = max(np.sqrt(totals["expected"] / count), np.finfo(np.float64).eps)
-    norm = np.sqrt(totals["expected"] * totals["actual"])
-    return {
-        "schema_version": 1,
-        "model_id": MODEL_ID,
-        "build_profile_id": variant_id,
-        "status": config["status"],
-        "reference": "ONNX source (ONNX Runtime)",
-        "candidate": "Quantized AFE graph (JAX execute)",
-        "dataset": {key: config["dataset"][key] for key in ("id", "variant", "sha256")},
-        "selection": selection,
-        "samples": len(names),
-        "metrics": [
-            {
-                "name": "predicted_depth",
-                "cosine_similarity": float(np.clip(totals["dot"] / norm if norm else 1.0, -1.0, 1.0)),
-                "normalized_rmse": float(np.sqrt(totals["error"] / count) / expected_rms),
-                "mean_absolute_error": float(totals["absolute"] / count),
-                "max_absolute_error": totals["max"],
-            }
-        ],
-    }
+        compared.append({"predicted_depth": (expected, np.asarray(outputs[0]).reshape(expected.shape))})
+    return fidelity_report(
+        MODEL_ID,
+        variant_id,
+        config,
+        compared,
+        reference="ONNX source (ONNX Runtime)",
+        candidate="Quantized AFE graph (JAX execute)",
+    )
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model", type=Path, required=True)
-    parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--build-profile", required=True)
-    parser.add_argument("--compile-invocation", required=True)
-    parser.add_argument("--dataset", type=Path, help="dataset-registry calibration archive")
-    parser.add_argument("--fidelity-dataset", type=Path, help="dataset-registry fidelity archive")
-    args = parser.parse_args()
-    if args.compile_invocation != args.build_profile:
-        parser.error("a build profile compiles in one invocation named after it")
+    arguments = parse_arguments(__doc__, MODEL_DIR)
     logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 
-    source = args.model.expanduser().resolve()
-    if not source.is_file():
-        parser.error(f"model does not exist: {source}")
-    fidelity = load_metadata(MODEL_DIR).get("numerical_fidelity")
-    if fidelity is not None and args.fidelity_dataset is None:
-        parser.error("model.yaml declares numerical_fidelity; pass --fidelity-dataset")
-    output_dir = args.output_dir.expanduser().resolve()
-    component_dir = output_dir / COMPONENT_ID
-    dataset = args.dataset.expanduser().resolve() if args.dataset else None
-    candidate = compile_model(source, component_dir, args.build_profile, dataset)
-    if fidelity is not None:
-        LOG.info("Measuring numerical fidelity on %d images", fidelity["selection"]["samples"])
-        fidelity_dataset = args.fidelity_dataset.expanduser().resolve()
-        report = measure_fidelity(source, candidate, fidelity_dataset, fidelity, args.build_profile)
-        (output_dir / "fidelity.json").write_text(
-            json.dumps(report, allow_nan=False, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-        )
-        LOG.info("Fidelity: %s", report["metrics"][0])
+    fidelity = load_metadata(MODEL_DIR)["numerical_fidelity"]
+    component_dir = arguments.output_dir / COMPONENT_ID
+    candidate = compile_model(arguments.model, component_dir, arguments.build_profile, arguments.dataset)
+    LOG.info("Measuring numerical fidelity on %d images", fidelity["selection"]["samples"])
+    report = measure_fidelity(arguments.model, candidate, arguments.fidelity_dataset, fidelity, arguments.build_profile)
+    (arguments.output_dir / "fidelity.json").write_text(
+        json.dumps(report, allow_nan=False, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    LOG.info("Fidelity: %s", report["metrics"][0])
     return 0
 
 

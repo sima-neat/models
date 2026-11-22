@@ -11,6 +11,7 @@ from types import ModuleType, SimpleNamespace
 import numpy as np
 import onnx
 import pytest
+from model_registry.errors import ValidationError
 
 # Ground truth for a pairs line: two identity intrinsics and an identity pose.
 IDENTITY = " ".join(["1 0 0 0 1 0 0 0 1"] * 2 + ["1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1"])
@@ -111,7 +112,7 @@ def test_only_the_int8_activation_build_calibrates_before_the_fidelity_pairs(
     selection = metadata["numerical_fidelity"]["selection"]
 
     for profile in metadata["build_profiles"]:
-        parameters = recipe._parameters(metadata, profile["id"])
+        parameters = recipe.component_parameters(recipe.MODEL_DIR, profile["id"], recipe.COMPONENT_ID)
         (binding,) = profile["components"]
         assert profile["id"].split("_mixed")[0] == parameters["precision"]
         assert bool(recipe._bf16_regions(profile["id"], parameters)) == ("mixed" in profile["id"])
@@ -122,10 +123,13 @@ def test_only_the_int8_activation_build_calibrates_before_the_fidelity_pairs(
             assert binding["calibration"] == "yfcc100m-keypoints-cal"
             assert parameters["calibration_samples"] <= selection["offset"]
     assert metadata["numerical_fidelity"]["outputs"] == [recipe.OUTPUT_NAME]
-    precisions = {recipe._parameters(metadata, profile["id"])["precision"] for profile in metadata["build_profiles"]}
+    precisions = {
+        recipe.component_parameters(recipe.MODEL_DIR, profile["id"], recipe.COMPONENT_ID)["precision"]
+        for profile in metadata["build_profiles"]
+    }
     assert precisions <= set(recipe.MATCH_OVERLAP_FLOORS)
-    with pytest.raises(ValueError, match="exactly one build profile named 'w32a32'"):
-        recipe._parameters(metadata, "w32a32")
+    with pytest.raises(ValidationError, match="unknown build profile: w32a32"):
+        recipe.component_parameters(recipe.MODEL_DIR, "w32a32", recipe.COMPONENT_ID)
 
 
 def test_bf16_activations_skip_calibration_and_int8_ones_calibrate_with_histogram_mse(
@@ -136,10 +140,11 @@ def test_bf16_activations_skip_calibration_and_int8_ones_calibrate_with_histogra
     for name in ("QuantizationParams", "SkipCalibration", "HistogramMSEMethod", "bfloat16_scheme",
                  "quantization_scheme"):
         monkeypatch.setattr(recipe, name, lambda *args, _name=name, **kwargs: (_name, args, kwargs))
-    metadata = recipe._metadata()
 
     (_, _, int8), (_, _, bf16) = (
-        recipe._quantization_config(recipe._parameters(metadata, profile)) for profile in ("w8a8", "w16a16"))
+        recipe._quantization_config(recipe.component_parameters(recipe.MODEL_DIR, profile, recipe.COMPONENT_ID))
+        for profile in ("w8a8", "w16a16")
+    )
     # model.yaml comments out the w8a16 profile until the simulator check passes, so its parameters are given here.
     (_, _, int8_weights) = recipe._quantization_config({"precision": "w8a16"})
 
@@ -272,6 +277,48 @@ def test_a_build_needs_its_matches_to_overlap_the_onnxs(load_script: Callable[[s
         recipe.require_match_overlap("w16a16", 0.75)
 
 
+def test_fidelity_compares_the_quantized_assignment_with_the_onnx_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, load_script: Callable[[str], ModuleType]
+) -> None:
+    recipe = load_script("compile")
+    fidelity = recipe._metadata()["numerical_fidelity"]
+    pair = {name: np.zeros(shape, np.float32) for name, shape in recipe.INPUT_SHAPES.items()}
+    expected = np.eye(512, dtype=np.float32) * 0.9
+    actual = expected.copy()
+    actual[3, 3] = 0.0  # The quantized graph loses keypoint 3's match.
+    onnx_inputs, compiler_inputs = [], []
+
+    class Session:
+        def __init__(self, path: str, providers: list[str]) -> None:
+            pass
+
+        def run(self, outputs: list[str], feeds: dict[str, np.ndarray]) -> list[np.ndarray]:
+            onnx_inputs.append({name: value.shape for name, value in feeds.items()})
+            # The ONNX writes entry (i, j) at assignment[0, j, 0, i].
+            return [expected.T[None, :, None]]
+
+    def execute(inputs: dict[str, np.ndarray], use_jax: bool) -> list[np.ndarray]:
+        compiler_inputs.append({name: value.shape for name, value in inputs.items()})
+        return [actual[None, None]]
+
+    monkeypatch.setattr(recipe, "fidelity_inputs", lambda dataset, seed, offset, samples: [pair, pair])
+    monkeypatch.setattr(recipe, "ort", SimpleNamespace(InferenceSession=Session))
+    monkeypatch.setattr(recipe, "InputName", str)
+
+    report, overlap = recipe.measure_fidelity(
+        tmp_path / "model.onnx", SimpleNamespace(execute=execute), tmp_path / "cal", fidelity, "w8a8"
+    )
+
+    assert onnx_inputs == [{name: tuple(shape) for name, shape in recipe.INPUTS.items()}] * 2
+    assert compiler_inputs == [recipe.INPUT_SHAPES] * 2
+    assert (report["model_id"], report["build_profile_id"], report["samples"]) == ("lightglue_superpoint", "w8a8", 2)
+    (metric,) = report["metrics"]
+    assert metric["name"] == "assignment"
+    assert metric["max_absolute_error"] == pytest.approx(0.9)
+    # 511 of the ONNX's 512 matches remain: 511 / sqrt(512 * 511).
+    assert overlap == pytest.approx(np.sqrt(511 / 512))
+
+
 def test_every_input_fills_whole_mla_words(load_script: Callable[[str], ModuleType]) -> None:
     """The MLA reads each input in 16-byte words, and Neat refuses an input that leaves a word partly filled."""
     calibration = load_script("calibration")
@@ -402,4 +449,5 @@ def test_build_holds_the_matcher_and_follows_the_onnx(
     # compile.py stops a build whose matches overlap the ONNX's no more than MATCH_OVERLAP_FLOORS before the MLA
     # compile, so a build here kept enough of them; the accuracy stage checks its pose AUC against tests.yaml.
     assert all(np.isfinite(value) for name, value in metrics["assignment"].items() if name != "name"), metrics
-    assert recipe._parameters(recipe._metadata(), build_profile)["precision"] in recipe.MATCH_OVERLAP_FLOORS
+    parameters = recipe.component_parameters(recipe.MODEL_DIR, build_profile, recipe.COMPONENT_ID)
+    assert parameters["precision"] in recipe.MATCH_OVERLAP_FLOORS

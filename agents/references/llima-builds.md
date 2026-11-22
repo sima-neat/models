@@ -144,8 +144,9 @@ provenance fields. That call records the installed LLiMa compiler version as
   publication share the key, so each file uploads once. Four uploads run at a time.
 - `S3ArtifactStore.ensure_native_sha256` refuses a file larger than 5 GiB. The size of
   the whole deployment has no limit.
-- `stage_catalog_build` restores the folder from the registry and checks each file's
-  size and SHA-256.
+- `stage_catalog_build` stages only the deployment manifest and the list of its files.
+  On the DevKit, `download_build` in `fetch.py` downloads each file by its compile run
+  and checks its size and SHA-256.
 
 ### Publish job runner
 
@@ -205,9 +206,11 @@ so a speculative profile is measured against normal decoding.
   differ from the profile that declares them.
 - The baseline enters the performance fingerprint with its own compile fingerprint
   (`benchmark_fingerprint` in `fingerprints.py`). It never enters a compile fingerprint.
-- `stage_benchmark_baseline` in `registry.py` restores the baseline deployment for a
+- `stage_benchmark_baseline` in `registry.py` stages the baseline deployment for a
   performance run and writes `benchmark-baseline.json`. It fails with `a speculative
   benchmark baseline must be a native LLiMa deployment` for any other baseline.
+- On the DevKit, `download-build` reads `benchmark-baseline.json` and downloads the
+  baseline's files beside the target's (`download_build` in `fetch.py`).
 
 ## Benchmarks
 

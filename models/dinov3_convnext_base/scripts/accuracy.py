@@ -173,7 +173,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--mpk", action="append", required=True, help="model=<path>")
     parser.add_argument("--dataset", required=True, help="imagenet-2012-val=<extracted directory>")
     parser.add_argument("--output", type=Path, required=True, help="directory for model-report.json")
-    parser.add_argument("--limit", type=int, help="measure the first images only (local runs only)")
+    parser.add_argument("--limit", type=int, help="measure the first images only")
     # The accuracy runner passes the package's resources, here only the license. The measurement reads none of them.
     parser.add_argument("--resources", help="directory holding the package's licenses folder (unused)")
     args = parser.parse_args(argv)

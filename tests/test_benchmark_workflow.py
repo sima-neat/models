@@ -1,8 +1,12 @@
+import hashlib
+import io
 import json
 import os
 import shutil
 import subprocess
 import sys
+import tarfile
+import time
 from pathlib import Path
 
 import pytest
@@ -45,7 +49,6 @@ def test_manual_benchmarks_keep_their_actions_identity() -> None:
     inputs = workflow["on"]["workflow_dispatch"]["inputs"]
     assert set(inputs) == {
         "environment",
-        "source_run_id",
         "source_sha",
         "source_branch",
         "deployment_branch",
@@ -81,7 +84,7 @@ def test_manual_dispatch_takes_the_called_inputs() -> None:
     # The resolvers' outputs are the only inputs a person does not type.
     assert set(inputs) - {"promoted_missing"} == set(call) - {"vulcan_config", "devkit_runner"}
     assert all(value["type"] == "string" for value in call.values())
-    optional = {"source_run_id", "deployment_branch", "vulcan_config", "devkit_runner"}
+    optional = {"deployment_branch", "vulcan_config", "devkit_runner"}
     assert {name for name, value in call.items() if value["required"] == "false"} == optional
     assert all(call[name]["default"] == "" for name in optional)
     assert all("default" not in value for name, value in call.items() if name not in optional)
@@ -90,7 +93,7 @@ def test_manual_dispatch_takes_the_called_inputs() -> None:
 def test_benchmark_inputs_outlive_long_speculative_runs():
     jobs = load_workflow()["jobs"]
     stage = jobs["stage"]
-    retained = step(stage["steps"], "Retain benchmark input independently of compile-run cleanup")
+    retained = step(stage["steps"], "Retain the staged build metadata for the DevKit and publication")
     assert int(retained["with"]["retention-days"]) * 24 * 60 > 4320
     assert jobs["benchmark"]["timeout-minutes"] == "${{ fromJSON(needs.stage.outputs.timeout_minutes) }}"
     assert stage["outputs"]["timeout_minutes"] == "${{ steps.settings.outputs.timeout_minutes }}"
@@ -130,9 +133,9 @@ def test_promoted_batch_is_manual_and_does_not_claim_a_devkit():
 
 
 @pytest.mark.parametrize("case", ["valid", "missing_model", "wrong_branch"])
-def test_single_model_dispatch_validates_fields_before_accessing_artifacts(tmp_path, case):
-    source = step(load_workflow()["jobs"]["stage"]["steps"], "Verify the source run and compiled artifact")
-    environment = {**os.environ, "SOURCE_RUN_ID": "", "SOURCE_SHA": "a" * 40,
+def test_single_model_dispatch_validates_fields_before_reading_the_registry(tmp_path, case):
+    source = step(load_workflow()["jobs"]["stage"]["steps"], "Validate the benchmark request")
+    environment = {**os.environ, "SOURCE_SHA": "a" * 40,
                    "SOURCE_BRANCH": "main" if case == "wrong_branch" else "develop", "GITHUB_REF_NAME": "develop",
                    "MODEL_ID": "" if case == "missing_model" else "resnet_50", "BUILD_PROFILE_ID": "w8a8",
                    "COMPILE_INVOCATION_ID": "w8a8", "STAGES": "performance", "GITHUB_OUTPUT": str(tmp_path / "output")}
@@ -176,34 +179,29 @@ def test_promoted_batch_dispatches_single_profile_runs_and_reports_skips(monkeyp
     assert "already measured" in summary and f"Queued {int(missing)}" in summary
 
 
-def test_benchmark_stages_only_its_compiled_artifact() -> None:
+def test_benchmark_stages_only_the_build_metadata() -> None:
     workflow = load_workflow()
     stage = workflow["jobs"]["stage"]
+    text = BENCHMARK_WORKFLOW.read_text(encoding="utf-8")
 
     assert stage["environment"] == ENVIRONMENT
-    assert stage["permissions"]["id-token"] == "write"
+    # The stage reads no Actions artifact, so it needs no Actions permission.
+    assert stage["permissions"] == {"contents": "read", "id-token": "write"}
     assert stage["outputs"]["source_branch"] == "${{ steps.source.outputs.branch }}"
     assert "inputs.operation" not in stage["if"]
-    verify = step(stage["steps"], "Verify the source run and compiled artifact")
-    assert '[[ "$SOURCE_BRANCH" == "$GITHUB_REF_NAME" ]]' in verify["run"]
-    assert '[[ -n "$STAGES" ]]' in verify["run"]
-    assert verify["env"]["STAGES"] == "${{ inputs.stages }}"
-    assert '[[ "$stage" == performance || "$stage" == accuracy ]]' in verify["run"]
-    assert "COMPONENT_IDS" not in BENCHMARK_WORKFLOW.read_text(encoding="utf-8")
-    assert 'actions/runs/$SOURCE_RUN_ID' in verify["run"]
-    assert ".head_sha == $sha" in verify["run"]
-    assert ".head_branch == $branch" in verify["run"]
-    assert '[[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]' in verify["run"]
-    assert 'git check-ref-format --branch "$SOURCE_BRANCH"' in verify["run"]
-    assert 'artifact_name="compiled-model-$MODEL_ID-$BUILD_PROFILE_ID-$COMPILE_INVOCATION_ID"' in verify["run"]
-    # An orchestrator run holds every build's artifacts, more than one listing page shows.
-    assert "/artifacts?name=$artifact_name" in verify["run"]
-    assert "compiler-output-" not in verify["run"]
-    download = next(item for item in stage["steps"] if item.get("uses") == "actions/download-artifact@v7")
-    assert download["with"]["name"] == (
-        "compiled-model-${{ inputs.model_id }}-${{ inputs.build_profile_id }}-${{ inputs.compile_invocation_id }}"
-    )
-    assert download["with"]["run-id"] == "${{ inputs.source_run_id }}"
+    validate = step(stage["steps"], "Validate the benchmark request")
+    assert '[[ "$SOURCE_BRANCH" == "$GITHUB_REF_NAME" ]]' in validate["run"]
+    assert '[[ -n "$STAGES" ]]' in validate["run"]
+    assert validate["env"]["STAGES"] == "${{ inputs.stages }}"
+    assert '[[ "$stage" == performance || "$stage" == accuracy ]]' in validate["run"]
+    assert '[[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]' in validate["run"]
+    assert 'git check-ref-format --branch "$SOURCE_BRANCH"' in validate["run"]
+    assert "COMPONENT_IDS" not in text
+    # Every build comes from the registry by compile run; no model file passes through an Actions artifact.
+    for retired in ("source_run_id", "SOURCE_RUN_ID", "compiled-model-"):
+        assert retired not in text, retired
+    assert all("gh " not in item.get("run", "") for item in stage["steps"])
+    assert all(item.get("uses") != "actions/download-artifact@v7" for item in stage["steps"])
     trusted_checkout = step(stage["steps"], "Check out trusted registry tooling from the protected workflow revision")
     assert trusted_checkout["with"] == {
         "ref": "${{ github.sha }}",
@@ -217,20 +215,17 @@ def test_benchmark_stages_only_its_compiled_artifact() -> None:
     }
     install = step(stage["steps"], "Install registry publication tooling")
     assert install["run"] == "python -m pip install ."
-    restore = step(stage["steps"], "Restore the current immutable compilation from the registry")
+    restore = step(stage["steps"], "Stage the current immutable compilation from the registry")
     assert "if" not in restore
     assert restore["run"] == "scripts/stage_benchmark_inputs.sh _source _compiled"
     script = (ROOT / "scripts/stage_benchmark_inputs.sh").read_text()
-    assert 'if [[ -z "$SOURCE_RUN_ID" ]]' in script
+    assert 'model-registry stage-registry-build "${args[@]}"\n' in script
     assert 'model-registry stage-registry-build "${args[@]}" --benchmark-baseline' in script
     # A benchmark runs under the profile's published package; the stage never registers a build itself.
-    registered = step(stage["steps"], "Verify the registered build and its package")
-    assert "if" not in registered
-    assert "model-registry model-component-artifacts _compiled --repository _source" in registered["run"]
-    assert '--model "$MODEL_ID" --build-profile "$BUILD_PROFILE_ID"' in registered["run"]
-    assert (
+    package = step(stage["steps"], "Require the profile's published package")
+    assert "if" not in package
+    assert package["run"] == (
         'test -f "_compiled/$MODEL_ID/$BUILD_PROFILE_ID/packages/default/registry-publication.json"'
-        in registered["run"]
     )
     assert all("model-registry publish" not in item.get("run", "") for item in stage["steps"])
     credentials = step(stage["steps"], "Configure authenticated production registry reads")
@@ -238,12 +233,12 @@ def test_benchmark_stages_only_its_compiled_artifact() -> None:
     assert credentials["with"]["output-credentials"] == "true"
     assert stage["steps"].index(credentials) < stage["steps"].index(restore)
     upload = next(item for item in stage["steps"] if item.get("uses") == "actions/upload-artifact@v7")
+    assert upload["name"] == "Retain the staged build metadata for the DevKit and publication"
     assert upload["with"]["name"] == (
         "benchmark-input-${{ inputs.model_id }}-${{ inputs.build_profile_id }}-${{ inputs.compile_invocation_id }}"
     )
     steps = stage["steps"]
-    assert steps.index(download) < steps.index(registered)
-    assert steps.index(restore) < steps.index(registered) < steps.index(upload)
+    assert steps.index(restore) < steps.index(package) < steps.index(upload)
 
 
 def test_benchmark_runs_on_the_devkit_its_caller_resolved() -> None:
@@ -268,6 +263,8 @@ def test_benchmark_runs_on_the_devkit_its_caller_resolved() -> None:
         "/media/nvme/neat-tests/model-benchmark-${{ github.run_id }}-${{ github.run_attempt }}"
         "-${{ inputs.model_id }}-${{ inputs.build_profile_id }}"
     )
+    # Both stages read their datasets from the board's dataset store, which outlives the job.
+    assert "DATASET_DIR" not in benchmark["env"]
     assert benchmark["env"]["SOURCE_BRANCH"] == "${{ needs.stage.outputs.source_branch }}"
     assert step(steps, "Check out trusted tooling from the protected workflow revision")["with"] == {
         "ref": "${{ github.sha }}",
@@ -282,7 +279,7 @@ def test_benchmark_runs_on_the_devkit_its_caller_resolved() -> None:
     assert "pip install '.[tests]'" in registry_install["run"]
     assert "|| sudo -n apt-get install -y python3-venv" in registry_install["run"]
     assert "pip install _source" not in registry_install["run"]
-    download = step(steps, "Download the staged compiled model output")
+    download = step(steps, "Download the staged build metadata")
     assert download["with"]["name"] == (
         "benchmark-input-${{ inputs.model_id }}-${{ inputs.build_profile_id }}-${{ inputs.compile_invocation_id }}"
     )
@@ -344,10 +341,12 @@ def test_performance_runs_the_model_owned_script() -> None:
     assert 'REQUIREMENTS="$MODEL_DIR/scripts/requirements-performance.txt"' in script
     assert '--target "$site" -r "$REQUIREMENTS"' in script
     assert 'PYTHONPATH="$REPOSITORY/tools:$site"' in script
-    # The script picks its benchmark input from the model's first accuracy dataset, unpacked.
-    assert "model_registry resolve-devkit-accuracy" in script
-    assert 'dataset=(--dataset "$name=$directory")' in script
-    assert script.index("resolve-devkit-accuracy") < script.index('scripts/performance.py"')
+    # The script picks its benchmark input from the model's first accuracy dataset, from the board's dataset store.
+    assert 'unpack_benchmark_datasets.sh" "$MODEL_DIR" "$BUILD_PROFILE_ID" --first)' in script
+    assert 'dataset=(--dataset "$(json_field name <<< "$resolution")=$(json_field directory <<< "$resolution")")' in (
+        script
+    )
+    assert script.index("unpack_benchmark_datasets.sh") < script.index('scripts/performance.py"')
     assert "model_registry model-component-artifacts" in script
     assert script.index('scripts/performance.py"') < script.index("model_registry check-report")
 
@@ -477,8 +476,9 @@ def test_benchmarks_run_only_when_requested() -> None:
     assert not {"BENCHMARK_PERFORMANCE", "BENCHMARK_ACCURACY"} & set(benchmark["env"])
     performance = step(steps, "Measure performance on DevKit")
     assert performance["if"] == (
-        "${{ !cancelled() && steps.core.outcome == 'success' && (steps.dataset-cache.outcome == 'success' || "
-        "steps.mole.outcome == 'success') && steps.stages.outputs.performance == 'true' }}"
+        "${{ !cancelled() && steps.build.outcome == 'success' && steps.core.outcome == 'success' && "
+        "(steps.dataset-cache.outcome == 'success' || steps.mole.outcome == 'success') && "
+        "steps.stages.outputs.performance == 'true' }}"
     )
     assert performance["run"] == (
         'scripts/run_model_performance.sh "_source/models/$MODEL_ID" "$BUILD_PROFILE_ID" _compiled _performance'
@@ -490,8 +490,8 @@ def test_benchmarks_run_only_when_requested() -> None:
 
     accuracy = step(steps, "Measure accuracy on DevKit")
     assert accuracy["if"] == (
-        "${{ !cancelled() && steps.core.outcome == 'success' && steps.dataset-cache.outcome == 'success' "
-        "&& steps.stages.outputs.accuracy == 'true' }}"
+        "${{ !cancelled() && steps.build.outcome == 'success' && steps.core.outcome == 'success' && "
+        "steps.dataset-cache.outcome == 'success' && steps.stages.outputs.accuracy == 'true' }}"
     )
     assert accuracy["run"] == (
         'scripts/run_model_accuracy.sh "_source/models/$MODEL_ID" "$BUILD_PROFILE_ID" _compiled _accuracy'
@@ -614,10 +614,13 @@ def test_credentialed_devkit_steps_never_run_model_code() -> None:
         if any(marker in item.get("run", "") for marker in MODEL_CODE_MARKERS):
             assert "AWS_" not in yaml.safe_dump(item.get("env", {})), item["name"]
 
+    # The credentialed step runs the cache script, which fills the dataset store through the unpack script.
     cache_script = (ROOT / "scripts" / "cache_accuracy_dataset.sh").read_text(encoding="utf-8")
-    assert "resolve-devkit-accuracy" in cache_script
-    for model_code in ("accuracy.py", "performance.py", "compile.py", "pip install"):
-        assert model_code not in cache_script
+    unpack_script = (ROOT / "scripts" / "unpack_benchmark_datasets.sh").read_text(encoding="utf-8")
+    assert "unpack_benchmark_datasets.sh" in cache_script
+    for script in (cache_script, unpack_script):
+        for model_code in ("accuracy.py", "performance.py", "compile.py", "pip install"):
+            assert model_code not in script
 
 
 def test_devkit_steps_use_only_tools_the_board_provides() -> None:
@@ -653,20 +656,328 @@ def test_accuracy_dataset_is_cached_on_nvme_under_a_shared_lock() -> None:
     assert "--download-only" in install_script
     assert "dataset/dataset-registry@main:latest" in install_script
     cache_script = (ROOT / "scripts" / "cache_accuracy_dataset.sh").read_text(encoding="utf-8")
-    accuracy_script = (ROOT / "scripts" / "run_model_accuracy.sh").read_text(encoding="utf-8")
-    performance_script = (ROOT / "scripts" / "run_model_performance.sh").read_text(encoding="utf-8")
+    unpack_script = (ROOT / "scripts" / "unpack_benchmark_datasets.sh").read_text(encoding="utf-8")
     assert 'NVME_MOUNT="${NVME_MOUNT:-/media/nvme}"' in cache_script
     assert 'mountpoint -q "$NVME_MOUNT"' in cache_script
     assert "coco" not in cache_script.lower()
-    # Every script serializes resolution through the board-wide dataset lock, under a timeout.
-    assert 'DATASET_LOCK="${DATASET_LOCK:-$NVME_MOUNT/datasets/locks/prepare.lock}"' in cache_script
-    for script in (accuracy_script, performance_script):
-        assert 'DATASET_LOCK="${DATASET_LOCK:-/media/nvme/datasets/locks/prepare.lock}"' in script
-        assert "/media/nvme/datasets/artifacts" in script
-    for script in (cache_script, accuracy_script, performance_script):
-        assert 'flock --wait "$DATASET_LOCK_SECONDS" --close "$DATASET_LOCK"' in script
-        assert 'timeout --signal=TERM --kill-after=30s "$RESOLVE_TIMEOUT_SECONDS"' in script
-    assert "$NVME_MOUNT/datasets/artifacts" in cache_script
+    # The cache step fills the board's dataset store through the script both stages read it with.
+    assert 'unpack_benchmark_datasets.sh" "$MODEL_DIR" "$BUILD_PROFILE_ID")"' in cache_script
+    # That one script owns the store, the archive cache, the board-wide lock, and the share's location.
+    for line in (
+        'NVME_MOUNT="${NVME_MOUNT:-/media/nvme}"',
+        'DATASET_STORE="${DATASET_STORE:-$NVME_MOUNT/datasets/unpacked}"',
+        'DATASET_CACHE="${DATASET_CACHE:-$NVME_MOUNT/datasets/artifacts}"',
+        'DATASET_LOCK="${DATASET_LOCK:-$NVME_MOUNT/datasets/locks/prepare.lock}"',
+        'SHARED_DATASET_ARCHIVES="${SHARED_DATASET_ARCHIVES:-/mnt/dataset-private/current}"',
+        'flock --wait "$DATASET_LOCK_SECONDS" 9',
+        'timeout --signal=TERM --kill-after=30s "$RESOLVE_TIMEOUT_SECONDS"',
+    ):
+        assert line in unpack_script, line
+    for runner in ("cache_accuracy_dataset.sh", "run_model_accuracy.sh", "run_model_performance.sh"):
+        text = (ROOT / "scripts" / runner).read_text(encoding="utf-8")
+        assert "unpack_benchmark_datasets.sh" in text
+        for owned in ("resolve-accuracy-dataset", "devkit-accuracy-datasets", "tar -xzf", "flock", "DATASET_STORE"):
+            assert owned not in text, (runner, owned)
+
+
+def _dataset(directory: Path, name: str, member: str, content: bytes, source: str) -> tuple[dict, dict]:
+    """A one-file dataset archive: its devkit-accuracy-datasets pin and its resolve-accuracy-dataset line."""
+    path = directory / f"{name}.tgz"
+    with tarfile.open(path, "w:gz") as archive:
+        info = tarfile.TarInfo(member)
+        info.size = len(content)
+        archive.addfile(info, io.BytesIO(content))
+    pin = {"name": name, "sha256": hashlib.sha256(path.read_bytes()).hexdigest(), "size_bytes": path.stat().st_size}
+    return pin, {"path": str(path), "source": source}
+
+
+def _board_paths(tmp_path: Path) -> dict[str, str]:
+    """The dataset store, archive cache, and lock under tmp_path, and a share that is not mounted."""
+    return {"DATASET_STORE": str(tmp_path / "store"), "DATASET_CACHE": str(tmp_path / "cache"),
+            "DATASET_LOCK": str(tmp_path / "locks/prepare.lock"),
+            "SHARED_DATASET_ARCHIVES": str(tmp_path / "unmounted/current")}
+
+
+def _stand_in_registry(tmp_path: Path, pins: list[dict], archives: dict[str, dict]) -> Path:
+    """A registry Python whose devkit-accuracy-datasets prints ``pins`` and whose resolve-accuracy-dataset prints
+    ``archives[name]``, logging each resolved name to tmp_path/resolved."""
+    registry = tmp_path / "registry-python"
+    registry.write_text(f"""#!{sys.executable}
+import json, os, sys
+if sys.argv[1] == '-c':
+    os.execv(sys.executable, [sys.executable, *sys.argv[1:]])
+command = sys.argv[3]
+if command == 'devkit-accuracy-datasets':
+    for pin in {pins!r}:
+        print(json.dumps(pin))
+elif command == 'resolve-accuracy-dataset':
+    name = sys.argv[sys.argv.index('--dataset') + 1]
+    with open({str(tmp_path / "resolved")!r}, 'a') as log:
+        log.write(name + '\\n')
+    print(json.dumps({archives!r}[name]))
+else:
+    raise AssertionError(sys.argv)
+""")
+    registry.chmod(0o755)
+    return registry
+
+
+def _unpack(tmp_path: Path, pins: list[dict], archives: dict[str, dict], *flags: str) -> list[dict]:
+    """Run unpack_benchmark_datasets.sh with a stand-in registry Python; return its JSON lines."""
+    env = {**os.environ, "REGISTRY_PYTHON": str(_stand_in_registry(tmp_path, pins, archives)), **_board_paths(tmp_path)}
+    result = subprocess.run(
+        [ROOT / "scripts/unpack_benchmark_datasets.sh", ROOT / "models/resnet_50", "w8a8", *flags],
+        env=env, check=True, capture_output=True, text=True,
+    )
+    return [json.loads(line) for line in result.stdout.splitlines()]
+
+
+def _resolved(tmp_path: Path) -> list[str]:
+    log = tmp_path / "resolved"
+    return log.read_text().splitlines() if log.exists() else []
+
+
+def test_a_share_that_gives_no_listing_is_left_out(tmp_path: Path) -> None:
+    version = subprocess.run(["timeout", "--version"], capture_output=True, text=True, check=False).stdout
+    if "coreutils" not in version:
+        pytest.skip("needs coreutils timeout, which ends the listing")
+    pin, archive = _dataset(tmp_path, "first", "a.jpg", b"one", "registry")
+    binaries = tmp_path / "bin"
+    binaries.mkdir()
+    # A stale share blocks the listing; this one blocks for far longer than the test allows.
+    (binaries / "ls").write_text("#!/bin/sh\nsleep 60\n")
+    (binaries / "ls").chmod(0o755)
+    env = {**os.environ, "REGISTRY_PYTHON": str(_stand_in_registry(tmp_path, [pin], {"first": archive})),
+           **_board_paths(tmp_path), "SHARE_LISTING_SECONDS": "1",
+           "PATH": f"{binaries}{os.pathsep}{os.environ['PATH']}"}
+
+    result = subprocess.run([ROOT / "scripts/unpack_benchmark_datasets.sh", ROOT / "models/resnet_50", "w8a8"],
+                            env=env, check=True, capture_output=True, text=True, timeout=30)
+
+    assert "The shared dataset archive share gave no listing in 1 s." in result.stderr
+    assert json.loads(result.stdout)["source"] == "registry"
+    assert not (tmp_path / "store/.share-copy").exists()
+
+
+def test_the_board_unpacks_each_archive_once_for_every_later_job(tmp_path: Path) -> None:
+    first, first_archive = _dataset(tmp_path, "first", "val/a.jpg", b"one", "share")
+    second, second_archive = _dataset(tmp_path, "second", "b.jpg", b"two", "registry")
+    archives = {"first": first_archive, "second": second_archive}
+    store = tmp_path / "store"
+
+    # The performance stage reads only the first dataset, unpacked looking through its single top-level folder.
+    first_directory = str(store / first["sha256"] / "dataset/val")
+    assert _unpack(tmp_path, [first, second], archives, "--first") == [
+        {**first, "directory": first_directory, "source": "share"},
+    ]
+    # The accuracy stage finds it in the store and unpacks only the dataset performance did not read.
+    assert [(item["directory"], item["source"]) for item in _unpack(tmp_path, [first, second], archives)] == [
+        (first_directory, "board"), (str(store / second["sha256"] / "dataset"), "registry"),
+    ]
+    # A later job reads no archive, so it works with the archives gone.
+    for archive in archives.values():
+        Path(archive["path"]).unlink()
+    assert [item["source"] for item in _unpack(tmp_path, [first, second], archives)] == ["board", "board"]
+    assert _resolved(tmp_path) == ["first", "second"]
+    assert sorted(path.name for path in store.iterdir()) == sorted([first["sha256"], second["sha256"]])
+
+
+def test_an_interrupted_unpack_is_redone(tmp_path: Path) -> None:
+    pin, archive = _dataset(tmp_path, "data", "val/a.jpg", b"one", "registry")
+    # An unpack that stopped early left part of the tree, already read-only, and no marker.
+    partial = tmp_path / "store" / pin["sha256"] / "dataset/val"
+    partial.mkdir(parents=True)
+    (partial / "half.jpg").write_bytes(b"o")
+    partial.chmod(0o555)
+
+    assert _unpack(tmp_path, [pin], {"data": archive})[0]["source"] == "registry"
+    assert sorted(path.name for path in partial.iterdir()) == ["a.jpg"]
+    assert (tmp_path / "store" / pin["sha256"] / "complete").is_file()
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root writes into read-only folders")
+def test_the_unpacked_dataset_is_read_only(tmp_path: Path) -> None:
+    pin, archive = _dataset(tmp_path, "data", "val/a.jpg", b"one", "share")
+    directory = Path(_unpack(tmp_path, [pin], {"data": archive})[0]["directory"])
+
+    # A model script that writes into its dataset fails, so it cannot change a later job's input.
+    with pytest.raises(PermissionError):
+        (directory / "written-by-a-model.txt").write_text("")
+    with pytest.raises(PermissionError):
+        (directory / "a.jpg").write_bytes(b"changed")
+    with pytest.raises(PermissionError):
+        (directory / "a.jpg").unlink()
+    assert (directory / "a.jpg").read_bytes() == b"one"
+
+
+def test_the_store_removes_copies_unused_for_30_days(tmp_path: Path) -> None:
+    store = tmp_path / "store"
+    pin, archive = _dataset(tmp_path, "data", "val/a.jpg", b"one", "registry")
+
+    def stored_copy(sha256: str, unused_days: int | None) -> None:
+        tree = store / sha256 / "dataset"
+        tree.mkdir(parents=True)
+        (tree / "a.jpg").write_bytes(b"one")
+        tree.chmod(0o555)
+        if unused_days is not None:
+            marker = store / sha256 / "complete"
+            marker.touch()
+            used = time.time() - unused_days * 24 * 3600
+            os.utime(marker, (used, used))
+
+    stored_copy("a" * 64, 31)
+    stored_copy("b" * 64, 29)
+    stored_copy("c" * 64, None)
+    stored_copy(pin["sha256"], 31)
+
+    # The job uses its copy before the removal runs, so that copy stays.
+    assert _unpack(tmp_path, [pin], {"data": archive})[0]["source"] == "board"
+    assert sorted(path.name for path in store.iterdir()) == sorted(["b" * 64, pin["sha256"]])
+    assert time.time() - (store / pin["sha256"] / "complete").stat().st_mtime < 600
+    assert _resolved(tmp_path) == []
+
+
+def test_a_profile_without_accuracy_datasets_unpacks_nothing(tmp_path: Path) -> None:
+    assert _unpack(tmp_path, [], {}) == []
+    assert not (tmp_path / "store").exists()
+
+
+def test_the_job_summary_names_where_each_dataset_came_from(tmp_path: Path) -> None:
+    first, first_archive = _dataset(tmp_path, "first", "val/a.jpg", b"one", "share")
+    second, second_archive = _dataset(tmp_path, "second", "b.jpg", b"two", "registry")
+    registry = _stand_in_registry(tmp_path, [first, second], {"first": first_archive, "second": second_archive})
+    binaries = tmp_path / "bin"
+    binaries.mkdir()
+    (binaries / "mountpoint").write_text("#!/bin/sh\nexit 0\n")
+    (binaries / "mountpoint").chmod(0o755)
+    summary = tmp_path / "summary.md"
+    env = {**os.environ, "PATH": f"{binaries}{os.pathsep}{os.environ['PATH']}", "REGISTRY_PYTHON": str(registry),
+           "NVME_MOUNT": str(tmp_path), "GITHUB_STEP_SUMMARY": str(summary), **_board_paths(tmp_path)}
+    store = tmp_path / "store"
+
+    def rows(source: dict[str, str]) -> list[str]:
+        return [
+            f"| first | `{first['sha256']}` | {first['size_bytes']} | {source['first']} | "
+            f"`{store / first['sha256'] / 'dataset/val'}` |",
+            f"| second | `{second['sha256']}` | {second['size_bytes']} | {source['second']} | "
+            f"`{store / second['sha256'] / 'dataset'}` |",
+        ]
+
+    def cache() -> list[str]:
+        subprocess.run([ROOT / "scripts/cache_accuracy_dataset.sh", ROOT / "models/resnet_50", "w8a8"], env=env,
+                       check=True, capture_output=True, text=True)
+        return summary.read_text(encoding="utf-8").splitlines()
+
+    assert cache() == [
+        "### Accuracy datasets", "", "| Dataset | SHA-256 | Bytes | Source | Directory |", "|---|---|---|---|---|",
+        *rows({"first": "shared dataset archive share", "second": "Dataset Registry"}),
+    ]
+    # The next job finds both datasets on the board.
+    assert cache()[-2:] == rows({"first": "board's unpacked copy", "second": "board's unpacked copy"})
+
+
+@pytest.mark.parametrize("on_share", [True, False], ids=["from_the_share", "from_the_dataset_registry"])
+def test_the_store_fills_from_the_share_or_else_the_dataset_registry(tmp_path: Path, on_share: bool) -> None:
+    """Run the unpack with the real model-registry commands and a stand-in dataset-registry on PATH."""
+    archive = tmp_path / "imagenet-val.tgz"
+    with tarfile.open(archive, "w:gz") as tar:
+        info = tarfile.TarInfo("val2012/image.JPEG")
+        info.size = 3
+        tar.addfile(info, io.BytesIO(b"img"))
+    digest, size = hashlib.sha256(archive.read_bytes()).hexdigest(), archive.stat().st_size
+    model_dir = repository_without_w16a16_accuracy(tmp_path) / "models" / "resnet_50"
+    model_yaml = model_dir / "model.yaml"
+    model = yaml.safe_load(model_yaml.read_text(encoding="utf-8"))
+    model["accuracy"]["datasets"] = [{"id": "imagenet-2012", "variant": "val", "sha256": digest, "size_bytes": size}]
+    model_yaml.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
+    board = _board_paths(tmp_path)
+    if on_share:
+        share = Path(board["SHARED_DATASET_ARCHIVES"])
+        (share / "imagenet").mkdir(parents=True)
+        shutil.copyfile(archive, share / "imagenet/val.tgz")
+        (share / "_release.json").write_text(json.dumps({"archives": [
+            {"key": "datasets/artifactory/imagenet/val.tgz", "sha256": digest, "size": size},
+        ]}))
+    binaries = tmp_path / "bin"
+    binaries.mkdir()
+    (binaries / "dataset-registry").write_text(
+        f"#!/bin/sh\necho \"$*\" >> '{tmp_path / 'registry-calls'}'\necho '{json.dumps({'path': str(archive)})}'\n"
+    )
+    (binaries / "dataset-registry").chmod(0o755)
+    env = {**os.environ, **board, "PATH": f"{binaries}{os.pathsep}{os.environ['PATH']}",
+           "REGISTRY_PYTHON": sys.executable,
+           "PYTHONPATH": os.pathsep.join([str(ROOT / "tools"), *filter(None, [os.environ.get("PYTHONPATH")])])}
+
+    def unpack() -> tuple[dict, str]:
+        result = subprocess.run([ROOT / "scripts/unpack_benchmark_datasets.sh", model_dir, "w8a8"], env=env,
+                                check=True, capture_output=True, text=True)
+        [line] = result.stdout.splitlines()
+        return json.loads(line), result.stderr
+
+    resolution, messages = unpack()
+    directory = tmp_path / "store" / digest / "dataset" / "val2012"
+    assert resolution == {"name": "imagenet-2012-val", "sha256": digest, "size_bytes": size,
+                          "directory": str(directory), "source": "share" if on_share else "registry"}
+    assert (directory / "image.JPEG").read_bytes() == b"img"
+    # A machine without the share says nothing about it and resolves through the Dataset Registry.
+    assert "shared dataset archive share" not in messages
+    calls = tmp_path / "registry-calls"
+    assert calls.exists() != on_share
+    if not on_share:
+        assert calls.read_text().split()[:4] == ["resolve", "imagenet-2012", "--variant", "val"]
+    # The next job takes the board's copy and reads neither source.
+    archive.unlink()
+    shutil.rmtree(tmp_path / "unmounted", ignore_errors=True)
+    calls.unlink(missing_ok=True)
+    assert unpack()[0]["source"] == "board"
+    assert not calls.exists()
+
+
+def test_the_devkit_downloads_the_build_files_without_credentials() -> None:
+    steps = load_workflow()["jobs"]["benchmark"]["steps"]
+    names = [item.get("name") for item in steps]
+    download = step(steps, "Download the build files from the registry")
+
+    assert download["id"] == "build"
+    assert download["run"] == (
+        '"$REGISTRY_PYTHON" -m model_registry download-build _compiled --model "$MODEL_ID" '
+        '--build-profile "$BUILD_PROFILE_ID"'
+    )
+    assert download["if"] == (
+        "steps.stages.outputs.performance == 'true' || steps.stages.outputs.accuracy == 'true'"
+    )
+    # The public registry serves the files, so the step takes no credentials.
+    assert "env" not in download
+    order = [names.index(name) for name in (
+        "Download the staged build metadata",
+        "Install registry tooling in an isolated environment",
+        "Select the requested stages the profile declares",
+        "Download the build files from the registry",
+        "Measure performance on DevKit",
+        "Measure accuracy on DevKit",
+    )]
+    assert order == sorted(order)
+    for name in ("Measure performance on DevKit", "Measure accuracy on DevKit"):
+        assert "steps.build.outcome == 'success'" in step(steps, name)["if"], name
+
+
+def test_the_devkit_removes_the_build_files_however_the_job_ends_and_keeps_the_dataset_store(
+    tmp_path: Path,
+) -> None:
+    benchmark = load_workflow()["jobs"]["benchmark"]
+    cleanup = benchmark["steps"][-1]
+
+    assert cleanup["name"] == "Remove the build files and scratch folder from the DevKit"
+    assert cleanup["if"] == "always()"
+    assert benchmark["env"]["WORK_DIR"].startswith("/media/nvme/neat-tests/")
+    work = tmp_path / "scratch"
+    for path in (tmp_path / "_compiled/resnet_50/w8a8/model", work / "site-packages"):
+        path.mkdir(parents=True)
+    subprocess.run(["bash", "-c", cleanup["run"]], cwd=tmp_path, check=True, env={**os.environ, "WORK_DIR": str(work)})
+    assert sorted(path.name for path in tmp_path.iterdir()) == []
+    # Only the unpack script removes a copy from the board's dataset store, after 30 days without use.
+    workflow = BENCHMARK_WORKFLOW.read_text(encoding="utf-8")
+    assert "datasets/unpacked" not in workflow and "DATASET_STORE" not in workflow
 
 
 def test_benchmark_runs_only_on_its_source_branch() -> None:
@@ -676,8 +987,8 @@ def test_benchmark_runs_only_on_its_source_branch() -> None:
         condition = workflow["jobs"][name]["if"]
         assert "inputs.source_branch == github.ref_name" in condition, name
         assert "refs/heads/develop" not in condition, name
-    verify = step(workflow["jobs"]["stage"]["steps"], "Verify the source run and compiled artifact")
-    assert '[[ "$SOURCE_BRANCH" == "$GITHUB_REF_NAME" ]]' in verify["run"]
+    validate = step(workflow["jobs"]["stage"]["steps"], "Validate the benchmark request")
+    assert '[[ "$SOURCE_BRANCH" == "$GITHUB_REF_NAME" ]]' in validate["run"]
 
 
 def test_completed_stages_are_published_from_a_hosted_runner() -> None:
@@ -724,7 +1035,7 @@ def test_each_measured_stage_is_published_under_the_registered_build() -> None:
     for stage in ("performance", "accuracy"):
         assert step(steps, f"Download {stage} evidence")["with"] == {"name": f"{stage}-{suffix}", "path": f"_{stage}"}
     # Both stages publish under the build and package receipt the board measured.
-    registered = step(steps, "Download the registered build the stages measured")
+    registered = step(steps, "Download the receipts of the build the stages measured")
     assert "if" not in registered
     assert registered["with"] == {"name": f"benchmark-input-{suffix}", "path": "_compiled"}
     assert publication["env"]["AWS_ACCESS_KEY_ID"] == (
@@ -905,13 +1216,10 @@ def test_registry_selection_is_independent_of_devkit_placement(override, default
     dataset = step(board['steps'], 'Install trusted dataset tooling')['env']['DATASET_REGISTRY_ENVIRONMENT']
     assert dataset == ENVIRONMENT
     reader = step(jobs['stage']['steps'], 'Configure authenticated production registry reads')
-    for source_run in ('', '123'):
-        for baseline in ('true', 'false'):
-            assert evaluate(reader['if'], {
-                **resolved, 'inputs.source_run_id': source_run, 'steps.settings.outputs.needs_baseline': baseline,
-            }) == (expected == 'production' and (source_run == '' or baseline == 'true'))
+    # Every benchmark stages its build from the registry, so every production benchmark signs its reads.
+    assert evaluate(reader['if'], resolved) == (expected == 'production')
     restore = step(jobs['stage']['steps'],
-                   'Restore the current immutable compilation from the registry')
+                   'Stage the current immutable compilation from the registry')
     urls = {**resolved, 'vars.VULCAN_ARTIFACT_REGISTRY_API_URL': 'https://iam.example',
             'vars.VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL': 'https://public.example'}
     assert evaluate(restore['env']['REGISTRY_API_URL'][3:-3], urls) == 'https://public.example'
@@ -945,8 +1253,8 @@ def test_report_command_publishes_both_stages_to_selected_registry(tmp_path, env
     assert all('--compiled-dir _compiled ' in call for call in calls)
 
 
-@pytest.mark.parametrize("supporting_files", [False, True])
-def test_accuracy_runner_passes_only_verified_local_resources(tmp_path, supporting_files):
+def accuracy_runner(tmp_path: Path, *, supporting_files: bool = False, samples: int | None = None) -> list[str]:
+    """Run run_model_accuracy.sh on clip_vit_b_16/w8a16 with stand-in tools; return accuracy.py's arguments."""
     import hashlib
     import io
     import tarfile
@@ -971,8 +1279,11 @@ import json, os, sys
 if sys.argv[1] == '-c' or sys.argv[3] == 'model-runtime-directory':
     os.execv(sys.executable, [sys.executable, *sys.argv[1:]])
 command = sys.argv[3]
-if command == 'resolve-devkit-accuracy':
-    print(json.dumps({{"name": "imagenet-2012-val", "path": {str(dataset)!r}}}))
+if command == 'devkit-accuracy-datasets':
+    print(json.dumps({{"name": "imagenet-2012-val", "sha256": "a" * 64, "size_bytes": 1,
+                      **({{"samples": {samples!r}}} if {samples!r} else {{}})}}))
+elif command == 'resolve-accuracy-dataset':
+    print(json.dumps({{"path": {str(dataset)!r}, "source": "registry"}}))
 elif command == 'model-component-mpks':
     print('image_encoder=image.tar.gz\\ntext_encoder=text.tar.gz')
 elif command != 'check-report':
@@ -990,16 +1301,36 @@ if sys.argv[1:3] != ['-m', 'pip']:
     board.chmod(0o755)
     environment = {
         **os.environ, "PYTHONPATH": str(ROOT / "tools"), "REGISTRY_PYTHON": str(registry),
-        "PYNEAT_PYTHON": str(board), "WORK_DIR": str(tmp_path / "scratch"),
-        "DATASET_CACHE": str(tmp_path / "cache"), "DATASET_LOCK": str(tmp_path / "prepare.lock"),
+        "PYNEAT_PYTHON": str(board), "WORK_DIR": str(tmp_path / "scratch"), **_board_paths(tmp_path),
     }
     run = subprocess.run(
         [ROOT / "scripts/run_model_accuracy.sh", ROOT / "models/clip_vit_b_16", "w8a16", compiled, tmp_path / "report"],
         cwd=ROOT, env=environment, capture_output=True, text=True,
     )
     assert run.returncode == 0, run.stderr
-    arguments = json.loads(captured.read_text())
+    assert not (tmp_path / "scratch").exists()
+    return json.loads(captured.read_text())
+
+
+@pytest.mark.parametrize("supporting_files", [False, True])
+def test_accuracy_runner_passes_only_verified_local_resources(tmp_path, supporting_files):
+    arguments = accuracy_runner(tmp_path, supporting_files=supporting_files)
+    profile = tmp_path / "compiled with spaces/clip_vit_b_16/w8a16"
     assert ("--resources" in arguments) == supporting_files
     if supporting_files:
         assert arguments[arguments.index("--resources") + 1] == str(profile)
     assert arguments.count("--mpk") == 2
+    # From the board's dataset store, looking through the archive's single top-level directory. The store outlives
+    # the runner's scratch folder.
+    dataset = tmp_path / "store" / ("a" * 64) / "dataset/val2012"
+    assert arguments[arguments.index("--dataset") + 1] == f"imagenet-2012-val={dataset}"
+    assert (dataset / "image.JPEG").is_file()
+
+
+@pytest.mark.parametrize("samples", [None, 500])
+def test_accuracy_runner_caps_samples_only_when_model_yaml_does(tmp_path, samples):
+    arguments = accuracy_runner(tmp_path, samples=samples)
+    # accuracy.samples reaches accuracy.py as --limit; without it the script evaluates every sample.
+    assert ("--limit" in arguments) == (samples is not None)
+    if samples is not None:
+        assert arguments[arguments.index("--limit") + 1] == str(samples)

@@ -25,6 +25,7 @@ INSTALL_ENVIRONMENTS = {"prod": "production", "stg": "staging", "dev": "dev"}
 DEPENDENCY_PACKAGES = {"runner": "simaai-runner", "scheduler": "simaai-scheduler"}
 DEPENDENCIES_FILE = "resolved-deps-manifest.json"
 DEBIAN_VERSION = r"[0-9][A-Za-z0-9.+:~\-]*"
+STATUS_TIMEOUT_S = 30
 
 
 def _read_text(url: str) -> str:
@@ -42,45 +43,59 @@ def _target_parts(target: str) -> tuple[str, str]:
     return value, "latest"
 
 
-def installed_matches(
+def _component(status: Any, name: str) -> dict:
+    """Return one component of the `neat --json` status, or an empty one when the status lacks it."""
+    components = status.get("components") if isinstance(status, dict) else None
+    component = components.get(name) if isinstance(components, dict) else None
+    return component if isinstance(component, dict) else {}
+
+
+def _shown(value: Any) -> str:
+    """Show an installed value in the public log only when it is a non-empty string."""
+    return value if isinstance(value, str) and value else "missing"
+
+
+def installed_mismatch(
     status: Any, metadata: Any, branch: str, tag: str, environment: str, dependencies: Any,
-) -> bool:
-    """Only a complete match with the selected artifact can authorize skipping installation."""
-    try:
-        resources = metadata["resources"]
-        core = status["components"]["core"]
-        channel = core["channel"]
-        installed_tag = core["tag"]
-        installed_environment = core["provenance"]["vulcanEnvironment"]
-    except (KeyError, TypeError):
-        return False
-    if not all(isinstance(value, str) and value.strip() for value in (
-        channel, installed_tag, installed_environment,
-    )) or not isinstance(resources, list) or not all(isinstance(item, str) for item in resources):
-        return False
-    if (channel.strip() not in {branch, branch.replace("/", "-").replace(" ", "-")}
-            or installed_tag.strip() != tag
-            or ENVIRONMENTS.get(installed_environment.strip()) != environment):
-        return False
+) -> str | None:
+    """Name the first difference between the installed Core and the selected artifact, or None on a complete match.
+
+    Only a complete match can authorize skipping installation.
+    """
+    resources = metadata.get("resources") if isinstance(metadata, dict) else None
+    if not isinstance(resources, list) or not all(isinstance(item, str) for item in resources):
+        return "the published Core metadata has no readable resource list"
+
+    core = _component(status, "core")
+    provenance = core.get("provenance") if isinstance(core.get("provenance"), dict) else {}
+    channel, installed_tag, installed_environment = (
+        value.strip() if isinstance(value, str) else None
+        for value in (core.get("channel"), core.get("tag"), provenance.get("vulcanEnvironment"))
+    )
+    if channel not in {branch, branch.replace("/", "-").replace(" ", "-")}:
+        return f"installed Core channel is {_shown(channel)}, pinned {branch}"
+    if installed_tag != tag:
+        return f"installed Core tag is {_shown(installed_tag)}, pinned {tag}"
+    if ENVIRONMENTS.get(installed_environment) != environment:
+        return f"installed Core environment is {_shown(installed_environment)}, pinned {environment}"
+
     # A Core tag can be republished with newer dependencies. Tag equality alone is insufficient.
-    names = [item.rsplit("/", 1)[-1] for item in resources]
     if not isinstance(dependencies, dict):
-        return False
+        return "the published dependency manifest could not be verified"
+    names = [item.rsplit("/", 1)[-1] for item in resources]
     # Stable package filenames carry no version; use the artifact's checksum-pinned dependency manifest.
     for component, package in DEPENDENCY_PACKAGES.items():
         candidates = [name for name in names if name == package + ".deb" or name.startswith(package + "_")]
         if candidates != [package + ".deb"]:
-            return False
+            return f"the published Core metadata does not list exactly one {package} package"
         dependency = dependencies.get(component)
         version = dependency.get("debian_version") if isinstance(dependency, dict) else None
         if not isinstance(version, str) or re.fullmatch(DEBIAN_VERSION, version) is None:
-            return False
-        try:
-            if status["components"][component]["version"] != version:
-                return False
-        except (KeyError, TypeError):
-            return False
-    return True
+            return f"the published dependency manifest has no valid {component} version"
+        installed_version = _component(status, component).get("version")
+        if installed_version != version:
+            return f"installed {package} is {_shown(installed_version)}, pinned {version}"
+    return None
 
 
 def _published_dependencies(metadata: Any, index: str) -> Any:
@@ -98,6 +113,37 @@ def _published_dependencies(metadata: Any, index: str) -> Any:
     if hashlib.sha256(content.encode("utf-8")).hexdigest() != expected:
         return None
     return json.loads(content)
+
+
+def _check_installed_core(selected_index: str, branch: str, tag: str, environment: str) -> str | None:
+    """Return why the runner cannot reuse its installed Core for the selected artifact, or None when it can.
+
+    The reason goes to a public CI log, so it names only versions, tags, channels, and environments.
+    """
+    try:
+        result = subprocess.run(
+            ["neat", "--json"], check=True, capture_output=True, text=True, timeout=STATUS_TIMEOUT_S,
+        )
+        status = json.loads(result.stdout)
+    except subprocess.TimeoutExpired:
+        return f"neat --json timed out after {STATUS_TIMEOUT_S} s"
+    except subprocess.SubprocessError:
+        return "neat --json failed"
+    except OSError:
+        return "neat --json could not start"
+    except ValueError:
+        return "neat --json returned unreadable output"
+
+    try:
+        metadata = json.loads(_read_text(f"{selected_index}/metadata-minimal.json"))
+    except (OSError, ValueError):
+        return "the published Core metadata could not be read"
+    try:
+        dependencies = _published_dependencies(metadata, selected_index)
+    except (OSError, ValueError):
+        # installed_mismatch reports a manifest that could not be read as unverified.
+        dependencies = None
+    return installed_mismatch(status, metadata, branch, tag, environment, dependencies)
 
 
 def ensure_neat_core(
@@ -130,23 +176,15 @@ def ensure_neat_core(
         if tag == "latest" or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", tag) is None:
             raise ValidationError(f"invalid published Core tag for {target}: {tag!r}")
 
-    matches = False
-    if index is not None:
-        try:
-            status = subprocess.run(["neat", "--json"], check=True, capture_output=True, text=True, timeout=30)
-            selected_index = f"{index}/{tag}"
-            metadata = json.loads(_read_text(f"{selected_index}/metadata-minimal.json"))
-            dependencies = _published_dependencies(metadata, selected_index)
-            matches = installed_matches(
-                json.loads(status.stdout), metadata, branch, tag, normalized_environment, dependencies,
-            )
-        except (OSError, ValueError, subprocess.SubprocessError):
-            # Missing/unreadable status or metadata never authorizes using an unverified installed build.
-            matches = False
+    if index is None:
+        reason = "no NEAT_ARTIFACTS_BASE_URL to compare the installed Core with"
+    else:
+        reason = _check_installed_core(f"{index}/{tag}", branch, tag, normalized_environment)
     try:
-        if matches:
+        if reason is None:
             print(f"NEAT core already installed ({branch}/{tag}). Skipping install.", flush=True)
         else:
+            print(f"Installing NEAT core ({branch}/{tag}): {reason}.", flush=True)
             subprocess.run([
                 "sima-cli", "neat", "install", "--env", INSTALL_ENVIRONMENTS[normalized_environment],
                 "--type", "minimal", f"core@{branch}:{tag}",

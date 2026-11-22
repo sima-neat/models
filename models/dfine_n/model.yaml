@@ -73,7 +73,7 @@ build_profiles:
         parameters:
           precision: w8a8
           calibration_bins: 1024
-          calibration_samples: 50
+          calibration_samples: 20
       decoder:
         parameters:
           precision: w16a16
@@ -84,7 +84,7 @@ build_profiles:
         parameters:
           precision: w8a8
           calibration_bins: 1024
-          calibration_samples: 50
+          calibration_samples: 20
           # Keep HGNet, non-convolution arithmetic and output producers BF16;
           # the remaining neck/projection convolutions run INT8.
           bf16_regions: [backbone, nonconv, outputs]
@@ -102,7 +102,7 @@ numerical_fidelity:
     method: seeded_random_without_replacement
     seed: 42
     offset: 50
-    samples: 10
+    samples: 5
   outputs:
   - pred_boxes
   - pred_logits

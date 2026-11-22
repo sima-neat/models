@@ -58,7 +58,11 @@ each finding cites the owning file and section.
   splits them. Each rewrite has a purpose in the description and a test.
 - **Recipe.** Compiler parameters live in the build profile, and profile IDs follow
   [`naming-conventions.yaml`](../../../naming-conventions.yaml). Each choice away from the
-  compiler default carries its reason. A `runner_class` or `runner_market` request links its
+  compiler default carries its reason, and no `**kwargs` compiler argument is passed at its
+  default ([`coding-style.md` "compile.py"](../../coding-style.md#compilepy)). `compile.py`
+  takes the shared helpers from `model_registry.compile_script`, keeps its recipe,
+  and calibrates each component on at most 20 samples ([`rules.md`
+  "Compile"](../../rules.md#compile)). A `runner_class` or `runner_market` request links its
   approval ([request additional compile
   resources](../../../docs/contributing.md#request-additional-compile-resources)).
 - **Benchmark scripts.** They stand alone as `rules.md` says, follow the [canonical
@@ -78,7 +82,9 @@ each finding cites the owning file and section.
   including the fingerprint lists, rerun tables, and tests a shared tooling change needs.
 - **Variants.** A profile is commented out, as `rules.md` says, only after it is proven
   unusable ([review and merge
-  expectations](../../../docs/contributing.md#review-and-merge-expectations)).
+  expectations](../../../docs/contributing.md#review-and-merge-expectations)), or because its
+  accuracy is more than 8% below its reference score. Its comment then gives the metric, both
+  values, and the gap.
 
 ## Evidence
 

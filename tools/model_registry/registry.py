@@ -8,7 +8,6 @@ import math
 import random
 import re
 import subprocess
-import tempfile
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -16,10 +15,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
-from urllib.error import HTTPError
 from urllib.parse import quote
-from urllib.request import Request as UrlRequest
-from urllib.request import urlopen
 
 from jsonschema import Draft202012Validator
 
@@ -28,7 +24,6 @@ from .artifact import (
     deployment_files,
     llima_compiled_parameters,
     validate_compile_outputs,
-    verify_artifact,
     verify_llima,
 )
 from .benchmark_declarations import benchmarked_profiles
@@ -36,15 +31,22 @@ from .compile_matrix import build_matrix
 from .dependencies import resolve_model_compiler
 from .documentation import load_model_documentation
 from .errors import ModelRegistryError, ValidationError
-from .fetch import sha256_file
+from .fetch import (
+    BENCHMARK_BASELINE,
+    BuildFile,
+    DownloadRequest,
+    ReadRequest,
+    StagedBuildFiles,
+    download_build_file,
+    sha256_file,
+)
 from .fingerprints import benchmark_fingerprint, compile_fingerprint
 from .mla_stage_simulation import SIMULATION_FILE
 from .model import build_profile_for, compile_invocations_for, load_and_validate_model, load_models, mpk_filename
 from .package import FIDELITY_FILE
-from .registry_http import RegistryPublicationError, SigV4RegistryClient
+from .registry_http import RegistryPublicationError, SigV4RegistryClient, iam_read_api_url
 from .registry_http import read_registry_json_authenticated as _public_registry_json
 from .runner_approval import runner_provenance
-from .runtime_files import restore_runtime_files
 from .source import source_identity
 from .stage_plan import (
     merge_catalog_sources,
@@ -62,8 +64,6 @@ from .taxonomy import (
 
 JsonObject = dict[str, Any]
 Request = Callable[[str, str, JsonObject | None, str], JsonObject]
-ReadRequest = Callable[[str], JsonObject]
-DownloadRequest = Callable[[str], bytes]
 # Catalog fields the registry owns for each ref: a snapshot may omit them but not carry another ref's.
 SERVER_OWNED_SELECTIONS = ("approved_deployments", "branch_deployments")
 
@@ -1207,53 +1207,6 @@ def publish_catalog(
         return {"catalog": document, "registry": result}
 
 
-def _download_registry_file(url: str, destination: Path, artifact: JsonObject,
-                            download: DownloadRequest | None = None) -> None:
-    # An orchestrator run stages every build's benchmark at once, so retry a dropped or throttled download.
-    for attempt in range(1, 6):
-        try:
-            return _download_registry_file_once(url, destination, artifact, download)
-        except RegistryPublicationError as exc:
-            cause = exc.__cause__
-            if isinstance(cause, HTTPError) and cause.code not in {429, 502, 503, 504} or attempt == 5:
-                raise
-        time.sleep(2 ** (attempt - 1) + random.uniform(0, 1))
-
-
-def _download_registry_file_once(url: str, destination: Path, artifact: JsonObject,
-                                 download: DownloadRequest | None = None) -> None:
-    """Stream into a temporary file and install only after size and checksum verification."""
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    digest = hashlib.sha256()
-    size = 0
-    temporary = None
-    try:
-        with tempfile.NamedTemporaryFile(dir=destination.parent, delete=False) as output:
-            temporary = Path(output.name)
-            if download is not None:
-                payload = download(url)
-                output.write(payload)
-                digest.update(payload)
-                size = len(payload)
-            else:
-                request = UrlRequest(url, headers={"User-Agent": "sima-neat-model-registry/0.1"})
-                with urlopen(request, timeout=120) as response:
-                    for chunk in iter(lambda: response.read(1024 * 1024), b""):
-                        size += len(chunk)
-                        if size > artifact["size_bytes"]:
-                            raise ValidationError("downloaded artifact exceeds its declared size")
-                        output.write(chunk)
-                        digest.update(chunk)
-        if digest.hexdigest() != artifact["sha256"] or size != artifact["size_bytes"]:
-            raise ValidationError("downloaded artifact failed size or SHA-256 verification")
-        temporary.replace(destination)
-    except OSError as exc:
-        raise RegistryPublicationError(f"could not download registry artifact: {exc}") from exc
-    finally:
-        if temporary is not None:
-            temporary.unlink(missing_ok=True)
-
-
 def stage_catalog_build(
     *,
     repository: str | Path,
@@ -1269,11 +1222,20 @@ def stage_catalog_build(
     expected_compile_fingerprint: str | None = None,
     deployment_branch: str | None = None,
 ) -> JsonObject:
-    """Restore a complete invocation from durable registry MPKs for later stages."""
+    """Stage a current catalog build for a benchmark as metadata: its compile outputs, receipts, and the
+    build-files.json the DevKit downloads each file by. Only a LLiMa deployment manifest is downloaded."""
     root = Path(repository).expanduser().resolve()
     output = Path(output_dir).expanduser().resolve()
     read = read_request or _public_registry_json
     base_url = api_url.rstrip("/")
+    # Reject the signed-read API here, before a board is claimed: build-files.json gives the DevKit this URL, and the
+    # DevKit reads it without credentials.
+    if base_url and base_url == iam_read_api_url():
+        raise ValidationError(
+            f"cannot stage from {base_url}: it is the registry API this job reads with credentials "
+            "(MODEL_REGISTRY_IAM_READ_API_URL), and the DevKit reads build-files.json's registry without them; "
+            "stage from the public read URL (VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL)"
+        )
     catalog_branch = deployment_branch or branch
     catalog_payload = read(
         f"{base_url}/v1/repositories/sima-neat/models/catalogs/current?"
@@ -1320,7 +1282,9 @@ def stage_catalog_build(
     ):
         raise ValidationError("benchmark needs a registered build matching its current model/compiler")
 
+    profile_dir = output / model_id / build_profile_id
     staged_outputs = []
+    files = []
     for component_id in invocation["component_ids"]:
         build = builds[component_id]
         run_id = build.get("run_id")
@@ -1334,58 +1298,33 @@ def stage_catalog_build(
         if not isinstance(artifact, dict):
             raise ValidationError(f"artifact registry returned no MPK metadata for {run_id}")
         digest = artifact.get("sha256")
+        size_bytes = artifact.get("size_bytes")
         download_url = artifact.get("download_url")
-        if not isinstance(digest, str) or len(digest) != 64 or not isinstance(download_url, str):
+        if (not isinstance(digest, str) or len(digest) != 64 or type(size_bytes) is not int or size_bytes < 1
+                or not isinstance(download_url, str)):
             raise ValidationError(f"artifact registry returned incomplete MPK metadata for {run_id}")
         if digest != build.get("artifact_sha256", digest):
             raise ValidationError(f"registry MPK checksum does not match the current catalog for {run_id}")
-        component_dir = output / model_id / build_profile_id / component_id
+        component_dir = profile_dir / component_id
         component_dir.mkdir(parents=True, exist_ok=True)
         archive_name = "deployment-manifest.json" if native else mpk_filename(model, build_profile_id, component_id)
-        archive = component_dir / archive_name
-        _download_registry_file(download_url, archive, artifact, download_request)
+        archive = BuildFile(f"{component_id}/{archive_name}", run_id, kind, digest, size_bytes)
         if native:
+            # The manifest lists every deployment file the DevKit downloads.
+            manifest_path = download_build_file(read, base_url, profile_dir, archive, download_request)
             try:
-                manifest = json.loads(archive.read_text(encoding="utf-8"))
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             except (OSError, ValueError) as exc:
                 raise ValidationError(f"invalid deployment manifest for {run_id}: {exc}") from exc
             if not isinstance(manifest, dict) or manifest.get("format") != "llima":
                 raise ValidationError(f"invalid LLiMa deployment manifest for {run_id}")
-            files = deployment_files(manifest)
-            deployment = component_dir / "deployment"
-            deployment.mkdir(exist_ok=True)
-
-            def fetch_file(item: JsonObject) -> None:
-                response = read(f"{base_url}/v1/runs/{run_id}/artifacts/{item['artifact']}")
-                registered = response.get("artifact", {})
-                if (registered.get("sha256") != item["sha256"]
-                        or registered.get("size_bytes") != item["size_bytes"]
-                        or not isinstance(registered.get("download_url"), str)):
-                    raise ValidationError(f"inconsistent deployment artifact: {item['path']}")
-                path = deployment / item["path"]
-                if any(parent.is_symlink() for parent in (path, *path.parents)):
-                    raise ValidationError(f"unsafe deployment output path: {path}")
-                if (path.is_file() and path.stat().st_size == item["size_bytes"]
-                        and sha256_file(path)[0] == item["sha256"]):
-                    return
-                _download_registry_file(registered["download_url"], path, registered, download_request)
-
-            with ThreadPoolExecutor(max_workers=4) as executor:
-                list(executor.map(fetch_file, sorted(files, key=lambda item: item["size_bytes"], reverse=True)))
-            declared = {item["path"] for item in files}
-            for path in deployment.rglob("*"):
-                if path.is_symlink():
-                    raise ValidationError(f"unsafe deployment output path: {path}")
-                if path.is_file() and path.relative_to(deployment).as_posix() not in declared:
-                    path.unlink()
-        verified = verify_artifact(component_dir)
-        run_payload = read(f"{base_url}/v1/runs/{run_id}")
-        run = run_payload.get("run", {}) if isinstance(run_payload, dict) else {}
-        compiler_version = run.get("toolchain_version") if isinstance(run, dict) else None
-        compile_result = {**verified, "provenance": {"compiler_version": compiler_version}}
-        (component_dir / "compile-result.json").write_text(
-            json.dumps(compile_result, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-        )
+            files.extend(
+                BuildFile(f"{component_id}/deployment/{item['path']}", run_id, item["artifact"], item["sha256"],
+                          item["size_bytes"])
+                for item in deployment_files(manifest)
+            )
+        else:
+            files.append(archive)
         (component_dir / "registry-publication.json").write_text(
             json.dumps({"runs": [{
                 "model_id": model_id,
@@ -1403,8 +1342,8 @@ def stage_catalog_build(
                 "run_id": run_id,
             }
         )
-    profile_dir = output / model_id / build_profile_id
     runtime_files = []
+    runtime_package = None
     package = next((
         item for item in catalog_packages
         if isinstance(item, dict) and (item.get("build_profile_id"), item.get("package_id")) == (
@@ -1427,11 +1366,14 @@ def stage_catalog_build(
                     or metadata.get("component_run_ids") != component_runs
                     or package.get("component_run_ids") != component_runs):
                 raise ValidationError("runtime-file package does not match the current catalog build")
-            with tempfile.TemporaryDirectory(prefix="restore-package-", dir=profile_dir) as temporary:
-                archive = Path(temporary) / "package.zip"
-                _download_registry_file(artifact["download_url"], archive, artifact, download_request)
-                runtime_files = metadata["runtime_files"]
-                restore_runtime_files(archive, runtime_files, profile_dir)
+            runtime_files = metadata["runtime_files"]
+            # Reject an empty list here, before a board is claimed: publication records runtime_files only when the
+            # package holds some, and the DevKit restores this list from the package.
+            if not isinstance(runtime_files, list) or not runtime_files:
+                raise ValidationError(f"package run {package['run_id']}: runtime_files must be a non-empty list")
+            # The DevKit restores the runtime files from the package and then removes the archive.
+            runtime_package = BuildFile("packages/default/package.zip", package["run_id"], "package",
+                                        artifact["sha256"], artifact["size_bytes"])
     # The same manifest a compile writes, so later stages read restored and fresh builds alike.
     (profile_dir / "compile-outputs.json").write_text(
         json.dumps({
@@ -1445,6 +1387,7 @@ def stage_catalog_build(
         }, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+    StagedBuildFiles(base_url, tuple(files), runtime_package).write(profile_dir)
     # A benchmark runs under the profile's package run, as after a fresh build's publish-package.
     if package is not None:
         receipt = profile_dir / "packages" / "default" / "registry-publication.json"
@@ -1453,17 +1396,16 @@ def stage_catalog_build(
             json.dumps({"packages": [{"model_id": model_id, **package}]}, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
-    return {"count": len(staged_outputs), "outputs": staged_outputs}
-
+    return {"count": len(staged_outputs), "outputs": staged_outputs, "files": len(files)}
 
 
 def stage_benchmark_baseline(
     *, repository: str | Path, output_dir: str | Path, model_id: str, build_profile_id: str, **registry_options
 ) -> JsonObject:
-    """Restore the declared ordinary deployment and retain its compile identities beside the benchmark input."""
+    """Stage the declared ordinary deployment and retain its compile identities beside the benchmark input."""
     root = Path(repository).resolve()
     output = Path(output_dir).resolve()
-    receipt = output / "benchmark-baseline.json"
+    receipt = output / BENCHMARK_BASELINE
     receipt.unlink(missing_ok=True)
     model = load_and_validate_model(root / "models" / model_id)
     baseline = build_profile_for(model, build_profile_id).get("benchmark_baseline")

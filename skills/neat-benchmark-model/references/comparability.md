@@ -44,6 +44,9 @@ expects `coco_map: 0.3808` for `w8a8` on `coco-2017-val`.
 CI tests a stage's values only when its entry in `tests.yaml` leaves
 `run_tests` at `true`. An entry with `run_tests: false` gives a `skip_reason`
 instead. The Models tests fail an accuracy score more than 5% below its expected
-value, and a throughput more than 10% below. A metric whose better direction is
-lower may rise by that much instead. Every model shares these limits, so a
-result inside them passes the model's test when that test runs.
+value, and a throughput more than 10% below. They also fail an accuracy score
+more than 8% below the model's reference score for that dataset: its FP32
+baseline, else the score its authors published for the same split. A metric
+whose better direction is lower may rise by that much instead. Every model
+shares these limits, so a result inside them passes the model's test when that
+test runs.

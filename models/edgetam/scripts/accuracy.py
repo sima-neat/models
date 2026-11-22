@@ -323,7 +323,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dataset", required=True, help="davis-2017-val=<extracted davis directory>")
     parser.add_argument("--output", type=Path, required=True, help="directory for model-report.json")
     parser.add_argument("--resources", type=Path, help="package resource directory (license only)")
-    parser.add_argument("--limit", type=int, help="measure a seeded sample of sequences (local runs only)")
+    parser.add_argument("--limit", type=int, help="measure a seeded sample of sequences")
     args = parser.parse_args(argv)
     dataset_id, dataset_dir = args.dataset.split("=", 1)
     dataset = Path(dataset_dir)

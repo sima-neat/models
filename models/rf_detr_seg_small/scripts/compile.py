@@ -3,19 +3,17 @@
 
 from __future__ import annotations
 
-import argparse
 import json
 import logging
 import math
 import multiprocessing
 import os
 import shutil
-import tarfile
 import tempfile
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -36,6 +34,7 @@ from afe.core.configs import QuantizationPrecision
 from afe.core.utils import convert_data_generator_to_iterable
 from afe.load.importers.general_importer import onnx_source
 from calibration import load_images, select_images, select_top_proposals, to_afe_layout
+from model_registry.compile_script import parse_arguments, read_mpk_manifest
 from model_registry.fetch import sha256_file
 from model_registry.model import load_model as load_metadata
 from sima_utils.data.data_generator import DataGenerator
@@ -201,26 +200,9 @@ def _require_bf16_regions(quantized: Any, component_id: str, regions: list[str])
         raise RuntimeError(f"expected BF16 operations including {softmaxes} softmaxes, found {dict(counts)}")
 
 
-def _read_mpk_manifest(archive: Path) -> tuple[list[str], dict[str, Any]]:
-    with tarfile.open(archive, "r:gz") as stream:
-        members = stream.getmembers()
-        for member in members:
-            path = PurePosixPath(member.name)
-            if path.is_absolute() or ".." in path.parts or member.issym() or member.islnk():
-                raise RuntimeError(f"unsafe MPK member: {member.name}")
-        names = [member.name for member in members]
-        manifests = [name for name in names if name.endswith("_mpk.json")]
-        if len(manifests) != 1:
-            raise RuntimeError(f"expected one MPK manifest, found {manifests}")
-        source = stream.extractfile(manifests[0])
-        if source is None:
-            raise RuntimeError(f"cannot read MPK manifest: {manifests[0]}")
-        return names, json.load(source)
-
-
 def audit_mpk(archive: Path, component_id: str) -> dict[str, Any]:
     contract = COMPONENT_INTERFACES[component_id]
-    names, manifest = _read_mpk_manifest(archive)
+    names, manifest = read_mpk_manifest(archive)
     elfs = [name for name in names if name.endswith(".elf")]
     shared_objects = [name for name in names if name.endswith(".so") or ".so." in name]
     plugins = sorted(manifest.get("plugins", []), key=lambda item: item.get("sequence", 0))
@@ -264,15 +246,8 @@ def _compile_component(
         tessellate_parameters=None,
         l2_caching_mode=L2CachingMode.NONE,
         preserve=True,
-        deployable=True,
-        retained_temporary_directory_name=None,
-        use_power_limits=False,
-        max_mla_power=None,
         # The option applies to every layer norm and INT8 ones reject it, so BF16 regions keep BF16 intermediates.
         layer_norm_use_fp32_intermediates=precision in A16_PRECISIONS,
-        rms_norm_use_fp32_intermediates=False,
-        enable_filter_sharing=False,
-        layout_search_effort_level=0,
     )
     archive = _find_mpk(build_dir, component_id)
     audit_mpk(archive, component_id)
@@ -713,34 +688,10 @@ def compile_model(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model", type=Path, required=True)
-    parser.add_argument("--dataset", type=Path, help="calibration images; required when a component calibrates")
-    parser.add_argument("--fidelity-dataset", type=Path, required=True)
-    parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--build-profile", required=True)
-    parser.add_argument("--compile-invocation", required=True)
-    args = parser.parse_args()
-    if args.compile_invocation != args.build_profile:
-        parser.error("a build profile compiles in one invocation named after it")
-    source = args.model.expanduser().resolve()
-    dataset = args.dataset.expanduser().resolve() if args.dataset else None
-    fidelity_dataset = args.fidelity_dataset.expanduser().resolve()
-    if source.suffix != ".onnx":
-        parser.error("--model must be the verified ONNX from the manual conversion workflow")
-    if not source.is_file():
-        parser.error(f"source does not exist: {source}")
-    if dataset is not None and not dataset.exists():
-        parser.error(f"dataset does not exist: {dataset}")
-    if not fidelity_dataset.exists():
-        parser.error(f"fidelity dataset does not exist: {fidelity_dataset}")
+    arguments = parse_arguments(__doc__, MODEL_DIR)
     logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
     outputs = compile_model(
-        source,
-        args.build_profile,
-        dataset,
-        fidelity_dataset,
-        args.output_dir.expanduser().resolve(),
+        arguments.model, arguments.build_profile, arguments.dataset, arguments.fidelity_dataset, arguments.output_dir
     )
     for component_id, archive in outputs.items():
         logging.info("Compiled %s MPK: %s", component_id, archive)

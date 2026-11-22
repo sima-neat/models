@@ -31,7 +31,7 @@ def calibration(load_script: Callable[[str], ModuleType]) -> ModuleType:
 
 def test_every_build_profile_is_named_after_its_component_precisions(compiler: ModuleType) -> None:
     for profile in load_metadata(MODEL_DIR)["build_profiles"]:
-        compiler.check_profile_id(profile["id"], compiler.component_parameters(profile["id"]))
+        compiler.check_profile_id(profile["id"], compiler._component_parameters(profile["id"]))
 
 
 def test_profile_id_writes_a_repeated_precision_once(compiler: ModuleType) -> None:

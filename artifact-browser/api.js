@@ -1,6 +1,6 @@
 import { heroImageSources } from "./hero-images.js";
 // Registry API requests, local caches, and catalog build selection.
-import { deploymentCatalog, runProfile, variantBuildKey, variantBuildRuns, withoutProfiles } from "./branch-builds.js";
+import { deploymentCatalog, runProfile, variantBuildKey, variantBuildRuns } from "./branch-builds.js";
 import { BENCHMARK_RUN_TYPES, customerPerformanceReport } from "./model-report.js";
 import { config, shows, DEFAULT_BRANCH, branchSelectionEnabled, state, elements, categoryFilters } from "./state.js";
 
@@ -113,8 +113,7 @@ function catalogCacheKey() {
   const categories = branchSnapshot ? [] : Object.entries(categoryFilters()).filter(([, value]) => value).sort();
   const search = branchSnapshot ? "" : elements.search.value.trim();
   const compiler = branchSnapshot ? "any" : elements["compiler-filter"].value || "any";
-  const audience = shows.lowAccuracyVariants ? "developer" : "customer";
-  return `sima-neat-model-catalog:v6:${audience}:${state.apiBase}:${repo.organization}/${repo.name}:${history}:${branch}:${compiler}:${search}:${JSON.stringify(categories)}`;
+  return `sima-neat-model-catalog:v6:${state.apiBase}:${repo.organization}/${repo.name}:${history}:${branch}:${compiler}:${search}:${JSON.stringify(categories)}`;
 }
 
 function branchCatalogCacheKey() {
@@ -311,18 +310,6 @@ function loadReferenceMetrics(modelId) {
     .then((response) => (response.ok ? response.json() : {}))
     .catch(() => ({}));
   return referenceMetrics.then((reference) => reference[modelId] || []);
-}
-
-// The catalog an audience sees. The customer view leaves out the build profiles whose accuracy falls too far
-// below the source model's reference score, listed from model.yaml and tests.yaml when the portal is built.
-// Without the list every profile shows, so a failed fetch is not an error.
-let lowAccuracyVariants = null;
-export async function audienceCatalog(catalogModels) {
-  if (shows.lowAccuracyVariants) return catalogModels;
-  lowAccuracyVariants ||= fetch(new URL("./low-accuracy-variants.json", import.meta.url))
-    .then((response) => (response.ok ? response.json() : {}))
-    .catch(() => ({}));
-  return withoutProfiles(catalogModels, await lowAccuracyVariants);
 }
 
 // The name of each dataset by its Dataset Registry ID, from datasets/<id>.yaml when the portal is built.

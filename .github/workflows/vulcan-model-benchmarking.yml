@@ -18,11 +18,6 @@ on:
         default: default
         type: choice
         options: [default, staging, production]
-      source_run_id:
-        description: Source workflow run containing the compiled-model artifact; empty restores the build from the registry
-        required: false
-        default: ""
-        type: string
       source_sha:
         description: Single model only; source revision containing the benchmark and model definitions
         required: false
@@ -59,11 +54,6 @@ on:
       environment:
         description: Registry and dataset environment, staging or production (DevKits remain on staging)
         required: true
-        type: string
-      source_run_id:
-        description: Source workflow run containing the compiled-model artifact; empty restores the build from the registry
-        required: false
-        default: ""
         type: string
       source_sha:
         description: Source revision containing the benchmark and model definitions
@@ -112,7 +102,7 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 concurrency:
-  group: model-benchmark-${{ inputs.environment != 'default' && inputs.environment || vars.VULCAN_ENV || 'staging' }}-${{ github.ref }}-${{ inputs.source_sha }}-${{ inputs.source_run_id }}-${{ inputs.stages }}-${{ inputs.model_id }}-${{ inputs.build_profile_id }}-${{ inputs.compile_invocation_id }}-${{ inputs.promoted_missing || false }}
+  group: model-benchmark-${{ inputs.environment != 'default' && inputs.environment || vars.VULCAN_ENV || 'staging' }}-${{ github.ref }}-${{ inputs.source_sha }}-${{ inputs.stages }}-${{ inputs.model_id }}-${{ inputs.build_profile_id }}-${{ inputs.compile_invocation_id }}-${{ inputs.promoted_missing || false }}
   cancel-in-progress: false
 
 jobs:
@@ -180,7 +170,6 @@ jobs:
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment != 'default' && inputs.environment || vars.VULCAN_ENV || 'staging' }}
     permissions:
-      actions: read
       contents: read
       id-token: write
     outputs:
@@ -190,11 +179,9 @@ jobs:
       benchmark_backend: ${{ steps.settings.outputs.backend }}
       timeout_minutes: ${{ steps.settings.outputs.timeout_minutes }}
     steps:
-      - name: Verify the source run and compiled artifact
+      - name: Validate the benchmark request
         id: source
         env:
-          GH_TOKEN: ${{ github.token }}
-          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
           SOURCE_SHA: ${{ inputs.source_sha }}
           SOURCE_BRANCH: ${{ inputs.source_branch }}
           MODEL_ID: ${{ inputs.model_id }}
@@ -210,29 +197,11 @@ jobs:
             [[ "$stage" == performance || "$stage" == accuracy ]]
           done
           [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
-          [[ -z "$SOURCE_RUN_ID" || "$SOURCE_RUN_ID" =~ ^[0-9]+$ ]]
           git check-ref-format --branch "$SOURCE_BRANCH" >/dev/null
           [[ "$MODEL_ID" =~ ^[a-z][a-z0-9]*(_[a-z0-9]+)*$ ]]
           [[ "$BUILD_PROFILE_ID" =~ ^[a-z][a-z0-9]*(_[a-z0-9]+)*$ ]]
           [[ "$COMPILE_INVOCATION_ID" =~ ^[a-z][a-z0-9]*(_[a-z0-9]+)*$ ]]
-          if [[ -z "$SOURCE_RUN_ID" ]]; then
-            echo "branch=$SOURCE_BRANCH" >> "$GITHUB_OUTPUT"
-            echo "attempt=1" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          run_json="$(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID")"
-          jq -e --arg sha "$SOURCE_SHA" --arg branch "$SOURCE_BRANCH" \
-            '.head_sha == $sha and .head_branch == $branch and
-             (.event == "push" or .event == "workflow_dispatch")' \
-            <<< "$run_json" >/dev/null
           echo "branch=$SOURCE_BRANCH" >> "$GITHUB_OUTPUT"
-          echo "attempt=$(jq -er '.run_attempt | tostring' <<< "$run_json")" >> "$GITHUB_OUTPUT"
-          artifact_name="compiled-model-$MODEL_ID-$BUILD_PROFILE_ID-$COMPILE_INVOCATION_ID"
-          artifact_count="$(
-            gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID/artifacts?name=$artifact_name" \
-              --jq '[.artifacts[] | select(.expired | not)] | length'
-          )"
-          test "$artifact_count" = "1"
 
       - name: Check out trusted registry tooling from the protected workflow revision
         uses: actions/checkout@v6
@@ -246,15 +215,6 @@ jobs:
           ref: ${{ inputs.source_sha }}
           path: _source
           persist-credentials: false
-
-      - name: Download this compiled model from its source run
-        if: inputs.source_run_id != ''
-        uses: actions/download-artifact@v7
-        with:
-          name: compiled-model-${{ inputs.model_id }}-${{ inputs.build_profile_id }}-${{ inputs.compile_invocation_id }}
-          path: _compiled
-          github-token: ${{ github.token }}
-          run-id: ${{ inputs.source_run_id }}
 
       - name: Set up registry publication tooling
         uses: actions/setup-python@v6
@@ -278,9 +238,7 @@ jobs:
         run: scripts/require_source_board_tooling.sh _source "${{ steps.settings.outputs.backend }}"
 
       - name: Configure authenticated production registry reads
-        if: >-
-          (inputs.environment != 'default' && inputs.environment || vars.VULCAN_ENV || 'staging') == 'production' &&
-          (inputs.source_run_id == '' || steps.settings.outputs.needs_baseline == 'true')
+        if: (inputs.environment != 'default' && inputs.environment || vars.VULCAN_ENV || 'staging') == 'production'
         id: registry-reader-credentials
         uses: aws-actions/configure-aws-credentials@v6
         with:
@@ -290,7 +248,8 @@ jobs:
           output-credentials: true
           output-env-credentials: false
 
-      - name: Restore the current immutable compilation from the registry
+      # Only the build's receipts and file list are staged: the DevKit downloads its files by compile run.
+      - name: Stage the current immutable compilation from the registry
         env:
           AWS_ACCESS_KEY_ID: ${{ steps.registry-reader-credentials.outputs.aws-access-key-id }}
           AWS_SECRET_ACCESS_KEY: ${{ steps.registry-reader-credentials.outputs.aws-secret-access-key }}
@@ -301,7 +260,6 @@ jobs:
           SOURCE_BRANCH: ${{ steps.source.outputs.branch }}
           DEPLOYMENT_BRANCH: ${{ inputs.deployment_branch }}
           SOURCE_SHA: ${{ inputs.source_sha }}
-          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
           MODEL_ID: ${{ inputs.model_id }}
           BUILD_PROFILE_ID: ${{ inputs.build_profile_id }}
           COMPILE_INVOCATION_ID: ${{ inputs.compile_invocation_id }}
@@ -309,17 +267,13 @@ jobs:
         run: scripts/stage_benchmark_inputs.sh _source _compiled
 
       # A benchmark runs under the profile's published package, so the build must be registered whole.
-      - name: Verify the registered build and its package
+      - name: Require the profile's published package
         env:
           MODEL_ID: ${{ inputs.model_id }}
           BUILD_PROFILE_ID: ${{ inputs.build_profile_id }}
-        run: |
-          set -euo pipefail
-          model-registry model-component-artifacts _compiled --repository _source \
-            --model "$MODEL_ID" --build-profile "$BUILD_PROFILE_ID"
-          test -f "_compiled/$MODEL_ID/$BUILD_PROFILE_ID/packages/default/registry-publication.json"
+        run: test -f "_compiled/$MODEL_ID/$BUILD_PROFILE_ID/packages/default/registry-publication.json"
 
-      - name: Retain benchmark input independently of compile-run cleanup
+      - name: Retain the staged build metadata for the DevKit and publication
         uses: actions/upload-artifact@v7
         with:
           name: benchmark-input-${{ inputs.model_id }}-${{ inputs.build_profile_id }}-${{ inputs.compile_invocation_id }}
@@ -368,7 +322,7 @@ jobs:
           path: _source
           persist-credentials: false
 
-      - name: Download the staged compiled model output
+      - name: Download the staged build metadata
         uses: actions/download-artifact@v7
         with:
           name: benchmark-input-${{ inputs.model_id }}-${{ inputs.build_profile_id }}-${{ inputs.compile_invocation_id }}
@@ -430,6 +384,13 @@ jobs:
           echo "Verified DevKit platform $actual_platform."
           echo "BENCHMARK_RUNTIME=$runtime" >> "$GITHUB_ENV"
 
+      # The public registry serves each file by compile run with a fresh link, so the board needs no credentials.
+      - name: Download the build files from the registry
+        id: build
+        if: steps.stages.outputs.performance == 'true' || steps.stages.outputs.accuracy == 'true'
+        run: >-
+          "$REGISTRY_PYTHON" -m model_registry download-build _compiled --model "$MODEL_ID" --build-profile "$BUILD_PROFILE_ID"
+
       - name: Install trusted dataset tooling
         # Both stages read the accuracy dataset: accuracy scores it, and performance benchmarks a sample of it.
         if: env.BENCHMARK_BACKEND == 'core' && (steps.stages.outputs.accuracy == 'true' || steps.stages.outputs.performance == 'true')
@@ -480,8 +441,9 @@ jobs:
       - name: Measure performance on DevKit
         id: performance
         if: >-
-          ${{ !cancelled() && steps.core.outcome == 'success' && (steps.dataset-cache.outcome == 'success' ||
-          steps.mole.outcome == 'success') && steps.stages.outputs.performance == 'true' }}
+          ${{ !cancelled() && steps.build.outcome == 'success' && steps.core.outcome == 'success' &&
+          (steps.dataset-cache.outcome == 'success' || steps.mole.outcome == 'success') &&
+          steps.stages.outputs.performance == 'true' }}
         run: scripts/run_model_performance.sh "_source/models/$MODEL_ID" "$BUILD_PROFILE_ID" _compiled _performance
 
       # Publication sends each recorded outcome with its report and then fails the run on a failed one.
@@ -496,8 +458,8 @@ jobs:
       - name: Measure accuracy on DevKit
         id: accuracy
         if: >-
-          ${{ !cancelled() && steps.core.outcome == 'success' && steps.dataset-cache.outcome == 'success' &&
-          steps.stages.outputs.accuracy == 'true' }}
+          ${{ !cancelled() && steps.build.outcome == 'success' && steps.core.outcome == 'success' &&
+          steps.dataset-cache.outcome == 'success' && steps.stages.outputs.accuracy == 'true' }}
         run: scripts/run_model_accuracy.sh "_source/models/$MODEL_ID" "$BUILD_PROFILE_ID" _compiled _accuracy
 
       - name: Test the accuracy report with the model's accuracy tests
@@ -525,6 +487,12 @@ jobs:
           path: _accuracy/
           if-no-files-found: error
           retention-days: 14
+
+      # The build files fill the board's NVMe, so remove them however the job ends. The board's dataset store stays
+      # for later jobs.
+      - name: Remove the build files and scratch folder from the DevKit
+        if: always()
+        run: rm -rf _compiled "$WORK_DIR"
 
   publish:
     name: Publish benchmarks to Vulcan
@@ -572,7 +540,7 @@ jobs:
         with:
           name: accuracy-${{ inputs.model_id }}-${{ inputs.build_profile_id }}-${{ inputs.compile_invocation_id }}
           path: _accuracy
-      - name: Download the registered build the stages measured
+      - name: Download the receipts of the build the stages measured
         uses: actions/download-artifact@v7
         with:
           name: benchmark-input-${{ inputs.model_id }}-${{ inputs.build_profile_id }}-${{ inputs.compile_invocation_id }}

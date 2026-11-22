@@ -34,7 +34,6 @@ is in [branch catalogs](branch-catalogs.md).
 | --- | --- | --- |
 | `package` | `model-registry-package.yml`, job `build` | `ruff check .`, `python -m pytest -n auto` (one worker per runner core), a collect-only pass over every model's stage-output tests, `packaging/model-registry/build.sh`, and `verify_package.sh` |
 | `portal` | `developer-docs.yml`, job `build` | `npm ci`, the TypeScript check, `npm run build:portal`, `node --test tests/browser/*.test.mjs`, and the Chromium smoke test |
-
 | `main-merge` | `main-merge-check.yml`, job `check`, only when the base branch is `main` | `scripts/check_main_merge.sh` with the pull request's head commit |
 
 A passing pull request shows that the definitions validate, the host tests pass, and the
@@ -106,7 +105,7 @@ compiles and benchmarks nothing and still publishes the catalog.
 
 Three orderings matter:
 
-- A reused build's benchmark restores the build from the catalog at this revision. It
+- A reused build's benchmark stages the build from the catalog at this revision. It
   therefore waits for `initialize-catalog`, or for `publish-catalog` when nothing compiles.
 - A new build's benchmark starts inside its own `compile` call as soon as the build
   publishes. Other builds may still compile.
@@ -173,16 +172,16 @@ LLiMa, because `publish-candidates` publishes those.
 5. `publish-catalog --compiled-dir --package-dir` records the build in the branch catalog.
    The step runs the command once more when another publisher keeps winning the snapshot
    conflict.
-6. The job uploads `compiled-model-<model>-<profile>-<invocation>` for the benchmark.
 
-Steps 4 to 6 run only when `publishable` is true. An on-demand build replaces steps 3 to 6
+Steps 4 and 5 run only when `publishable` is true. An on-demand build replaces steps 3 to 5
 with `publish-candidate` ([on-demand builds](on-demand-builds.md)).
 
 ### `benchmark` (Benchmark)
 
-Calls `vulcan-model-benchmarking.yml` with this run as `source_run_id`. It runs when the
-build is `publishable`, is not on-demand, published a package, targets `modalix`, and
-declares a benchmark stage.
+Calls `vulcan-model-benchmarking.yml` after `publish` records the build in the catalog,
+because the benchmark stages the build from there. It runs when the build is
+`publishable`, is not on-demand, published a package, targets `modalix`, and declares a
+benchmark stage.
 
 ## Benchmark workflow
 
@@ -196,54 +195,68 @@ Runs on a GitHub-hosted runner.
 
 1. It validates the inputs. `source_branch` must be the branch the workflow runs on, and
    `source_sha` must be a full commit SHA.
-2. With a `source_run_id`, it checks that run's commit, branch, and event, and requires
-   exactly one unexpired `compiled-model-…` artifact.
-3. It checks out the tooling at the workflow revision and the source revision in `_source`
+2. It checks out the tooling at the workflow revision and the source revision in `_source`
    as data.
-4. `model-registry benchmark-job` prints the backend (`core` or `llima`) and the DevKit
+3. `model-registry benchmark-job` prints the backend (`core` or `llima`) and the DevKit
    job's timeout: 45 minutes, 90 for LLiMa performance, and 4320 for a speculative profile
    with a `benchmark_baseline`.
-5. `scripts/require_source_board_tooling.sh` fails when the workflow revision and the
+4. `scripts/require_source_board_tooling.sh` fails when the workflow revision and the
    source revision differ in a file the benchmark fingerprints hash. The newer push then
    benchmarks the build.
-6. `scripts/stage_benchmark_inputs.sh` restores the build from the registry when no
-   source run supplies it, and restores the baseline deployment for a performance stage
-   ([restoring a published build](publication.md#restoring-a-published-build)).
-7. `model-component-artifacts` verifies each component, and the job requires the package
-   receipt. It uploads the result as `benchmark-input-<model>-<profile>-<invocation>`.
+5. In production the job assumes the publisher role for signed registry reads.
+   `scripts/stage_benchmark_inputs.sh` stages the build's receipts and file list from the
+   catalog, and the baseline's for a performance stage. It downloads no MPK or deployment
+   file ([staging a published build](publication.md#staging-a-published-build)).
+6. The job requires the package receipt and uploads the staged metadata as
+   `benchmark-input-<model>-<profile>-<invocation>`. No model file passes through an
+   Actions artifact.
 
 ### `benchmark` (Benchmark on DevKit)
 
 Runs on the resolved Modalix DevKit. Its scratch folder is
-`/media/nvme/neat-tests/model-benchmark-<run>-<attempt>-<model>-<profile>`, and each runner
-script removes it on exit.
+`/media/nvme/neat-tests/model-benchmark-<run>-<attempt>-<model>-<profile>`, which each runner
+script removes on exit. Both stages read their datasets from the board's dataset store, which
+outlives the job ([benchmark input](../../docs/benchmarking.md#benchmark-input)).
 
 1. It installs the registry tooling with the `tests` extra in a virtual environment.
 2. It keeps each requested stage the profile declares and skips the others.
 3. `resolve-benchmark-runtime` reads the pins, and the job fails when `DISTRO_VERSION` in
    `/etc/buildinfo` differs from `platform-version`.
-4. For the `core` backend it installs the Dataset Registry wheel, assumes the dataset
-   reader role, and runs `scripts/cache_accuracy_dataset.sh`. The script refuses to run
-   when the NVMe is not mounted. It holds a board-wide lock, so concurrent jobs download an
-   archive once.
-5. `model-registry ensure-neat-core --repository _source --environment production`
+4. `model-registry download-build _compiled` downloads every file in the staged
+   `build-files.json`, and in the baseline's, from the registry the stage read, without
+   credentials. It verifies each file against the staged SHA-256 and size, retries a failed
+   or cut-off transfer through a fresh link, and restores runtime files from the package
+   archive ([staging a published build](publication.md#staging-a-published-build)).
+5. For the `core` backend it installs the Dataset Registry wheel, assumes the dataset
+   reader role, and runs `scripts/cache_accuracy_dataset.sh`, which refuses to run when the
+   NVMe is not mounted. The script fills the dataset store through
+   `scripts/unpack_benchmark_datasets.sh` under a board-wide lock, so concurrent jobs unpack
+   an archive once, and the stages later need no credentials. The `Source` column of the
+   job summary's `Accuracy datasets` table names where each dataset came from:
+   `board's unpacked copy`, `shared dataset archive share`, or `Dataset Registry`.
+6. `model-registry ensure-neat-core --repository _source --environment production`
    prepares Core.
-6. For the `llima` backend, `scripts/install_mole_benchmark_runtime.sh` installs MoLE from
+7. For the `llima` backend, `scripts/install_mole_benchmark_runtime.sh` installs MoLE from
    the LLiMa pin and reuses a matching installation on the NVMe.
-7. `scripts/run_model_performance.sh` measures performance. It needs step 5, and step 4 or
-   step 6.
-8. `scripts/run_model_accuracy.sh` measures accuracy. It needs steps 4 and 5.
-9. After each measurement, `scripts/run_model_tests.sh` runs the model's test of that
-   stage on `model-report.json` and writes `passed`, `failed`, or `skipped` to
-   `test-status.txt`.
-10. The job uploads `performance-…` and `accuracy-…` evidence, also after a failure.
+8. `scripts/run_model_performance.sh` measures performance. It needs steps 4 and 6, and
+   step 5 or step 7.
+9. `scripts/run_model_accuracy.sh` measures accuracy. It needs steps 4, 5, and 6.
+10. After each measurement, `scripts/run_model_tests.sh` runs the model's test of that
+    stage on `model-report.json` and writes `passed`, `failed`, or `skipped` to
+    `test-status.txt`.
+11. The job uploads `performance-…` and `accuracy-…` evidence, also after a failure.
+12. The last step removes `_compiled` and the scratch folder, however the job ends. No step
+    removes the dataset store. A cancellation GitHub forces skips the step. The next job's
+    checkout then removes `_compiled`, and the scratch folder stays.
 
 `ensure-neat-core` reads `neat-core.install_target`. It resolves a floating target such as
 `core@develop` to the published tag once, then compares `neat --json` with that artifact's
 metadata. Installation is skipped only when the Core channel, tag, and artifact environment
 match, and the installed Runner and Scheduler versions equal the Debian versions in the
 artifact's checksum-verified `resolved-deps-manifest.json`. Any missing or unreadable value
-installs with `sima-cli neat install --env production --type minimal`. An unresolved
+installs with `sima-cli neat install --env production --type minimal`, after one
+`Installing NEAT core (<channel>/<tag>): <reason>.` line that names the first value that
+differed, with its installed and pinned values, or the step that could not be read. An unresolved
 floating target fails the job. Both paths print the PyNeat version and the installed
 packages. Core artifacts come from production whatever the registry environment is. A
 non-production Core index needs `--artifacts-base-url` or `NEAT_ARTIFACTS_BASE_URL`.
@@ -251,8 +264,9 @@ non-production Core index needs `--artifacts-base-url` or `NEAT_ARTIFACTS_BASE_U
 `run_model_performance.sh` does this for the `core` backend:
 
 1. lists the MPKs with `model-component-artifacts`
-2. resolves the first accuracy dataset from the NVMe cache with `resolve-devkit-accuracy`
-   and unpacks it, and passes no `--dataset` for a profile that accuracy does not measure
+2. takes the first accuracy dataset from the dataset store with
+   `scripts/unpack_benchmark_datasets.sh`, and passes no `--dataset` for a profile that
+   accuracy does not measure
 3. fetches the model's pinned `resources` with `fetch-resources` and passes `--resources`
 4. installs `scripts/requirements-performance.txt`, when present, beside PyNeat's
    environment
@@ -264,10 +278,11 @@ non-production Core index needs `--artifacts-base-url` or `NEAT_ARTIFACTS_BASE_U
 For the `llima` backend it skips steps 2 to 4 and passes `--deployment`, plus `--baseline`
 when the staged input holds `benchmark-baseline.json`.
 
-`run_model_accuracy.sh` resolves every declared dataset, lists the MPKs with
-`model-component-mpks`, passes the build's `runtime_files` folder as `--resources` when the
-compile declared any, installs `scripts/requirements-accuracy.txt`, runs `accuracy.py`, and
-runs `check-report`.
+`run_model_accuracy.sh` takes every declared dataset from the store with the same script.
+It lists the MPKs with `model-component-mpks`, passes the build's `runtime_files` folder as
+`--resources` when the compile declared any, and passes `--limit` when `model.yaml` sets
+`accuracy.samples`. It installs `scripts/requirements-accuracy.txt`, runs `accuracy.py`,
+and runs `check-report`.
 
 ### `publish` and `check`
 
@@ -291,8 +306,7 @@ Run the workflow from the branch named in `source_branch`.
 | Input | Meaning |
 | --- | --- |
 | `environment` | `default` uses `vars.VULCAN_ENV`, or staging when that is unset. `staging` and `production` override it. |
-| `source_run_id` | The orchestrator run that holds the `compiled-model-…` artifact. Empty restores the build from the registry. |
-| `source_sha` | The revision whose model definition and scripts are measured. For a restore from the branch's own catalog it must be that catalog's current revision. |
+| `source_sha` | The revision whose model definition and scripts are measured. With the branch's own catalog it must be that catalog's current revision. |
 | `deployment_branch` | Another branch whose catalog supplies the compiled build, for example `develop` when testing a feature branch. |
 | `stages` | `performance`, `accuracy`, or both. A stage the profile does not declare is skipped. |
 | `promoted_missing` | Queues the missing benchmarks of promoted builds and ignores the per-model inputs. |
@@ -351,9 +365,13 @@ The package holds `model_registry` without the CI-only modules, plus `model_repo
 Both paths publish the checked `model-browser-site` artifact under the `models` prefix and
 invalidate `/models` and `/models/*`. They share the concurrency group
 `<repository>-model-browser-<environment>` without cancellation, so two uploads never
-overlap. The group does not protect an upload from the run-level cancellation: a newer
-push to `main` or `develop` cancels that ref's running push run, including
-`publish-model-browser` during its upload.
+overlap. A newer push to `main` or `develop` waits for that ref's running push run, so it
+does not cancel `publish-model-browser` during an upload. A waiting run that a newer push
+replaces never starts and publishes nothing. A browser change merged while a push run
+runs therefore reaches staging only after that run ends, when the next run publishes its
+portal. The manual path publishes it sooner. An orchestrator dispatch publishes too, but
+unless it names profiles or components it also moves the catalog
+([concurrency](#concurrency-and-cancellation)).
 
 No push publishes to production. Production is reached through the manual workflow, or
 through `scripts/deploy-production-model-browser.sh` from an operator's machine.
@@ -414,25 +432,32 @@ Registry reads use `VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL` and fall back to
 `MODEL_REGISTRY_IAM_READ_API_URL` to the API URL. `read_registry_json_authenticated` in
 `registry_http.py` then signs only requests under that URL's `/v1/` path. Other hosts and
 artifact downloads stay unsigned. Production can therefore plan against a private registry
-with no public read URL.
+with no public read URL. A benchmark cannot: the DevKit downloads the build from the URL
+the stage read, without credentials, so that URL must serve unsigned reads, and
+`stage-registry-build` fails before any read when it equals
+`MODEL_REGISTRY_IAM_READ_API_URL`.
 
 ## Concurrency and cancellation
 
 | Workflow | Group | A newer run |
 | --- | --- | --- |
-| Orchestrator, push | `model-compile-<ref>-<VULCAN_ENV>` | cancels the running one, with its compiles and benchmarks |
+| Orchestrator, push to `develop` or `main` | `model-compile-<ref>-<VULCAN_ENV>` | waits for the running one. GitHub keeps one waiting run per group, so a third push replaces the waiting run, whose changes the newer revision also holds. |
+| Orchestrator, push to another branch | the same | cancels the running one, with its compiles and benchmarks |
 | Orchestrator, dispatch | the same, plus the run ID | runs beside it, and each dispatch runs to completion |
-| Benchmarking | environment, ref, source SHA, source run, stages, model, profile, invocation | waits, never cancels |
+| Benchmarking | `model-benchmark-` with the resolved environment, ref, source SHA, the `stages` text, model, profile, invocation, and `promoted_missing` | waits, never cancels the running one. A newer run of the same group replaces a waiting one. A manual dispatch of a build waits for the orchestrator's benchmark of it only when every part matches, the `stages` text included: the orchestrator passes only the stages it planned, and a dispatch defaults to `performance,accuracy`. `deployment_branch` is not part of the group. |
 | Target Branch Checks | `target-branch-checks-<ref>` | cancels |
 | Registry package | `model-registry-<workflow>-<ref>` | cancels on a branch |
 | Browser publication | `<repository>-model-browser-<environment>` | waits |
 | Branch lifecycle (per branch), registry state, Main metadata | one group each | waits |
 | Promote model | the run ID | runs beside it |
 
-A cancelled orchestrator leaves published builds and benchmark runs in place. The next run
-plans the builds left pending and the benchmarks without a completed run
-([concurrent pushes](branch-catalogs.md#concurrent-pushes)). Deleting a branch cancels its
-unfinished runs.
+A merge into `develop` or `main` therefore never cancels compiles in flight. A cancelled
+orchestrator, on another branch, leaves published builds and benchmark runs in place. The
+next run plans the builds left pending and the benchmarks without a completed run. A
+dispatch runs beside a waiting or running push run of its ref, and a catalog it publishes
+at another commit fails that push run's later benchmark staging. [Concurrent
+pushes](branch-catalogs.md#concurrent-pushes) owns both effects on the catalog. Deleting a
+branch cancels its unfinished runs.
 
 ## Trust boundary
 

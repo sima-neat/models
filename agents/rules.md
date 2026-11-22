@@ -42,11 +42,12 @@ depends on.
 ## Before a push
 
 A push reruns each build whose fingerprint changed. Some files are fingerprint inputs of every
-model: `scripts/run_model_compilation.sh` and the other entries of `COMPILE_TOOLING`,
-`BOARD_STAGE_TOOLING`, `PERFORMANCE_TOOLING`, and `ACCURACY_TOOLING` in `fingerprints.py`, the
-compiler pin, the Core runtime target, and `FINGERPRINT_VERSION` in `conversion.py`. An edit to
-one of them, even a comment made while working on one model, recompiles or remeasures models
-the pull request has nothing to do with.
+model: `scripts/run_model_compilation.sh`, the compile helpers in
+`tools/model_registry/compile_script.py`, `scripts/unpack_benchmark_datasets.sh`, and the other
+entries of `COMPILE_TOOLING`, `BOARD_STAGE_TOOLING`, `PERFORMANCE_TOOLING`, and `ACCURACY_TOOLING`
+in `fingerprints.py`, the compiler pin, the Core runtime target, and `FINGERPRINT_VERSION` in
+`conversion.py`. An edit to one of them, even a comment made while working on one model,
+recompiles or remeasures models the pull request has nothing to do with.
 
 - Before each push, list the changed files and check each against those inputs.
 - When one matches, say so before pushing, in these terms: the file, the stages it reruns, and
@@ -84,6 +85,16 @@ later or never. Apply them while you write.
 
 - **Hide an unready variant by commenting it out.** A commented-out profile in
   `model.yaml` is neither compiled nor benchmarked, and its tests skip.
+- **Calibrate on at most 20 samples.** Keep each component's `calibration_samples` at 20 or
+  fewer, because each sample adds compile time to every build and nothing validates the
+  parameter.
+- **A shared compile helper holds a registry format, never a recipe step.**
+  `tools/model_registry/compile_script.py` holds only what ONNX recipes share unchanged: the
+  command line, one component's parameters, the MPK manifest, and the fidelity report
+  layout. Quantization, the compile call, calibration, graph surgery, running the source and
+  the quantized graph, and the MPK audit stay in the model's `compile.py`. A script whose
+  step differs from a helper keeps its own code, because a per-model branch or flag in a
+  helper recompiles every ONNX build when one model changes.
 - **An LLM or VLM is one component.** Declare the complete model as one
   component with one 4K profile (`max_num_tokens: 4096` and
   `language_group_size`). Keep graph-changing options in component
@@ -113,7 +124,16 @@ later or never. Apply them while you write.
 - **Expected values follow published results.** When a reviewed change moves a
   published value, set `expected` in `tests/tests.yaml` to the new published
   result. Leave `ACCURACY_ALLOWED_DROP` and `PERFORMANCE_ALLOWED_DROP` alone:
-  every model shares them.
+  every model shares them. When the new accuracy is more than
+  `ACCURACY_ALLOWED_REFERENCE_DROP` below the reference score, comment the profile out
+  instead ([the reference rule](../docs/adding-a-model.md#comment-out-a-variant-far-below-its-reference-score)),
+  because `model-registry validate` fails that `expected` value.
+- **Comment out a profile that fails the reference test on `develop` before the merge into
+  `main`.** The DevKit accuracy test fails a measured accuracy more than
+  `ACCURACY_ALLOWED_REFERENCE_DROP` below the reference score, but the stage still publishes
+  its report. `check-main-merge` (`find_main_merge_blockers` in `stage_plan.py`) checks only
+  that each profile has a completed result, not its test outcome, so it lets the merge carry
+  the profile to customers.
 
 ### Publication and approval
 
@@ -144,7 +164,8 @@ The code holds each limit, and this table names where. A change to a limit updat
 | A committed file is neither excluded by `.gitignore` nor larger than this, unless `ALLOWED_FILES` lists it | `MAX_FILE_BYTES` in `tests/test_target_branch_checks.py` | 2 MiB |
 | How far an accuracy measurement may be worse than its `expected` value in `tests/tests.yaml`, relative to that value, and still pass | `ACCURACY_ALLOWED_DROP` in `tools/model_registry/model_tests.py` | 0.05 |
 | How far a performance measurement may be worse than its `expected` value, relative to that value, and still pass | `PERFORMANCE_ALLOWED_DROP` in `model_tests.py` | 0.10 |
-| How far a profile's expected accuracy may be worse than the source model's reference score before the customer view leaves the profile out | `ACCURACY_ALLOWED_REFERENCE_DROP` in `model_tests.py` | 0.08 |
+| How far a profile's expected or measured accuracy may be worse than the source model's reference score, relative to that score, before `model-registry validate`, `model-registry validate-models`, or the DevKit accuracy test fails | `ACCURACY_ALLOWED_REFERENCE_DROP` in `model_tests.py` | 0.08 |
+| Samples a model's numerical fidelity compares during each compile | `maximum` of `numerical_fidelity.selection.samples` in `schemas/model.schema.json` | 5 |
 | The conversion fingerprint's version, raised as [Stages and fingerprints](#stages-and-fingerprints) says | `FINGERPRINT_VERSION` in `tools/model_registry/conversion.py` | 1 |
 | Words in a model README after the hero | `MAX_README_WORDS` in `tools/model_registry/documentation.py` | 400 |
 | Words in the README's Overview, in one or two paragraphs | the check in `load_model_documentation` in `documentation.py` | 50 to 120 |
@@ -153,7 +174,7 @@ The code holds each limit, and this table names where. A change to a limit updat
 | Pixel size of a model's `hero.png` | `HERO_WIDTH` and `HERO_HEIGHT` in `documentation.py` | 1200 by 480 |
 | Clock cycles and seconds the MLA stage simulation runs before it stops | `CYCLE_LIMIT` and `TIMEOUT_S` in `tools/model_registry/mla_stage_simulation.py` | 2,000,000,000 cycles, 600 s |
 | Roles and required names in one Vulcan candidate | the check in `tools/model_registry/candidates.py` | 32 roles, 4096 names |
-| Lines in `AGENTS.md`, which every agent session loads | `AGENTS_LINE_BUDGET` in `tests/test_docs.py` | 130 |
+| Lines in `AGENTS.md`, which every agent session loads | `AGENTS_LINE_BUDGET` in `tests/test_docs.py` | 155 |
 
 ## Where a lesson goes
 

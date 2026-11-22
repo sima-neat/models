@@ -11,6 +11,7 @@ from types import ModuleType
 import numpy as np
 import onnx
 import pytest
+from model_registry.errors import ValidationError
 from model_registry.model import load_model as load_metadata
 
 ROOT = Path(__file__).resolve().parents[4]
@@ -127,14 +128,17 @@ def test_quantized_keypoints_must_follow_fp32(
 
 def test_compile_reads_the_declared_build_parameters(load_script: Callable[[str], ModuleType]) -> None:
     compile_module = load_script("compile")
+    model_dir, component_id = compile_module.MODEL_DIR, compile_module.COMPONENT_ID
 
-    assert compile_module._parameters("w16a16") == {"precision": "w16a16"}
-    assert compile_module._parameters("w8a16") == {"precision": "w8a16"}
-    assert compile_module._parameters("w8a8") == {
-        "precision": "w8a8", "calibration_bins": 2048, "calibration_samples": 50,
+    assert compile_module.component_parameters(model_dir, "w16a16", component_id) == {"precision": "w16a16"}
+    assert compile_module.component_parameters(model_dir, "w8a16", component_id) == {"precision": "w8a16"}
+    assert compile_module.component_parameters(model_dir, "w8a8", component_id) == {
+        "precision": "w8a8",
+        "calibration_bins": 2048,
+        "calibration_samples": 20,
     }
-    with pytest.raises(ValueError, match="no build profile"):
-        compile_module._parameters("w4a8")
+    with pytest.raises(ValidationError, match="unknown build profile: w4a8"):
+        compile_module.component_parameters(model_dir, "w4a8", component_id)
 
 
 @pytest.mark.parametrize(
@@ -168,7 +172,7 @@ def test_only_the_int8_build_quantizes_with_calibration_data(
     parameters = {"precision": precision}
     if precision == "w8a8":
         parameters |= {"calibration_bins": 2048, "calibration_samples": 2}
-    monkeypatch.setattr(compile_module, "_parameters", lambda profile_id: parameters)
+    monkeypatch.setattr(compile_module, "component_parameters", lambda model_dir, profile_id, component_id: parameters)
     monkeypatch.setattr(compile_module, "validate_source", lambda source: None)
     monkeypatch.setattr(compile_module, "check_quantized_keypoints", lambda source, quantized: (1.0, 1.0))
     monkeypatch.setattr(

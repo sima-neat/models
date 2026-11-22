@@ -10,10 +10,12 @@ from enum import Enum
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from typing import Any
+from unittest.mock import MagicMock
 
 import numpy as np
 import onnx
 import pytest
+from model_registry.errors import ValidationError
 from onnx import TensorProto, helper, numpy_helper
 from PIL import Image
 
@@ -94,11 +96,11 @@ def test_read_images_reports_a_missing_image(tmp_path: Path, load_script: Callab
 @pytest.mark.parametrize("profile_id", ["w16a16", "w8a8", "w8a8_mixed"])
 def test_compile_reads_each_declared_build_profile(load_script: Callable[[str], ModuleType], profile_id: str) -> None:
     recipe = load_script("compile")
-    parameters = recipe._parameters(profile_id)
+    parameters = recipe.component_parameters(recipe.MODEL_DIR, profile_id, recipe.COMPONENT_ID)
 
     assert parameters["precision"] == profile_id.removesuffix("_mixed")
     if profile_id.startswith("w8a8"):
-        assert (parameters["calibration_bins"], parameters["calibration_samples"]) == (2048, 50)
+        assert (parameters["calibration_bins"], parameters["calibration_samples"]) == (2048, 20)
     expected_regions = ["attention_core", "norms", "gelu"] if profile_id == "w8a8_mixed" else []
     assert recipe._bf16_regions(profile_id, parameters) == expected_regions
 
@@ -192,8 +194,8 @@ def test_marked_precision_check_names_each_operation_off_its_mark(
 def test_compile_rejects_an_undeclared_build_profile(load_script: Callable[[str], ModuleType]) -> None:
     recipe = load_script("compile")
 
-    with pytest.raises(ValueError, match="no build profile 'w8a16'"):
-        recipe._parameters("w8a16")
+    with pytest.raises(ValidationError, match="unknown build profile: w8a16"):
+        recipe.component_parameters(recipe.MODEL_DIR, "w8a16", recipe.COMPONENT_ID)
 
 
 def test_logits_come_back_in_onnx_order(load_script: Callable[[str], ModuleType]) -> None:
@@ -204,6 +206,45 @@ def test_logits_come_back_in_onnx_order(load_script: Callable[[str], ModuleType]
     np.testing.assert_array_equal(recipe._logits([logits]), logits)
     with pytest.raises(RuntimeError, match="unexpected logits shape"):
         recipe._logits([logits[:, :, :64]])
+
+
+def test_fidelity_compares_the_quantized_logits_with_the_onnx_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, load_script: Callable[[str], ModuleType]
+) -> None:
+    recipe = load_script("compile")
+    fidelity = recipe.load_metadata(recipe.MODEL_DIR)["numerical_fidelity"]
+    images = {"val2017/a.jpg": 1.0, "val2017/b.jpg": 2.0}
+    onnx_inputs = []
+
+    class Session:
+        def __init__(self, path: str, providers: list[str]) -> None:
+            pass
+
+        def run(self, outputs: None, feeds: dict[str, np.ndarray]) -> list[np.ndarray]:
+            onnx_inputs.append(feeds["pixel_values"].shape)
+            return [np.full(recipe.LOGITS_SHAPE, feeds["pixel_values"][0, 0, 0, 0], np.float32)]
+
+    def channels_last_logits(value: float) -> np.ndarray:
+        logits = np.full((1, 128, 128, 150), value, np.float32)
+        logits[..., -1] += 1
+        return logits
+
+    candidate = MagicMock()
+    # The compiler returns the logits channels-last. Each image's last class comes back 1 too high.
+    candidate.execute.side_effect = [[channels_last_logits(value)] for value in images.values()]
+    monkeypatch.setattr(recipe, "fidelity_names", lambda dataset, seed, offset, samples: list(images))
+    monkeypatch.setattr(recipe, "read_images", lambda dataset, names: dict(images))
+    monkeypatch.setattr(recipe, "preprocess_image", lambda value: np.full((512, 512, 3), value, np.float32))
+    monkeypatch.setattr(recipe, "ort", MagicMock(InferenceSession=Session))
+
+    report = recipe.measure_fidelity(tmp_path / "model.onnx", candidate, tmp_path / "val", fidelity, "w8a8")
+
+    assert onnx_inputs == [(1, 3, 512, 512)] * 2
+    assert (report["model_id"], report["build_profile_id"], report["samples"]) == ("segformer_b0_ade_512", "w8a8", 2)
+    (metric,) = report["metrics"]
+    assert metric["name"] == "logits"
+    assert metric["max_absolute_error"] == 1.0
+    assert metric["mean_absolute_error"] == pytest.approx(1 / 150)
 
 
 def test_mpk_interface_is_the_float32_onnx_interface(load_script: Callable[[str], ModuleType]) -> None:

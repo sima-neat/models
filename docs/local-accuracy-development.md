@@ -24,7 +24,7 @@ model with the source model on a fixed sample of a registered dataset:
 numerical_fidelity:
   status: diagnostic
   dataset: {id: imagenet-2012, variant: cal, sha256: e6c18b28…, size_bytes: 112710756}
-  selection: {method: seeded_random_without_replacement, seed: 42, offset: 0, samples: 50}
+  selection: {method: seeded_random_without_replacement, seed: 42, offset: 0, samples: 5}
   outputs: [logits]
 ```
 
@@ -111,8 +111,12 @@ nonnegative ratio without an upper bound for `abs_rel`, a percentage from 0 to 1
 for `d1_all`, and pixels for `epe`. Each dataset's
 result must hold every metric its requirements file lists for
 the model's tasks. Other known accuracy metrics are allowed. Existing scripts also accept
-`--limit <images>` to evaluate a subset for a quick local check; CI never
-passes it.
+`--limit <images>` to evaluate a subset for a quick local check.
+
+CI passes `--limit` only when `model.yaml` sets `accuracy.samples`
+([accuracy](metadata-schema.md#accuracy)). The report then records how many
+samples the script evaluated. The model's reference score is still the one for
+the whole split, and the model tests compare the capped score with it.
 
 ### Run it on a DevKit
 
@@ -128,21 +132,24 @@ PYNEAT_PYTHON=~/pyneat/bin/python \
 `<compile-output-root>` holds `<model-id>/<build-profile>/compile-outputs.json`
 and the MPKs it lists. The script does this:
 
-1. It resolves each declared dataset into `DATASET_CACHE` (default
-   `/media/nvme/datasets/artifacts`). A lock makes concurrent runs share one
-   download.
+1. It takes each declared dataset as a folder from the DevKit's dataset store
+   with `scripts/unpack_benchmark_datasets.sh`. A dataset the store lacks comes
+   from the shared dataset archive share or the Dataset Registry
+   ([benchmark input](benchmarking.md#benchmark-input)).
 2. It lists each component's MPK with `model-registry model-component-mpks`.
 3. It finds the build's supporting files with `model-registry
    model-runtime-directory`. When the compile declared `runtime_files`, it
    passes the verified profile root to `accuracy.py` as `--resources`.
-4. It extracts each dataset under `WORK_DIR` and removes that directory when
-   it exits. The default is a folder for this run under
-   `/media/nvme/neat-tests/`, which a local run names `model-accuracy-local-1`.
-5. It installs `requirements-accuracy.txt` beside PyNeat.
-6. It runs `accuracy.py` with `--dataset <source id>=<directory>` for each
-   dataset and `PYTHONPATH` including `tools`. The script writes
-   `model-report.json`, and the runner saves its output to `accuracy.log`.
-7. It runs `model-registry check-report`, which validates the report against
+4. It installs `requirements-accuracy.txt` beside PyNeat, in `WORK_DIR`, which
+   it removes when it exits. The default `WORK_DIR` is a folder for this run
+   under `/media/nvme/neat-tests/`, which a local run names
+   `model-accuracy-local-1`. Set `WORK_DIR` before the command to use another
+   folder.
+5. It runs `accuracy.py` with `--dataset <source id>=<directory>` for each
+   dataset, `--limit` when `model.yaml` sets `accuracy.samples`, and
+   `PYTHONPATH` including `tools`. The script writes `model-report.json`, and
+   the runner saves its output to `accuracy.log`.
+6. It runs `model-registry check-report`, which validates the report against
    [`model-report.schema.json`](../schemas/model-report.schema.json), requires
    a result for exactly the declared datasets, each with its required metrics,
    and writes the board's installation to `environment.json`.
@@ -201,7 +208,9 @@ On the DevKit, `scripts/run_model_tests.sh` runs the model's
 `tests/benchmark/test_accuracy.py` on the report, which compares each dataset's
 metrics with the build profile's expected values for that dataset in
 `tests/tests.yaml` ([set up
-`tests/tests.yaml`](adding-a-model.md#set-up-teststestsyaml)). CI then
+`tests/tests.yaml`](adding-a-model.md#set-up-teststestsyaml)). It also compares
+them with the model's reference score for that dataset ([comment out a variant
+far below its reference score](adding-a-model.md#comment-out-a-variant-far-below-its-reference-score)). CI then
 publishes the report with the test outcome: `passed`, `failed`, or `skipped`.
 A failed test still publishes the report, then fails the workflow run. See [CI
 and registry publication](benchmarking.md#ci-and-registry-publication) for the

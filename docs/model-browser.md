@@ -23,11 +23,13 @@ navigation. It also leaves out the board's Linux memory, MLA Utilization, the
 developer view keeps all of them. Selecting a branch in the developer view changes
 the catalog, not the view.
 
-The customer view also leaves out a variant whose accuracy falls more than 8% below
-the source model's score. The comparison uses the FP32 baseline when the model has
-one, and otherwise the score its authors published for the same dataset split. A
-variant with neither score stays. A model whose every variant is left out does not
-appear.
+Neither view leaves out a variant because of its accuracy. CI does not build a
+variant more than 8% below its reference score, because its author comments the
+profile out of `model.yaml`
+([comment out a variant far below its reference score](adding-a-model.md#comment-out-a-variant-far-below-its-reference-score)).
+Both views keep listing a promoted build of such a variant while its promotion
+stands. To stop offering it, a maintainer withdraws it as
+[withdraw a promoted build](model-promotion.md#withdraw-a-promoted-build) describes.
 
 Cards appear when the catalog loads. In the developer view, compiler versions
 and newly completed builds can appear after the cards. A message that a branch

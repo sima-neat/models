@@ -82,6 +82,14 @@ def _assert_reporting(setup):
     assert setup.calls[-1] == ["dpkg-query", "-W", "*neat*", "simaai-*"]
 
 
+def _assert_install_reason(capsys, reason):
+    assert capsys.readouterr().out.splitlines()[:1] == [f"Installing NEAT core (develop/{TAG}): {reason}."]
+
+
+UNVERIFIED_DEPENDENCIES = "the published dependency manifest could not be verified"
+NO_CHANNEL = "installed Core channel is missing, pinned develop"
+
+
 @pytest.mark.parametrize("branch,channel,version", [
     ("develop", "develop", RUNNER),
     ("v0.6.1", "v0.6.1", "0.6.1"),
@@ -108,13 +116,18 @@ def test_matching_state_skips_install_and_still_reports(setup, capsys, branch, c
     _assert_reporting(setup)
 
 
-@pytest.mark.parametrize("section,key,value", [
-    ("core", "channel", "other"), ("core", "tag", "abcdef123456"),
-    ("core", "provenance", {"vulcanEnvironment": "stg"}), ("core", "provenance", None),
-    ("core", "tag", None), ("runner", "version", "0.6.0+older.build"),
-    ("scheduler", "version", "0.6.0+older.build"), ("runner", "version", None),
+@pytest.mark.parametrize("section,key,value,reason", [
+    ("core", "channel", "other", "installed Core channel is other, pinned develop"),
+    ("core", "tag", "abcdef123456", f"installed Core tag is abcdef123456, pinned {TAG}"),
+    ("core", "provenance", {"vulcanEnvironment": "stg"}, "installed Core environment is stg, pinned prod"),
+    ("core", "provenance", None, "installed Core environment is missing, pinned prod"),
+    ("core", "tag", None, f"installed Core tag is missing, pinned {TAG}"),
+    ("runner", "version", "0.6.0+older.build", f"installed simaai-runner is 0.6.0+older.build, pinned {RUNNER}"),
+    ("scheduler", "version", "0.6.0+older.build",
+     f"installed simaai-scheduler is 0.6.0+older.build, pinned {SCHEDULER}"),
+    ("runner", "version", None, f"installed simaai-runner is missing, pinned {RUNNER}"),
 ])
-def test_identity_or_republished_dependency_mismatch_installs(setup, section, key, value):
+def test_identity_or_republished_dependency_mismatch_installs(setup, capsys, section, key, value, reason):
     setup.status["components"][section][key] = value
 
     setup.ensure()
@@ -122,55 +135,74 @@ def test_identity_or_republished_dependency_mismatch_installs(setup, section, ke
     assert _installer_calls(setup) == [[
         "sima-cli", "neat", "install", "--env", "production", "--type", "minimal", f"core@develop:{TAG}",
     ]]
+    _assert_install_reason(capsys, reason)
     _assert_reporting(setup)
 
 
-@pytest.mark.parametrize("metadata", [
-    OSError("unavailable"), "{", "[]", "null", {}, {"resources": None}, {"resources": [None]},
-    {"resources": ["simaai-runner.deb"]},
+@pytest.mark.parametrize("metadata,reason", [
+    (OSError("unavailable"), "the published Core metadata could not be read"),
+    ("{", "the published Core metadata could not be read"),
+    ("[]", "the published Core metadata has no readable resource list"),
+    ("null", "the published Core metadata has no readable resource list"),
+    ({}, "the published Core metadata has no readable resource list"),
+    ({"resources": None}, "the published Core metadata has no readable resource list"),
+    ({"resources": [None]}, "the published Core metadata has no readable resource list"),
+    ({"resources": ["simaai-runner.deb"]}, UNVERIFIED_DEPENDENCIES),
 ])
-def test_unverifiable_metadata_installs(setup, metadata):
+def test_unverifiable_metadata_installs(setup, capsys, metadata, reason):
     setup.metadata = metadata
 
     setup.ensure()
 
     assert len(_installer_calls(setup)) == 1
+    _assert_install_reason(capsys, reason)
     _assert_reporting(setup)
 
 
-@pytest.mark.parametrize("status", [
-    FileNotFoundError("neat"), subprocess.CalledProcessError(1, ["neat", "--json"]),
-    subprocess.TimeoutExpired(["neat", "--json"], 30), "{", "[]", "null", {},
-    {"components": {"core": {}}},
+@pytest.mark.parametrize("status,reason", [
+    (FileNotFoundError("neat"), "neat --json could not start"),
+    (subprocess.CalledProcessError(1, ["neat", "--json"]), "neat --json failed"),
+    (subprocess.TimeoutExpired(["neat", "--json"], 30), "neat --json timed out after 30 s"),
+    ("{", "neat --json returned unreadable output"),
+    ("[]", NO_CHANNEL), ("null", NO_CHANNEL), ({}, NO_CHANNEL), ({"components": {"core": {}}}, NO_CHANNEL),
 ])
-def test_unreadable_installed_state_installs(setup, status):
+def test_unreadable_installed_state_installs(setup, capsys, status, reason):
     setup.status = status
 
     setup.ensure()
 
     assert len(_installer_calls(setup)) == 1
+    _assert_install_reason(capsys, reason)
     _assert_reporting(setup)
 
 
-@pytest.mark.parametrize("dependencies", [
-    "{", None, [], {}, {"runner": {"debian_version": RUNNER}},
-    {"runner": {"debian_version": None}, "scheduler": {"debian_version": SCHEDULER}},
-    {"runner": {"debian_version": "invalid version"}, "scheduler": {"debian_version": SCHEDULER}},
+@pytest.mark.parametrize("dependencies,reason", [
+    ("{", UNVERIFIED_DEPENDENCIES), (None, UNVERIFIED_DEPENDENCIES), ([], UNVERIFIED_DEPENDENCIES),
+    ({}, "the published dependency manifest has no valid runner version"),
+    ({"runner": {"debian_version": RUNNER}}, "the published dependency manifest has no valid scheduler version"),
+    ({"runner": {"debian_version": None}, "scheduler": {"debian_version": SCHEDULER}},
+     "the published dependency manifest has no valid runner version"),
+    ({"runner": {"debian_version": "invalid version"}, "scheduler": {"debian_version": SCHEDULER}},
+     "the published dependency manifest has no valid runner version"),
 ])
-def test_unverifiable_dependency_versions_install(setup, dependencies):
+def test_unverifiable_dependency_versions_install(setup, capsys, dependencies, reason):
     setup.dependencies = dependencies
     _publish_dependencies(setup)
 
     setup.ensure()
 
     assert len(_installer_calls(setup)) == 1
+    _assert_install_reason(capsys, reason)
 
 
-@pytest.mark.parametrize("problem", [
-    "checksum missing", "checksum wrong", "file undeclared", "file ambiguous", "package ambiguous",
-    "package version ambiguous", "offline",
+@pytest.mark.parametrize("problem,reason", [
+    ("checksum missing", UNVERIFIED_DEPENDENCIES), ("checksum wrong", UNVERIFIED_DEPENDENCIES),
+    ("file undeclared", UNVERIFIED_DEPENDENCIES), ("file ambiguous", UNVERIFIED_DEPENDENCIES),
+    ("package ambiguous", "the published Core metadata does not list exactly one simaai-runner package"),
+    ("package version ambiguous", "the published Core metadata does not list exactly one simaai-runner package"),
+    ("offline", UNVERIFIED_DEPENDENCIES),
 ])
-def test_requires_verified_unambiguous_dependency_manifest(setup, problem):
+def test_requires_verified_unambiguous_dependency_manifest(setup, capsys, problem, reason):
     if problem == "checksum missing":
         setup.metadata.pop("resources-checksum")
     elif problem == "checksum wrong":
@@ -189,6 +221,7 @@ def test_requires_verified_unambiguous_dependency_manifest(setup, problem):
     setup.ensure()
 
     assert len(_installer_calls(setup)) == 1
+    _assert_install_reason(capsys, reason)
 
 
 @pytest.mark.parametrize("matches", [False, True])
@@ -257,13 +290,14 @@ def test_production_source_ignores_artifact_index_overrides(setup, monkeypatch, 
 
 
 @pytest.mark.parametrize("index", [None, neat_core.PRODUCTION_ARTIFACTS])
-def test_nonproduction_needs_appropriate_explicit_index_to_skip(setup, index):
+def test_nonproduction_needs_appropriate_explicit_index_to_skip(setup, capsys, index):
     setup.status["components"]["core"]["provenance"]["vulcanEnvironment"] = "stg"
 
     setup.ensure(environment="staging", artifacts_base_url=index)
 
     assert setup.urls == []
     assert _installer_calls(setup)[0][3:5] == ["--env", "staging"]
+    _assert_install_reason(capsys, "no NEAT_ARTIFACTS_BASE_URL to compare the installed Core with")
     _assert_reporting(setup)
 
 

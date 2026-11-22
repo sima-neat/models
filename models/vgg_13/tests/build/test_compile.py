@@ -8,9 +8,11 @@ import tarfile
 from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
+from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
+from model_registry.errors import ValidationError
 from PIL import Image
 
 MODEL_DIR = Path(__file__).resolve().parents[2]
@@ -166,7 +168,7 @@ def test_fidelity_selection_is_the_declared_seeded_sample(
 @pytest.mark.parametrize("profile_id", ["w16a16", "w8a8"])
 def test_compile_reads_each_declared_build_profile(load_script: Callable[[str], ModuleType], profile_id: str) -> None:
     recipe = load_script("compile")
-    parameters = recipe._parameters(profile_id)
+    parameters = recipe.component_parameters(recipe.MODEL_DIR, profile_id, recipe.COMPONENT_ID)
 
     assert parameters["precision"] == profile_id
 
@@ -174,8 +176,8 @@ def test_compile_reads_each_declared_build_profile(load_script: Callable[[str], 
 def test_compile_rejects_an_undeclared_build_profile(load_script: Callable[[str], ModuleType]) -> None:
     recipe = load_script("compile")
 
-    with pytest.raises(ValueError, match="exactly one build profile named 'w32a32'"):
-        recipe._parameters("w32a32")
+    with pytest.raises(ValidationError, match="unknown build profile: w32a32"):
+        recipe.component_parameters(recipe.MODEL_DIR, "w32a32", recipe.COMPONENT_ID)
 
 
 def test_numerical_fidelity_compares_the_logits(load_script: Callable[[str], ModuleType]) -> None:
@@ -212,8 +214,12 @@ def test_bf16_builds_quantize_without_calibration_data(
     recipe = load_script("compile")
     monkeypatch.setattr(
         recipe,
-        "_parameters",
-        lambda profile_id: {"precision": "w16a16", "input_name": "pixel_values", "input_shape": [1, 3, 224, 224]},
+        "component_parameters",
+        lambda model_dir, profile_id, component_id: {
+            "precision": "w16a16",
+            "input_name": "pixel_values",
+            "input_shape": [1, 3, 224, 224],
+        },
     )
 
     with pytest.raises(RuntimeError, match="expected exactly one MPK archive"):
@@ -227,11 +233,51 @@ def test_compile_rejects_an_undeclared_precision_before_compiling(
     load_script: Callable[[str], ModuleType],
 ) -> None:
     recipe = load_script("compile")
-    monkeypatch.setattr(recipe, "_parameters", lambda profile_id: {"precision": "fp32"})
+    parameters = {"precision": "fp32"}
+    monkeypatch.setattr(recipe, "component_parameters", lambda model_dir, profile_id, component_id: parameters)
 
     with pytest.raises(ValueError, match="only the declared BF16 and INT8 build profiles"):
         recipe.compile_model(tmp_path / "model.onnx", tmp_path / "model", "w16a16", None)
     assert not (tmp_path / "model").exists()
+
+
+def test_fidelity_compares_the_quantized_logits_with_the_onnx_source(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    load_script: Callable[[str], ModuleType],
+) -> None:
+    recipe = load_script("compile")
+    fidelity = recipe.load_metadata(recipe.MODEL_DIR)["numerical_fidelity"]
+    images = {"cal2012/a.JPEG": 1.0, "cal2012/b.JPEG": 2.0}
+    onnx_input_shapes = []
+
+    class Session:
+        def __init__(self, path: str, providers: list[str]) -> None:
+            pass
+
+        def run(self, outputs: None, feeds: dict[str, np.ndarray]) -> list[np.ndarray]:
+            onnx_input_shapes.append(feeds["pixel_values"].shape)
+            return [np.full((1, 1000), feeds["pixel_values"][0, 0, 0, 0], np.float32)]
+
+    candidate = MagicMock()
+    # This candidate returns the logits as [1, 1, 1, 1000], which the recipe reshapes to the source's [1, 1000].
+    # Each image's last logit comes back 1 too high.
+    candidate.execute.side_effect = [
+        [np.append(np.full(999, value), value + 1).reshape(1, 1, 1, 1000)] for value in images.values()
+    ]
+    monkeypatch.setattr(recipe, "fidelity_names", lambda dataset, seed, offset, samples: list(images))
+    monkeypatch.setattr(recipe, "read_images", lambda dataset, names: dict(images))
+    monkeypatch.setattr(recipe, "preprocess_image", lambda value: np.full((224, 224, 3), value, np.float32))
+    monkeypatch.setattr(recipe, "ort", MagicMock(InferenceSession=Session))
+
+    report = recipe.measure_fidelity(tmp_path / "model.onnx", candidate, tmp_path / "cal", fidelity, "w8a8")
+
+    assert onnx_input_shapes == [(1, 3, 224, 224)] * 2
+    assert (report["model_id"], report["build_profile_id"], report["samples"]) == ("vgg_13", "w8a8", 2)
+    (metric,) = report["metrics"]
+    assert metric["name"] == "logits"
+    assert metric["max_absolute_error"] == 1.0
+    assert metric["mean_absolute_error"] == pytest.approx(1 / 1000)
 
 
 @pytest.mark.parametrize(

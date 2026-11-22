@@ -281,9 +281,13 @@ calibrations:
 A build profile that needs calibration names its entry with
 `calibration_dataset`. The recipe receives the verified archive as
 `--dataset`, calibrates the first component, and calibrates later components
-on its outputs. Calibration prepares quantization ranges; it is not a
+on its outputs. Calibration prepares quantization ranges. It is not a
 quality measurement. See [Datasets for local model
 development](datasets.md).
+
+A component's `calibration_samples` parameter sets how many samples it
+calibrates on. Keep it at 20 or fewer, because every sample adds compile time
+to each build. Validation does not check this value.
 
 ## Build profiles
 
@@ -292,20 +296,24 @@ build parameters:
 
 ```yaml
 build_profiles:
-  w8a8_w16a16:
+  w8a16_w16a16:
     calibration_dataset: coco-2017-cal
     components:
       backbone:
-        parameters: {precision: w8a8, calibration_samples: 50}
+        parameters: {precision: w8a16, per_token: true}
       decoder:
-        parameters: {precision: w16a16, calibration_samples: 50}
+        parameters: {precision: w16a16, calibration_bins: 2048, calibration_samples: 20}
 ```
+
+The model's `compile.py` decides what each parameter does. In this RF-DETR
+Nano profile, `per_token: true` gives each token's activations their own INT8
+scale in the backbone's INT8-weight operations.
 
 Compose the profile ID from the precision tokens in
 [`naming-conventions.yaml`](../naming-conventions.yaml): one token per
 component in component order, with a repeated token written once. Both
-components W8A8 is `w8a8`; an INT8 backbone followed by a BF16 decoder is
-`w8a8_w16a16`. Leave the target out of the ID. If two profiles of one model
+components W8A8 is `w8a8`. A W8A16 backbone followed by a BF16 decoder is
+`w8a16_w16a16`, as above. Leave the target out of the ID. If two profiles of one model
 would share an ID, append the first vocabulary tokens that tell them apart.
 The Model Browser shows variant IDs in uppercase, while
 `sima-cli models download --variant` takes the lowercase ID.
@@ -344,9 +352,9 @@ Each compiled MPK is named after its model and variant:
 `<model_id>_<profile_id>_<component_id>_mpk.tar.gz` when the model has
 several components. `scripts/compile.py` passes the name without
 `_mpk.tar.gz` to the compiler as the model name, and CI rejects an
-MPK with any other name. For example, RF-DETR's `w8a8_w16a16` profile
-produces `rf_detr_nano_w8a8_w16a16_backbone_mpk.tar.gz` and
-`rf_detr_nano_w8a8_w16a16_decoder_mpk.tar.gz`. The package and the browser and
+MPK with any other name. For example, RF-DETR's `w8a16_w16a16` profile
+produces `rf_detr_nano_w8a16_w16a16_backbone_mpk.tar.gz` and
+`rf_detr_nano_w8a16_w16a16_decoder_mpk.tar.gz`. The package and the browser and
 CLI downloads all use this name.
 
 ## Packages and pipeline
@@ -424,7 +432,7 @@ profile's MPKs. CI publishes it with the package.
 | --- | --- |
 | `status` | `diagnostic`, `provisional`, or `ready`. |
 | `dataset` | The Dataset Registry pin it compares on. |
-| `selection` | `method: seeded_random_without_replacement`, with `seed`, `offset`, and `samples`. |
+| `selection` | `method: seeded_random_without_replacement`, with `seed`, `offset`, and `samples`. `samples` is 1 to 5, because the compile runs the source and the compiled model on each one. Validation rejects more. |
 | `outputs` | Output names of the model to compare. |
 
 The report follows
@@ -445,6 +453,7 @@ accuracy:
 | Field | Meaning |
 | --- | --- |
 | `datasets` | Dataset Registry pins; the stage resolves each on the DevKit and evaluates the model on all of them in one run. Each goes by its source ID, such as `imagenet-2012-mini`. |
+| `samples` | Optional. A positive whole number. CI passes it to `accuracy.py` as `--limit`, so the script evaluates at most that many samples of each dataset. Keep it no larger than the smallest dataset the model evaluates, because most `accuracy.py` scripts draw that many samples at random and stop with an error when a dataset holds fewer. Omitted, the script evaluates every sample. Changing it measures accuracy again. |
 | `build_profiles` | Optional; the profiles measured. Omitted, every profile is measured. |
 
 The metrics each dataset's result must hold come from
@@ -530,7 +539,10 @@ only numbers the source or the script prints, not values derived from them. Two
 entries of one origin may not give the same metric for the same dataset. An FP32
 baseline names one of the model's `accuracy` datasets. A reference score appears
 beside a measured one only when both name the same dataset `id`. The field
-feeds no fingerprint, so editing it reruns nothing.
+feeds no fingerprint, so editing it reruns nothing. `model-registry validate` and
+the DevKit accuracy test compare each build profile's accuracy with it, as
+[comment out a variant far below its reference score](adding-a-model.md#comment-out-a-variant-far-below-its-reference-score)
+describes.
 
 ## Validation
 

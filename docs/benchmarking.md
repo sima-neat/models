@@ -139,6 +139,28 @@ The script runs once per benchmarked build profile, with every component's MPK.
 CI passes `--dataset` with the model's first accuracy dataset, and only for a build
 profile that accuracy measures.
 
+`scripts/run_model_performance.sh` and `scripts/run_model_accuracy.sh` take each dataset
+from the DevKit's dataset store with `scripts/unpack_benchmark_datasets.sh`. The store
+keeps one unpacked copy of each pinned dataset archive, in a folder named by the archive's
+SHA-256. When the store holds a complete copy, the run reads no archive. Otherwise the
+script takes the archive from the DevKit pool's shared dataset archive share when the
+share holds it, and from the Dataset Registry when it does not or when the share gives
+no listing within 20 seconds. It checks the archive's
+size and SHA-256 against `model.yaml` before it unpacks it. The unpacked copy is
+read-only, so a script that writes into its dataset fails. A copy unused for 30 days is
+removed.
+
+These environment variables set the locations:
+
+| Variable | Default | Holds |
+|---|---|---|
+| `DATASET_STORE` | `/media/nvme/datasets/unpacked` | the unpacked copies |
+| `DATASET_CACHE` | `/media/nvme/datasets/artifacts` | the archives the Dataset Registry downloads |
+| `DATASET_LOCK` | `/media/nvme/datasets/locks/prepare.lock` | the lock that lets one run at a time change the store |
+| `SHARED_DATASET_ARCHIVES` | `/mnt/dataset-private/current` | the shared dataset archive share. Without it, each archive comes from the Dataset Registry |
+
+`NVME_MOUNT`, by default `/media/nvme`, moves the first three together.
+
 For an image model, the benchmark repeats one real camera-sized frame, so its
 throughput is what an application gets from a 720p frame to decoded results,
 not the MPK alone:
@@ -227,8 +249,8 @@ component, in `model.yaml` order:
 
 ```bash
 PYTHONPATH=tools ~/pyneat/bin/python models/rf_detr_nano/scripts/performance.py \
-  --mpk backbone=/workspace/rf_detr_nano_w8a8_w16a16_backbone_mpk.tar.gz \
-  --mpk decoder=/workspace/rf_detr_nano_w8a8_w16a16_decoder_mpk.tar.gz \
+  --mpk backbone=/workspace/rf_detr_nano_w8a16_w16a16_backbone_mpk.tar.gz \
+  --mpk decoder=/workspace/rf_detr_nano_w8a16_w16a16_decoder_mpk.tar.gz \
   --dataset coco-2017-val=/media/nvme/datasets/coco-2017-val \
   --output /workspace/performance
 ```

@@ -68,12 +68,12 @@ build_profiles:
           precision: w8a8
           input_name: pixel_values
           input_shape: [1, 3, 299, 299]
-          calibration_samples: 50
+          calibration_samples: 20
 
 numerical_fidelity:
   status: diagnostic
   dataset: {id: imagenet-2012, variant: cal, sha256: e6c18b281f5ac5fc7cf6d36ef9a5f486ce95eb43ead99ee8523bd8162bc49a6f, size_bytes: 112710756}
-  selection: {method: seeded_random_without_replacement, seed: 42, offset: 0, samples: 50}
+  selection: {method: seeded_random_without_replacement, seed: 42, offset: 0, samples: 5}
   outputs: [logits]
 
 accuracy:

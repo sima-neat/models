@@ -5,10 +5,10 @@ The network is timm's convnext_tiny written out in plain PyTorch, with timm's mo
 strictly, and the outputs of convert.py's reference.onnx. One change is for the compiler: each GELU is its tanh
 approximation, x * sigmoid(x * (x * x * b + a)). The Model Compiler fuses the exact erf GELU into one operation whose
 BF16 erf loses fidelity: quantized to w16a16 by Model Compiler 3.0.0.dev0+develop.2291, the Large model's outputs
-keep cosine similarity 0.9951 (class) and 0.9758 (patches) with the exact reference on 16 of the numerical-fidelity
-images, and 0.9999 and 0.9995 with the tanh form. The tanh form runs as BF16 multiplies, one multiply-add and a
-sigmoid. In float, on the seeded inputs export_network checks, its least cosine similarity with the exact reference
-is 0.999979.
+keep cosine similarity 0.9951 (class) and 0.9758 (patches) with the exact reference on 16 of the imagenet-2012 cal
+images at positions 51 to 100 of the seed-42 shuffled order, and 0.9999 and 0.9995 with the tanh form. The tanh form
+runs as BF16 multiplies, one multiply-add and a sigmoid. In float, on the seeded inputs export_network checks, its
+least cosine similarity with the exact reference is 0.999979.
 
 compile.py calls export_network. To get the FP32 ONNX on a host, run:
 

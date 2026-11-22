@@ -7,6 +7,7 @@ import tarfile
 import numpy as np
 import onnx
 import pytest
+from model_registry.errors import ValidationError
 from model_registry.model import load_model
 
 
@@ -117,10 +118,10 @@ def test_compile_profiles_and_sources_match_the_definition(model_dir, load_scrip
     assert model["components"][0]["source"]["type"] == "conversion"
     assert model["license"]["spdx"] == "Apache-2.0"
     assert [profile["id"] for profile in model["build_profiles"]] == ["w8a8"]
-    assert recipe._parameters("w8a8")["precision"] == "w8a8"
+    assert recipe.component_parameters(recipe.MODEL_DIR, "w8a8", recipe.COMPONENT_ID)["precision"] == "w8a8"
     for profile in ("w16a16", "w8a16", "unknown"):
-        with pytest.raises(ValueError, match="no build profile"):
-            recipe._parameters(profile)
+        with pytest.raises(ValidationError, match=f"unknown build profile: {profile}"):
+            recipe.component_parameters(recipe.MODEL_DIR, profile, recipe.COMPONENT_ID)
 
 
 def write_mpk(path, recipe, case="valid"):

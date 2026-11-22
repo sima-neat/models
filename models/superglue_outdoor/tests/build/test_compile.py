@@ -10,6 +10,7 @@ from types import ModuleType, SimpleNamespace
 import numpy as np
 import onnx
 import pytest
+from model_registry.errors import ValidationError
 from model_registry.model import load_model as load_metadata
 
 ROOT = Path(__file__).resolve().parents[4]
@@ -126,12 +127,16 @@ def test_quantized_matches_must_follow_fp32(
 
 @pytest.mark.parametrize("profile_id", ["w16a16", "w8a16"])
 def test_compile_reads_the_declared_build_parameters(load_script: Callable[[str], ModuleType], profile_id: str) -> None:
-    assert load_script("compile")._parameters(profile_id) == {"precision": profile_id}
+    recipe = load_script("compile")
+
+    assert recipe.component_parameters(recipe.MODEL_DIR, profile_id, recipe.COMPONENT_ID) == {"precision": profile_id}
 
 
 def test_compile_rejects_an_undeclared_build_profile(load_script: Callable[[str], ModuleType]) -> None:
-    with pytest.raises(ValueError, match="no build profile"):
-        load_script("compile")._parameters("w4a16")
+    recipe = load_script("compile")
+
+    with pytest.raises(ValidationError, match="unknown build profile: w4a16"):
+        recipe.component_parameters(recipe.MODEL_DIR, "w4a16", recipe.COMPONENT_ID)
 
 
 @pytest.mark.parametrize(("precision", "per_token"), [("w16a16", False), ("w8a16", True)])
@@ -163,10 +168,10 @@ def test_every_w8a8_profile_calibrates_and_names_its_bf16_regions(load_script: C
     recipe = load_script("compile")
     mixed = {}
     for profile in load_metadata(MODEL_DIR)["build_profiles"]:
-        parameters = recipe._parameters(profile["id"])
+        parameters = recipe.component_parameters(recipe.MODEL_DIR, profile["id"], recipe.COMPONENT_ID)
         regions = recipe._bf16_regions(profile["id"], parameters)
         if parameters["precision"] == "w8a8":
-            assert parameters["calibration_samples"] == 32 and parameters["calibration_bins"] == 2048
+            assert parameters["calibration_samples"] == 20 and parameters["calibration_bins"] == 2048
         if regions:
             mixed[profile["id"]] = regions
     assert mixed == {"w8a8_mixed": list(recipe.BF16_REGIONS)}
@@ -218,7 +223,8 @@ def test_compile_quantizes_without_calibration_data(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, load_script: Callable[[str], ModuleType], precision: str
 ) -> None:
     recipe = load_script("compile")
-    monkeypatch.setattr(recipe, "_parameters", lambda profile_id: {"precision": precision})
+    parameters = {"precision": precision}
+    monkeypatch.setattr(recipe, "component_parameters", lambda model_dir, profile_id, component_id: parameters)
     monkeypatch.setattr(recipe, "check_quantized_matches", lambda source, quantized, minimum: 1.0)
 
     with pytest.raises(RuntimeError, match="expected one MPK"):

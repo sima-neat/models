@@ -5,19 +5,20 @@ The network is timm's convnext_large written out in plain PyTorch, with timm's m
 strictly, and the outputs of convert.py's reference.onnx. One change is for the compiler: each GELU is its tanh
 approximation, x * sigmoid(x * (x * x * b + a)). The Model Compiler fuses the exact erf GELU into one operation whose
 BF16 erf loses fidelity: quantized to w16a16 by Model Compiler 3.0.0.dev0+develop.2291, the Large model's outputs
-keep cosine similarity 0.9951 (class) and 0.9758 (patches) with the exact reference on 16 of the numerical-fidelity
-images, and 0.9999 and 0.9995 with the tanh form. The tanh form runs as BF16 multiplies, one multiply-add and a
-sigmoid. In float, on the seeded inputs export_network checks, its least cosine similarity with the exact reference
-is 0.999973.
+keep cosine similarity 0.9951 (class) and 0.9758 (patches) with the exact reference on 16 of the imagenet-2012 cal
+images at positions 51 to 100 of the seed-42 shuffled order, and 0.9999 and 0.9995 with the tanh form. The tanh form
+runs as BF16 multiplies, one multiply-add and a sigmoid. In float, on the seeded inputs export_network checks, its
+least cosine similarity with the exact reference is 0.999973.
 
 A second change is for the code generator: the first stage's MLPs run as MLP_SLICES[0] slices of fc1's output
 channels, each through its own GELU and its slice of fc2's input channels, and the slices' outputs are added. The sum
 is the same MLP. With INT8 weights, Model Compiler 3.0.0.dev0+develop.2291 splits those MLPs into 4 channel parts
 itself (conv_bounded_split), and the w8a16 package then keeps cosine similarity only 0.515 (class) and 0.377
-(patches) with the reference on the device, on the 50 numerical-fidelity images, against 0.9985 and 0.9920 in its
-simulation on 16 of them. Sliced here, the code generator leaves the MLPs whole and the package keeps 0.9987 and
-0.9920 on the device. The w16a16 package keeps 0.9999 and 0.9994 on the device either way, and sliced its MLA stage
-time falls from 29515 to 27977 microseconds, measured on one board at a 600 MHz MLA clock.
+(patches) with the reference on the device, on the imagenet-2012 cal images at positions 51 to 100 of the seed-42
+shuffled order, against 0.9985 and 0.9920 in its simulation on 16 of them. Sliced here, the code generator leaves the
+MLPs whole and the package keeps 0.9987 and 0.9920 on the device. The w16a16 package keeps 0.9999 and 0.9994 on the
+device either way, and sliced its MLA stage time falls from 29515 to 27977 microseconds, measured on one board at a
+600 MHz MLA clock.
 
 compile.py calls export_network. To get the FP32 ONNX on a host, run:
 

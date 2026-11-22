@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import re
 import threading
 from collections.abc import Iterator
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -10,8 +11,14 @@ from pathlib import Path
 from urllib.request import HTTPRedirectHandler, Request
 
 import pytest
-from model_registry.errors import FetchError
-from model_registry.fetch import Fetcher, open_verified_url, resolve_dataset
+from model_registry.errors import FetchError, ValidationError
+from model_registry.fetch import (
+    Fetcher,
+    _build_file_path,
+    copy_shared_dataset,
+    open_verified_url,
+    resolve_dataset,
+)
 from model_registry.source import SourceSpec, source_identity
 
 PAYLOAD = b"model registry fixture\n"
@@ -429,3 +436,117 @@ def test_dataset_still_differing_after_refetch_fails(tmp_path: Path, monkeypatch
     with pytest.raises(FetchError, match="dataset size mismatch"):
         resolve_dataset(DATASET)
     assert len(calls) == 2
+
+
+# The share's index entry for DATASET's archive, which the release holds at fixture/val.tgz.
+SHARED_ARCHIVE = {"key": "datasets/artifactory/fixture/val.tgz", "sha256": DIGEST, "size": len(PAYLOAD)}
+
+
+def shared_archives(tmp_path: Path, index: list[dict] | str, files: dict[str, bytes]) -> Path:
+    """A shared dataset archive share whose current release lists ``index`` and holds ``files``."""
+    release = tmp_path / "share" / "releases" / "1"
+    release.mkdir(parents=True)
+    for relative, payload in files.items():
+        (release / relative).parent.mkdir(parents=True, exist_ok=True)
+        (release / relative).write_bytes(payload)
+    text = index if isinstance(index, str) else json.dumps({"archives": index})
+    (release / "_release.json").write_text(text, encoding="utf-8")
+    (tmp_path / "share" / "current").symlink_to("releases/1")
+    (tmp_path / "copy").mkdir()
+    return tmp_path / "share" / "current"
+
+
+def test_the_share_gives_the_archive_its_index_lists_under_the_pin(tmp_path: Path, capsys) -> None:
+    other = {**SHARED_ARCHIVE, "key": "datasets/artifactory/fixture/other.tgz", "sha256": "0" * 64}
+    share = shared_archives(tmp_path, [other, SHARED_ARCHIVE], {"fixture/val.tgz": PAYLOAD,
+                                                               "fixture/other.tgz": b"other"})
+
+    copy = copy_shared_dataset(DATASET, share, tmp_path / "copy")
+
+    # The copy is verified against the pin, and the share stays as it was.
+    assert copy == (tmp_path / "copy" / "val.tgz").resolve()
+    assert copy.read_bytes() == PAYLOAD
+    assert (tmp_path / "share/releases/1/fixture/val.tgz").read_bytes() == PAYLOAD
+    assert capsys.readouterr().err == ""
+
+
+def test_a_machine_without_the_share_falls_back_quietly(tmp_path: Path, capsys) -> None:
+    (tmp_path / "copy").mkdir()
+
+    assert copy_shared_dataset(DATASET, tmp_path / "absent" / "current", tmp_path / "copy") is None
+    assert capsys.readouterr().err == ""
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [{**SHARED_ARCHIVE, "sha256": "0" * 64}, {**SHARED_ARCHIVE, "size": len(PAYLOAD) + 1}],
+    ids=["other_sha256", "other_size"],
+)
+def test_the_share_gives_only_an_archive_whose_sha256_and_size_match_the_pin(
+    tmp_path: Path, capsys, entry: dict
+) -> None:
+    share = shared_archives(tmp_path, [entry], {"fixture/val.tgz": PAYLOAD})
+
+    assert copy_shared_dataset(DATASET, share, tmp_path / "copy") is None
+    assert capsys.readouterr().err == (
+        "The shared dataset archive share does not hold fixture val. Resolving it through the Dataset Registry.\n"
+    )
+    assert list((tmp_path / "copy").iterdir()) == []
+
+
+@pytest.mark.parametrize(
+    ("index", "files", "reason"),
+    [
+        ("{not json", {}, "Expecting property name"),
+        (json.dumps({"releases": []}), {}, "'archives'"),
+        ([{"sha256": DIGEST, "size": len(PAYLOAD)}], {}, "'key'"),
+        ([{**SHARED_ARCHIVE, "key": "fixture/val.tgz"}], {"fixture/val.tgz": PAYLOAD}, "does not start with"),
+        ([SHARED_ARCHIVE], {}, "No such file"),
+        ([SHARED_ARCHIVE], {"fixture/val.tgz": b"x" * len(PAYLOAD)}, "dataset SHA-256 mismatch"),
+        ([SHARED_ARCHIVE], {"fixture/val.tgz": PAYLOAD + b"x"}, "dataset size mismatch"),
+    ],
+    ids=["malformed_index", "no_archives", "entry_without_key", "key_without_prefix", "listed_file_missing",
+         "wrong_sha256", "wrong_size"],
+)
+def test_a_broken_share_falls_back_to_the_dataset_registry_in_one_line(
+    tmp_path: Path, capsys, index: list[dict] | str, files: dict[str, bytes], reason: str
+) -> None:
+    share = shared_archives(tmp_path, index, files)
+
+    assert copy_shared_dataset(DATASET, share, tmp_path / "copy") is None
+    message = capsys.readouterr().err
+    assert message.startswith("The shared dataset archive share cannot give fixture val (")
+    assert reason in message
+    assert message.endswith("). Resolving it through the Dataset Registry.\n")
+    assert message.count("\n") == 1
+
+
+@pytest.mark.parametrize(
+    ("relative", "unsafe"),
+    [
+        ("model/deployment/devkit/vlm_config.json", False),
+        ("../model.tar.gz", True),
+        ("model/../../model.tar.gz", True),
+        ("/tmp/model.tar.gz", True),
+        ("model//model.tar.gz", True),
+        ("./model/model.tar.gz", True),
+        ("model/deployment/", True),
+        ("", True),
+        ("linked/model.tar.gz", True),
+        ("model/linked.tar.gz", True),
+    ],
+    ids=["valid", "parent", "inner_parent", "absolute", "double_slash", "dot", "trailing_slash", "empty",
+         "linked_parent", "linked_file"],
+)
+def test_a_staged_build_file_stays_inside_its_profile_folder(tmp_path: Path, relative: str, unsafe: bool) -> None:
+    profile_dir = tmp_path / "profile"
+    (profile_dir / "model").mkdir(parents=True)
+    (tmp_path / "elsewhere").mkdir()
+    (profile_dir / "linked").symlink_to(tmp_path / "elsewhere", target_is_directory=True)
+    (profile_dir / "model" / "linked.tar.gz").symlink_to(tmp_path / "elsewhere" / "model.tar.gz")
+
+    if unsafe:
+        with pytest.raises(ValidationError, match=re.escape(f"unsafe staged build file path: {relative!r}")):
+            _build_file_path(profile_dir, relative)
+    else:
+        assert _build_file_path(profile_dir, relative) == profile_dir / relative

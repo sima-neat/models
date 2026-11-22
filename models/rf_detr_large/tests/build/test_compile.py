@@ -235,7 +235,7 @@ def test_surgery_folds_only_power_of_two_score_scales(load_script: Callable[[str
 def test_compile_recipe_uses_one_grouped_entrypoint_and_direct_afe_api() -> None:
     source = (SCRIPTS_DIR / "compile.py").read_text(encoding="utf-8")
 
-    assert 'parser.add_argument("--compile-invocation", required=True)' in source
+    assert "parse_arguments(__doc__, MODEL_DIR)" in source
     assert "export_model" not in source
     assert "prepare_model(source" in source
     assert "loaded.quantize(" in source
@@ -260,14 +260,14 @@ def _metadata() -> dict:
 @pytest.mark.parametrize(
     ("profile_id", "backbone"),
     [
-        ("w8a8_w16a16", {"precision": "w8a8", "calibration_bins": 2048, "calibration_samples": 50}),
+        ("w8a8_w16a16", {"precision": "w8a8", "calibration_bins": 2048, "calibration_samples": 20}),
         ("w8a16_w16a16", {"precision": "w8a16", "per_token": True}),
         (
             "w8a8_mixed_w16a16",
             {
                 "precision": "w8a8",
                 "calibration_bins": 2048,
-                "calibration_samples": 50,
+                "calibration_samples": 20,
                 "bf16_regions": ["residual", "attention_global", "projector", "head", "outputs"],
             },
         ),
@@ -278,7 +278,7 @@ def test_compile_reads_each_declared_build_profile(
 ) -> None:
     assert load_script("compile")._component_parameters(_metadata(), profile_id) == {
         "backbone": backbone,
-        "decoder": {"precision": "w16a16", "calibration_bins": 2048, "calibration_samples": 50},
+        "decoder": {"precision": "w16a16", "calibration_bins": 2048, "calibration_samples": 20},
     }
 
 

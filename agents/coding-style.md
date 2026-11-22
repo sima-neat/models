@@ -13,7 +13,8 @@ Read both before writing or reviewing a model script. These rules cover ONNX mod
 VLM recipe follows [LLiMa language and vision-language
 models](../docs/adding-a-model.md#llima-language-and-vision-language-models).
 [`rules.md` "Rules no check catches"](rules.md#rules-no-check-catches) owns what `convert.py`
-exports and what `surgery.py` rewrites, where board-only code lives, how the benchmark scripts
+exports and what `surgery.py` rewrites, what a shared compile helper may hold and what stays in
+the recipe, the calibration sample limit, where board-only code lives, how the benchmark scripts
 stand alone, how scripts read conversion output names, and how DevKit tests import. The rules
 below assume those.
 
@@ -44,7 +45,7 @@ def compile_model(source: Path, output_dir: Path, profile_id: str, dataset: Path
 ```python
 # Good
 def compile_model(source: Path, output_dir: Path, profile_id: str, dataset: Path | None) -> Path:
-    parameters = _parameters(profile_id)
+    parameters = component_parameters(MODEL_DIR, profile_id, COMPONENT_ID)
     precision = str(parameters["precision"])
     quantization = _quantization(precision, calibration_bins)
     ...
@@ -195,14 +196,24 @@ not declare, and a helper a copy from another model left unused. A test alone do
 ## compile.py
 
 - The command line is the [ONNX recipe
-  interface](../docs/adding-a-model.md#6-define-build-profiles). `main` rejects a
-  `--compile-invocation` other than `--build-profile`, a `--model` that is not an existing
-  `.onnx` file, and a missing dataset path. It then calls `compile_model`, logs each MPK path,
-  and returns 0 to `raise SystemExit(main())`.
+  interface](../docs/adding-a-model.md#6-define-build-profiles). `main` parses it with
+  `parse_arguments(__doc__, MODEL_DIR)`, which rejects a `--compile-invocation` other than
+  `--build-profile`, a `--model` that is not an existing `.onnx` file, a missing dataset path,
+  and a missing `--fidelity-dataset` when `model.yaml` declares `numerical_fidelity`. It then
+  calls `compile_model`, logs each MPK path, and returns 0 to `raise SystemExit(main())`. A
+  recipe whose `--model` is a checkpoint, such as `weights.pth`, parses its own command line
+  with the same checks.
 - It imports the component interface from `surgery.py` and the preprocessing from
   `calibration.py`, and restates neither.
-- One function, `_parameters` or `_component_parameters`, reads the build profile from
-  `model.yaml` with `load_model` and raises for an undeclared profile.
+- It takes the registry formats from `model_registry.compile_script` and restates none of
+  them: `component_parameters(MODEL_DIR, profile_id, COMPONENT_ID)` reads a component's build
+  parameters and raises for an undeclared profile, `audit_mpk` reads the MPK with
+  `read_mpk_manifest`, and `measure_fidelity` runs the source and the quantized graph and hands
+  the compared outputs to `fidelity_report`. A recipe that reads every component's parameters
+  at once keeps one `_component_parameters` function, which reads them with `load_model`.
+- It passes `Model.compile` no extra keyword argument at its default and none the compiler
+  does not read, as [`compile.py` in the model
+  recipe](../skills/neat-compile-model/references/model-recipe.md#compilepy) says.
 - One function turns a component's parameters into `QuantizationParams`, with one branch per
   precision, as [quantization in
   `compile.py`](../skills/neat-compile-model/references/model-recipe.md#quantization-in-compilepy)

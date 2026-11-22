@@ -55,8 +55,6 @@ A compile leaves this tree. The compile job uploads it, and the publish job read
     <name>_mpk.tar.gz             or deployment-manifest.json and deployment/ for LLiMa
     compile-result.json           from verify-artifact --write-manifest
     registry-publication.json     the compile run ID, written by publish
-  packages/default/
-    registry-publication.json     the package run, copied in after publish-package
 ```
 
 `compile-outputs.json` holds `model_id`, `build_profile_id`, `compile_invocation_id`, and
@@ -283,24 +281,45 @@ compile can outlast the session. The job therefore assumes a fresh session with 
 policy right before `verify-artifact`. The artifact body comes from a version-specific
 download URL. Version, checksum, size, and validation checks apply on both paths.
 
-## Restoring a published build
+## Staging a published build
 
-A benchmark of a reused build has no workflow artifact. `stage-registry-build`
-(`stage_catalog_build` in `registry.py`) rebuilds the compile output tree from the registry:
+Every benchmark, of a new or a reused build, stages its build from the registry.
+`stage-registry-build` (`stage_catalog_build` in `registry.py`) runs on the hosted stage
+job and writes the build's metadata, without its files:
 
 1. It reads the branch's current catalog and requires its revision to equal `source_sha`.
    With `deployment_branch`, it reads that branch's catalog and requires the build's
    compile fingerprint to equal the checkout's.
-2. It downloads each component's MPK from its compile run and verifies size and SHA-256.
-   For LLiMa it downloads the deployment index and every listed file.
-3. It writes `compile-result.json`, the component's `registry-publication.json`, and a
-   `compile-outputs.json` like the one a compile writes.
-4. When the package records `runtime_files`, it downloads the package ZIP, checks it
-   against the catalog, and restores only the declared files.
-5. It writes the package receipt that `publish-report` needs.
+2. For each component it reads the compile run's artifact metadata and requires the
+   catalog's SHA-256. For LLiMa it downloads only the deployment manifest.
+3. It writes the component's `registry-publication.json` and a `compile-outputs.json` like
+   the one a compile writes. When the package records `runtime_files`, it checks the
+   package against the catalog, fails when the list is empty, and lists them in
+   `compile-outputs.json`.
+4. It writes the package receipt that `publish-report` needs.
+5. It writes `build-files.json`: the registry URL it read, and for each MPK or deployment
+   file its path, compile run, artifact name, SHA-256, and size. A build with runtime files
+   also names its package archive. It fails before any read when that URL is
+   `MODEL_REGISTRY_IAM_READ_API_URL`, because the DevKit reads it without credentials.
 
-With `--benchmark-baseline` it restores the LLiMa deployment a profile's
-`benchmark_baseline` names and writes `benchmark-baseline.json`.
+With `--benchmark-baseline` it stages the LLiMa deployment a profile's
+`benchmark_baseline` names the same way and writes `benchmark-baseline.json`.
+
+On the DevKit, `download-build` (`download_build` in `fetch.py`) downloads each listed file
+of the profile and its baseline, four at a time and the largest first. It restores only the
+declared runtime files from the package archive and deletes the archive. The publish job
+reads only the staged receipts and `compile-outputs.json`, so no model file reaches it.
+
+`download_build_file` makes up to `REGISTRY_DOWNLOAD_ATTEMPTS` (5) attempts per file:
+
+- Each attempt reads the file's artifact record again, for a freshly signed link, and
+  requires the record to hold the staged SHA-256 and size. A record that differs fails at
+  once.
+- It retries a transfer that fails or ends short of the staged size, after a wait of
+  2^(attempt - 1) seconds plus up to one random second. An HTTP status outside
+  `RETRIED_DOWNLOAD_STATUSES` (403, 429, 502, 503, 504) fails at once.
+- A body longer than the staged size, or a complete body with another SHA-256, fails at
+  once. Only a verified file replaces the destination.
 
 ## What is immutable
 

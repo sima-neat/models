@@ -7,10 +7,12 @@ import tarfile
 from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
+from unittest.mock import MagicMock
 
 import numpy as np
 import onnx
 import pytest
+from model_registry.errors import ValidationError
 from onnx import helper, numpy_helper
 
 
@@ -104,7 +106,7 @@ def test_the_benchmarks_read_the_directory_the_runners_pass(
 @pytest.mark.parametrize("profile_id", ["w16a16", "w8a8_mixed", "w8a16"])
 def test_compile_reads_each_declared_build_profile(load_script: Callable[[str], ModuleType], profile_id: str) -> None:
     recipe = load_script("compile")
-    parameters = recipe._parameters(profile_id)
+    parameters = recipe.component_parameters(recipe.MODEL_DIR, profile_id, recipe.COMPONENT_ID)
 
     assert parameters["precision"] == profile_id.removesuffix("_mixed")
     assert parameters["input_shape"] == [1, 3, 518, 686]
@@ -115,21 +117,20 @@ def test_compile_reads_each_declared_build_profile(load_script: Callable[[str], 
 
 def test_compile_rejects_an_undeclared_build_profile(load_script: Callable[[str], ModuleType]) -> None:
     recipe = load_script("compile")
-    with pytest.raises(ValueError, match="exactly one build profile named 'w32a32'"):
-        recipe._parameters("w32a32")
+    with pytest.raises(ValidationError, match="unknown build profile: w32a32"):
+        recipe.component_parameters(recipe.MODEL_DIR, "w32a32", recipe.COMPONENT_ID)
 
 
 def test_compile_rejects_another_input_shape_before_compiling(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, load_script: Callable[[str], ModuleType]
 ) -> None:
     recipe = load_script("compile")
-    metadata = recipe.load_metadata(recipe.MODEL_DIR)
-    profile = metadata["build_profiles"][0]
-    profile["components"][0]["parameters"]["input_shape"] = [1, 3, 518, 518]
-    monkeypatch.setattr(recipe, "load_metadata", lambda _: metadata)
+    parameters = recipe.component_parameters(recipe.MODEL_DIR, "w16a16", recipe.COMPONENT_ID)
+    parameters["input_shape"] = [1, 3, 518, 518]
+    monkeypatch.setattr(recipe, "component_parameters", lambda model_dir, profile_id, component_id: parameters)
 
     with pytest.raises(ValueError, match="unsupported Depth Anything V2 input shape"):
-        recipe.compile_model(tmp_path / "model.onnx", tmp_path / "model", profile["id"], None)
+        recipe.compile_model(tmp_path / "model.onnx", tmp_path / "model", "w16a16", None)
     assert not (tmp_path / "model").exists()
 
 
@@ -141,8 +142,9 @@ def test_only_int8_activations_need_calibration(load_script, monkeypatch, profil
     monkeypatch.setattr(recipe, "quantization_scheme", lambda **kwargs: kwargs)
     monkeypatch.setattr(recipe, "SkipCalibration", lambda: "skip")
     monkeypatch.setattr(recipe, "CalibrationMethod", SimpleNamespace(from_str=lambda name: name))
+    precision = recipe.component_parameters(recipe.MODEL_DIR, profile_id, recipe.COMPONENT_ID)["precision"]
 
-    config = recipe.quantization(recipe._parameters(profile_id)["precision"])
+    config = recipe.quantization(precision)
 
     assert config.calibration_method == ("mse" if profile_id == "w8a8_mixed" else "skip")
     assert config.per_token_quant == (profile_id == "w8a16")
@@ -164,9 +166,45 @@ def test_only_int8_activations_need_calibration(load_script, monkeypatch, profil
 )
 def test_mixed_precision_requires_a_matching_profile(load_script, monkeypatch, tmp_path, profile, parameters, message):
     recipe = load_script("compile")
-    monkeypatch.setattr(recipe, "_parameters", lambda _: parameters)
+    monkeypatch.setattr(recipe, "component_parameters", lambda model_dir, profile_id, component_id: parameters)
     with pytest.raises(ValueError, match=message):
         recipe.compile_model(tmp_path / "source.onnx", tmp_path / "model", profile, None)
+
+
+def test_fidelity_compares_the_quantized_depth_with_the_onnx_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, load_script: Callable[[str], ModuleType]
+) -> None:
+    recipe = load_script("compile")
+    fidelity = recipe.load_metadata(recipe.MODEL_DIR)["numerical_fidelity"]
+    images = {"nyu_depth_v2/test/rgb_00001.jpg": 1.0, "nyu_depth_v2/test/rgb_00002.jpg": 2.0}
+    pixels = 518 * 686
+    onnx_inputs = []
+
+    class Session:
+        def __init__(self, path: str, providers: list[str]) -> None:
+            pass
+
+        def run(self, outputs: None, feeds: dict[str, np.ndarray]) -> list[np.ndarray]:
+            onnx_inputs.append(feeds["pixel_values"].shape)
+            return [np.full((1, 518, 686), feeds["pixel_values"][0, 0, 0, 0], np.float32)]
+
+    candidate = MagicMock()
+    # measure_fidelity reshapes the candidate's depth map to the source's. Each image's last pixel comes back 1 deeper.
+    candidate.execute.side_effect = [[np.append(np.full(pixels - 1, value), value + 1)] for value in images.values()]
+    monkeypatch.setattr(recipe, "fidelity_names", lambda dataset, seed, offset, samples: list(images))
+    monkeypatch.setattr(recipe, "read_images", lambda dataset, names: dict(images))
+    monkeypatch.setattr(recipe, "preprocess_image", lambda value: np.full((518, 686, 3), value, np.float32))
+    monkeypatch.setattr(recipe, "ort", MagicMock(InferenceSession=Session))
+
+    report = recipe.measure_fidelity(tmp_path / "model.onnx", candidate, tmp_path / "val", fidelity, "w8a16")
+
+    assert onnx_inputs == [(1, 3, 518, 686)] * 2
+    assert report["model_id"] == "depth_anything_v2_small"
+    assert (report["build_profile_id"], report["samples"]) == ("w8a16", 2)
+    (metric,) = report["metrics"]
+    assert metric["name"] == "predicted_depth"
+    assert metric["max_absolute_error"] == 1.0
+    assert metric["mean_absolute_error"] == pytest.approx(1 / pixels)
 
 
 def test_precision_hints_end_at_the_first_compute_reader(load_script, monkeypatch):

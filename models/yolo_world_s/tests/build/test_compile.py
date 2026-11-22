@@ -84,7 +84,7 @@ def test_calibration_is_pinned_in_model_registry(model_dir):
     (profile,) = model["build_profiles"]
     assert profile["components"][0]["calibration"] == "coco-2017-cal"
     detector = next(item for item in profile["components"] if item["id"] == "detector")
-    assert detector["parameters"]["calibration_samples"] == 64
+    assert detector["parameters"]["calibration_samples"] == 20
 
 
 def test_bf16_text_configuration_skips_calibration(load_script, monkeypatch):

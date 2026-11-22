@@ -4,10 +4,11 @@
 # Usage: run_model_performance.sh <model_dir> <build_profile> <compiled_dir> <output_dir>
 #
 # <compiled_dir> holds <model_id>/<build_profile>/compile-outputs.json and the MPKs it lists. The model's first
-# accuracy dataset, already in DATASET_CACHE, supplies the benchmark input. A model whose CPU work reads its package
-# resources gets them as --resources, and scripts/requirements-performance.txt adds the wheels that work needs. The
-# script writes model-report.json into <output_dir> with tools/model_report; check-report then holds it to model.yaml
-# and records the board in environment.json.
+# accuracy dataset supplies the benchmark input, as unpack_benchmark_datasets.sh gives it from the board's dataset
+# store. A model whose CPU work reads its package resources gets them as --resources, and
+# scripts/requirements-performance.txt adds the wheels that work needs. The script writes model-report.json into
+# <output_dir> with tools/model_report; check-report then holds it to model.yaml and records the board in
+# environment.json.
 
 set -euo pipefail
 
@@ -22,11 +23,7 @@ OUTPUT_DIR="$4"
 REGISTRY_PYTHON="${REGISTRY_PYTHON:-python3}"
 PYNEAT_PYTHON="${PYNEAT_PYTHON:-$HOME/pyneat/bin/python}"
 LLIMA_MOLE_PYTHON="${LLIMA_MOLE_PYTHON:-${SIMA_MOLE_VENV_PATH:-/media/nvme/llima/mole-venv}/bin/python}"
-DATASET_CACHE="${DATASET_CACHE:-/media/nvme/datasets/artifacts}"
-DATASET_LOCK="${DATASET_LOCK:-/media/nvme/datasets/locks/prepare.lock}"
-DATASET_LOCK_SECONDS="${DATASET_LOCK_SECONDS:-1200}"
-RESOLVE_TIMEOUT_SECONDS="${RESOLVE_TIMEOUT_SECONDS:-600}"
-# Scratch space for the extracted dataset, resources and wheels; removed on exit. NVMe keeps it off the root filesystem.
+# Scratch space for resources and wheels; removed on exit. NVMe keeps it off the root filesystem.
 WORK_DIR="${WORK_DIR:-/media/nvme/neat-tests/model-performance-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}}"
 REQUIREMENTS="$MODEL_DIR/scripts/requirements-performance.txt"
 REPOSITORY="$(cd "$MODEL_DIR/../.." && pwd)"
@@ -55,27 +52,13 @@ from model_registry.model import load_model
 print("llima" if load_model(sys.argv[1])["components"][0]["interface"]["format"] == "huggingface" else "core")
 ' "$MODEL_DIR")"
 
-# The script takes the first accuracy dataset as <name>=<path>, unpacked and looking through a single top-level
-# directory, and picks its input from it. A model without an accuracy dataset gets none.
+# The script takes the first accuracy dataset as <name>=<path> and picks its input from it. A model without an
+# accuracy dataset gets none.
 dataset=()
 if [[ "$backend" == core ]]; then
-mkdir -p "$DATASET_CACHE" "$(dirname "$DATASET_LOCK")"
-resolutions="$(flock --wait "$DATASET_LOCK_SECONDS" --close "$DATASET_LOCK" \
-  timeout --signal=TERM --kill-after=30s "$RESOLVE_TIMEOUT_SECONDS" "$REGISTRY_PYTHON" -m model_registry resolve-devkit-accuracy "$MODEL_DIR" \
-  --build-profile "$BUILD_PROFILE_ID" --cache-dir "$DATASET_CACHE")"
-dataset=()
-if [[ -n "$resolutions" ]]; then
-  resolution="${resolutions%%$'\n'*}"
-  name="$(json_field name <<< "$resolution")"
-  directory="$WORK_DIR/datasets/$name"
-  rm -rf "$directory"
-  mkdir -p "$directory"
-  tar -xzf "$(json_field path <<< "$resolution")" -C "$directory"
-  entries=("$directory"/*)
-  if [[ ${#entries[@]} -eq 1 && -d "${entries[0]}" ]]; then
-    directory="${entries[0]}"
-  fi
-  dataset=(--dataset "$name=$directory")
+resolution="$("$(dirname "${BASH_SOURCE[0]}")/unpack_benchmark_datasets.sh" "$MODEL_DIR" "$BUILD_PROFILE_ID" --first)"
+if [[ -n "$resolution" ]]; then
+  dataset=(--dataset "$(json_field name <<< "$resolution")=$(json_field directory <<< "$resolution")")
 fi
 
 # The model's pinned resources, laid out as its package installs them. A model without resources gets none.
