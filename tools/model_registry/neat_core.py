@@ -73,10 +73,12 @@ def installed_mismatch(
         for value in (core.get("channel"), core.get("tag"), provenance.get("vulcanEnvironment"))
     )
     if channel not in {branch, branch.replace("/", "-").replace(" ", "-")}:
-        # `neat` assumes a channel when the installed package names none; the tag tells the two cases apart.
-        assumed = " (assumed)" if core.get("channelAssumed") is True else ""
-        return (f"installed Core channel is {_shown(channel)}{assumed} and tag is {_shown(installed_tag)}, "
-                f"pinned {branch}")
+        if core.get("channelAssumed") is not True:
+            return f"installed Core channel is {_shown(channel)} and tag is {_shown(installed_tag)}, pinned {branch}"
+        # `neat` assumes a channel when the installed package's build record gives it no channel and tag.
+        return (f"installed Core {_shown(core.get('version'))} names no channel and tag, pinned {branch}; its build "
+                f"record names ref {_shown(provenance.get('vulcanRef'))} and spec "
+                f"{_shown(provenance.get('vulcanSpec'))} in environment {_shown(installed_environment)}")
     if installed_tag != tag:
         return f"installed Core tag is {_shown(installed_tag)}, pinned {tag}"
     if ENVIRONMENTS.get(installed_environment) != environment:

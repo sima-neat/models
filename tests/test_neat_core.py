@@ -140,11 +140,15 @@ def test_identity_or_republished_dependency_mismatch_installs(setup, capsys, sec
 
 
 def test_an_assumed_channel_is_named_in_the_install_reason(setup, capsys):
-    setup.status["components"]["core"].update({"channel": "main", "channelAssumed": True, "tag": None})
+    setup.status["components"]["core"].update({
+        "channel": "main", "channelAssumed": True, "tag": None, "version": "0.6.2",
+        "provenance": {"vulcanEnvironment": "prod", "vulcanRef": "v0.6.2"},
+    })
 
     setup.ensure()
 
-    _assert_install_reason(capsys, "installed Core channel is main (assumed) and tag is missing, pinned develop")
+    _assert_install_reason(capsys, "installed Core 0.6.2 names no channel and tag, pinned develop; its build record "
+                                   "names ref v0.6.2 and spec missing in environment prod")
 
 
 @pytest.mark.parametrize("metadata,reason", [
