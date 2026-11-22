@@ -19,7 +19,7 @@ from afe.apis.defines import (
 from afe.apis.loaded_net import load_model
 from afe.ir.tensor_type import ScalarType
 from afe.load.importers.general_importer import onnx_source
-from model_registry.compile_script import component_parameters, parse_arguments
+from model_registry.compile_script import compiler_log_level, component_parameters, parse_arguments
 from model_registry.model import load_model as load_metadata
 from surgery import INPUT_SHAPES, prepare_model
 
@@ -72,10 +72,12 @@ def compile_model(source: Path, output_dir: Path, profile_id: str) -> Path:
     name = f"{metadata['id']}_{profile_id}"
     try:
         model = load_model(importer, target=gen2_target).quantize(
-            calibration_data=None, quantization_config=quantization(), model_name=name
+            calibration_data=None, quantization_config=quantization(), model_name=name,
+            log_level=compiler_log_level(),
         )
         model.compile(
-            output_path=str(component_dir), batch_size=1, layer_norm_use_fp32_intermediates=True
+            output_path=str(component_dir), batch_size=1, layer_norm_use_fp32_intermediates=True,
+            log_level=compiler_log_level(),
         )
     except SystemExit as error:
         # The compiler can report a fatal error through SystemExit(0).

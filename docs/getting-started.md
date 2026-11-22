@@ -223,12 +223,12 @@ Other models differ here:
 
 ### 6. Copy the build and the dataset to the DevKit
 
-Set `devkit` to your DevKit's user and address, then copy the model folder, the report
-tooling, and the MPK:
+Set `devkit` to your DevKit's user and address, then copy the model folder, the two
+shared modules its scripts import, and the MPK:
 
 ```bash
 devkit=sima@192.168.1.20
-tar -czf - models/yolo26n tools/model_report build/yolo26n/w8a8/model \
+tar -czf - models/yolo26n tools/model_report tools/model_inputs build/yolo26n/w8a8/model \
   | ssh "$devkit" 'mkdir -p /media/nvme/neat-tests/yolo26n && tar -xzf - -C /media/nvme/neat-tests/yolo26n'
 ```
 
@@ -278,7 +278,8 @@ PYTHONPATH=tools ~/pyneat/bin/python models/yolo26n/scripts/performance.py \
   --output results/performance
 ```
 
-`PYTHONPATH=tools` lets the script import `model_report`, which writes the report. The
+`PYTHONPATH=tools` lets the script import `model_report`, which writes the report, and
+`model_inputs`, which builds the benchmark frame. The
 script places one `val2017` image in a 1280x720 frame. It measures latency over 1000
 inferences and throughput over at least 60 seconds, then writes
 `results/performance/model-report.json`.
@@ -385,6 +386,7 @@ describes that run.
 | `--model must be the verified ONNX source, not <path>` | The `--model` path does not end in `.onnx`. | Pass `build/yolo26n/onnx/model.onnx`. |
 | `has no images under val2017/` | The dataset directory does not hold `val2017/` directly. | Pass the folder that contains `val2017/` and `annotations/`. |
 | `No module named 'model_report'` | `PYTHONPATH` lacks `tools`, or the command runs outside the folder that holds `tools/`. | Run from `/media/nvme/neat-tests/yolo26n` with `PYTHONPATH=tools`. |
+| `No module named 'model_inputs'` | The DevKit folder lacks `tools/model_inputs`, which the model's scripts import. | Copy it as [step 6](#6-copy-the-build-and-the-dataset-to-the-devkit) does. |
 | `No module named 'faster_coco_eval'` | The accuracy packages are missing, or `PYTHONPATH` lacks `site-packages`. | Run both commands of step 8 from the same folder. |
 | A clock in step 7 prints a lower value | The DevKit runs the MLA or the CPU below the clock CI measures at. | Set both clocks with the commands below, then read them again. |
 | The MLA clock stays below `1000000000` after you set it | The DevKit started with a lower limit for the MLA clock. `cat /sys/class/devfreq/5000000.mla/max_freq` prints that limit. | Restart the DevKit with `sudo reboot` and read the clock again. Repeat until it prints `1000000000`. |

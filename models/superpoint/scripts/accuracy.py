@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 import time
 from collections import deque
 from collections.abc import Callable, Iterator, Sequence
@@ -22,6 +21,7 @@ from pathlib import Path
 import model_report
 import numpy as np
 from keypoints import HEIGHT, WIDTH, decode_image, preprocess
+from model_report import log
 
 SPLIT = "val"
 SEQUENCES = 106
@@ -161,10 +161,6 @@ def parse_mpks(values: list[str]) -> Path:
     if set(mpks) != {"model"}:
         raise SystemExit("--mpk must name exactly model=<path>")
     return Path(mpks["model"])
-
-
-def log(*values: object) -> None:
-    print(*values, file=sys.stderr, flush=True)
 
 
 def report(dataset_id: str, metrics: dict, sequences: int, keypoints: float, seconds: float) -> model_report.Report:

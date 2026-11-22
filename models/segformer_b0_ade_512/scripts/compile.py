@@ -30,8 +30,10 @@ from afe.apis.model import L2CachingMode
 from afe.core.configs import QuantizationPrecision
 from afe.core.utils import convert_data_generator_to_iterable
 from afe.load.importers.general_importer import onnx_source
-from calibration import IMAGE_SIZE, calibration_samples, fidelity_names, preprocess_image, read_images
-from model_registry.compile_script import component_parameters, fidelity_report, parse_arguments, read_mpk_manifest
+from calibration import IMAGE_SIZE, calibration_samples, fidelity_names, preprocess_image
+from model_inputs.images import read_images
+from model_registry.compile_script import compiler_log_level, component_parameters, parse_arguments, read_mpk_manifest
+from model_registry.fidelity import fidelity_report
 from model_registry.model import load_model as load_metadata
 from sima_utils.data.data_generator import DataGenerator
 from surgery import BF16_REGIONS, annotate_bf16_regions
@@ -178,7 +180,7 @@ def compile_model(source: Path, output_dir: Path, profile_id: str, dataset: Path
             calibration_data=calibration_data,
             quantization_config=quantization,
             model_name=f"{MODEL_ID}_{profile_id}",
-            log_level=logging.INFO,
+            log_level=compiler_log_level(),
         )
         if regions:
             _check_precision(quantized, marks, regions)
@@ -186,7 +188,7 @@ def compile_model(source: Path, output_dir: Path, profile_id: str, dataset: Path
             output_path=str(build_dir),
             batch_size=1,
             compress=True,
-            log_level=logging.INFO,
+            log_level=compiler_log_level(),
             tessellate_parameters=None,
             l2_caching_mode=L2CachingMode.NONE,
         )

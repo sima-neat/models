@@ -35,6 +35,15 @@ def benchmarked_profiles(model: dict[str, Any], stage: str) -> list[str]:
     return declaration.get("build_profiles", [profile["id"] for profile in model["build_profiles"]])
 
 
+def benchmark_runner(model: dict[str, Any]) -> str:
+    """Which Python measures the model on a DevKit: "mole" for a deployment that generates text, else "pyneat".
+
+    A speech model is packaged as a deployment folder too, and PyNeat's speech server runs it.
+    """
+    deployment = model["components"][0]["interface"]["format"] == "huggingface"
+    return "mole" if deployment and model["compositions"][0].get("entrypoint") == "generate" else "pyneat"
+
+
 def resolve_accuracy_requirements(model: dict[str, Any], repository: Path, directory: Path) -> None:
     """Give each accuracy dataset the metrics its datasets/<id>.yaml requires for any of the model's tasks."""
     for name, dataset in model.get("accuracy", {}).get("datasets", {}).items():

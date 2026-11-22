@@ -13,7 +13,6 @@ import argparse
 import json
 import os
 import random
-import sys
 import time
 from collections import deque
 from collections.abc import Callable, Iterator, Sequence
@@ -24,6 +23,7 @@ from typing import Any
 import model_report
 import numpy as np
 from calibration import preprocess_image
+from model_report import log
 
 VALIDATION_SPLIT = "val2012"
 CLASSES = 1000
@@ -60,10 +60,6 @@ def parse_mpks(values: list[str]) -> Path:
     if set(mpks) != {"model"}:
         raise SystemExit("--mpk must name exactly model=<path>")
     return Path(mpks["model"])
-
-
-def log(*values: object) -> None:
-    print(*values, file=sys.stderr, flush=True)
 
 
 def validation_labels(dataset: Path) -> dict[str, int]:

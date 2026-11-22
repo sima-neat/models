@@ -20,7 +20,6 @@ import collections
 import io
 import json
 import random
-import sys
 import time
 from collections.abc import Callable, Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
@@ -31,6 +30,7 @@ import cv2
 import model_report
 import numpy as np
 import pyneat
+from model_report import log
 from PIL import Image
 
 COMPONENTS = ["image_encoder", "memory_attention", "mask_decoder", "memory_encoder"]
@@ -311,10 +311,6 @@ def parse_mpks(values: list[str]) -> dict[str, Path]:
     if len(mpks) != len(values) or set(mpks) != set(COMPONENTS):
         raise SystemExit(f"--mpk must name exactly <component>=<path> for {', '.join(COMPONENTS)}")
     return {name: Path(mpks[name]) for name in COMPONENTS}
-
-
-def log(*values: object) -> None:
-    print(*values, file=sys.stderr, flush=True)
 
 
 def main(argv: list[str] | None = None) -> int:

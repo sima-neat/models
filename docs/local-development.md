@@ -298,8 +298,8 @@ as tensors for a model whose inputs are not images (see
 measure accuracy.
 
 Complete the DevKit setup in [DevKit performance](benchmarking.md#set-up-a-devkit)
-once. Then copy the exact compiled MPKs, the model folder, and
-`tools/model_report` to the DevKit, extract the model's accuracy dataset as
+once. Then copy the exact compiled MPKs, the model folder,
+`tools/model_report`, and `tools/model_inputs` to the DevKit, extract the model's accuracy dataset as
 for [accuracy](local-accuracy-development.md#run-it-on-a-devkit), and run the
 script:
 

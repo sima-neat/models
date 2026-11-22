@@ -37,7 +37,7 @@ from afe.core.configs import QuantizationPrecision
 from afe.core.utils import convert_data_generator_to_iterable
 from afe.load.importers.general_importer import onnx_source
 from calibration import CalibrationSet, calibration_sets
-from model_registry.compile_script import read_mpk_manifest
+from model_registry.compile_script import compiler_log_level, read_mpk_manifest
 from model_registry.conversion import conversion_outputs
 from model_registry.fetch import sha256_file
 from model_registry.model import load_model as load_metadata
@@ -203,7 +203,7 @@ def quantize_component(build: ComponentBuild, samples: list[dict[str, np.ndarray
             calibration_data=calibration_data(component, samples),
             quantization_config=quantization(parameters),
             model_name=build.model_name,
-            log_level=logging.INFO,
+            log_level=compiler_log_level(),
         )
     except SystemExit as error:
         raise RuntimeError(f"quantizing {component} failed; the AFE log above names the cause") from error
@@ -253,7 +253,7 @@ def compile_component(quantized: Any, build: ComponentBuild) -> None:
             output_path=str(build.build_dir),
             batch_size=1,
             compress=True,
-            log_level=logging.INFO,
+            log_level=compiler_log_level(),
             tessellate_parameters=None,
             l2_caching_mode=L2CachingMode.NONE,
         )

@@ -19,9 +19,7 @@ import shutil
 import tarfile
 import tempfile
 from collections import Counter
-from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Any
 
 import numpy as np
 import onnxruntime as ort
@@ -39,8 +37,9 @@ from afe.core.configs import QuantizationPrecision
 from afe.core.utils import convert_data_generator_to_iterable
 from afe.load.importers.general_importer import onnx_source
 from calibration import decoder_inputs, load_images, select_images, to_afe_layout
-from model_registry.compile_script import parse_arguments
+from model_registry.compile_script import compiler_log_level, parse_arguments
 from model_registry.fetch import sha256_file
+from model_registry.fidelity import write_fidelity_report
 from model_registry.model import load_model as load_metadata
 from sima_utils.data.data_generator import DataGenerator
 from surgery import (
@@ -136,7 +135,7 @@ def quantize_component(graph, name, parameters, arrays):
         calibration_data=data,
         quantization_config=quantization_config(parameters),
         model_name=name,
-        log_level=logging.INFO,
+        log_level=compiler_log_level(),
     )
     if "bf16_regions" in parameters:
         require_mixed_precision(quantized)
@@ -197,7 +196,7 @@ def audit_mpk(archive, component):
 def compile_component(model, root, component):
     output = root / component
     output.mkdir()
-    model.compile(output_path=str(output), batch_size=1, log_level=logging.INFO)
+    model.compile(output_path=str(output), batch_size=1, log_level=compiler_log_level())
     archives = list(output.glob("*_mpk.tar.gz"))
     if len(archives) != 1:
         raise ValueError(f"Expected one {component} model package")
@@ -267,53 +266,10 @@ def backbone_phase(profile, parameters, dataset, calibration_names, evaluation_n
     compile_component(model, work, "backbone")
 
 
-@dataclass
-class _OutputError:
-    """Running sums of one output's error against the original ONNX, over every fidelity image."""
-
-    name: str
-    count: int = 0
-    dot: float = 0.0
-    expected_squared: float = 0.0
-    actual_squared: float = 0.0
-    error_squared: float = 0.0
-    error_absolute: float = 0.0
-    max_absolute_error: float = 0.0
-
-    def add(self, expected: np.ndarray, actual: np.ndarray) -> None:
-        expected = np.asarray(expected, dtype=np.float64)
-        actual = np.asarray(actual, dtype=np.float64)
-        if expected.shape != actual.shape:
-            raise RuntimeError(f"{self.name} shape mismatch: {expected.shape} != {actual.shape}")
-        if not np.isfinite(expected).all() or not np.isfinite(actual).all():
-            raise RuntimeError(f"{self.name} contains non-finite values")
-        error = actual - expected
-        absolute = np.abs(error)
-        self.count += expected.size
-        self.dot += float(np.dot(expected.ravel(), actual.ravel()))
-        self.expected_squared += float(np.sum(np.square(expected)))
-        self.actual_squared += float(np.sum(np.square(actual)))
-        self.error_squared += float(np.sum(np.square(error)))
-        self.error_absolute += float(np.sum(absolute))
-        self.max_absolute_error = max(self.max_absolute_error, float(np.max(absolute)))
-
-    def summary(self) -> dict[str, Any]:
-        expected_rms = max(np.sqrt(self.expected_squared / self.count), np.finfo(np.float64).eps)
-        norm = np.sqrt(self.expected_squared * self.actual_squared)
-        cosine = self.dot / norm if norm else float(self.expected_squared == self.actual_squared)
-        return {
-            "name": self.name,
-            "cosine_similarity": float(np.clip(cosine, -1.0, 1.0)),
-            "normalized_rmse": float(np.sqrt(self.error_squared / self.count) / expected_rms),
-            "mean_absolute_error": float(self.error_absolute / self.count),
-            "max_absolute_error": self.max_absolute_error,
-        }
-
-
-def decoder_phase(profile, parameters, metadata, work):
+def decoder_phase(profile, parameters, work):
     model = quantize_component(work / "graphs/decoder.onnx", f"{MODEL_ID}_{profile}_decoder", parameters, None)
     compile_component(model, work, "decoder")
-    errors = [_OutputError(name) for name in OUTPUTS]
+    compared = []
     with (
         np.load(work / "backbone-evaluation.npz", allow_pickle=False) as upstream,
         np.load(work / "reference.npz", allow_pickle=False) as reference,
@@ -322,22 +278,18 @@ def decoder_phase(profile, parameters, metadata, work):
         for i in range(count):
             outputs = [upstream[name][i][None] for name in BACKBONE_OUTPUTS]
             actual = model.execute(inputs={InputName(k): v for k, v in decoder_feed(outputs).items()}, use_jax=True)
-            for error, value in zip(errors, actual, strict=True):
-                error.add(reference[error.name][i][None], np.asarray(value))
-    config = metadata["numerical_fidelity"]
-    report = {
-        "schema_version": 1,
-        "model_id": MODEL_ID,
-        "build_profile_id": profile,
-        "status": config["status"],
-        "reference": "Original full ONNX (ONNX Runtime)",
-        "candidate": f"AFE profile {profile}: backbone -> CPU Top300/Gather -> bounded-reference decoder (JAX execute)",
-        "dataset": {k: config["dataset"][k] for k in ("id", "variant", "sha256")},
-        "selection": config["selection"],
-        "samples": count,
-        "metrics": [e.summary() for e in errors],
-    }
-    (work / "fidelity.json").write_text(json.dumps(report, allow_nan=False, indent=2) + "\n")
+            # Copied, because the compiler may reuse an output's storage on the next execute.
+            compared.append(
+                {name: (reference[name][i][None], np.array(value)) for name, value in zip(OUTPUTS, actual, strict=True)}
+            )
+    write_fidelity_report(
+        MODEL_DIR,
+        profile,
+        compared,
+        work,
+        reference="Original full ONNX (ONNX Runtime)",
+        candidate=f"AFE profile {profile}: backbone -> CPU Top300/Gather -> bounded-reference decoder (JAX execute)",
+    )
 
 
 def execute_phase(target, arguments):
@@ -398,7 +350,7 @@ def compile_model(source, profile, dataset, fidelity_dataset, output_dir):
             evaluation_names=evaluation_names,
             work=work,
         )
-        run_phase(decoder_phase, profile=profile, parameters=parameters["decoder"], metadata=metadata, work=work)
+        run_phase(decoder_phase, profile=profile, parameters=parameters["decoder"], work=work)
         output_dir.mkdir(parents=True)
         outputs = []
         for name in COMPONENTS:

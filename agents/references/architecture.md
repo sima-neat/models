@@ -29,9 +29,10 @@ Three rules follow from these boundaries:
   validation, report, and publication code lives in `tools/`.
 - A stage runs the same way locally and in CI, because both call the same runner script in
   `scripts/`.
-- A model's `performance.py` and `accuracy.py` import `tools/model_report` and never
-  `model_registry`. The report writer in `model_report/__init__.py` needs only the Python
-  standard library and PyNeat, so it runs inside PyNeat's environment.
+- A model's `performance.py` and `accuracy.py` import `tools/model_report` and
+  `tools/model_inputs`, and never `model_registry`. The report writer in
+  `model_report/__init__.py` needs only the Python standard library and PyNeat, and
+  `model_inputs` only what PyNeat's environment has, so both run inside it.
   `generation_benchmark.py` also imports the MoLE environment's packages.
 
 The product name is Model Browser. Commands, code, and paths keep `model-registry` and
@@ -61,6 +62,7 @@ taxonomies/                model-taxonomy.yaml: model categories and display lab
 tests/                     repository-wide tests, browser tests in tests/browser/, fixtures
 tools/model_registry/      the model-registry command and the shared lifecycle code
 tools/model_report/        the report writer and metric vocabulary used on the DevKit
+tools/model_inputs/        the image listing and benchmark frame that model scripts share
 website/                   the Docusaurus site and the scripts that assemble the portal
 ```
 
@@ -95,10 +97,11 @@ marked CI only from the author package.
 | `promotions.py` (CI only) | Promotion requests, decisions, receipts, and the benchmark reference refresh after a promotion. |
 | `report_publication.py` (CI only) | Checking a `model-report.json` against `model.yaml` (`check_report`) and publishing one benchmark run (`publish_report`). |
 | `neat_core.py` (CI only) | Resolving the selected Core artifact and installing it only when the installed one differs. |
-| `benchmark_declarations.py` | The `performance` and `accuracy` declarations: benchmarked profiles, stage scripts, required metrics, `reference_metrics` validation, and the dataset names the model browser shows. |
+| `benchmark_declarations.py` | The `performance` and `accuracy` declarations: benchmarked profiles, stage scripts, required metrics, `reference_metrics` validation, the dataset names the model browser shows, and which Python measures a model on a DevKit (`benchmark_runner`). |
 | `artifact.py` | `compile-outputs.json` validation, MPK and LLiMa deployment verification, the LLiMa reproduction recipe, and deployment file indexes. |
 | `runtime_files.py` | Path and checksum validation of a compile's `runtime_files`, and their restoration from a package ZIP. |
-| `compile_script.py` | The registry formats a model's `compile.py` shares: its command line (`parse_arguments`), one component's build parameters (`component_parameters`), the MPK member names and manifest (`read_mpk_manifest`), and the numerical fidelity report's metrics and layout (`fidelity_report`). It runs in the Model Compiler environment and is in `COMPILE_TOOLING`. |
+| `compile_script.py` | What every model's `compile.py` shares: its command line (`parse_arguments`), one component's build parameters (`component_parameters`), the MPK member names and manifest (`read_mpk_manifest`), and the log level it passes to the Model Compiler (`compiler_log_level`). It runs in the Model Compiler environment and is in `COMPILE_TOOLING`. |
+| `fidelity.py` | The numerical fidelity measurement: running samples through the ONNX source and the quantized graph (`compare_with_onnx`), and the report's metrics and `fidelity.json` (`write_fidelity_report`, `fidelity_report`). It runs in the Model Compiler environment, and the compile fingerprint hashes it only for a model that declares `numerical_fidelity`. |
 | `mla_stage_simulation.py` | The simulator's operation counts and latency for each MLA stage (`simulate-mla-stages`). |
 | `package.py` | Assembling a profile's `default` package from MPKs, pinned `resources`, and `runtime_files`, or from a complete LLiMa deployment folder. |
 | `dependencies.py` | Resolving the Model Compiler and DevKit runtime pins in `deps/manifest.json`. |
@@ -120,10 +123,17 @@ no compiler dependency.
 
 | Module | Owns |
 | --- | --- |
-| `__init__.py` | Building `model-report.json` from what Core returned: `from_performance`, `from_component_performance`, `from_accuracy`, and `from_generation` for LLiMa. |
-| `board_telemetry.py` | Sentinel traces around measured inference, summarized like Core's telemetry. |
+| `__init__.py` | Building `model-report.json` from what Core returned: `from_performance`, `from_component_performance`, `from_accuracy`, and `from_generation` for LLiMa. Also `log`, which a benchmark script prints its progress with. |
+| `board_telemetry.py` | Sentinel traces around measured inference, summarized like Core's telemetry, and stopping a recording a killed benchmark left active (`stop_active_recording`). |
 | `generation_benchmark.py` | MoLE timings, dataset comparisons, and telemetry for deployed LLiMa models. |
 | `metrics.json` | The one metric vocabulary: each metric's stage, label, unit, direction, Vulcan measurement name (`registry_name`), and whether a performance report requires it. |
+
+### `tools/model_inputs`
+
+| Module | Owns |
+| --- | --- |
+| `images.py` | Listing a dataset's images from its directory or tar archive (`image_names`) and reading the named ones (`read_images`). It needs only the Python standard library, and it is in `COMPILE_TOOLING` because every `calibration.py` imports it. |
+| `frame.py` | The 720p benchmark frame of an image model: `read_rgb`, `letterbox_to_720p`, and the frame size. It needs OpenCV and NumPy, and a performance fingerprint hashes it for a model that PyNeat measures. |
 
 ## Stages and fingerprints
 
@@ -147,9 +157,9 @@ the truth for what each fingerprint hashes:
 
 | Fingerprint | Built from |
 | --- | --- |
-| ONNX compile | The profile's projection of `model.yaml` (sources, parameters, calibration pin, `numerical_fidelity`, `resources`), the compiler identity, the files in `COMPILE_TOOLING`, and every `.py` and `.sh` file under the model's `scripts/` that is not in `NON_COMPILE_SCRIPTS`. |
+| ONNX compile | The profile's projection of `model.yaml` (sources, parameters, calibration pin, `numerical_fidelity`, `resources`), the compiler identity, the files in `COMPILE_TOOLING`, `fidelity.py` for a model that declares `numerical_fidelity`, and every `.py` and `.sh` file under the model's `scripts/` that is not in `NON_COMPILE_SCRIPTS`. |
 | LLiMa compile | Checkpoint content, target, the component's `parameters`, and the compiler identity. No script or shared file. |
-| benchmark | Each component's compile run ID, plus its MPK SHA-256 for an ONNX build. The stage's `model.yaml` declaration without `build_profiles`. For accuracy it includes the metrics each dataset's `datasets/<id>.yaml` requires for the model's tasks. The stage script and its optional requirements file. `PERFORMANCE_TOOLING` or `ACCURACY_TOOLING`, plus `LLIMA_PERFORMANCE_TOOLING` for LLiMa performance. The DevKit runtime pins. A performance fingerprint adds the profile's `benchmark_baseline` with that baseline's compile fingerprint. |
+| benchmark | Each component's compile run ID, plus its MPK SHA-256 for an ONNX build. The stage's `model.yaml` declaration without `build_profiles`. For accuracy it includes the metrics each dataset's `datasets/<id>.yaml` requires for the model's tasks. The stage script and its optional requirements file. `PERFORMANCE_TOOLING` or `ACCURACY_TOOLING`. Performance adds `LLIMA_PERFORMANCE_TOOLING` for a model MoLE measures and `tools/model_inputs/frame.py` for a model PyNeat measures. The DevKit runtime pins. A performance fingerprint adds the profile's `benchmark_baseline` with that baseline's compile fingerprint. |
 | conversion | `conversion.source`, `conversion.outputs`, `FINGERPRINT_VERSION`, and the model's conversion files under `scripts/`. No shared file. |
 
 [What a change reruns](../../docs/adding-a-model.md#9-know-what-a-change-reruns) lists each

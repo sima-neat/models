@@ -30,7 +30,8 @@ from afe.core.configs import QuantizationPrecision
 from afe.core.utils import convert_data_generator_to_iterable
 from afe.load.importers.general_importer import onnx_source
 from calibration import load_images, select_images
-from model_registry.compile_script import component_parameters, fidelity_report, read_mpk_manifest
+from model_registry.compile_script import compiler_log_level, component_parameters, read_mpk_manifest
+from model_registry.fidelity import fidelity_report
 from model_registry.model import load_model as load_metadata
 from sima_utils.data.data_generator import DataGenerator
 from surgery import (
@@ -160,7 +161,7 @@ def compile_model(
             calibration_data=convert_data_generator_to_iterable(DataGenerator({InputName(INPUT): samples})),
             quantization_config=quantization(precision, int(parameters["calibration_bins"])),
             model_name=f"{MODEL_ID}_{profile_id}",
-            log_level=logging.INFO,
+            log_level=compiler_log_level(),
         )
         if parameters.get("bf16_regions"):
             require_bf16_pooling(quantized)
@@ -169,7 +170,7 @@ def compile_model(
                 output_path=str(build_dir / "mpk"),
                 batch_size=1,
                 compress=True,
-                log_level=logging.INFO,
+                log_level=compiler_log_level(),
                 tessellate_parameters=None,
                 l2_caching_mode=L2CachingMode.NONE,
             )

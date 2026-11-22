@@ -8,7 +8,6 @@ bf16_regions, if it declares any, in BF16.
 from __future__ import annotations
 
 import argparse
-import logging
 import math
 import os
 import shutil
@@ -34,7 +33,7 @@ from afe.core.configs import QuantizationPrecision
 from afe.core.utils import convert_data_generator_to_iterable
 from afe.load.importers.general_importer import onnx_source
 from calibration import calibration_inputs
-from model_registry.compile_script import component_parameters, read_mpk_manifest
+from model_registry.compile_script import compiler_log_level, component_parameters, read_mpk_manifest
 from sima_utils.data.data_generator import DataGenerator
 from surgery import BF16_REGIONS, annotate_bf16_regions, export_matcher
 
@@ -237,7 +236,7 @@ def compile_model(source: Path, output_dir: Path, profile_id: str, dataset: Path
             calibration_data=_calibration_data(parameters, dataset),
             quantization_config=_quantization(parameters),
             model_name=f"{MODEL_ID}_{profile_id}",
-            log_level=logging.INFO,
+            log_level=compiler_log_level(),
         )
         if regions:
             _require_bf16_regions(quantized, regions)
@@ -248,7 +247,7 @@ def compile_model(source: Path, output_dir: Path, profile_id: str, dataset: Path
             output_path=str(build_dir / "mpk"),
             batch_size=1,
             compress=True,
-            log_level=logging.INFO,
+            log_level=compiler_log_level(),
             tessellate_parameters=None,
             l2_caching_mode=L2CachingMode.NONE,
         )

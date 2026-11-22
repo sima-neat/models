@@ -7,7 +7,6 @@ import tarfile
 from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
-from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
@@ -114,15 +113,6 @@ def test_split_names_read_an_extracted_directory_and_require_the_split(
         calibration.split_names(tmp_path, "cal2012")
 
 
-def test_read_images_reports_a_missing_image(tmp_path: Path, load_script: Callable[[str], ModuleType]) -> None:
-    calibration = load_script("calibration")
-    archive = _write_archive(tmp_path / "cal.tar.gz", {"imagenet/cal2012/a.JPEG": b"a"})
-
-    assert calibration.read_images(archive, ["imagenet/cal2012/a.JPEG"]) == {"imagenet/cal2012/a.JPEG": b"a"}
-    with pytest.raises(ValueError, match="missing 1 requested images"):
-        calibration.read_images(archive, ["imagenet/cal2012/a.JPEG", "imagenet/cal2012/b.JPEG"])
-
-
 def test_fidelity_selection_is_the_declared_seeded_sample(
     tmp_path: Path,
     load_script: Callable[[str], ModuleType],
@@ -216,43 +206,27 @@ def test_compile_rejects_an_undeclared_precision_before_compiling(
     assert not (tmp_path / "model").exists()
 
 
-def test_fidelity_compares_the_quantized_logits_with_the_onnx_source(
+def test_fidelity_samples_are_the_declared_selection_preprocessed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     load_script: Callable[[str], ModuleType],
 ) -> None:
     recipe = load_script("compile")
-    fidelity = recipe.load_metadata(recipe.MODEL_DIR)["numerical_fidelity"]
-    images = {"cal2012/a.JPEG": 1.0, "cal2012/b.JPEG": 2.0}
-    onnx_input_shapes = []
+    selections = []
 
-    class Session:
-        def __init__(self, path: str, providers: list[str]) -> None:
-            pass
+    def fidelity_names(dataset: Path, seed: int, offset: int, samples: int) -> list[str]:
+        selections.append((dataset, seed, offset, samples))
+        return ["first", "second"]
 
-        def run(self, outputs: None, feeds: dict[str, np.ndarray]) -> list[np.ndarray]:
-            onnx_input_shapes.append(feeds["pixel_values"].shape)
-            return [np.full((1, 1000), feeds["pixel_values"][0, 0, 0, 0], np.float32)]
+    monkeypatch.setattr(recipe, "fidelity_names", fidelity_names)
+    monkeypatch.setattr(recipe, "read_images", lambda dataset, names: {name: name.encode() for name in names})
+    monkeypatch.setattr(recipe, "preprocess_image", lambda content: content.decode().upper())
 
-    candidate = MagicMock()
-    # This candidate returns the logits as [1, 1, 1, 1000], which the recipe reshapes to the source's [1, 1000].
-    # Each image's last logit comes back 1 too high.
-    candidate.execute.side_effect = [
-        [np.append(np.full(999, value), value + 1).reshape(1, 1, 1, 1000)] for value in images.values()
-    ]
-    monkeypatch.setattr(recipe, "fidelity_names", lambda dataset, seed, offset, samples: list(images))
-    monkeypatch.setattr(recipe, "read_images", lambda dataset, names: dict(images))
-    monkeypatch.setattr(recipe, "preprocess_image", lambda value: np.full((224, 224, 3), value, np.float32))
-    monkeypatch.setattr(recipe, "ort", MagicMock(InferenceSession=Session))
+    samples = recipe.fidelity_samples(tmp_path / "dataset")
 
-    report = recipe.measure_fidelity(tmp_path / "model.onnx", candidate, tmp_path / "cal", fidelity, "w8a8")
-
-    assert onnx_input_shapes == [(1, 3, 224, 224)] * 2
-    assert (report["model_id"], report["build_profile_id"], report["samples"]) == ("densenet_161", "w8a8", 2)
-    (metric,) = report["metrics"]
-    assert metric["name"] == "logits"
-    assert metric["max_absolute_error"] == 1.0
-    assert metric["mean_absolute_error"] == pytest.approx(1 / 1000)
+    selection = recipe.load_metadata(recipe.MODEL_DIR)["numerical_fidelity"]["selection"]
+    assert selections == [(tmp_path / "dataset", selection["seed"], selection["offset"], selection["samples"])]
+    assert samples == ["FIRST", "SECOND"]
 
 
 @pytest.mark.parametrize(

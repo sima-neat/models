@@ -35,7 +35,7 @@ from afe.apis.loaded_net import load_model
 from afe.apis.model import L2CachingMode
 from afe.load.importers.general_importer import onnx_source
 from calibration import load_images, select_names
-from model_registry.compile_script import read_mpk_manifest
+from model_registry.compile_script import compiler_log_level, read_mpk_manifest
 from model_registry.fetch import sha256_file
 from model_registry.model import load_model as load_metadata
 from surgery import COMPONENT_GRAPHS, FIDELITY_PROMPTS, RUNTIME_FILES, prepare_model
@@ -98,7 +98,7 @@ def _quantize_component(graph: Path, name: str, component_id: str, parameters: d
         calibration_data=None,
         quantization_config=_quantization_config(parameters),
         model_name=name,
-        log_level=logging.INFO,
+        log_level=compiler_log_level(),
     )
 
 
@@ -135,7 +135,7 @@ def _compile_component(quantized: Any, build_dir: Path, component_id: str) -> Pa
         output_path=str(build_dir),
         batch_size=1,
         compress=True,
-        log_level=logging.INFO,
+        log_level=compiler_log_level(),
         tessellate_parameters=None,
         l2_caching_mode=L2CachingMode.NONE,
         preserve=True,

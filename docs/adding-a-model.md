@@ -234,20 +234,24 @@ and latency for each MLA stage. Keep download, checksum, MPK validation, and
 publication code out of model code. The shared tooling under `tools/` does
 that work.
 
-`model_registry.compile_script` holds the formats every ONNX recipe shares.
-Import them instead of copying them:
+Three shared modules under `tools/` hold what every ONNX recipe does the same
+way. Import them instead of copying them:
 
-| Function | What it does |
-| --- | --- |
-| `parse_arguments(__doc__, MODEL_DIR)` | Parses the command line above when `--model` is an `.onnx` file. It stops when the compile invocation is not the build profile, a path does not exist, or `--fidelity-dataset` is missing while `model.yaml` declares `numerical_fidelity`. |
-| `component_parameters(MODEL_DIR, profile_id, component_id)` | Returns one component's parameters in a build profile, and fails for a profile or component `model.yaml` does not declare. |
-| `read_mpk_manifest(archive)` | Returns an MPK's member names and its manifest, and refuses a link or a path outside the archive. |
-| `fidelity_report(model_id, profile_id, fidelity, compared, reference=..., candidate=...)` | Computes each output's agreement over the compared samples and lays out `fidelity.json`. |
+| Function | Module | What it does |
+| --- | --- | --- |
+| `parse_arguments(__doc__, MODEL_DIR)` | `model_registry.compile_script` | Parses the command line above when `--model` is an `.onnx` file. It stops when the compile invocation is not the build profile, a path does not exist, or `--fidelity-dataset` is missing while `model.yaml` declares `numerical_fidelity`. |
+| `component_parameters(MODEL_DIR, profile_id, component_id)` | `model_registry.compile_script` | Returns one component's parameters in a build profile, and fails for a profile or component `model.yaml` does not declare. |
+| `read_mpk_manifest(archive)` | `model_registry.compile_script` | Returns an MPK's member names and its manifest, and refuses a link or a path outside the archive. |
+| `compiler_log_level()` | `model_registry.compile_script` | Returns the log level a recipe passes to `quantize` and `compile` as `log_level`: `DEBUG` in a GitHub Actions job, so a failed CI compile leaves its full log, and `INFO` anywhere else. |
+| `compare_with_onnx(onnx_path, quantized, samples, input_name, output_names)` | `model_registry.fidelity` | Runs each preprocessed sample through the ONNX source with ONNX Runtime and through the quantized graph, and returns each output's pair of arrays for every sample. It is for a model with one image input. |
+| `write_fidelity_report(MODEL_DIR, profile_id, compared, output_dir)` | `model_registry.fidelity` | Computes each output's agreement over the compared samples and writes `fidelity.json`. A recipe that compares outputs its own way, such as a multi-component model, passes its own `compared` pairs. |
+| `image_names(dataset, suffixes)` | `model_inputs.images` | Lists a dataset's images from its directory or its tar archive, sorted, without the `._` companion files macOS tar writes. |
+| `read_images(dataset, names)` | `model_inputs.images` | Returns the named images' encoded bytes, reading an archive through once. |
 
-The recipe stays in `compile.py`: quantization, the compile call, calibration,
-graph surgery, running the source and the quantized graph for fidelity, and the
-MPK audit. A recipe that takes a checkpoint such as `weights.pth` as `--model`
-parses its own command line.
+The recipe stays in the model's scripts: quantization, the compile call,
+preprocessing, which samples calibrate the model and which measure fidelity,
+graph surgery, and the MPK audit. A recipe that takes a checkpoint such as
+`weights.pth` as `--model` parses its own command line.
 
 A build compiles on the default runner unless its profile sets `runner_class`
 or `runner_market`. They default independently to `default` and `spot`. A
@@ -328,9 +332,9 @@ separate request. See [on-demand builds](#on-demand-builds).
 | Stage | Fingerprint inputs |
 | --- | --- |
 | conversion | the model's own conversion inputs: the upstream checkpoint, `conversion.outputs`, and `convert.py` with its requirements and the files it uses. No shared file is an input. See [when to run Convert again](conversion-artifacts.md#when-to-run-convert-again) |
-| compile (ONNX) | the model and profile IDs, the target, each component's ID and the source identity and layout, each component's `parameters`, the model's pinned `resources`, the profile's calibration pin, the `numerical_fidelity` section, compile/surgery code, the Model Compiler version, `scripts/run_model_compilation.sh`, the shared model loader, the shared compile helpers (`tools/model_registry/compile_script.py`), and the MLA stage simulation (`tools/model_registry/mla_stage_simulation.py`) |
+| compile (ONNX) | the model and profile IDs, the target, each component's ID and the source identity and layout, each component's `parameters`, the model's pinned `resources`, the profile's calibration pin, the `numerical_fidelity` section, compile/surgery code, the Model Compiler version, `scripts/run_model_compilation.sh`, the shared model loader, the shared compile helpers (`tools/model_registry/compile_script.py`), the shared image listing (`tools/model_inputs/images.py`), the MLA stage simulation (`tools/model_registry/mla_stage_simulation.py`), and, for a model that declares `numerical_fidelity`, the fidelity measurement (`tools/model_registry/fidelity.py`) |
 | compile (LLiMa) | checkpoint content hashes, the target, component graph `parameters`, and the pinned Model Compiler identity including its build revision |
-| performance | each component's compile run (plus its MPK digest for ONNX), the `performance` declaration, the optional `benchmark_baseline` and its compile fingerprint, `performance.py` and its requirements, shared benchmark tooling and runner scripts, including `scripts/unpack_benchmark_datasets.sh`, and the Core/MoLE runtime pins |
+| performance | each component's compile run (plus its MPK digest for ONNX), the `performance` declaration, the optional `benchmark_baseline` and its compile fingerprint, `performance.py` and its requirements, shared benchmark tooling and runner scripts, including `scripts/unpack_benchmark_datasets.sh`, the shared benchmark frame (`tools/model_inputs/frame.py`) for a model that PyNeat measures, and the Core/MoLE runtime pins |
 | accuracy | the compile run and MPK digest of every component, each `accuracy` dataset's name, pin, and the metrics its `datasets/<id>.yaml` requires for the model's tasks, `accuracy.samples`, `accuracy.py` and `requirements-accuracy.txt`, the shared benchmark tooling, `scripts/run_model_accuracy.sh`, `scripts/unpack_benchmark_datasets.sh`, `scripts/cache_accuracy_dataset.sh`, `scripts/install_dataset_registry.sh`, `tools/model_registry/runtime_files.py` (verified supporting-file inputs), and the DevKit runtime pin |
 
 ONNX compile code includes every `.py` and `.sh` under `scripts/` except
@@ -338,7 +342,8 @@ ONNX compile code includes every `.py` and `.sh` under `scripts/` except
 `requirements-convert.txt`.
 The shared model loader, `tools/model_registry/model.py`, is an input to
 every ONNX compile fingerprint, and so are the shared compile helpers,
-`tools/model_registry/compile_script.py`. The shared benchmark tooling is
+`tools/model_registry/compile_script.py`, and the shared image listing,
+`tools/model_inputs/images.py`. The shared benchmark tooling is
 `BOARD_STAGE_TOOLING`: the benchmarking workflow, Core
 installation/reuse checks in `tools/model_registry/neat_core.py`,
 `tools/model_report/__init__.py`, `schemas/model-report.schema.json`, and
@@ -371,7 +376,9 @@ is always benchmarked again.
 | the Model Compiler pin | every build, then every benchmark |
 | `scripts/run_model_compilation.sh` | ONNX builds, then their benchmarks |
 | the shared model loader | ONNX builds, then their benchmarks |
-| `tools/model_registry/compile_script.py` | ONNX builds, then their benchmarks |
+| `tools/model_registry/compile_script.py` or `tools/model_inputs/images.py` | ONNX builds, then their benchmarks |
+| `tools/model_registry/fidelity.py` | the ONNX builds of models that declare `numerical_fidelity`, then their benchmarks |
+| `tools/model_inputs/frame.py` | every performance stage of a model that PyNeat measures |
 | `tools/model_registry/mla_stage_simulation.py` | ONNX builds, then their benchmarks |
 | LLiMa scripts, registry helpers, checkpoint repository name, job count, logging or runner class/market | no LLiMa compilation |
 

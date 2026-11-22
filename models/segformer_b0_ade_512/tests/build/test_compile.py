@@ -84,15 +84,6 @@ def test_fidelity_selection_is_the_declared_seeded_val2017_sample(
         calibration.fidelity_names(tmp_path, 42, 1, 10)
 
 
-def test_read_images_reports_a_missing_image(tmp_path: Path, load_script: Callable[[str], ModuleType]) -> None:
-    calibration = load_script("calibration")
-    archive = _write_archive(tmp_path / "coco.tgz", {"val2017/a.jpg": b"a"})
-
-    assert calibration.read_images(archive, ["val2017/a.jpg"]) == {"val2017/a.jpg": b"a"}
-    with pytest.raises(ValueError, match="missing 1 requested images"):
-        calibration.read_images(archive, ["val2017/a.jpg", "val2017/b.jpg"])
-
-
 @pytest.mark.parametrize("profile_id", ["w16a16", "w8a8", "w8a8_mixed"])
 def test_compile_reads_each_declared_build_profile(load_script: Callable[[str], ModuleType], profile_id: str) -> None:
     recipe = load_script("compile")

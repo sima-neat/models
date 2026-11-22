@@ -27,7 +27,7 @@ def repository(tmp_path):
     root = tmp_path / "repo"
     for name in (
         "schemas", "taxonomies", "datasets", "scripts",
-        "tools/model_registry", "tools/model_report", ".github/workflows",
+        "tools/model_registry", "tools/model_report", "tools/model_inputs", ".github/workflows",
     ):
         shutil.copytree(ROOT / name, root / name)
     for name in ("conftest.py", "pyproject.toml"):

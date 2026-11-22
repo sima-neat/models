@@ -12,7 +12,6 @@ import contextlib
 import io
 import json
 import random
-import sys
 import tarfile
 import time
 from collections import deque
@@ -24,6 +23,7 @@ import model_report
 import numpy as np
 from calibration import IMAGE_SIZE, letterbox_geometry, preprocess_image
 from faster_coco_eval import COCO, COCOeval_faster
+from model_report import log
 
 ANNOTATIONS = "annotations/instances_val2017.json"
 IMAGES = "val2017"
@@ -280,10 +280,6 @@ def coco_stats(scorer: COCOeval_faster) -> dict[str, float]:
     if empty:
         raise SystemExit(f"no ground-truth objects to score for: {', '.join(empty)}")
     return stats
-
-
-def log(*values: object) -> None:
-    print(*values, file=sys.stderr, flush=True)
 
 
 def main(argv: list[str] | None = None) -> int:

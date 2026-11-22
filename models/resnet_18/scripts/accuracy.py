@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 import time
 from collections import deque
 from collections.abc import Callable, Iterator, Sequence
@@ -15,6 +14,7 @@ import model_report
 import numpy as np
 import pyneat
 from calibration import VALIDATION_SPLIT, preprocess_image, validation_labels
+from model_report import log
 
 # Images decode on worker threads while the MPK runs; Pillow releases the GIL while it decodes and resizes.
 WORKERS = 4
@@ -37,10 +37,6 @@ def parse_mpks(values: list[str]) -> Path:
     if set(mpks) != {"model"}:
         raise SystemExit("--mpk must name exactly model=<path>")
     return Path(mpks["model"])
-
-
-def log(*values: object) -> None:
-    print(*values, file=sys.stderr, flush=True)
 
 
 def main(argv: list[str] | None = None) -> int:

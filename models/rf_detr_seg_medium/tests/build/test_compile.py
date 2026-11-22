@@ -456,32 +456,6 @@ def test_backbone_outputs_survive_the_file_between_phases(
             np.testing.assert_array_equal(getattr(loaded, name), value)
 
 
-def test_fidelity_error_sums_match_the_metrics_over_all_images(load_script: Callable[[str], ModuleType]) -> None:
-    compile_module = load_script("compile")
-    rng = np.random.RandomState(0)
-    expected = rng.standard_normal((2, 3, 4))
-    actual = expected + rng.standard_normal((2, 3, 4)) * 0.1
-    error = compile_module._OutputError("dets")
-
-    for image in range(2):
-        error.add(expected[image], actual[image])
-    summary = error.summary()
-
-    difference = actual - expected
-    assert summary["name"] == "dets"
-    np.testing.assert_allclose(
-        summary["cosine_similarity"],
-        np.dot(expected.ravel(), actual.ravel()) / (np.linalg.norm(expected) * np.linalg.norm(actual)),
-    )
-    np.testing.assert_allclose(
-        summary["normalized_rmse"], np.sqrt(np.mean(difference**2)) / np.sqrt(np.mean(expected**2))
-    )
-    np.testing.assert_allclose(summary["mean_absolute_error"], np.mean(np.abs(difference)))
-    np.testing.assert_allclose(summary["max_absolute_error"], np.max(np.abs(difference)))
-    with pytest.raises(RuntimeError, match="dets shape mismatch"):
-        error.add(expected[0], actual[0, :2])
-
-
 def test_backbone_features_convert_to_the_onnx_boundary_layout(load_script: Callable[[str], ModuleType]) -> None:
     compile_module = load_script("compile")
     batch, channels, height, width = compile_module.BOUNDARY_SHAPES[compile_module.FEATURES]

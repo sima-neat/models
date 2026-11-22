@@ -13,7 +13,6 @@ import io
 import json
 import multiprocessing
 import random
-import sys
 import time
 from collections import deque
 from collections.abc import Callable, Iterator, Sequence
@@ -26,6 +25,7 @@ import numpy as np
 from calibration import IMAGE_SIZE, MEAN, QUERY_COUNT, STD, select_top_proposals
 from faster_coco_eval import COCO, COCOeval_faster
 from faster_coco_eval.core import mask as mask_util
+from model_report import log
 from PIL import Image
 
 ANNOTATIONS = "annotations/instances_val2017.json"
@@ -249,10 +249,6 @@ def parse_mpks(values: list[str]) -> dict[str, Path]:
     if set(mpks) != {"backbone", "decoder"}:
         raise SystemExit("--mpk must name exactly backbone=<path> and decoder=<path>")
     return {name: Path(path) for name, path in mpks.items()}
-
-
-def log(*values: object) -> None:
-    print(*values, file=sys.stderr, flush=True)
 
 
 def main(argv: list[str] | None = None) -> int:

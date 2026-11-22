@@ -17,7 +17,9 @@ CALIBRATION_SEED = 20261023
 def _calibration_member(name: str) -> bool:
     """Whether an archive member is an image of a cal sequence: hpatches/cal/<sequence>/<k>.ppm."""
     path = PurePosixPath(name)
-    return path.suffix == ".ppm" and path.parent.parent.name == CALIBRATION_SPLIT
+    # macOS tar writes a "._<name>" companion beside a file with extended attributes; it holds no image.
+    is_image = path.suffix == ".ppm" and not path.name.startswith("._")
+    return is_image and path.parent.parent.name == CALIBRATION_SPLIT
 
 
 def calibration_images(dataset: Path, count: int) -> np.ndarray:

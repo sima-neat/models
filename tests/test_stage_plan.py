@@ -17,6 +17,8 @@ from model_registry.fingerprints import (
     BENCHMARK_RUN_TYPES,
     BOARD_STAGE_TOOLING,
     COMPILE_TOOLING,
+    FIDELITY_TOOLING,
+    FRAME_TOOLING,
     PERFORMANCE_TOOLING,
     benchmark_fingerprint,
     compile_fingerprint,
@@ -384,7 +386,7 @@ READ_API = "https://reader.example.invalid"
 def stage_repository(tmp_path: Path) -> Path:
     repository = repository_without_w16a16_accuracy(tmp_path)
     for relative in ("deps/manifest.json",
-                     *COMPILE_TOOLING, *PERFORMANCE_TOOLING, *ACCURACY_TOOLING):
+                     *COMPILE_TOOLING, FIDELITY_TOOLING, *PERFORMANCE_TOOLING, FRAME_TOOLING, *ACCURACY_TOOLING):
         destination = repository / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / relative, destination)
@@ -769,10 +771,11 @@ def test_metric_vocabulary_change_reruns_nothing(stage_repository: Path) -> None
     assert plan["benchmark"]["include"] == []
 
 
-def test_performance_runner_change_measures_performance_only(stage_repository: Path) -> None:
+@pytest.mark.parametrize("relative", ["scripts/run_model_performance.sh", FRAME_TOOLING])
+def test_shared_performance_tooling_change_measures_performance_only(stage_repository: Path, relative: str) -> None:
     document = _published_catalog(stage_repository)
     registry = FakeRegistry({BRANCH: document}, _published_runs(document))
-    _edit(stage_repository, "../../scripts/run_model_performance.sh")
+    _edit(stage_repository, f"../../{relative}")
 
     plan = _plan(stage_repository, registry)
 

@@ -1,27 +1,34 @@
-"""The registry formats a model's scripts/compile.py shares: its command line, its build parameters, the MPK
-manifest, and the numerical fidelity report.
+"""What every model's scripts/compile.py shares: its command line, its build parameters, the MPK manifest, and the
+log level it passes to the Model Compiler.
 
-The recipe stays in the model: quantization, the compile call, calibration, graph surgery, running the source and
-the quantized graph for fidelity, and the MPK audit. Every ONNX compile imports this module, so it is in
-COMPILE_TOOLING and an edit recompiles every ONNX build. It imports only what the Model Compiler environment has.
+The recipe stays in the model: quantization, the compile call, calibration preprocessing, graph surgery, and the
+MPK audit. Every ONNX compile imports this module, so it is in COMPILE_TOOLING and an edit recompiles every ONNX
+build. It imports only what the Model Compiler environment has. fidelity.py holds the numerical fidelity
+measurement.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import logging
+import os
 import tarfile
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-import numpy as np
-
 from .model import load_model, profile_component_for
 
-# The model browser and sima-cli choose a renderer by it (schemas/numerical-fidelity.schema.json).
-FIDELITY_SCHEMA_VERSION = 1
+
+def compiler_log_level() -> int:
+    """The log level a recipe passes to the Model Compiler.
+
+    DEBUG in a GitHub Actions job, so a failed CI compile leaves its full log. INFO anywhere else, so a compile on
+    a developer's machine stays readable.
+    """
+    return logging.DEBUG if os.environ.get("GITHUB_ACTIONS") == "true" else logging.INFO
 
 
 @dataclass(frozen=True)
@@ -96,84 +103,3 @@ def read_mpk_manifest(archive: Path) -> tuple[list[str], dict[str, Any]]:
         if source is None:
             raise RuntimeError(f"cannot read MPK manifest: {manifests[0]}")
         return names, json.load(source)
-
-
-def fidelity_report(
-    model_id: str,
-    profile_id: str,
-    fidelity: Mapping[str, Any],
-    compared: Sequence[Mapping[str, tuple[np.ndarray, np.ndarray]]],
-    *,
-    reference: str,
-    candidate: str,
-) -> dict[str, Any]:
-    """The numerical fidelity report of one build, laid out as schemas/numerical-fidelity.schema.json requires.
-
-    Each metric covers one output over every sample: the cosine similarity, the RMS error divided by the
-    expected values' RMS, and the mean and the largest absolute error.
-
-    Args:
-        model_id: The model the build belongs to.
-        profile_id: The build profile that was compiled.
-        fidelity: The numerical_fidelity section of model.yaml.
-        compared: One entry per fidelity sample, in selection order. Each maps an output name, in the order the
-            report lists the metrics, to its expected value from the reference and its actual value from the
-            candidate.
-        reference: What computed the expected values, such as "ONNX source (ONNX Runtime)".
-        candidate: What computed the actual values, such as "Quantized AFE graph (JAX execute)".
-
-    Raises:
-        ValueError: compared is empty, or its samples name different outputs.
-        RuntimeError: an output's expected and actual values differ in shape or hold a non-finite value.
-    """
-    if not compared:
-        raise ValueError("a fidelity report needs at least one compared sample")
-    names = list(compared[0])
-    for index, outputs in enumerate(compared):
-        if list(outputs) != names:
-            raise ValueError(f"fidelity sample {index} compares {list(outputs)}, the first sample {names}")
-    return {
-        "schema_version": FIDELITY_SCHEMA_VERSION,
-        "model_id": model_id,
-        "build_profile_id": profile_id,
-        "status": fidelity["status"],
-        "reference": reference,
-        "candidate": candidate,
-        "dataset": {key: fidelity["dataset"][key] for key in ("id", "variant", "sha256")},
-        "selection": fidelity["selection"],
-        "samples": len(compared),
-        "metrics": [_output_metric(name, [outputs[name] for outputs in compared]) for name in names],
-    }
-
-
-def _output_metric(name: str, pairs: list[tuple[np.ndarray, np.ndarray]]) -> dict[str, Any]:
-    """One output's agreement over every sample, summed one sample at a time in selection order."""
-    count = 0
-    dot = expected_squared = actual_squared = error_squared = error_absolute = max_absolute_error = 0.0
-    for index, (expected_value, actual_value) in enumerate(pairs):
-        expected = np.asarray(expected_value, dtype=np.float64)
-        actual = np.asarray(actual_value, dtype=np.float64)
-        if expected.shape != actual.shape:
-            raise RuntimeError(f"{name} of fidelity sample {index} has shape {actual.shape}, expected {expected.shape}")
-        if not (np.isfinite(expected).all() and np.isfinite(actual).all()):
-            raise RuntimeError(f"{name} of fidelity sample {index} contains non-finite values")
-        error = actual - expected
-        absolute = np.abs(error)
-        count += expected.size
-        dot += float(np.dot(expected.ravel(), actual.ravel()))
-        expected_squared += float(np.sum(np.square(expected)))
-        actual_squared += float(np.sum(np.square(actual)))
-        error_squared += float(np.sum(np.square(error)))
-        error_absolute += float(np.sum(absolute))
-        max_absolute_error = max(max_absolute_error, float(np.max(absolute)))
-    expected_rms = max(np.sqrt(expected_squared / count), np.finfo(np.float64).eps)
-    norm = np.sqrt(expected_squared * actual_squared)
-    # Two all-zero outputs agree. An all-zero output against a nonzero one has no direction, so it scores 0.
-    cosine = dot / norm if norm else float(expected_squared == actual_squared)
-    return {
-        "name": name,
-        "cosine_similarity": float(np.clip(cosine, -1.0, 1.0)),
-        "normalized_rmse": float(np.sqrt(error_squared / count) / expected_rms),
-        "mean_absolute_error": float(error_absolute / count),
-        "max_absolute_error": max_absolute_error,
-    }

@@ -37,7 +37,8 @@ from afe.apis.model import L2CachingMode
 from afe.core.configs import QuantizationPrecision
 from afe.core.utils import convert_data_generator_to_iterable
 from afe.load.importers.general_importer import onnx_source
-from model_registry.compile_script import component_parameters, fidelity_report, read_mpk_manifest
+from model_registry.compile_script import compiler_log_level, component_parameters, read_mpk_manifest
+from model_registry.fidelity import fidelity_report
 from model_registry.model import load_model as load_metadata
 from scene_flow import INPUT, end_point_error, read_pairs, selected_pairs
 from sima_utils.data.data_generator import DataGenerator
@@ -143,7 +144,7 @@ def quantize(source: Path, profile_id: str, dataset: Path, seed: int) -> Any:
             calibration_data=convert_data_generator_to_iterable(DataGenerator({InputName(INPUT): frames})),
             quantization_config=quantization,
             model_name=f"{MODEL_ID}_{profile_id}",
-            log_level=logging.INFO,
+            log_level=compiler_log_level(),
         )
     except SystemExit as error:
         # AFE reports a failed quantization or compile by raising SystemExit, which would exit with status 0.
@@ -161,7 +162,7 @@ def compile_model(quantized: Any, output_dir: Path, profile_id: str) -> Path:
                 output_path=str(build_dir / "mpk"),
                 batch_size=1,
                 compress=True,
-                log_level=logging.INFO,
+                log_level=compiler_log_level(),
                 tessellate_parameters=None,
                 l2_caching_mode=L2CachingMode.NONE,
             )

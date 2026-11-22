@@ -51,8 +51,8 @@ The runner user therefore needs passwordless `sudo` for both writes.
 ## The performance script
 
 Every model that declares `performance` includes `scripts/performance.py` in
-its own GitHub folder. CI runs that same script. Copy the model folder and
-`tools/model_report` to the DevKit, extract the model's accuracy dataset, and
+its own GitHub folder. CI runs that same script. Copy the model folder,
+`tools/model_report` and `tools/model_inputs` to the DevKit, extract the model's accuracy dataset, and
 run the script with PyNeat; no registry installation or YAML configuration is
 needed:
 
@@ -172,10 +172,10 @@ not the MPK alone:
 1. The script picks one image from the dataset's validation split with
    `random.Random(0)`, so every run measures the same image. Pose models pick
    among the images with labelled people, which pose accuracy scores.
-2. It reads the image as RGB and letterboxes it into a 1280x720 frame with
-   `letterbox_to_720p`: scaled to fit, centered, and padded with grey (114).
-   The function is OpenCV and NumPy code inside the script, not a shared
-   module.
+2. It reads the image as RGB with `read_rgb` and letterboxes it into a
+   1280x720 frame with `letterbox_to_720p`: scaled to fit, centered, and padded
+   with grey (114). Both come from `model_inputs.frame`, a shared module of
+   OpenCV and NumPy code under `tools/`.
 3. It passes the frame to Core in `BenchmarkOptions.inputs` as an RGB
    `pyneat.Tensor`. The Model uses the image route
    (`preprocess.kind = InputKind.Image`), so Neat's preprocessing resizes,

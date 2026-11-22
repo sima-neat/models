@@ -4,18 +4,17 @@ from __future__ import annotations
 
 import io
 import json
+import logging
 import tarfile
 from pathlib import Path
 from typing import Any
 
-import numpy as np
 import pytest
 import yaml
-from jsonschema import Draft202012Validator
 from model_registry.compile_script import (
     CompileArguments,
+    compiler_log_level,
     component_parameters,
-    fidelity_report,
     parse_arguments,
     read_mpk_manifest,
 )
@@ -23,7 +22,6 @@ from model_registry.errors import ValidationError
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = ROOT / "tests" / "fixtures" / "fixture_model" / "model.yaml"
-FIDELITY_SCHEMA = ROOT / "schemas" / "numerical-fidelity.schema.json"
 FIDELITY = {
     "status": "diagnostic",
     "dataset": {"id": "imagenet-2012", "variant": "cal", "sha256": "e" * 64, "size_bytes": 1},
@@ -193,71 +191,16 @@ def test_read_mpk_manifest_returns_the_members_and_the_one_manifest(
         assert str(raised.value) == message
 
 
-def test_fidelity_report_sums_each_output_over_every_sample() -> None:
-    compared = [
-        {"logits": (np.array([3.0, 4.0]), np.array([3.0, 4.0])), "boxes": (np.array([[1.0, 1.0]]), np.zeros((1, 2)))},
-        {"logits": (np.array([0.0, 0.0]), np.array([0.0, 2.0])), "boxes": (np.zeros((1, 2)), np.zeros((1, 2)))},
-    ]
-
-    report = fidelity_report(
-        "fixture", "w8a8", FIDELITY, compared, reference="ONNX source (ONNX Runtime)", candidate="Quantized graph"
-    )
-
-    Draft202012Validator(json.loads(FIDELITY_SCHEMA.read_text(encoding="utf-8"))).validate(report)
-    assert {key: value for key, value in report.items() if key != "metrics"} == {
-        "schema_version": 1,
-        "model_id": "fixture",
-        "build_profile_id": "w8a8",
-        "status": "diagnostic",
-        "reference": "ONNX source (ONNX Runtime)",
-        "candidate": "Quantized graph",
-        "dataset": {"id": "imagenet-2012", "variant": "cal", "sha256": "e" * 64},
-        "selection": FIDELITY["selection"],
-        "samples": 2,
-    }
-    logits, boxes = report["metrics"]
-    # logits: expected (3, 4, 0, 0), actual (3, 4, 0, 2). Error energy 4 over 4 values, expected energy 25.
-    assert logits == {
-        "name": "logits",
-        "cosine_similarity": pytest.approx(25 / np.sqrt(25 * 29)),
-        "normalized_rmse": pytest.approx(np.sqrt(4 / 4) / np.sqrt(25 / 4)),
-        "mean_absolute_error": pytest.approx(2 / 4),
-        "max_absolute_error": 2.0,
-    }
-    # boxes: the candidate is all zeros, so it has no direction to agree with. The largest error is in sample 0.
-    assert boxes == {
-        "name": "boxes",
-        "cosine_similarity": 0.0,
-        "normalized_rmse": pytest.approx(1.0),
-        "mean_absolute_error": pytest.approx(2 / 4),
-        "max_absolute_error": 1.0,
-    }
-
-
 @pytest.mark.parametrize(
-    ("compared", "error", "message"),
-    [
-        ([{"logits": (np.zeros(2), np.zeros(2))}], None, None),
-        ([], ValueError, "a fidelity report needs at least one compared sample"),
-        (
-            [{"logits": (np.ones(2), np.ones(2))}, {"boxes": (np.ones(2), np.ones(2))}],
-            ValueError,
-            "fidelity sample 1 compares ['boxes'], the first sample ['logits']",
-        ),
-        ([{"logits": (np.ones((1, 2)), np.ones(2))}], RuntimeError, "logits of fidelity sample 0 has shape (2,)"),
-        ([{"logits": (np.ones(2), np.array([1.0, np.nan]))}], RuntimeError, "contains non-finite values"),
-    ],
+    ("github_actions", "level"),
+    [("true", logging.DEBUG), ("false", logging.INFO), (None, logging.INFO)],
 )
-def test_fidelity_report_rejects_samples_it_cannot_compare(
-    compared: list[dict[str, tuple[np.ndarray, np.ndarray]]], error: type[Exception] | None, message: str | None
+def test_the_compiler_logs_at_debug_only_in_a_github_actions_job(
+    monkeypatch: pytest.MonkeyPatch, github_actions: str | None, level: int
 ) -> None:
-    def report() -> dict[str, Any]:
-        return fidelity_report("fixture", "w8a8", FIDELITY, compared, reference="ONNX", candidate="AFE")
-
-    if error is None:
-        # Two all-zero outputs agree exactly.
-        assert report()["metrics"][0]["cosine_similarity"] == 1.0
+    if github_actions is None:
+        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     else:
-        with pytest.raises(error) as raised:
-            report()
-        assert message in str(raised.value)
+        monkeypatch.setenv("GITHUB_ACTIONS", github_actions)
+
+    assert compiler_log_level() == level

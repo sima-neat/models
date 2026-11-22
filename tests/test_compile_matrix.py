@@ -12,7 +12,12 @@ from model_registry.compile_matrix import build_matrix
 from model_registry.conversion import conversion_fingerprint
 from model_registry.dependencies import resolve_model_compiler
 from model_registry.errors import ValidationError
-from model_registry.fingerprints import COMPILE_TOOLING, benchmark_fingerprint, compile_fingerprint
+from model_registry.fingerprints import (
+    COMPILE_TOOLING,
+    FIDELITY_TOOLING,
+    benchmark_fingerprint,
+    compile_fingerprint,
+)
 from model_registry.model import load_and_validate_model, load_models
 from model_registry.registry import RegistryPublicationError, publish_catalog
 
@@ -75,7 +80,7 @@ def model_repository(tmp_path: Path) -> Path:
     (tmp_path / "deps" / "manifest.json").write_text(
         (ROOT / "deps" / "manifest.json").read_text(encoding="utf-8"), encoding="utf-8"
     )
-    for relative in COMPILE_TOOLING:
+    for relative in (*COMPILE_TOOLING, FIDELITY_TOOLING):
         (tmp_path / relative).parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / relative, tmp_path / relative)
     _write_model(tmp_path, "alpha")
@@ -247,6 +252,30 @@ def test_numerical_fidelity_settings_invalidate_the_compile_fingerprint(model_re
     manifest.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
 
     assert compile_fingerprint(model_repository, "alpha", "fixture", "fixture", "2.1.3") != first
+
+
+def test_the_fidelity_module_recompiles_only_a_model_that_declares_fidelity(model_repository: Path) -> None:
+    manifest = model_repository / "models" / "alpha" / "model.yaml"
+    model = yaml.safe_load(manifest.read_text(encoding="utf-8"))
+    _declare_components(model)
+    model["numerical_fidelity"] = {
+        "status": "diagnostic",
+        "dataset": dict(DATASET),
+        "selection": {"method": "seeded_random_without_replacement", "seed": 1, "offset": 0, "samples": 1},
+        "outputs": ["output"],
+    }
+    manifest.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
+
+    def fingerprints() -> list[str]:
+        models = ("alpha", "bravo")
+        return [compile_fingerprint(model_repository, name, "fixture", "fixture", "2.1.3") for name in models]
+
+    declaring, plain = fingerprints()
+    module = model_repository / FIDELITY_TOOLING
+    module.write_text(module.read_text(encoding="utf-8") + "\n# tooling change\n", encoding="utf-8")
+
+    assert fingerprints()[0] != declaring
+    assert fingerprints()[1] == plain
 
 
 def test_package_resources_invalidate_only_their_models_compile_fingerprint(model_repository: Path) -> None:
@@ -668,6 +697,9 @@ def test_compile_fingerprint_ignores_performance_and_accuracy_declarations(
         ("tools/model_registry/model.py", True),
         ("tools/model_registry/compile_script.py", True),
         ("tools/model_registry/mla_stage_simulation.py", True),
+        ("tools/model_registry/fidelity.py", True),
+        ("tools/model_inputs/images.py", True),
+        ("tools/model_inputs/frame.py", False),
         ("tools/model_registry/compile_matrix.py", False),
         ("models/qwen3_5_0_8b/scripts/compile.sh", False),
         ("scripts/run_model_compilation.sh", True),

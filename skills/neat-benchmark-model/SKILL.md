@@ -48,12 +48,13 @@ describes.
      shows the limit the DevKit started with. Restart it with `sudo reboot` and
      read the clock again, until it prints `1000000000`.
    - From the machine that holds the build, copy the model's scripts,
-     `tools/model_report`, and the MPKs to the DevKit's NVMe drive, which keeps
-     large files off the root filesystem. Copy the whole model folder, because
+     `tools/model_report`, `tools/model_inputs`, and the MPKs to the DevKit's
+     NVMe drive, which keeps large files off the root filesystem. The scripts
+     import both `tools` folders. Copy the whole model folder, because
      `accuracy.py` can import another file from its `scripts/` folder:
 
      ```bash
-     tar -czf - models/<model-id> tools/model_report <build-folder> \
+     tar -czf - models/<model-id> tools/model_report tools/model_inputs <build-folder> \
        | ssh <user>@<devkit-address> 'mkdir -p /media/nvme/neat-tests/<run> && tar -xzf - -C /media/nvme/neat-tests/<run>'
      ```
 
@@ -63,7 +64,7 @@ describes.
 
    Done when `~/pyneat/bin/python -c 'import pyneat; print(pyneat.__version__)'`
    prints a version, both clocks read their target, the run folder holds the
-   MPKs, the scripts, and `tools/model_report`, and the dataset folder holds the
+   MPKs, the scripts, `tools/model_report` and `tools/model_inputs`, and the dataset folder holds the
    split the scripts read.
 
 2. **Write or reuse a performance script.** A published model's own

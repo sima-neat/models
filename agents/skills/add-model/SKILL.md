@@ -36,8 +36,9 @@ this work has nothing to do with ([`rules.md` "Before a push"](../../rules.md#be
    when the conversion tests pass and a published conversion matches the current conversion
    inputs.
 4. Write `surgery.py`, `calibration.py`, and `compile.py` as `coding-style.md` describes.
-   `compile.py` imports the shared helpers from `model_registry.compile_script` and keeps its
-   recipe, and each component calibrates on at most 20 samples, as [`rules.md`
+   `compile.py` imports the shared helpers from `model_registry.compile_script` and
+   `model_registry.fidelity`, `calibration.py` lists and reads images with
+   `model_inputs.images`, and both keep the recipe, and each component calibrates on at most 20 samples, as [`rules.md`
    "Compile"](../../rules.md#compile) says. Judge each rewrite and each quantization choice with
    [`neat-compile-model`](../../../skills/neat-compile-model/SKILL.md). The step is done when
    each rewrite has a purpose the description can state under `Surgery`, and each choice away

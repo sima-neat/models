@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import json
 import random
-import sys
 import time
 from collections import deque
 from collections.abc import Callable, Iterator, Sequence
@@ -17,6 +16,7 @@ import numpy as np
 import pyneat
 import shapely
 from calibration import IMAGE_SIZE, decode_image, letterbox_geometry, preprocess_tile, tile_windows
+from model_report import log
 
 IMAGES = "val/images"
 LABELS = "val/labelTxt"
@@ -277,10 +277,6 @@ def parse_mpks(values: list[str]) -> Path:
     if set(mpks) != {"model"}:
         raise SystemExit("--mpk must name exactly model=<path>")
     return Path(mpks["model"])
-
-
-def log(*values: object) -> None:
-    print(*values, file=sys.stderr, flush=True)
 
 
 def main(argv: list[str] | None = None) -> int:

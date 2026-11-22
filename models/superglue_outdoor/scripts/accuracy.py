@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -24,6 +23,7 @@ from pathlib import Path
 
 import model_report
 import numpy as np
+from model_report import log
 
 DATASET = "yfcc100m-keypoints-val"
 PAIRS_FILE = "annotations/pairs_val.txt"
@@ -391,10 +391,6 @@ def parse_mpks(values: list[str]) -> Path:
     if set(mpks) != {"model"}:
         raise SystemExit("--mpk must name exactly model=<path>")
     return Path(mpks["model"])
-
-
-def log(*values: object) -> None:
-    print(*values, file=sys.stderr, flush=True)
 
 
 def main(argv: list[str] | None = None) -> int:

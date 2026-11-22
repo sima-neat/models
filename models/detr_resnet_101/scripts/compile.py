@@ -28,7 +28,7 @@ from afe.core.configs import QuantizationPrecision
 from afe.core.utils import convert_data_generator_to_iterable
 from afe.load.importers.general_importer import onnx_source
 from calibration import calibration_images
-from model_registry.compile_script import component_parameters, parse_arguments, read_mpk_manifest
+from model_registry.compile_script import compiler_log_level, component_parameters, parse_arguments, read_mpk_manifest
 from sima_utils.data.data_generator import DataGenerator
 from surgery import BF16_REGIONS, INPUT, INPUT_SHAPE, OUTPUT_SHAPES, OUTPUTS, annotate_bf16_regions, prepare_model
 
@@ -154,7 +154,7 @@ def compile_model(source: Path, output_dir: Path, profile_id: str, dataset: Path
             calibration_data=calibration_data,
             quantization_config=quantization,
             model_name=f"{MODEL_ID}_{profile_id}",
-            log_level=logging.INFO,
+            log_level=compiler_log_level(),
         )
         operations, bf16 = _operation_counts(quantized)
         logging.info("Quantized operations: %s", dict(sorted(operations.items())))
@@ -164,7 +164,7 @@ def compile_model(source: Path, output_dir: Path, profile_id: str, dataset: Path
             output_path=str(build_dir / "mpk"),
             batch_size=1,
             compress=True,
-            log_level=logging.INFO,
+            log_level=compiler_log_level(),
             tessellate_parameters=None,
             l2_caching_mode=L2CachingMode.NONE,
             # The option applies to every layer norm and INT8 ones reject it, so a build keeps FP32 intermediates

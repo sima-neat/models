@@ -11,7 +11,6 @@ import contextlib
 import io
 import json
 import random
-import sys
 import time
 from collections import deque
 from collections.abc import Callable, Iterator, Sequence
@@ -22,6 +21,7 @@ import model_report
 import numpy as np
 import pyneat
 from faster_coco_eval import COCO, COCOeval_faster
+from model_report import log
 from PIL import Image
 
 QUERY_COUNT = 300
@@ -206,10 +206,6 @@ def parse_mpks(values: list[str]) -> dict[str, Path]:
     if set(mpks) != {"backbone", "decoder"}:
         raise SystemExit("--mpk must name exactly backbone=<path> and decoder=<path>")
     return {name: Path(path) for name, path in mpks.items()}
-
-
-def log(*values: object) -> None:
-    print(*values, file=sys.stderr, flush=True)
 
 
 def main(argv: list[str] | None = None) -> int:

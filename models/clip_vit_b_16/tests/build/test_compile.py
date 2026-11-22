@@ -124,14 +124,6 @@ def test_validation_labels_come_from_the_labels_file(tmp_path: Path, load_script
         calibration.validation_labels(tmp_path)
 
 
-def test_read_images_reports_a_missing_image(tmp_path: Path, load_script: Callable[[str], ModuleType]) -> None:
-    calibration = load_script("calibration")
-    archive = _write_archive(tmp_path / "cal.tar.gz", {"imagenet/cal2012/a.JPEG": b"a"})
-    assert calibration.read_images(archive, ["imagenet/cal2012/a.JPEG"]) == {"imagenet/cal2012/a.JPEG": b"a"}
-    with pytest.raises(ValueError, match="missing 1 requested images"):
-        calibration.read_images(archive, ["imagenet/cal2012/a.JPEG", "imagenet/cal2012/b.JPEG"])
-
-
 def test_compile_reads_both_encoders_of_each_build_profile(load_script: Callable[[str], ModuleType]) -> None:
     recipe = load_script("compile")
     metadata = recipe.load_metadata(MODEL_DIR)

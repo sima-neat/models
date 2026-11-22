@@ -13,9 +13,9 @@ Read both before writing or reviewing a model script. These rules cover ONNX mod
 VLM recipe follows [LLiMa language and vision-language
 models](../docs/adding-a-model.md#llima-language-and-vision-language-models).
 [`rules.md` "Rules no check catches"](rules.md#rules-no-check-catches) owns what `convert.py`
-exports and what `surgery.py` rewrites, what a shared compile helper may hold and what stays in
-the recipe, the calibration sample limit, where board-only code lives, how the benchmark scripts
-stand alone, how scripts read conversion output names, and how DevKit tests import. The rules
+exports and what `surgery.py` rewrites, what a shared helper may hold and what stays in
+the recipe, the calibration sample limit, where board-only code lives, what the benchmark scripts
+may import, how scripts read conversion output names, and how DevKit tests import. The rules
 below assume those.
 
 ## How the code reads
@@ -207,10 +207,16 @@ not declare, and a helper a copy from another model left unused. A test alone do
   `calibration.py`, and restates neither.
 - It takes the registry formats from `model_registry.compile_script` and restates none of
   them: `component_parameters(MODEL_DIR, profile_id, COMPONENT_ID)` reads a component's build
-  parameters and raises for an undeclared profile, `audit_mpk` reads the MPK with
-  `read_mpk_manifest`, and `measure_fidelity` runs the source and the quantized graph and hands
-  the compared outputs to `fidelity_report`. A recipe that reads every component's parameters
-  at once keeps one `_component_parameters` function, which reads them with `load_model`.
+  parameters and raises for an undeclared profile, and `audit_mpk` reads the MPK with
+  `read_mpk_manifest`. A recipe that reads every component's parameters at once keeps one
+  `_component_parameters` function, which reads them with `load_model`.
+- Every `quantize` and `compile` call passes `log_level=compiler_log_level()`.
+- A model that declares `numerical_fidelity` keeps one `fidelity_samples(dataset)` function,
+  which returns the preprocessed samples `model.yaml` selects. `main` hands them to
+  `compare_with_onnx` and the compared outputs to `write_fidelity_report`, both from
+  `model_registry.fidelity`. A recipe that compares outputs its own way, such as a
+  multi-component model or one that also scores against ground truth, builds the compared
+  pairs itself and still writes the report with `write_fidelity_report`.
 - It passes `Model.compile` no extra keyword argument at its default and none the compiler
   does not read, as [`compile.py` in the model
   recipe](../skills/neat-compile-model/references/model-recipe.md#compilepy) says.
@@ -231,8 +237,11 @@ not declare, and a helper a copy from another model left unused. A test alone do
 - It holds the preprocessing the README's Inputs section describes (`preprocess_image`), the
   calibration sample selection, and each host step between components, such as RF-DETR's
   `select_top_proposals`.
-- The selection reads a sorted list of names from a directory or a tar archive, draws with
-  `random.Random(<seed>)`, and fails with both counts when the dataset holds too few samples.
+- The selection lists the dataset's images with `image_names(dataset, IMAGE_SUFFIXES)` from
+  `model_inputs.images`, keeps those of its split, draws with `random.Random(<seed>)`, and
+  fails with both counts when the dataset holds too few samples. It reads the selected images
+  with `read_images` from the same module. A script that reads another kind of file skips a
+  name that starts with `._`, which macOS tar writes beside a file and which holds no sample.
 - `accuracy.py` imports the preprocessing and the host steps from `calibration.py`. A copy in
   `accuracy.py` or `performance.py` names, in its docstring, the `calibration.py` function whose
   values it matches: `"""calibration.select_top_proposals, without the Pillow import this stage
@@ -243,6 +252,8 @@ not declare, and a helper a copy from another model left unused. A test alone do
 - It follows the [canonical script](../docs/benchmarking.md#the-performance-script) and the
   [benchmark input](../docs/benchmarking.md#benchmark-input), or the [multi-component
   script](../docs/benchmarking.md#multi-component-models).
+- It takes `read_rgb`, `letterbox_to_720p`, and the frame size from `model_inputs.frame`, and
+  keeps `sample_image`, which says which image the model is measured on.
 - `workload` is one line that names the dataset, the image, the frame, the preprocessing, and
   the decoder settings the script chose.
 
@@ -256,7 +267,7 @@ not declare, and a helper a copy from another model left unused. A test alone do
 - `--limit <n>` scores `random.Random(0).sample(available, n)`.
 - `decode` turns one sample's MPK outputs into the scorer's rows. It first checks the output
   shapes and that every value is finite.
-- Progress and scorer messages go to stderr through `log()`. The last line on stdout is the
+- Progress and scorer messages go to stderr through `log()` from `model_report`. The last line on stdout is the
   rounded metrics as one JSON object.
 - Each dataset's report entry holds `metrics`, `split`, `evaluated_samples`,
   `available_samples`, and `details` with `inference_seconds`.

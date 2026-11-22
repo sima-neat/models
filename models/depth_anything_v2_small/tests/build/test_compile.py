@@ -7,7 +7,6 @@ import tarfile
 from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
-from unittest.mock import MagicMock
 
 import numpy as np
 import onnx
@@ -171,40 +170,27 @@ def test_mixed_precision_requires_a_matching_profile(load_script, monkeypatch, t
         recipe.compile_model(tmp_path / "source.onnx", tmp_path / "model", profile, None)
 
 
-def test_fidelity_compares_the_quantized_depth_with_the_onnx_source(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, load_script: Callable[[str], ModuleType]
+def test_fidelity_samples_are_the_declared_selection_preprocessed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    load_script: Callable[[str], ModuleType],
 ) -> None:
     recipe = load_script("compile")
-    fidelity = recipe.load_metadata(recipe.MODEL_DIR)["numerical_fidelity"]
-    images = {"nyu_depth_v2/test/rgb_00001.jpg": 1.0, "nyu_depth_v2/test/rgb_00002.jpg": 2.0}
-    pixels = 518 * 686
-    onnx_inputs = []
+    selections = []
 
-    class Session:
-        def __init__(self, path: str, providers: list[str]) -> None:
-            pass
+    def fidelity_names(dataset: Path, seed: int, offset: int, samples: int) -> list[str]:
+        selections.append((dataset, seed, offset, samples))
+        return ["first", "second"]
 
-        def run(self, outputs: None, feeds: dict[str, np.ndarray]) -> list[np.ndarray]:
-            onnx_inputs.append(feeds["pixel_values"].shape)
-            return [np.full((1, 518, 686), feeds["pixel_values"][0, 0, 0, 0], np.float32)]
+    monkeypatch.setattr(recipe, "fidelity_names", fidelity_names)
+    monkeypatch.setattr(recipe, "read_images", lambda dataset, names: {name: name.encode() for name in names})
+    monkeypatch.setattr(recipe, "preprocess_image", lambda content: content.decode().upper())
 
-    candidate = MagicMock()
-    # measure_fidelity reshapes the candidate's depth map to the source's. Each image's last pixel comes back 1 deeper.
-    candidate.execute.side_effect = [[np.append(np.full(pixels - 1, value), value + 1)] for value in images.values()]
-    monkeypatch.setattr(recipe, "fidelity_names", lambda dataset, seed, offset, samples: list(images))
-    monkeypatch.setattr(recipe, "read_images", lambda dataset, names: dict(images))
-    monkeypatch.setattr(recipe, "preprocess_image", lambda value: np.full((518, 686, 3), value, np.float32))
-    monkeypatch.setattr(recipe, "ort", MagicMock(InferenceSession=Session))
+    samples = recipe.fidelity_samples(tmp_path / "dataset")
 
-    report = recipe.measure_fidelity(tmp_path / "model.onnx", candidate, tmp_path / "val", fidelity, "w8a16")
-
-    assert onnx_inputs == [(1, 3, 518, 686)] * 2
-    assert report["model_id"] == "depth_anything_v2_small"
-    assert (report["build_profile_id"], report["samples"]) == ("w8a16", 2)
-    (metric,) = report["metrics"]
-    assert metric["name"] == "predicted_depth"
-    assert metric["max_absolute_error"] == 1.0
-    assert metric["mean_absolute_error"] == pytest.approx(1 / pixels)
+    selection = recipe.load_metadata(recipe.MODEL_DIR)["numerical_fidelity"]["selection"]
+    assert selections == [(tmp_path / "dataset", selection["seed"], selection["offset"], selection["samples"])]
+    assert samples == ["FIRST", "SECOND"]
 
 
 def test_precision_hints_end_at_the_first_compute_reader(load_script, monkeypatch):

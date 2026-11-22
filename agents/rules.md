@@ -43,7 +43,8 @@ depends on.
 
 A push reruns each build whose fingerprint changed. Some files are fingerprint inputs of every
 model: `scripts/run_model_compilation.sh`, the compile helpers in
-`tools/model_registry/compile_script.py`, `scripts/unpack_benchmark_datasets.sh`, and the other
+`tools/model_registry/compile_script.py`, the image listing in `tools/model_inputs/images.py`,
+the benchmark frame in `tools/model_inputs/frame.py`, `scripts/unpack_benchmark_datasets.sh`, and the other
 entries of `COMPILE_TOOLING`, `BOARD_STAGE_TOOLING`, `PERFORMANCE_TOOLING`, and `ACCURACY_TOOLING`
 in `fingerprints.py`, the compiler pin, the Core runtime target, and `FINGERPRINT_VERSION` in
 `conversion.py`. An edit to one of them, even a comment made while working on one model,
@@ -88,13 +89,23 @@ later or never. Apply them while you write.
 - **Calibrate on at most 20 samples.** Keep each component's `calibration_samples` at 20 or
   fewer, because each sample adds compile time to every build and nothing validates the
   parameter.
-- **A shared compile helper holds a registry format, never a recipe step.**
-  `tools/model_registry/compile_script.py` holds only what ONNX recipes share unchanged: the
-  command line, one component's parameters, the MPK manifest, and the fidelity report
-  layout. Quantization, the compile call, calibration, graph surgery, running the source and
-  the quantized graph, and the MPK audit stay in the model's `compile.py`. A script whose
-  step differs from a helper keeps its own code, because a per-model branch or flag in a
-  helper recompiles every ONNX build when one model changes.
+- **A shared helper holds what every recipe does the same way, never a recipe step.**
+  `tools/model_registry/compile_script.py` holds the command line, one component's
+  parameters, the MPK manifest, and the compiler log level. `tools/model_registry/fidelity.py`
+  runs samples through the ONNX source and the quantized graph and writes `fidelity.json`.
+  `tools/model_inputs/images.py` lists and reads a dataset's images. Quantization, the
+  compile call, preprocessing, which samples calibrate the model and which measure
+  fidelity, graph surgery, and the MPK audit stay in the model's scripts, because they
+  show how the model reaches its MPK. A script whose step differs from a helper keeps its
+  own code, because a per-model branch or flag in a helper recompiles every ONNX build
+  when one model changes.
+- **A recipe takes its compiler log level from `compiler_log_level()`.** It passes the
+  result to every `quantize` and `compile` call as `log_level`, so CI keeps the full log
+  of a failed compile and a local compile stays readable. A hard-coded level loses one of
+  the two.
+- **Name a shared module once.** A fingerprint hashes a shared file's path with its
+  content, so renaming or moving `fidelity.py`, `images.py`, or `frame.py` recompiles or
+  remeasures every model that reads it.
 - **An LLM or VLM is one component.** Declare the complete model as one
   component with one 4K profile (`max_num_tokens: 4096` and
   `language_group_size`). Keep graph-changing options in component
@@ -108,11 +119,18 @@ later or never. Apply them while you write.
   module under `scripts/` is a compile input. Put maintainer explanations in
   `model.yaml` comments or in the docstrings of `convert.py`, `performance.py`,
   and `accuracy.py`.
-- **Benchmark scripts stand alone.** `performance.py` and `accuracy.py` run
-  with `tools/model_report` on `PYTHONPATH`, without `model_registry` imports,
-  YAML configuration, registry credentials, or downloads. They take verified
-  local paths: `--mpk`, `--dataset`, `--output`, and `--resources` when the
-  model declares supporting files.
+- **Benchmark scripts need only `tools/model_report` and `tools/model_inputs`.**
+  `performance.py` and `accuracy.py` run with those two folders on `PYTHONPATH`, without
+  `model_registry` imports, YAML configuration, registry credentials, or downloads. They
+  take verified local paths: `--mpk`, `--dataset`, `--output`, and `--resources` when the
+  model declares supporting files. `model_report` needs only the Python standard library,
+  and `model_inputs` only what PyNeat's environment has, so a customer copies both to a
+  DevKit beside the model folder.
+- **The benchmark tooling asks who measures a model, not how it is packaged.** A speech
+  model is a deployment folder like a language model, and PyNeat measures it like a
+  vision model. Shared benchmark code that must tell them apart calls `benchmark_runner`
+  in `benchmark_declarations.py`, which returns `mole` only for a deployment that
+  generates text.
 
 ### Tests
 

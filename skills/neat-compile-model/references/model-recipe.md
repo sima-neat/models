@@ -180,8 +180,10 @@ makes.
 ## `calibration.py`
 
 `calibration.py` is a helper beside `compile.py` for model-specific calibration
-code, such as reading the calibration images and picking the samples with a
-fixed seed. ResNet-50's
+code: the preprocessing, and picking the samples with a fixed seed. In the
+Models repository it lists and reads the dataset's images with `image_names`
+and `read_images` from `model_inputs.images`, a shared module under `tools/`
+that also skips the `._` companion files macOS tar writes into an archive. ResNet-50's
 [`calibration.py`](https://github.com/sima-neat/models/blob/main/models/resnet_50/scripts/calibration.py)
 is one example.
 
@@ -198,7 +200,7 @@ is one example.
 - Results match the published ones only when calibration reads the same
   samples. Other images give a different INT8 model.
 - When `accuracy.py` imports it, as ResNet-50's does, copy it to the DevKit
-  beside `accuracy.py`. It stays a compile input.
+  beside `accuracy.py`, with `tools/model_inputs`. It stays a compile input.
 
 ## `compile.py`
 
@@ -218,12 +220,22 @@ its components in one invocation named after it. The recipe does this:
 - It reads its build profile from `model.yaml`. In the Models repository it
   uses `component_parameters` from `model_registry.compile_script`. That module
   also parses this command line (`parse_arguments`), reads the MPK manifest
-  (`read_mpk_manifest`), and lays out the fidelity report (`fidelity_report`),
-  so the recipe does not copy them. The recipe itself stays in `compile.py`:
-  quantization, the compile call, calibration, graph surgery, running the
-  source and the quantized graph for fidelity, and the MPK audit. A recipe
+  (`read_mpk_manifest`), and gives the log level the recipe passes to
+  `quantize` and `compile` (`compiler_log_level`: `DEBUG` in a GitHub Actions
+  job, `INFO` anywhere else). `model_registry.fidelity` runs the fidelity
+  samples through the ONNX source and the quantized graph (`compare_with_onnx`)
+  and writes `fidelity.json` (`write_fidelity_report`). The recipe does not
+  copy any of them. The recipe itself stays in the model's scripts:
+  quantization, the compile call, preprocessing, which samples calibrate the
+  model and which measure fidelity, graph surgery, and the MPK audit. A recipe
   whose step differs from a helper keeps its own code, such as one that takes
-  a checkpoint like `weights.pth` as `--model` and parses its own command line.
+  a checkpoint like `weights.pth` as `--model` and parses its own command line,
+  or one that compares outputs between several components.
+- When a compile fails without a clear error, pass `log_level=logging.DEBUG`
+  to `quantize` and `compile`, because Model Compiler 3.0.0.2 then logs the
+  quantization configuration and each MLA scheduling and memory decision. For
+  ResNet-18 `w8a8` that is about 6,700 log lines in place of 70, with the
+  compile time unchanged at about a minute.
 - It passes `Model.compile` an extra keyword argument only when the compiler
   reads that argument and the value differs from its default. In Model
   Compiler 3.0.0.2, `Model.compile` takes extra keyword arguments through

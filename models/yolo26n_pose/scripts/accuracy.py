@@ -7,7 +7,6 @@ import contextlib
 import io
 import json
 import random
-import sys
 import time
 from collections import deque
 from collections.abc import Callable, Iterator, Sequence
@@ -19,6 +18,7 @@ import numpy as np
 import pyneat
 from calibration import IMAGE_SIZE, letterbox_geometry, preprocess_image
 from faster_coco_eval import COCO, COCOeval_faster
+from model_report import log
 
 ANNOTATIONS = "annotations/person_keypoints_val2017.json"
 IMAGES = "val2017"
@@ -166,10 +166,6 @@ def parse_mpks(values: list[str]) -> Path:
     if set(mpks) != {"model"}:
         raise SystemExit("--mpk must name exactly model=<path>")
     return Path(mpks["model"])
-
-
-def log(*values: object) -> None:
-    print(*values, file=sys.stderr, flush=True)
 
 
 def main(argv: list[str] | None = None) -> int:

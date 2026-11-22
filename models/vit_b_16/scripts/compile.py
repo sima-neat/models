@@ -3,17 +3,13 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import tempfile
 from pathlib import Path
-from typing import Any
 
 import numpy as np
-import onnxruntime as ort
 from afe.apis.defines import (
-    InputName,
     QuantizationParams,
     SkipCalibration,
     bfloat16_scheme,
@@ -24,8 +20,10 @@ from afe.apis.loaded_net import load_model
 from afe.apis.model import Model as AfeModel
 from afe.ir.tensor_type import ScalarType
 from afe.load.importers.general_importer import onnx_source
-from calibration import fidelity_names, preprocess_image, read_images
-from model_registry.compile_script import component_parameters, fidelity_report, parse_arguments
+from calibration import fidelity_names, preprocess_image
+from model_inputs.images import read_images
+from model_registry.compile_script import compiler_log_level, component_parameters, parse_arguments
+from model_registry.fidelity import compare_with_onnx, write_fidelity_report
 from model_registry.model import load_model as load_metadata
 from surgery import prepare_model
 
@@ -72,10 +70,12 @@ def compile_model(source: Path, component_dir: Path, profile_id: str) -> AfeMode
         graph = prepare_model(source, Path(temporary))
         importer = onnx_source(str(graph), {input_name: input_shape}, {input_name: ScalarType.float32})
         loaded = load_model(importer, target=gen2_target)
-        quantized = loaded.quantize(None, _quantization(precision), model_name=model_name)
+        quantized = loaded.quantize(
+            None, _quantization(precision), model_name=model_name, log_level=compiler_log_level()
+        )
     quantized.save(model_name=model_name, output_directory=str(component_dir))
     saved = AfeModel.load(model_name=f"{model_name}.sima", network_directory=str(component_dir))
-    saved.compile(output_path=str(component_dir))
+    saved.compile(output_path=str(component_dir), log_level=compiler_log_level())
 
     archives = sorted(component_dir.glob("*_mpk.tar.gz"))
     if len(archives) != 1:
@@ -84,29 +84,12 @@ def compile_model(source: Path, component_dir: Path, profile_id: str) -> AfeMode
     return saved
 
 
-def measure_fidelity(
-    source: Path, candidate: AfeModel, dataset: Path, config: dict[str, Any], profile_id: str
-) -> dict[str, Any]:
-    """Compare the quantized graph's logits with the ONNX source on the declared calibration images."""
-    input_name = str(component_parameters(MODEL_DIR, profile_id, COMPONENT_ID)["input_name"])
-    selection = config["selection"]
+def fidelity_samples(dataset: Path) -> list[np.ndarray]:
+    """The preprocessed calibration images model.yaml declares for the fidelity comparison."""
+    selection = load_metadata(MODEL_DIR)["numerical_fidelity"]["selection"]
     names = fidelity_names(dataset, int(selection["seed"]), int(selection["offset"]), int(selection["samples"]))
     images = read_images(dataset, names)
-    reference = ort.InferenceSession(str(source), providers=["CPUExecutionProvider"])
-    compared = []
-    for name in names:
-        sample = preprocess_image(images[name])
-        expected = reference.run(None, {input_name: sample.transpose(2, 0, 1)[None]})[0]
-        outputs = candidate.execute(inputs={InputName(input_name): sample[None]}, use_jax=True)
-        compared.append({"logits": (expected, np.asarray(outputs[0]).reshape(expected.shape))})
-    return fidelity_report(
-        MODEL_ID,
-        profile_id,
-        config,
-        compared,
-        reference="ONNX source (ONNX Runtime)",
-        candidate="Quantized AFE graph (JAX execute)",
-    )
+    return [preprocess_image(images[name]) for name in names]
 
 
 def main() -> int:
@@ -114,15 +97,13 @@ def main() -> int:
     # The compiler's imports already give the root logger a handler, which a plain basicConfig would keep.
     logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s", force=True)
 
-    fidelity = load_metadata(MODEL_DIR)["numerical_fidelity"]
     component_dir = arguments.output_dir / COMPONENT_ID
     candidate = compile_model(arguments.model, component_dir, arguments.build_profile)
-    LOG.info("Measuring numerical fidelity on %d images", fidelity["selection"]["samples"])
-    report = measure_fidelity(arguments.model, candidate, arguments.fidelity_dataset, fidelity, arguments.build_profile)
-    (arguments.output_dir / "fidelity.json").write_text(
-        json.dumps(report, allow_nan=False, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    input_name = str(component_parameters(MODEL_DIR, arguments.build_profile, COMPONENT_ID)["input_name"])
+    compared = compare_with_onnx(
+        arguments.model, candidate, fidelity_samples(arguments.fidelity_dataset), input_name, ["logits"]
     )
-    LOG.info("Fidelity: %s", report["metrics"][0])
+    write_fidelity_report(MODEL_DIR, arguments.build_profile, compared, arguments.output_dir)
     return 0
 
 

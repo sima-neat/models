@@ -38,7 +38,7 @@ from keypoints import (
     sample_descriptors,
     synthetic_image,
 )
-from model_registry.compile_script import component_parameters, parse_arguments, read_mpk_manifest
+from model_registry.compile_script import compiler_log_level, component_parameters, parse_arguments, read_mpk_manifest
 from sima_utils.data.data_generator import DataGenerator
 
 MODEL_DIR = Path(__file__).resolve().parents[1]
@@ -205,14 +205,14 @@ def compile_model(source: Path, output_dir: Path, profile_id: str, dataset: Path
             calibration_data=calibration_data,
             quantization_config=quantization,
             model_name=f"{MODEL_ID}_{profile_id}",
-            log_level=logging.INFO,
+            log_level=compiler_log_level(),
         )
         check_quantized_keypoints(source, quantized)
         quantized.compile(
             output_path=str(build_dir / "mpk"),
             batch_size=1,
             compress=True,
-            log_level=logging.INFO,
+            log_level=compiler_log_level(),
             tessellate_parameters=None,
             l2_caching_mode=L2CachingMode.NONE,
         )

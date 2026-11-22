@@ -14,7 +14,6 @@ import contextlib
 import io
 import json
 import random
-import sys
 import time
 from collections import deque
 from collections.abc import Callable, Iterator, Sequence
@@ -27,6 +26,7 @@ import model_report
 import numpy as np
 from calibration import MEAN, STD, stretch
 from faster_coco_eval import COCO, COCOeval_faster
+from model_report import log
 from PIL import Image
 
 ANNOTATIONS = "annotations/instances_val2017.json"
@@ -115,10 +115,6 @@ def parse_mpks(values: list[str]) -> Path:
     if set(mpks) != {"model"}:
         raise SystemExit("--mpk must name exactly model=<path>")
     return Path(mpks["model"])
-
-
-def log(*values: object) -> None:
-    print(*values, file=sys.stderr, flush=True)
 
 
 def mpk_inference(mpk: Path) -> Inference:

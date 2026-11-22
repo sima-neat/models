@@ -11,7 +11,13 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .benchmark_declarations import ACCURACY_REQUIREMENTS, FP32_BASELINE_SCRIPT, PERFORMANCE_REQUIREMENTS, SCRIPTS
+from .benchmark_declarations import (
+    ACCURACY_REQUIREMENTS,
+    FP32_BASELINE_SCRIPT,
+    PERFORMANCE_REQUIREMENTS,
+    SCRIPTS,
+    benchmark_runner,
+)
 from .dependencies import resolve_benchmark_runtime, resolve_model_compiler
 from .errors import ValidationError
 from .model import CONVERSION_FILES, SCRIPTS_DIR, build_profile_for, compile_invocations_for, load_and_validate_model
@@ -24,7 +30,10 @@ COMPILE_TOOLING = (
     "tools/model_registry/model.py",
     "tools/model_registry/compile_script.py",
     "tools/model_registry/mla_stage_simulation.py",
+    "tools/model_inputs/images.py",
 )
+# Read only by the compile of a model that declares numerical_fidelity.
+FIDELITY_TOOLING = "tools/model_registry/fidelity.py"
 
 _IGNORED_BUILD_PARTS = {".git", "__pycache__"}
 _IGNORED_BUILD_SUFFIXES = {".pyc", ".pyo"}
@@ -54,6 +63,8 @@ LLIMA_PERFORMANCE_TOOLING = (
     "scripts/install_mole_benchmark_runtime.sh",
     "scripts/stage_benchmark_inputs.sh",
 )
+# The 720p benchmark frame, which the performance.py of a model that PyNeat measures builds.
+FRAME_TOOLING = "tools/model_inputs/frame.py"
 ACCURACY_TOOLING = (
     *BOARD_STAGE_TOOLING,
     "tools/model_registry/runtime_files.py",
@@ -92,15 +103,15 @@ def _file_digests(root: Path, required: list[str], optional: list[str] = ()) -> 
     return digests
 
 
-def _compile_input_files(root: Path, model_id: str) -> list[Path]:
+def _compile_input_files(root: Path, model: dict[str, Any]) -> list[Path]:
     """Code the compile runs: the shared runner and the model's scripts."""
     candidates: list[Path] = []
-    for relative in COMPILE_TOOLING:
+    for relative in (*COMPILE_TOOLING, *([FIDELITY_TOOLING] if model.get("numerical_fidelity") else [])):
         path = root / relative
         if not path.is_file():
             raise ValidationError(f"model compile input not found: {path}")
         candidates.append(path)
-    model_dir = root / "models" / model_id
+    model_dir = root / "models" / model["id"]
     candidates.extend(
         item
         for item in (model_dir / SCRIPTS_DIR).rglob("*")
@@ -226,7 +237,7 @@ def compile_fingerprint(
         "compiler_version": compiler,
     }
     digest = hashlib.sha256(json.dumps(identity, sort_keys=True, separators=(",", ":")).encode())
-    _hash_files(digest, root, _compile_input_files(root, model_id))
+    _hash_files(digest, root, _compile_input_files(root, model))
     return digest.hexdigest()
 
 
@@ -256,8 +267,8 @@ def benchmark_fingerprint(
     model_dir = f"models/{model_id}"
     required = [f"{model_dir}/{SCRIPTS[stage]}", *(PERFORMANCE_TOOLING if stage == "performance" else ACCURACY_TOOLING)]
     native = model["components"][0]["interface"]["format"] == "huggingface"
-    if native and stage == "performance":
-        required.extend(LLIMA_PERFORMANCE_TOOLING)
+    if stage == "performance":
+        required.extend(LLIMA_PERFORMANCE_TOOLING if benchmark_runner(model) == "mole" else [FRAME_TOOLING])
     runtime = resolve_benchmark_runtime(root)
     if not native:
         runtime.pop("llima", None)

@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from graph_tools import compare
-from model_registry.compile_script import read_mpk_manifest
+from model_registry.compile_script import compiler_log_level, read_mpk_manifest
 from model_registry.dependencies import resolve_model_compiler
 from model_registry.model import load_model as load_metadata
 from model_registry.model import mpk_filename
@@ -165,7 +165,7 @@ def _load_and_quantize(
         calibration_data=None,
         quantization_config=_quantization(parameters),
         model_name=model_name,
-        log_level=logging.INFO,
+        log_level=compiler_log_level(),
     )
     return loaded, quantized, afe_inputs
 
@@ -251,7 +251,7 @@ def _compile(quantized: Any, build_dir: Path, component_id: str, batch_size: int
         batch_size=batch_size,
         compress=True,
         preserve=True,
-        log_level=logging.INFO,
+        log_level=compiler_log_level(),
         layer_norm_use_fp32_intermediates=True,
     )
     archives = sorted(build_dir.glob("*_mpk.tar.gz"))

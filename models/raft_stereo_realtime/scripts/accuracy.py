@@ -17,7 +17,6 @@ from __future__ import annotations
 import argparse
 import json
 import random
-import sys
 import time
 from collections import deque
 from collections.abc import Callable, Iterator, Sequence
@@ -26,6 +25,7 @@ from pathlib import Path
 
 import model_report
 import numpy as np
+from model_report import log
 from scene_flow import HEIGHT, MAX_DISPARITY, WIDTH, Pair, end_point_error, preprocess_image, read_pfm
 
 DATASET = "scene-flow-val"
@@ -104,10 +104,6 @@ def parse_mpks(values: list[str]) -> Path:
     if set(mpks) != {"model"}:
         raise SystemExit("--mpk must name exactly model=<path>")
     return Path(mpks["model"])
-
-
-def log(*values: object) -> None:
-    print(*values, file=sys.stderr, flush=True)
 
 
 def main(argv: list[str] | None = None) -> int:

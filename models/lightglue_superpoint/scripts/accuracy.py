@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -36,6 +35,7 @@ from calibration import (
     split_of,
     usable_pairs,
 )
+from model_report import log
 
 THRESHOLDS = (5, 10, 20)
 RANSAC_PIXELS = 1.0
@@ -196,10 +196,6 @@ def parse_mpks(values: list[str]) -> Path:
     if set(mpks) != {"model"}:
         raise SystemExit("--mpk must name exactly model=<path>")
     return Path(mpks["model"])
-
-
-def log(*values: object) -> None:
-    print(*values, file=sys.stderr, flush=True)
 
 
 def main(argv: list[str] | None = None) -> int:

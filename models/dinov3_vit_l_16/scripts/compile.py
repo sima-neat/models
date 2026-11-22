@@ -10,18 +10,15 @@ images.
 from __future__ import annotations
 
 import argparse
-import json
-import logging
 import math
 import os
 import tempfile
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
 import numpy as np
-import onnxruntime as ort
 from afe.apis.defines import (
-    InputName,
     QuantizationParams,
     SkipCalibration,
     bfloat16_scheme,
@@ -32,14 +29,17 @@ from afe.apis.loaded_net import load_model
 from afe.apis.model import L2CachingMode
 from afe.load.importers.general_importer import onnx_source
 from calibration import load_images, select_names
-from model_registry.compile_script import component_parameters, fidelity_report, read_mpk_manifest
+from model_registry.compile_script import compiler_log_level, component_parameters, read_mpk_manifest
 from model_registry.conversion import conversion_outputs
+from model_registry.fidelity import compare_with_onnx, write_fidelity_report
 from model_registry.model import load_model as load_metadata
 from surgery import INPUTS, OUTPUTS, export_encoder
 
 MODEL_DIR = Path(__file__).resolve().parents[1]
 MODEL_ID = MODEL_DIR.name
 COMPONENT_ID = "model"
+# What numerical fidelity compares the quantized graph with.
+REFERENCE = "timm's DINOv3 as reference.onnx (ONNX Runtime)"
 (INPUT_NAME,) = INPUTS
 
 
@@ -71,7 +71,7 @@ def quantize(source: Path, profile_id: str, precision: str) -> Any:
             calibration_data=None,
             quantization_config=_quantization_config(precision),
             model_name=f"{MODEL_ID}_{profile_id}",
-            log_level=logging.INFO,
+            log_level=compiler_log_level(),
         )
     except SystemExit as error:
         # AFE reports a failed quantization or compile by raising SystemExit, which would exit with status 0.
@@ -104,7 +104,7 @@ def compile_model(quantized: Any, component_dir: Path) -> Path:
             output_path=str(component_dir),
             batch_size=1,
             compress=True,
-            log_level=logging.INFO,
+            log_level=compiler_log_level(),
             tessellate_parameters=None,
             l2_caching_mode=L2CachingMode.NONE,
             # Not the compiler's default (False); no build of this recipe was measured without it.
@@ -120,36 +120,11 @@ def compile_model(quantized: Any, component_dir: Path) -> Path:
     return archives[0]
 
 
-def measure_fidelity(
-    reference: Path, quantized: Any, dataset: Path, fidelity: dict[str, Any], profile_id: str
-) -> dict[str, Any]:
-    """Compare the quantized graph's embeddings with reference.onnx's on the declared cal images."""
-    selection = fidelity["selection"]
+def fidelity_samples(dataset: Path) -> Iterator[np.ndarray]:
+    """The preprocessed cal images model.yaml declares for the fidelity comparison."""
+    selection = load_metadata(MODEL_DIR)["numerical_fidelity"]["selection"]
     names = select_names(dataset, int(selection["seed"]), int(selection["offset"]), int(selection["samples"]))
-    session = ort.InferenceSession(str(reference), providers=["CPUExecutionProvider"])
-    compared = []
-    for image in load_images(dataset, names):
-        # The image is channels-last, as the compiler takes it; reference.onnx takes it channels-first.
-        expected = dict(zip(OUTPUTS, session.run(list(OUTPUTS), {INPUT_NAME: image.transpose(2, 0, 1)[None]}),
-                            strict=True))
-        # The outputs' shapes differ, so each quantized output is matched to its name by its shape.
-        executed = quantized.execute(inputs={InputName(INPUT_NAME): image[None]}, use_jax=True)
-        outputs = {np.asarray(output).shape: np.asarray(output) for output in executed}
-        sample = {}
-        for name in fidelity["outputs"]:
-            shape = tuple(OUTPUTS[name])
-            if shape not in outputs:
-                raise RuntimeError(f"the quantized model returned no {name} of shape {shape}: {list(outputs)}")
-            sample[name] = (expected[name], outputs[shape])
-        compared.append(sample)
-    return fidelity_report(
-        MODEL_ID,
-        profile_id,
-        fidelity,
-        compared,
-        reference="timm's DINOv3 as reference.onnx (ONNX Runtime)",
-        candidate="Quantized AFE graph (JAX execute)",
-    )
+    return load_images(dataset, names)
 
 
 def main() -> int:
@@ -168,23 +143,16 @@ def main() -> int:
         parser.error(f"--model must be the converted weights.pth, not {weights}")
     reference = weights.with_name(conversion_outputs(MODEL_DIR)[1])
     precision = str(component_parameters(MODEL_DIR, args.build_profile, COMPONENT_ID)["precision"])
-    fidelity = load_metadata(MODEL_DIR)["numerical_fidelity"]
     output_dir = args.output_dir.expanduser().resolve()
     with tempfile.TemporaryDirectory(prefix=f"{MODEL_ID}-onnx-", dir=os.environ.get("RUNNER_TEMP")) as temporary:
         source = export_encoder(weights, reference, Path(temporary) / "model.onnx")
         quantized = quantize(source, args.build_profile, precision)
-        # Before the MLA compile, so a broken quantization shows early. Printed, not logged: the Model Compiler's
-        # logging setup drops this script's INFO records.
-        print(f"Measuring numerical fidelity on {fidelity['selection']['samples']} images", flush=True)
-        report = measure_fidelity(reference, quantized, args.fidelity_dataset.expanduser().resolve(), fidelity,
-                                  args.build_profile)
-        for metric in report["metrics"]:
-            print(f"Fidelity {metric['name']}: cosine {metric['cosine_similarity']:.5f}, "
-                  f"normalized RMSE {metric['normalized_rmse']:.5f}", flush=True)
+        # Before the MLA compile, so a broken quantization shows early.
+        samples = fidelity_samples(args.fidelity_dataset.expanduser().resolve())
+        compared = compare_with_onnx(reference, quantized, samples, INPUT_NAME, list(OUTPUTS))
+        output_dir.mkdir(parents=True, exist_ok=False)
+        write_fidelity_report(MODEL_DIR, args.build_profile, compared, output_dir, reference=REFERENCE)
         compile_model(quantized, output_dir / COMPONENT_ID)
-    (output_dir / "fidelity.json").write_text(
-        json.dumps(report, allow_nan=False, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
     return 0
 
 

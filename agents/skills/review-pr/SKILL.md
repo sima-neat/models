@@ -60,12 +60,13 @@ each finding cites the owning file and section.
   [`naming-conventions.yaml`](../../../naming-conventions.yaml). Each choice away from the
   compiler default carries its reason, and no `**kwargs` compiler argument is passed at its
   default ([`coding-style.md` "compile.py"](../../coding-style.md#compilepy)). `compile.py`
-  takes the shared helpers from `model_registry.compile_script`, keeps its recipe,
+  takes the shared helpers from `model_registry.compile_script` and `model_registry.fidelity`, passes
+  `compiler_log_level()` to every `quantize` and `compile` call, keeps its recipe,
   and calibrates each component on at most 20 samples ([`rules.md`
   "Compile"](../../rules.md#compile)). A `runner_class` or `runner_market` request links its
   approval ([request additional compile
   resources](../../../docs/contributing.md#request-additional-compile-resources)).
-- **Benchmark scripts.** They stand alone as `rules.md` says, follow the [canonical
+- **Benchmark scripts.** They import only `model_report` and `model_inputs` as `rules.md` says, follow the [canonical
   script](../../../docs/benchmarking.md#the-performance-script), and name what ran in
   `workload`. Each accuracy report holds the metrics its `datasets/<id>.yaml` requires.
 - **Code.** Each changed script follows `coding-style.md`. Model-specific code sits under

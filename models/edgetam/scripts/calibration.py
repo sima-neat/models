@@ -80,7 +80,9 @@ class DavisCal:
     def frames(self, sequence: str) -> list[str]:
         """The sequence's frame names without their extension, in order."""
         prefix = f"cal/{sequence}/"
-        return sorted(Path(name).stem for name in self.files if name.startswith(prefix))
+        # macOS tar writes a "._<name>" companion beside a file with extended attributes; it holds no frame.
+        names = (Path(name) for name in self.files if name.startswith(prefix))
+        return sorted(name.stem for name in names if not name.name.startswith("._"))
 
     def image(self, sequence: str, frame: str) -> Image.Image:
         return Image.open(io.BytesIO(self.read(f"cal/{sequence}/{frame}.jpg"))).convert("RGB")

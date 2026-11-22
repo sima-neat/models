@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import math
+import sys
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -28,6 +29,11 @@ METRICS: dict[str, dict[str, Any]] = json.loads(Path(__file__).with_name("metric
 REQUIRED_PERFORMANCE_METRICS = [name for name, metric in METRICS.items() if metric.get("required")]
 # Derived from the measured power and rate rather than read from Core.
 ENERGY_PER_INFERENCE = "energy_per_inference_joules"
+
+
+def log(*values: object) -> None:
+    """Print progress to standard error, where a benchmark job's log shows it as the script runs."""
+    print(*values, file=sys.stderr, flush=True)
 
 
 def accuracy_value_error(metric: str, value: float) -> str | None:

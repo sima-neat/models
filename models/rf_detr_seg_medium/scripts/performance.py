@@ -17,10 +17,10 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
-import cv2
 import model_report
 import numpy as np
 import pyneat
+from model_inputs.frame import FRAME_HEIGHT, FRAME_WIDTH, letterbox_to_720p, read_rgb
 
 IMAGE_SIZE = 432
 QUERY_COUNT = 200
@@ -31,8 +31,6 @@ TIMEOUT_MS = 10000
 # Frames each runner may queue; deeper queues add latency without adding throughput.
 QUEUE_DEPTH = 4
 IMAGES = "val2017"
-# The benchmark input is a 720p camera frame, letterboxed with grey padding.
-FRAME_WIDTH, FRAME_HEIGHT, FILL = 1280, 720, 114
 
 
 def image_options() -> pyneat.ModelOptions:
@@ -88,23 +86,6 @@ def sample_image(dataset: Path) -> Path:
     if not images:
         raise SystemExit(f"{dataset} has no images under {IMAGES}/")
     return random.Random(0).choice(images)
-
-
-def read_rgb(path: Path) -> np.ndarray:
-    image = cv2.imread(str(path), cv2.IMREAD_COLOR | cv2.IMREAD_IGNORE_ORIENTATION)
-    if image is None:
-        raise SystemExit(f"could not read {path}")
-    return cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-
-
-def letterbox_to_720p(image: np.ndarray) -> np.ndarray:
-    """Scale an RGB image to fit a 1280x720 frame and pad it to the frame, centered."""
-    scale = min(FRAME_WIDTH / image.shape[1], FRAME_HEIGHT / image.shape[0])
-    width, height = round(image.shape[1] * scale), round(image.shape[0] * scale)
-    left, top = (FRAME_WIDTH - width) // 2, (FRAME_HEIGHT - height) // 2
-    frame = np.full((FRAME_HEIGHT, FRAME_WIDTH, 3), FILL, np.uint8)
-    frame[top : top + height, left : left + width] = cv2.resize(image, (width, height), interpolation=cv2.INTER_LINEAR)
-    return frame
 
 
 def frame_tensor(path: Path) -> pyneat.Tensor:

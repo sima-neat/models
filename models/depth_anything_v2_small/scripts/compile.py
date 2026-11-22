@@ -8,13 +8,10 @@ import logging
 import math
 import tarfile
 from pathlib import Path
-from typing import Any
 
 import numpy as np
-import onnxruntime as ort
 from afe.apis.defines import (
     CalibrationMethod,
-    InputName,
     QuantizationParams,
     SkipCalibration,
     bfloat16_scheme,
@@ -27,7 +24,8 @@ from afe.core.utils import convert_data_generator_to_iterable
 from afe.ir.tensor_type import ScalarType
 from afe.load.importers.general_importer import onnx_source
 from calibration import HEIGHT, WIDTH, calibration_samples, fidelity_names, preprocess_image, read_images
-from model_registry.compile_script import component_parameters, fidelity_report, parse_arguments
+from model_registry.compile_script import compiler_log_level, component_parameters, parse_arguments
+from model_registry.fidelity import compare_with_onnx, write_fidelity_report
 from model_registry.model import load_model as load_metadata
 from sima_utils.data.data_generator import DataGenerator
 from surgery import prepare_model
@@ -109,9 +107,10 @@ def compile_model(source: Path, component_dir: Path, variant_id: str, dataset: P
     model_name = f"{MODEL_ID}_{variant_id}"
     try:
         quantized = load_model(importer, target=gen2_target).quantize(
-            calibration_data=data, quantization_config=config, model_name=model_name
+            calibration_data=data, quantization_config=config, model_name=model_name,
+            log_level=compiler_log_level(),
         )
-        quantized.compile(output_path=str(component_dir))
+        quantized.compile(output_path=str(component_dir), log_level=compiler_log_level())
     except SystemExit as error:
         # The compiler can report a fatal error through SystemExit(0).
         raise RuntimeError(f"Model Compiler failed for {model_name}") from error
@@ -124,44 +123,25 @@ def compile_model(source: Path, component_dir: Path, variant_id: str, dataset: P
     return quantized
 
 
-def measure_fidelity(
-    source: Path, candidate: AfeModel, dataset: Path, config: dict[str, Any], variant_id: str
-) -> dict[str, Any]:
-    """Compare the quantized graph's relative depth with the ONNX source on the declared validation images."""
-    input_name = component_parameters(MODEL_DIR, variant_id, COMPONENT_ID)["input_name"]
-    selection = config["selection"]
+def fidelity_samples(dataset: Path) -> list[np.ndarray]:
+    """The preprocessed validation images model.yaml declares for the fidelity comparison."""
+    selection = load_metadata(MODEL_DIR)["numerical_fidelity"]["selection"]
     names = fidelity_names(dataset, int(selection["seed"]), int(selection["offset"]), int(selection["samples"]))
     images = read_images(dataset, names)
-    reference = ort.InferenceSession(str(source), providers=["CPUExecutionProvider"])
-    compared = []
-    for name in names:
-        sample = preprocess_image(images[name])
-        expected = reference.run(None, {input_name: sample.transpose(2, 0, 1)[None]})[0]
-        outputs = candidate.execute(inputs={InputName(input_name): sample[None]}, use_jax=True)
-        compared.append({"predicted_depth": (expected, np.asarray(outputs[0]).reshape(expected.shape))})
-    return fidelity_report(
-        MODEL_ID,
-        variant_id,
-        config,
-        compared,
-        reference="ONNX source (ONNX Runtime)",
-        candidate="Quantized AFE graph (JAX execute)",
-    )
+    return [preprocess_image(images[name]) for name in names]
 
 
 def main() -> int:
     arguments = parse_arguments(__doc__, MODEL_DIR)
     logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 
-    fidelity = load_metadata(MODEL_DIR)["numerical_fidelity"]
     component_dir = arguments.output_dir / COMPONENT_ID
     candidate = compile_model(arguments.model, component_dir, arguments.build_profile, arguments.dataset)
-    LOG.info("Measuring numerical fidelity on %d images", fidelity["selection"]["samples"])
-    report = measure_fidelity(arguments.model, candidate, arguments.fidelity_dataset, fidelity, arguments.build_profile)
-    (arguments.output_dir / "fidelity.json").write_text(
-        json.dumps(report, allow_nan=False, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    input_name = component_parameters(MODEL_DIR, arguments.build_profile, COMPONENT_ID)["input_name"]
+    compared = compare_with_onnx(
+        arguments.model, candidate, fidelity_samples(arguments.fidelity_dataset), input_name, ["predicted_depth"]
     )
-    LOG.info("Fidelity: %s", report["metrics"][0])
+    write_fidelity_report(MODEL_DIR, arguments.build_profile, compared, arguments.output_dir)
     return 0
 
 

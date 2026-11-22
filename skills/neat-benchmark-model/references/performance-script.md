@@ -7,8 +7,10 @@ Core owns warm-up, latency and throughput measurement, board telemetry, and
 runner lifetime. The script hands Core's results to
 `model_report.from_performance()`, which writes the report.
 
-The script stands alone. It needs PyNeat and `tools/model_report` on
-`PYTHONPATH`, and no registry installation or YAML configuration. Every
+The script needs PyNeat, and `tools/model_report` and `tools/model_inputs` on
+`PYTHONPATH`. It needs no registry installation or YAML configuration.
+`model_report` writes the report, and `model_inputs.frame` reads an image and
+letterboxes it into the 720p benchmark frame. Every
 published model's script is in its folder in the Models repository, such as
 [ResNet-50's](https://github.com/sima-neat/models/blob/main/models/resnet_50/scripts/performance.py),
 and [DevKit performance](https://github.com/sima-neat/models/blob/main/docs/benchmarking.md)
@@ -32,22 +34,9 @@ image in a 720p frame:
 import argparse, random
 from pathlib import Path
 
-import cv2
 import model_report
-import numpy as np
 import pyneat
-
-FRAME_WIDTH, FRAME_HEIGHT, FILL = 1280, 720, 114
-
-
-def letterbox_to_720p(image: np.ndarray) -> np.ndarray:
-    """Scale an RGB image to fit a 1280x720 frame and pad it to the frame, centered."""
-    scale = min(FRAME_WIDTH / image.shape[1], FRAME_HEIGHT / image.shape[0])
-    width, height = round(image.shape[1] * scale), round(image.shape[0] * scale)
-    left, top = (FRAME_WIDTH - width) // 2, (FRAME_HEIGHT - height) // 2
-    frame = np.full((FRAME_HEIGHT, FRAME_WIDTH, 3), FILL, np.uint8)
-    frame[top : top + height, left : left + width] = cv2.resize(image, (width, height), interpolation=cv2.INTER_LINEAR)
-    return frame
+from model_inputs.frame import FRAME_HEIGHT, FRAME_WIDTH, letterbox_to_720p, read_rgb
 
 
 parser = argparse.ArgumentParser()
@@ -76,8 +65,8 @@ benchmark_options.num_samples = 1000
 benchmark_options.min_duration_ms = 60000
 benchmark_options.include_mla_layer_stats = True
 benchmark_options.include_mla_stage_stats = True
-rgb = cv2.cvtColor(cv2.imread(str(image), cv2.IMREAD_COLOR | cv2.IMREAD_IGNORE_ORIENTATION), cv2.COLOR_BGR2RGB)
-frame = letterbox_to_720p(rgb)
+# The image as RGB, scaled to fit a 1280x720 frame, centered, and padded with grey (114).
+frame = letterbox_to_720p(read_rgb(image))
 benchmark_options.inputs = [pyneat.Tensor.from_numpy(frame, copy=True, image_format=pyneat.PixelFormat.RGB)]
 
 report = model_report.from_performance(
