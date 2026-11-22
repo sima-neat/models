@@ -4,10 +4,10 @@
 # Usage: run_model_accuracy.sh <model_dir> <build_profile> <compiled_dir> <output_dir>
 #
 # <compiled_dir> holds <model_id>/<build_profile>/compile-outputs.json and the MPKs it lists.
-# unpack_benchmark_datasets.sh gives each declared dataset as a directory from the board's dataset store. The script
-# takes them all in one run, with --limit when model.yaml sets accuracy.samples. It writes model-report.json into
-# <output_dir> with tools/model_report; check-report then holds it to model.yaml and records the board in
-# environment.json.
+# unpack_benchmark_datasets.sh unpacks each declared dataset into DATASET_DIR, or reuses the folder an earlier step of
+# the job unpacked there. The script takes them all in one run, with --limit when model.yaml sets accuracy.samples.
+# It writes model-report.json into <output_dir> with tools/model_report; check-report then holds it to model.yaml
+# and records the board in environment.json.
 
 set -euo pipefail
 
@@ -23,6 +23,8 @@ REGISTRY_PYTHON="${REGISTRY_PYTHON:-python3}"
 PYNEAT_PYTHON="${PYNEAT_PYTHON:-$HOME/pyneat/bin/python}"
 # Scratch space for accuracy wheels; removed on exit. NVMe keeps it off the root filesystem.
 WORK_DIR="${WORK_DIR:-/media/nvme/neat-tests/model-accuracy-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}}"
+# The unpacked datasets, inside WORK_DIR unless the caller shares them between steps.
+DATASET_DIR="${DATASET_DIR:-$WORK_DIR/datasets}"
 
 SCRIPT="$MODEL_DIR/scripts/accuracy.py"
 REQUIREMENTS="$MODEL_DIR/scripts/requirements-accuracy.txt"
@@ -36,7 +38,8 @@ json_field() {
 
 trap 'rm -rf "$WORK_DIR"' EXIT
 # One JSON line per dataset with its directory; none when the profile measures no accuracy.
-resolutions="$("$(dirname "${BASH_SOURCE[0]}")/unpack_benchmark_datasets.sh" "$MODEL_DIR" "$BUILD_PROFILE_ID")"
+resolutions="$("$(dirname "${BASH_SOURCE[0]}")/unpack_benchmark_datasets.sh" "$MODEL_DIR" "$BUILD_PROFILE_ID" \
+  "$DATASET_DIR")"
 if [[ -z "$resolutions" ]]; then
   echo "$MODEL_ID declares no DevKit accuracy for $BUILD_PROFILE_ID."
   exit 0

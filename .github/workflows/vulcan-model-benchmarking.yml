@@ -308,6 +308,8 @@ jobs:
       SIMA_CLI_AUTO_ACCEPT_UPDATE: "1"
       # One orchestrator run benchmarks many builds under the same run ID, so each build gets its own scratch.
       WORK_DIR: /media/nvme/neat-tests/model-benchmark-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.model_id }}-${{ inputs.build_profile_id }}
+      # The dataset step unpacks here once and both stages reuse it. Each stage's runner removes only its WORK_DIR.
+      DATASET_DIR: /media/nvme/neat-tests/model-benchmark-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.model_id }}-${{ inputs.build_profile_id }}-datasets
     steps:
       - name: Check out trusted tooling from the protected workflow revision
         uses: actions/checkout@v6
@@ -420,7 +422,7 @@ jobs:
           AWS_REGION: ${{ fromJSON(needs.stage.outputs.vulcan_config).dataset_aws_region }}
           AWS_DEFAULT_REGION: ${{ fromJSON(needs.stage.outputs.vulcan_config).dataset_aws_region }}
           SIMA_DATASET_S3_URI: s3://${{ fromJSON(needs.stage.outputs.vulcan_config).dataset_bucket }}
-        run: scripts/cache_accuracy_dataset.sh "_source/models/$MODEL_ID" "$BUILD_PROFILE_ID"
+        run: scripts/cache_accuracy_dataset.sh "_source/models/$MODEL_ID" "$BUILD_PROFILE_ID" "$DATASET_DIR"
 
       - name: Install selected Neat Core
         id: core
@@ -488,11 +490,10 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      # The build files fill the board's NVMe, so remove them however the job ends. The board's dataset store stays
-      # for later jobs.
-      - name: Remove the build files and scratch folder from the DevKit
+      # The build files and unpacked datasets fill the board's NVMe, so remove them however the job ends.
+      - name: Remove the build files and datasets from the DevKit
         if: always()
-        run: rm -rf _compiled "$WORK_DIR"
+        run: rm -rf _compiled "$WORK_DIR" "$DATASET_DIR"
 
   publish:
     name: Publish benchmarks to Vulcan

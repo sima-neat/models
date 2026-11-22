@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
@@ -311,19 +312,21 @@ SHARED_ARCHIVE_INDEX = "_release.json"
 SHARED_ARCHIVE_KEY_PREFIX = "datasets/artifactory/"
 
 
-def copy_shared_dataset(dataset: dict[str, Any], shared_archives: Path, copy_dir: Path) -> Path | None:
-    """Copy a pinned dataset archive from the DevKit pool's shared dataset archive share and verify it.
+def unpack_shared_dataset(dataset: dict[str, Any], shared_archives: Path, destination: Path) -> bool:
+    """Unpack a pinned dataset archive from the DevKit pool's shared dataset archive share into ``destination``.
 
     The share's index lists each archive with its SHA-256 and size, so the pin, never the dataset's name, finds
-    the archive. Returns the verified copy in ``copy_dir``, or None when the share cannot give the pinned
-    archive. A machine without the share returns None quietly. Any other miss says why in one line on stderr.
+    the archive, which is read in place and never copied. Returns True once the unpack is complete and the archive
+    matches the pin. Returns False when the share cannot give the archive, and a failed unpack removes
+    ``destination`` with everything in it. A machine without the share returns False quietly. Any other miss says
+    why in one line on stderr.
     """
     # Follow a link at the share's path once, so the index and the archive come from one folder even when the link
     # moves meanwhile.
     root = shared_archives.resolve()
     index = root / SHARED_ARCHIVE_INDEX
     if not index.is_file():
-        return None
+        return False
     label = f"{dataset['id']} {dataset['variant']}"
     try:
         archives = json.loads(index.read_text(encoding="utf-8"))["archives"]
@@ -332,17 +335,51 @@ def copy_shared_dataset(dataset: dict[str, Any], shared_archives: Path, copy_dir
         if key is None:
             print(f"The shared dataset archive share does not hold {label}. Resolving it through the Dataset "
                   "Registry.", file=sys.stderr)
-            return None
+            return False
         if not key.startswith(SHARED_ARCHIVE_KEY_PREFIX):
             raise ValueError(f"archive key {key!r} does not start with {SHARED_ARCHIVE_KEY_PREFIX}")
-        archive = root / key.removeprefix(SHARED_ARCHIVE_KEY_PREFIX)
-        copy = copy_dir / archive.name
-        shutil.copyfile(archive, copy)
-        return _verify_dataset(copy, dataset)
+        destination.mkdir(parents=True, exist_ok=True)
+        _unpack_verified(root / key.removeprefix(SHARED_ARCHIVE_KEY_PREFIX), destination, dataset)
+        return True
     except (OSError, ValueError, KeyError, TypeError, AttributeError, FetchError) as exc:
+        shutil.rmtree(destination, ignore_errors=True)
         print(f"The shared dataset archive share cannot give {label} ({exc}). Resolving it through the Dataset "
               "Registry.", file=sys.stderr)
-        return None
+        return False
+
+
+def _unpack_verified(archive: Path, destination: Path, dataset: dict[str, Any]) -> None:
+    """Unpack ``archive`` into ``destination`` with tar, reading it once, and check it against the dataset's pin.
+
+    Each chunk passes through SHA-256 on its way into tar, so the unpacked files count only once this returns.
+    Raises FetchError when the size, the digest, or the unpack is wrong, in that order.
+    """
+    digest, size, writing = hashlib.sha256(), 0, True
+    with archive.open("rb") as stream, tempfile.TemporaryFile() as tar_errors:
+        tar = subprocess.Popen(["tar", "-xzf", "-", "-C", str(destination)], stdin=subprocess.PIPE, stderr=tar_errors)
+        try:
+            # Reading goes on after tar stops, so a wrong archive is reported by its digest, not by tar.
+            while size <= dataset["size_bytes"] and (chunk := stream.read(1024 * 1024)):
+                digest.update(chunk)
+                size += len(chunk)
+                if writing:
+                    try:
+                        tar.stdin.write(chunk)
+                    except BrokenPipeError:
+                        writing = False
+        finally:
+            with contextlib.suppress(BrokenPipeError):
+                tar.stdin.close()
+            tar.wait()
+        tar_errors.seek(0)
+        complaint = tar_errors.read().decode(errors="replace").strip().splitlines()
+    if size != dataset["size_bytes"]:
+        found = "more" if size > dataset["size_bytes"] else size
+        raise FetchError(f"dataset size mismatch: expected {dataset['size_bytes']}, found {found}")
+    if digest.hexdigest() != dataset["sha256"]:
+        raise FetchError(f"dataset SHA-256 mismatch: expected {dataset['sha256']}, found {digest.hexdigest()}")
+    if tar.returncode != 0:
+        raise FetchError(f"tar exited with {tar.returncode}: {complaint[-1] if complaint else 'no message'}")
 
 
 def read_registry_json(url: str) -> dict[str, Any]:

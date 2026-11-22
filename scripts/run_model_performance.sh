@@ -4,11 +4,11 @@
 # Usage: run_model_performance.sh <model_dir> <build_profile> <compiled_dir> <output_dir>
 #
 # <compiled_dir> holds <model_id>/<build_profile>/compile-outputs.json and the MPKs it lists. The model's first
-# accuracy dataset supplies the benchmark input, as unpack_benchmark_datasets.sh gives it from the board's dataset
-# store. A model whose CPU work reads its package resources gets them as --resources, and
-# scripts/requirements-performance.txt adds the wheels that work needs. The script writes model-report.json into
-# <output_dir> with tools/model_report; check-report then holds it to model.yaml and records the board in
-# environment.json.
+# accuracy dataset supplies the benchmark input. unpack_benchmark_datasets.sh unpacks it into DATASET_DIR, or reuses
+# the folder an earlier step of the job unpacked there. A model whose CPU work reads its package resources gets them
+# as --resources, and scripts/requirements-performance.txt adds the wheels that work needs. The script writes
+# model-report.json into <output_dir> with tools/model_report; check-report then holds it to model.yaml and records
+# the board in environment.json.
 
 set -euo pipefail
 
@@ -25,6 +25,8 @@ PYNEAT_PYTHON="${PYNEAT_PYTHON:-$HOME/pyneat/bin/python}"
 LLIMA_MOLE_PYTHON="${LLIMA_MOLE_PYTHON:-${SIMA_MOLE_VENV_PATH:-/media/nvme/llima/mole-venv}/bin/python}"
 # Scratch space for resources and wheels; removed on exit. NVMe keeps it off the root filesystem.
 WORK_DIR="${WORK_DIR:-/media/nvme/neat-tests/model-performance-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}}"
+# The unpacked datasets, inside WORK_DIR unless the caller shares them between steps.
+DATASET_DIR="${DATASET_DIR:-$WORK_DIR/datasets}"
 REQUIREMENTS="$MODEL_DIR/scripts/requirements-performance.txt"
 REPOSITORY="$(cd "$MODEL_DIR/../.." && pwd)"
 MODEL_ID="$(basename "$MODEL_DIR")"
@@ -56,7 +58,8 @@ print("llima" if load_model(sys.argv[1])["components"][0]["interface"]["format"]
 # accuracy dataset gets none.
 dataset=()
 if [[ "$backend" == core ]]; then
-resolution="$("$(dirname "${BASH_SOURCE[0]}")/unpack_benchmark_datasets.sh" "$MODEL_DIR" "$BUILD_PROFILE_ID" --first)"
+resolution="$("$(dirname "${BASH_SOURCE[0]}")/unpack_benchmark_datasets.sh" "$MODEL_DIR" "$BUILD_PROFILE_ID" \
+  "$DATASET_DIR" --first)"
 if [[ -n "$resolution" ]]; then
   dataset=(--dataset "$(json_field name <<< "$resolution")=$(json_field directory <<< "$resolution")")
 fi

@@ -132,19 +132,18 @@ PYNEAT_PYTHON=~/pyneat/bin/python \
 `<compile-output-root>` holds `<model-id>/<build-profile>/compile-outputs.json`
 and the MPKs it lists. The script does this:
 
-1. It takes each declared dataset as a folder from the DevKit's dataset store
-   with `scripts/unpack_benchmark_datasets.sh`. A dataset the store lacks comes
-   from the shared dataset archive share or the Dataset Registry
+1. It unpacks each declared dataset into `DATASET_DIR`, by default
+   `WORK_DIR/datasets`, with `scripts/unpack_benchmark_datasets.sh`
    ([benchmark input](benchmarking.md#benchmark-input)).
 2. It lists each component's MPK with `model-registry model-component-mpks`.
 3. It finds the build's supporting files with `model-registry
    model-runtime-directory`. When the compile declared `runtime_files`, it
    passes the verified profile root to `accuracy.py` as `--resources`.
 4. It installs `requirements-accuracy.txt` beside PyNeat, in `WORK_DIR`, which
-   it removes when it exits. The default `WORK_DIR` is a folder for this run
-   under `/media/nvme/neat-tests/`, which a local run names
-   `model-accuracy-local-1`. Set `WORK_DIR` before the command to use another
-   folder.
+   it removes when it exits with the datasets unpacked there. The default
+   `WORK_DIR` is a folder for this run under `/media/nvme/neat-tests/`, which a
+   local run names `model-accuracy-local-1`. Set `WORK_DIR` before the command
+   to use another folder.
 5. It runs `accuracy.py` with `--dataset <source id>=<directory>` for each
    dataset, `--limit` when `model.yaml` sets `accuracy.samples`, and
    `PYTHONPATH` including `tools`. The script writes `model-report.json`, and

@@ -102,7 +102,7 @@ marked CI only from the author package.
 | `mla_stage_simulation.py` | The simulator's operation counts and latency for each MLA stage (`simulate-mla-stages`). |
 | `package.py` | Assembling a profile's `default` package from MPKs, pinned `resources`, and `runtime_files`, or from a complete LLiMa deployment folder. |
 | `dependencies.py` | Resolving the Model Compiler and DevKit runtime pins in `deps/manifest.json`. |
-| `fetch.py` | Verified downloads, the cache, dataset resolution through the Dataset Registry or the DevKit pool's shared dataset archive share (`copy_shared_dataset`), unsigned registry reads, and the DevKit's download of a staged build by compile run (`download-build`). |
+| `fetch.py` | Verified downloads, the cache, dataset resolution through the Dataset Registry, the verified unpack of a dataset read in place from the DevKit pool's shared dataset archive share (`unpack_shared_dataset`), unsigned registry reads, and the DevKit's download of a staged build by compile run (`download-build`). |
 | `source.py` | The approved source hosts (`HTTPS_HOST_CHECKS`), source identity, and URL redaction. |
 | `taxonomy.py` | Loading the taxonomy and validating a model's categories. |
 | `documentation.py` | Loading and validating a model's README and hero image, and the example application page the model browser links. |

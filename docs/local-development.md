@@ -320,7 +320,7 @@ Keep the report and log outside Git.
 
 `scripts/run_model_performance.sh <model-dir> <profile-id> <output-root>
 <result-directory>` runs the stage the way CI does against a local compile
-output: it also takes the dataset from the DevKit's dataset store
+output: it also unpacks the dataset
 ([benchmark input](benchmarking.md#benchmark-input)), sets the MLA and CPU
 clocks, and runs `model-registry check-report`. It needs a full `model-registry`
 install from this checkout (`python -m pip install .`) with Dataset Registry,

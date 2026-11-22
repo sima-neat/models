@@ -14,7 +14,7 @@ from .compile_matrix import build_matrix
 from .dependencies import resolve_benchmark_runtime, resolve_model_compiler
 from .documentation import example_apps, load_model_documentation
 from .errors import ModelRegistryError
-from .fetch import Fetcher, copy_shared_dataset, download_build, resolve_dataset
+from .fetch import Fetcher, download_build, resolve_dataset, unpack_shared_dataset
 from .mla_stage_simulation import write_mla_stage_simulation
 from .model import (
     build_profile_for,
@@ -223,19 +223,24 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     devkit_accuracy.add_argument("--schema", type=Path)
     devkit_accuracy.add_argument("--build-profile", required=True)
 
+    shared_dataset = subcommands.add_parser(
+        "unpack-shared-dataset",
+        help="unpack an accuracy dataset from the shared dataset archive share, read once and checked against its "
+        "pin. It exits 1 when the share cannot give the dataset",
+    )
+    shared_dataset.add_argument("model_dir", type=Path)
+    shared_dataset.add_argument("--schema", type=Path)
+    shared_dataset.add_argument("--dataset", required=True, help="the dataset's name, such as imagenet-2012-val")
+    shared_dataset.add_argument("--shared-archives", type=Path, required=True)
+    shared_dataset.add_argument("--destination", type=Path, required=True)
+
     accuracy_dataset = subcommands.add_parser(
-        "resolve-accuracy-dataset",
-        help="copy an accuracy dataset's archive from the shared dataset archive share, or resolve it through the "
-        "Dataset Registry, verified against its pin",
+        "resolve-accuracy-dataset", help="resolve an accuracy dataset's archive through the Dataset Registry"
     )
     accuracy_dataset.add_argument("model_dir", type=Path)
     accuracy_dataset.add_argument("--schema", type=Path)
     accuracy_dataset.add_argument("--dataset", required=True, help="the dataset's name, such as imagenet-2012-val")
-    accuracy_dataset.add_argument("--cache-dir", type=Path, help="the Dataset Registry's cache")
-    accuracy_dataset.add_argument("--shared-archives", type=Path, required=True,
-                                  help="the shared dataset archive share; a missing one falls back to the registry")
-    accuracy_dataset.add_argument("--copy-dir", type=Path, required=True,
-                                  help="the existing folder that receives an archive copied from the share")
+    accuracy_dataset.add_argument("--cache-dir", type=Path)
 
     inputs = subcommands.add_parser(
         "model-component-mpks", aliases=["model-component-artifacts"],
@@ -962,14 +967,9 @@ def _devkit_accuracy_datasets(args: argparse.Namespace) -> int:
     return 0
 
 
-def _resolve_accuracy_dataset(args: argparse.Namespace) -> int:
-    """Print the verified archive of one accuracy dataset as JSON, with its ``source``: ``share`` or ``registry``."""
-    dataset = load_and_validate_model(args.model_dir, args.schema)["accuracy"]["datasets"][args.dataset]
-    path, source = copy_shared_dataset(dataset, args.shared_archives, args.copy_dir), "share"
-    if path is None:
-        path, source = resolve_dataset(dataset, args.cache_dir), "registry"
-    print(json.dumps({"path": str(path), "source": source}, sort_keys=True))
-    return 0
+def _load_accuracy_dataset(args: argparse.Namespace) -> dict:
+    """Return the pin of the accuracy dataset ``--dataset`` names in the model at ``model_dir``."""
+    return load_and_validate_model(args.model_dir, args.schema)["accuracy"]["datasets"][args.dataset]
 
 
 def _check_report(args: argparse.Namespace) -> int:
@@ -1171,8 +1171,12 @@ def _main(argv: Sequence[str] | None, *, author_safe: bool) -> int:
             return 0
         if args.command == "devkit-accuracy-datasets":
             return _devkit_accuracy_datasets(args)
+        if args.command == "unpack-shared-dataset":
+            unpacked = unpack_shared_dataset(_load_accuracy_dataset(args), args.shared_archives, args.destination)
+            return 0 if unpacked else 1
         if args.command == "resolve-accuracy-dataset":
-            return _resolve_accuracy_dataset(args)
+            print(resolve_dataset(_load_accuracy_dataset(args), args.cache_dir))
+            return 0
         if args.command in ("model-component-mpks", "model-component-artifacts"):
             from .report_publication import model_component_artifacts, model_component_mpks
 

@@ -437,7 +437,7 @@ def test_devkit_accuracy_datasets_prints_each_pin_without_reading_an_archive(mon
         raise AssertionError("listing the datasets must not read an archive")
 
     monkeypatch.setattr("model_registry.cli.resolve_dataset", unexpected_read)
-    monkeypatch.setattr("model_registry.cli.copy_shared_dataset", unexpected_read)
+    monkeypatch.setattr("model_registry.cli.unpack_shared_dataset", unexpected_read)
 
     assert main(["devkit-accuracy-datasets", str(ROOT / "models" / "resnet_50"), "--build-profile", "w8a8"]) == 0
 
@@ -469,37 +469,46 @@ def test_devkit_accuracy_datasets_passes_the_declared_sample_cap(tmp_path: Path,
     assert [json.loads(line)["samples"] for line in capsys.readouterr().out.splitlines()] == [500]
 
 
-@pytest.mark.parametrize("on_share", [True, False], ids=["on_share", "not_on_share"])
-def test_resolve_accuracy_dataset_prefers_the_shared_archive_share(
-    monkeypatch, tmp_path: Path, capsys, on_share: bool
+RESNET_50_PIN = "018bf95eb75b8b7f1d7766303cdecf3c45ecb02ccf4cf161122ae885c4d7a36f"
+
+
+@pytest.mark.parametrize("unpacked", [True, False], ids=["unpacked", "not_on_share"])
+def test_unpack_shared_dataset_exits_1_when_the_share_cannot_give_the_dataset(
+    monkeypatch, tmp_path: Path, unpacked: bool
 ) -> None:
-    shared, cached = tmp_path / "copy" / "val.tgz", tmp_path / "cache" / "val.tgz"
     calls = []
 
-    def copy(dataset, shared_archives, copy_dir):
-        calls.append(("share", dataset["sha256"], shared_archives, copy_dir))
-        return shared if on_share else None
+    def unpack(dataset, shared_archives, destination):
+        calls.append((dataset["sha256"], shared_archives, destination))
+        return unpacked
+
+    monkeypatch.setattr("model_registry.cli.unpack_shared_dataset", unpack)
+
+    assert main([
+        "unpack-shared-dataset", str(ROOT / "models" / "resnet_50"), "--dataset", "imagenet-2012-val",
+        "--shared-archives", str(tmp_path / "share"), "--destination", str(tmp_path / "datasets" / "imagenet"),
+    ]) == (0 if unpacked else 1)
+    # The share is asked by the pin, and the shell falls back to the Dataset Registry on exit status 1.
+    assert calls == [(RESNET_50_PIN, tmp_path / "share", tmp_path / "datasets" / "imagenet")]
+
+
+def test_resolve_accuracy_dataset_prints_the_archive_the_dataset_registry_resolves(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    calls = []
 
     def resolve(dataset, cache_dir):
-        calls.append(("registry", dataset["sha256"], cache_dir))
-        return cached
+        calls.append((dataset["sha256"], cache_dir))
+        return tmp_path / "cache" / "val.tgz"
 
-    monkeypatch.setattr("model_registry.cli.copy_shared_dataset", copy)
     monkeypatch.setattr("model_registry.cli.resolve_dataset", resolve)
 
     assert main([
         "resolve-accuracy-dataset", str(ROOT / "models" / "resnet_50"), "--dataset", "imagenet-2012-val",
-        "--cache-dir", str(tmp_path / "cache"), "--shared-archives", str(tmp_path / "share"),
-        "--copy-dir", str(tmp_path / "copy"),
+        "--cache-dir", str(tmp_path / "cache"),
     ]) == 0
-
-    # The share is asked first, by the pin; the Dataset Registry only when the share cannot give the archive.
-    pin = "018bf95eb75b8b7f1d7766303cdecf3c45ecb02ccf4cf161122ae885c4d7a36f"
-    asked_share = ("share", pin, tmp_path / "share", tmp_path / "copy")
-    assert calls == ([asked_share] if on_share else [asked_share, ("registry", pin, tmp_path / "cache")])
-    assert json.loads(capsys.readouterr().out) == (
-        {"path": str(shared), "source": "share"} if on_share else {"path": str(cached), "source": "registry"}
-    )
+    assert calls == [(RESNET_50_PIN, tmp_path / "cache")]
+    assert capsys.readouterr().out == f"{tmp_path / 'cache' / 'val.tgz'}\n"
 
 
 STAGED_API = "https://registry.example.invalid"

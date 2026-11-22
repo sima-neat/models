@@ -215,8 +215,8 @@ Runs on a GitHub-hosted runner.
 
 Runs on the resolved Modalix DevKit. Its scratch folder is
 `/media/nvme/neat-tests/model-benchmark-<run>-<attempt>-<model>-<profile>`, which each runner
-script removes on exit. Both stages read their datasets from the board's dataset store, which
-outlives the job ([benchmark input](../../docs/benchmarking.md#benchmark-input)).
+script removes on exit. Both stages read the datasets that step 5 unpacks into the same path
+with `-datasets` appended, `DATASET_DIR` ([benchmark input](../../docs/benchmarking.md#benchmark-input)).
 
 1. It installs the registry tooling with the `tests` extra in a virtual environment.
 2. It keeps each requested stage the profile declares and skips the others.
@@ -229,11 +229,12 @@ outlives the job ([benchmark input](../../docs/benchmarking.md#benchmark-input))
    archive ([staging a published build](publication.md#staging-a-published-build)).
 5. For the `core` backend it installs the Dataset Registry wheel, assumes the dataset
    reader role, and runs `scripts/cache_accuracy_dataset.sh`, which refuses to run when the
-   NVMe is not mounted. The script fills the dataset store through
-   `scripts/unpack_benchmark_datasets.sh` under a board-wide lock, so concurrent jobs unpack
-   an archive once, and the stages later need no credentials. The `Source` column of the
-   job summary's `Accuracy datasets` table names where each dataset came from:
-   `board's unpacked copy`, `shared dataset archive share`, or `Dataset Registry`.
+   NVMe is not mounted. The script unpacks every dataset into `DATASET_DIR` through
+   `scripts/unpack_benchmark_datasets.sh`, so the stages later need no credentials and read
+   no archive. A Dataset Registry resolution holds a board-wide lock, so concurrent jobs
+   download an archive once. The `Source` column of the job summary's `Accuracy datasets`
+   table names where each dataset came from: `shared dataset archive share` or
+   `Dataset Registry`.
 6. `model-registry ensure-neat-core --repository _source --environment production`
    prepares Core.
 7. For the `llima` backend, `scripts/install_mole_benchmark_runtime.sh` installs MoLE from
@@ -245,9 +246,9 @@ outlives the job ([benchmark input](../../docs/benchmarking.md#benchmark-input))
     stage on `model-report.json` and writes `passed`, `failed`, or `skipped` to
     `test-status.txt`.
 11. The job uploads `performance-…` and `accuracy-…` evidence, also after a failure.
-12. The last step removes `_compiled` and the scratch folder, however the job ends. No step
-    removes the dataset store. A cancellation GitHub forces skips the step. The next job's
-    checkout then removes `_compiled`, and the scratch folder stays.
+12. The last step removes `_compiled`, the scratch folder, and `DATASET_DIR`, however the
+    job ends. A cancellation GitHub forces skips it. The next job's checkout then removes
+    `_compiled`, and the two NVMe folders stay.
 
 `ensure-neat-core` reads `neat-core.install_target`. It resolves a floating target such as
 `core@develop` to the published tag once, then compares `neat --json` with that artifact's
@@ -264,7 +265,7 @@ non-production Core index needs `--artifacts-base-url` or `NEAT_ARTIFACTS_BASE_U
 `run_model_performance.sh` does this for the `core` backend:
 
 1. lists the MPKs with `model-component-artifacts`
-2. takes the first accuracy dataset from the dataset store with
+2. takes the first accuracy dataset from `DATASET_DIR` with
    `scripts/unpack_benchmark_datasets.sh`, and passes no `--dataset` for a profile that
    accuracy does not measure
 3. fetches the model's pinned `resources` with `fetch-resources` and passes `--resources`
@@ -278,7 +279,7 @@ non-production Core index needs `--artifacts-base-url` or `NEAT_ARTIFACTS_BASE_U
 For the `llima` backend it skips steps 2 to 4 and passes `--deployment`, plus `--baseline`
 when the staged input holds `benchmark-baseline.json`.
 
-`run_model_accuracy.sh` takes every declared dataset from the store with the same script.
+`run_model_accuracy.sh` takes every declared dataset from `DATASET_DIR` with the same script.
 It lists the MPKs with `model-component-mpks`, passes the build's `runtime_files` folder as
 `--resources` when the compile declared any, and passes `--limit` when `model.yaml` sets
 `accuracy.samples`. It installs `scripts/requirements-accuracy.txt`, runs `accuracy.py`,

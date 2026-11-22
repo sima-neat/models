@@ -139,27 +139,31 @@ The script runs once per benchmarked build profile, with every component's MPK.
 CI passes `--dataset` with the model's first accuracy dataset, and only for a build
 profile that accuracy measures.
 
-`scripts/run_model_performance.sh` and `scripts/run_model_accuracy.sh` take each dataset
-from the DevKit's dataset store with `scripts/unpack_benchmark_datasets.sh`. The store
-keeps one unpacked copy of each pinned dataset archive, in a folder named by the archive's
-SHA-256. When the store holds a complete copy, the run reads no archive. Otherwise the
-script takes the archive from the DevKit pool's shared dataset archive share when the
-share holds it, and from the Dataset Registry when it does not or when the share gives
-no listing within 20 seconds. It checks the archive's
-size and SHA-256 against `model.yaml` before it unpacks it. The unpacked copy is
-read-only, so a script that writes into its dataset fails. A copy unused for 30 days is
-removed.
+`scripts/unpack_benchmark_datasets.sh` unpacks each dataset into a dataset folder. A
+marker beside each unpack lets a later step of the same job reuse it without reading the
+archive again. The archive comes from the DevKit pool's shared dataset archive share when
+the share's index lists the dataset's SHA-256 and size and the share answers a listing
+within 20 seconds. The script reads that archive once, in place, and checks its SHA-256
+and size against `model.yaml` as it unpacks it. When the share cannot give the archive or
+the check fails, the script removes what it unpacked, and the Dataset Registry downloads
+the archive into a cache on the NVMe. The script checks that archive before it unpacks it.
+
+In CI the dataset step unpacks into the job's dataset folder, both stages reuse it, and
+the job removes it when it ends. On your own DevKit, `scripts/run_model_performance.sh`
+and `scripts/run_model_accuracy.sh` each unpack the datasets into their own work folder
+and remove it when they end. To unpack once for both, set `DATASET_DIR` to a folder
+outside that work folder, and delete it when you are done.
 
 These environment variables set the locations:
 
 | Variable | Default | Holds |
 |---|---|---|
-| `DATASET_STORE` | `/media/nvme/datasets/unpacked` | the unpacked copies |
+| `DATASET_DIR` | `$WORK_DIR/datasets` | the unpacked datasets |
 | `DATASET_CACHE` | `/media/nvme/datasets/artifacts` | the archives the Dataset Registry downloads |
-| `DATASET_LOCK` | `/media/nvme/datasets/locks/prepare.lock` | the lock that lets one run at a time change the store |
+| `DATASET_LOCK` | `/media/nvme/datasets/locks/prepare.lock` | the lock that lets one run at a time download an archive |
 | `SHARED_DATASET_ARCHIVES` | `/mnt/dataset-private/current` | the shared dataset archive share. Without it, each archive comes from the Dataset Registry |
 
-`NVME_MOUNT`, by default `/media/nvme`, moves the first three together.
+`NVME_MOUNT`, by default `/media/nvme`, moves `DATASET_CACHE` and `DATASET_LOCK` together.
 
 For an image model, the benchmark repeats one real camera-sized frame, so its
 throughput is what an application gets from a 720p frame to decoded results,

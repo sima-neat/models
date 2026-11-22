@@ -6,7 +6,6 @@ import shutil
 import subprocess
 import sys
 import tarfile
-import time
 from pathlib import Path
 
 import pytest
@@ -263,8 +262,8 @@ def test_benchmark_runs_on_the_devkit_its_caller_resolved() -> None:
         "/media/nvme/neat-tests/model-benchmark-${{ github.run_id }}-${{ github.run_attempt }}"
         "-${{ inputs.model_id }}-${{ inputs.build_profile_id }}"
     )
-    # Both stages read their datasets from the board's dataset store, which outlives the job.
-    assert "DATASET_DIR" not in benchmark["env"]
+    # The dataset step unpacks beside the scratch folder once, and both stages reuse that unpack.
+    assert benchmark["env"]["DATASET_DIR"] == benchmark["env"]["WORK_DIR"] + "-datasets"
     assert benchmark["env"]["SOURCE_BRANCH"] == "${{ needs.stage.outputs.source_branch }}"
     assert step(steps, "Check out trusted tooling from the protected workflow revision")["with"] == {
         "ref": "${{ github.sha }}",
@@ -341,8 +340,8 @@ def test_performance_runs_the_model_owned_script() -> None:
     assert 'REQUIREMENTS="$MODEL_DIR/scripts/requirements-performance.txt"' in script
     assert '--target "$site" -r "$REQUIREMENTS"' in script
     assert 'PYTHONPATH="$REPOSITORY/tools:$site"' in script
-    # The script picks its benchmark input from the model's first accuracy dataset, from the board's dataset store.
-    assert 'unpack_benchmark_datasets.sh" "$MODEL_DIR" "$BUILD_PROFILE_ID" --first)' in script
+    # The script picks its benchmark input from the model's first accuracy dataset, unpacked once for the job.
+    assert 'unpack_benchmark_datasets.sh" "$MODEL_DIR" "$BUILD_PROFILE_ID" \\\n  "$DATASET_DIR" --first)' in script
     assert 'dataset=(--dataset "$(json_field name <<< "$resolution")=$(json_field directory <<< "$resolution")")' in (
         script
     )
@@ -604,7 +603,9 @@ def test_credentialed_devkit_steps_never_run_model_code() -> None:
     assert "AWS_" not in yaml.safe_dump(benchmark.get("env", {}))
     assert "${{ secrets." not in yaml.safe_dump(benchmark)
     # The trusted checkout's script resolves the dataset; the source revision is read only as model metadata.
-    assert cache["run"] == 'scripts/cache_accuracy_dataset.sh "_source/models/$MODEL_ID" "$BUILD_PROFILE_ID"'
+    assert cache["run"] == (
+        'scripts/cache_accuracy_dataset.sh "_source/models/$MODEL_ID" "$BUILD_PROFILE_ID" "$DATASET_DIR"'
+    )
     assert all(marker not in cache["run"] for marker in MODEL_CODE_MARKERS)
     assert names.index("Check out trusted tooling from the protected workflow revision") < names.index(
         "Cache the accuracy dataset on NVMe"
@@ -614,7 +615,7 @@ def test_credentialed_devkit_steps_never_run_model_code() -> None:
         if any(marker in item.get("run", "") for marker in MODEL_CODE_MARKERS):
             assert "AWS_" not in yaml.safe_dump(item.get("env", {})), item["name"]
 
-    # The credentialed step runs the cache script, which fills the dataset store through the unpack script.
+    # The credentialed step runs the cache script, which unpacks the job's datasets through the unpack script.
     cache_script = (ROOT / "scripts" / "cache_accuracy_dataset.sh").read_text(encoding="utf-8")
     unpack_script = (ROOT / "scripts" / "unpack_benchmark_datasets.sh").read_text(encoding="utf-8")
     assert "unpack_benchmark_datasets.sh" in cache_script
@@ -660,192 +661,199 @@ def test_accuracy_dataset_is_cached_on_nvme_under_a_shared_lock() -> None:
     assert 'NVME_MOUNT="${NVME_MOUNT:-/media/nvme}"' in cache_script
     assert 'mountpoint -q "$NVME_MOUNT"' in cache_script
     assert "coco" not in cache_script.lower()
-    # The cache step fills the board's dataset store through the script both stages read it with.
-    assert 'unpack_benchmark_datasets.sh" "$MODEL_DIR" "$BUILD_PROFILE_ID")"' in cache_script
-    # That one script owns the store, the archive cache, the board-wide lock, and the share's location.
+    # The cache step unpacks into the job's dataset folder through the script both stages read it with.
+    assert 'unpack_benchmark_datasets.sh" "$MODEL_DIR" "$BUILD_PROFILE_ID" \\\n  "$DATASET_DIR")"' in cache_script
+    # That one script owns the archive cache, the board-wide lock around resolving, and the share's location.
     for line in (
         'NVME_MOUNT="${NVME_MOUNT:-/media/nvme}"',
-        'DATASET_STORE="${DATASET_STORE:-$NVME_MOUNT/datasets/unpacked}"',
         'DATASET_CACHE="${DATASET_CACHE:-$NVME_MOUNT/datasets/artifacts}"',
         'DATASET_LOCK="${DATASET_LOCK:-$NVME_MOUNT/datasets/locks/prepare.lock}"',
         'SHARED_DATASET_ARCHIVES="${SHARED_DATASET_ARCHIVES:-/mnt/dataset-private/current}"',
-        'flock --wait "$DATASET_LOCK_SECONDS" 9',
+        'flock --wait "$DATASET_LOCK_SECONDS" --close "$DATASET_LOCK"',
         'timeout --signal=TERM --kill-after=30s "$RESOLVE_TIMEOUT_SECONDS"',
     ):
         assert line in unpack_script, line
     for runner in ("cache_accuracy_dataset.sh", "run_model_accuracy.sh", "run_model_performance.sh"):
         text = (ROOT / "scripts" / runner).read_text(encoding="utf-8")
         assert "unpack_benchmark_datasets.sh" in text
-        for owned in ("resolve-accuracy-dataset", "devkit-accuracy-datasets", "tar -xzf", "flock", "DATASET_STORE"):
+        for owned in ("unpack-shared-dataset", "resolve-accuracy-dataset", "devkit-accuracy-datasets", "tar -xzf",
+                      "flock"):
             assert owned not in text, (runner, owned)
 
 
-def _dataset(directory: Path, name: str, member: str, content: bytes, source: str) -> tuple[dict, dict]:
-    """A one-file dataset archive: its devkit-accuracy-datasets pin and its resolve-accuracy-dataset line."""
+def _dataset(directory: Path, name: str, member: str, content: bytes) -> tuple[dict, Path]:
+    """A one-file dataset archive and its devkit-accuracy-datasets pin."""
     path = directory / f"{name}.tgz"
     with tarfile.open(path, "w:gz") as archive:
         info = tarfile.TarInfo(member)
         info.size = len(content)
         archive.addfile(info, io.BytesIO(content))
-    pin = {"name": name, "sha256": hashlib.sha256(path.read_bytes()).hexdigest(), "size_bytes": path.stat().st_size}
-    return pin, {"path": str(path), "source": source}
+    return {"name": name, "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            "size_bytes": path.stat().st_size}, path
 
 
 def _board_paths(tmp_path: Path) -> dict[str, str]:
-    """The dataset store, archive cache, and lock under tmp_path, and a share that is not mounted."""
-    return {"DATASET_STORE": str(tmp_path / "store"), "DATASET_CACHE": str(tmp_path / "cache"),
-            "DATASET_LOCK": str(tmp_path / "locks/prepare.lock"),
+    """The archive cache and lock under tmp_path, and a share that is not mounted."""
+    return {"DATASET_CACHE": str(tmp_path / "cache"), "DATASET_LOCK": str(tmp_path / "locks/prepare.lock"),
             "SHARED_DATASET_ARCHIVES": str(tmp_path / "unmounted/current")}
 
 
-def _stand_in_registry(tmp_path: Path, pins: list[dict], archives: dict[str, dict]) -> Path:
-    """A registry Python whose devkit-accuracy-datasets prints ``pins`` and whose resolve-accuracy-dataset prints
-    ``archives[name]``, logging each resolved name to tmp_path/resolved."""
-    registry = tmp_path / "registry-python"
-    registry.write_text(f"""#!{sys.executable}
-import json, os, sys
+def _stand_in_registry(tmp_path: Path, pins: list[dict], shared: dict[str, str], registry: dict[str, str]) -> Path:
+    """A registry Python with stand-ins for the three dataset commands, logging each unpack to tmp_path/calls.
+
+    devkit-accuracy-datasets prints ``pins``. unpack-shared-dataset unpacks the archive ``shared`` names, fails for
+    a dataset it does not name, and for ``partial`` or ``slow`` leaves part of a tree and fails or hangs.
+    resolve-accuracy-dataset prints the archive ``registry`` names."""
+    registry_python = tmp_path / "registry-python"
+    registry_python.write_text(f"""#!{sys.executable}
+import json, os, sys, tarfile, time
+from pathlib import Path
 if sys.argv[1] == '-c':
     os.execv(sys.executable, [sys.executable, *sys.argv[1:]])
-command = sys.argv[3]
+command, name = sys.argv[3], sys.argv[sys.argv.index('--dataset') + 1] if '--dataset' in sys.argv else ''
 if command == 'devkit-accuracy-datasets':
     for pin in {pins!r}:
         print(json.dumps(pin))
+    sys.exit()
+with open({str(tmp_path / "calls")!r}, 'a') as log:
+    log.write(command + ' ' + name + '\\n')
+if command == 'unpack-shared-dataset':
+    archive = {shared!r}.get(name)
+    if archive is None:
+        sys.exit(1)
+    destination = Path(sys.argv[sys.argv.index('--destination') + 1])
+    destination.mkdir(parents=True)
+    if archive in ('partial', 'slow'):
+        (destination / 'half.jpg').write_bytes(b'o')
+        time.sleep(60 if archive == 'slow' else 0)
+        sys.exit(1)
+    with tarfile.open(archive) as source:
+        source.extractall(destination)
 elif command == 'resolve-accuracy-dataset':
-    name = sys.argv[sys.argv.index('--dataset') + 1]
-    with open({str(tmp_path / "resolved")!r}, 'a') as log:
-        log.write(name + '\\n')
-    print(json.dumps({archives!r}[name]))
+    print({registry!r}[name])
 else:
     raise AssertionError(sys.argv)
 """)
-    registry.chmod(0o755)
-    return registry
+    registry_python.chmod(0o755)
+    return registry_python
 
 
-def _unpack(tmp_path: Path, pins: list[dict], archives: dict[str, dict], *flags: str) -> list[dict]:
-    """Run unpack_benchmark_datasets.sh with a stand-in registry Python; return its JSON lines."""
-    env = {**os.environ, "REGISTRY_PYTHON": str(_stand_in_registry(tmp_path, pins, archives)), **_board_paths(tmp_path)}
+def _unpack(tmp_path: Path, registry_python: Path, *flags: str, **environment: str) -> list[dict]:
+    """Run unpack_benchmark_datasets.sh into tmp_path/datasets; return its JSON lines."""
+    env = {**os.environ, "REGISTRY_PYTHON": str(registry_python), **_board_paths(tmp_path), **environment}
     result = subprocess.run(
-        [ROOT / "scripts/unpack_benchmark_datasets.sh", ROOT / "models/resnet_50", "w8a8", *flags],
-        env=env, check=True, capture_output=True, text=True,
+        [ROOT / "scripts/unpack_benchmark_datasets.sh", ROOT / "models/resnet_50", "w8a8", tmp_path / "datasets",
+         *flags], env=env, check=True, capture_output=True, text=True, timeout=60,
     )
     return [json.loads(line) for line in result.stdout.splitlines()]
 
 
-def _resolved(tmp_path: Path) -> list[str]:
-    log = tmp_path / "resolved"
+def _calls(tmp_path: Path) -> list[str]:
+    log = tmp_path / "calls"
     return log.read_text().splitlines() if log.exists() else []
 
 
-def test_a_share_that_gives_no_listing_is_left_out(tmp_path: Path) -> None:
+def _coreutils_timeout() -> None:
     version = subprocess.run(["timeout", "--version"], capture_output=True, text=True, check=False).stdout
     if "coreutils" not in version:
-        pytest.skip("needs coreutils timeout, which ends the listing")
-    pin, archive = _dataset(tmp_path, "first", "a.jpg", b"one", "registry")
+        pytest.skip("needs coreutils timeout, which ends the share access")
+
+
+def test_a_share_that_gives_no_listing_is_left_out(tmp_path: Path) -> None:
+    _coreutils_timeout()
+    pin, archive = _dataset(tmp_path, "first", "a.jpg", b"one")
     binaries = tmp_path / "bin"
     binaries.mkdir()
     # A stale share blocks the listing; this one blocks for far longer than the test allows.
     (binaries / "ls").write_text("#!/bin/sh\nsleep 60\n")
     (binaries / "ls").chmod(0o755)
-    env = {**os.environ, "REGISTRY_PYTHON": str(_stand_in_registry(tmp_path, [pin], {"first": archive})),
-           **_board_paths(tmp_path), "SHARE_LISTING_SECONDS": "1",
-           "PATH": f"{binaries}{os.pathsep}{os.environ['PATH']}"}
+    registry = _stand_in_registry(tmp_path, [pin], {"first": str(archive)}, {"first": str(archive)})
 
-    result = subprocess.run([ROOT / "scripts/unpack_benchmark_datasets.sh", ROOT / "models/resnet_50", "w8a8"],
-                            env=env, check=True, capture_output=True, text=True, timeout=30)
+    result = subprocess.run(
+        [ROOT / "scripts/unpack_benchmark_datasets.sh", ROOT / "models/resnet_50", "w8a8", tmp_path / "datasets"],
+        env={**os.environ, "REGISTRY_PYTHON": str(registry), **_board_paths(tmp_path), "SHARE_LISTING_SECONDS": "1",
+             "PATH": f"{binaries}{os.pathsep}{os.environ['PATH']}"},
+        check=True, capture_output=True, text=True, timeout=30,
+    )
 
     assert "The shared dataset archive share gave no listing in 1 s." in result.stderr
     assert json.loads(result.stdout)["source"] == "registry"
-    assert not (tmp_path / "store/.share-copy").exists()
+    # The share is not touched again after the listing.
+    assert _calls(tmp_path) == ["resolve-accuracy-dataset first"]
 
 
-def test_the_board_unpacks_each_archive_once_for_every_later_job(tmp_path: Path) -> None:
-    first, first_archive = _dataset(tmp_path, "first", "val/a.jpg", b"one", "share")
-    second, second_archive = _dataset(tmp_path, "second", "b.jpg", b"two", "registry")
-    archives = {"first": first_archive, "second": second_archive}
-    store = tmp_path / "store"
+def test_a_share_unpack_that_does_not_finish_in_time_falls_back_without_its_partial_tree(tmp_path: Path) -> None:
+    _coreutils_timeout()
+    pin, archive = _dataset(tmp_path, "data", "a.jpg", b"one")
+    registry = _stand_in_registry(tmp_path, [pin], {"data": "slow"}, {"data": str(archive)})
+    env = {**os.environ, "REGISTRY_PYTHON": str(registry), **_board_paths(tmp_path), "RESOLVE_TIMEOUT_SECONDS": "1"}
 
-    # The performance stage reads only the first dataset, unpacked looking through its single top-level folder.
-    first_directory = str(store / first["sha256"] / "dataset/val")
-    assert _unpack(tmp_path, [first, second], archives, "--first") == [
-        {**first, "directory": first_directory, "source": "share"},
+    result = subprocess.run(
+        [ROOT / "scripts/unpack_benchmark_datasets.sh", ROOT / "models/resnet_50", "w8a8", tmp_path / "datasets"],
+        env=env, check=True, capture_output=True, text=True, timeout=60,
+    )
+
+    assert "The shared dataset archive share did not give data in 1 s." in result.stderr
+    assert json.loads(result.stdout)["source"] == "registry"
+    assert sorted(path.name for path in (tmp_path / "datasets/data").iterdir()) == ["a.jpg"]
+
+
+def test_one_job_unpacks_each_dataset_once_for_its_three_steps(tmp_path: Path) -> None:
+    first, first_archive = _dataset(tmp_path, "first", "val/a.jpg", b"one")
+    second, second_archive = _dataset(tmp_path, "second", "b.jpg", b"two")
+    registry = _stand_in_registry(tmp_path, [first, second], {"first": str(first_archive)},
+                                  {"second": str(second_archive)})
+    datasets = tmp_path / "datasets"
+    lines = [
+        {**first, "directory": str(datasets / "first/val"), "source": "share"},
+        {**second, "directory": str(datasets / "second"), "source": "registry"},
     ]
-    # The accuracy stage finds it in the store and unpacks only the dataset performance did not read.
-    assert [(item["directory"], item["source"]) for item in _unpack(tmp_path, [first, second], archives)] == [
-        (first_directory, "board"), (str(store / second["sha256"] / "dataset"), "registry"),
-    ]
-    # A later job reads no archive, so it works with the archives gone.
-    for archive in archives.values():
-        Path(archive["path"]).unlink()
-    assert [item["source"] for item in _unpack(tmp_path, [first, second], archives)] == ["board", "board"]
-    assert _resolved(tmp_path) == ["first", "second"]
-    assert sorted(path.name for path in store.iterdir()) == sorted([first["sha256"], second["sha256"]])
+
+    # The credentialed dataset step unpacks every dataset, the first from the share, looking through its single
+    # top-level folder.
+    assert _unpack(tmp_path, registry) == lines
+    assert _calls(tmp_path) == ["unpack-shared-dataset first", "unpack-shared-dataset second",
+                                "resolve-accuracy-dataset second"]
+    # Performance reads only the first dataset, and accuracy reads both, from that unpack. Neither reads an
+    # archive, so both work with the archives gone.
+    first_archive.unlink()
+    second_archive.unlink()
+    assert _unpack(tmp_path, registry, "--first") == lines[:1]
+    assert _unpack(tmp_path, registry) == lines
+    assert len(_calls(tmp_path)) == 3
+    assert (datasets / "first.unpacked").read_text() == f"{first['sha256']} share\n"
 
 
-def test_an_interrupted_unpack_is_redone(tmp_path: Path) -> None:
-    pin, archive = _dataset(tmp_path, "data", "val/a.jpg", b"one", "registry")
-    # An unpack that stopped early left part of the tree, already read-only, and no marker.
-    partial = tmp_path / "store" / pin["sha256"] / "dataset/val"
-    partial.mkdir(parents=True)
-    (partial / "half.jpg").write_bytes(b"o")
-    partial.chmod(0o555)
+def test_another_archive_under_the_same_name_replaces_the_earlier_unpack(tmp_path: Path) -> None:
+    old, old_archive = _dataset(tmp_path, "data", "val/a.jpg", b"one")
+    _unpack(tmp_path, _stand_in_registry(tmp_path, [old], {}, {"data": str(old_archive)}))
+    (tmp_path / "new").mkdir()
+    new, new_archive = _dataset(tmp_path / "new", "data", "val/c.jpg", b"three")
 
-    assert _unpack(tmp_path, [pin], {"data": archive})[0]["source"] == "registry"
-    assert sorted(path.name for path in partial.iterdir()) == ["a.jpg"]
-    assert (tmp_path / "store" / pin["sha256"] / "complete").is_file()
+    _unpack(tmp_path, _stand_in_registry(tmp_path, [new], {}, {"data": str(new_archive)}))
+
+    assert sorted(path.name for path in (tmp_path / "datasets/data/val").iterdir()) == ["c.jpg"]
 
 
-@pytest.mark.skipif(os.geteuid() == 0, reason="root writes into read-only folders")
-def test_the_unpacked_dataset_is_read_only(tmp_path: Path) -> None:
-    pin, archive = _dataset(tmp_path, "data", "val/a.jpg", b"one", "share")
-    directory = Path(_unpack(tmp_path, [pin], {"data": archive})[0]["directory"])
+def test_a_failed_share_unpack_falls_back_to_the_dataset_registry_without_its_partial_tree(tmp_path: Path) -> None:
+    pin, archive = _dataset(tmp_path, "data", "val/a.jpg", b"one")
+    registry = _stand_in_registry(tmp_path, [pin], {"data": "partial"}, {"data": str(archive)})
 
-    # A model script that writes into its dataset fails, so it cannot change a later job's input.
-    with pytest.raises(PermissionError):
-        (directory / "written-by-a-model.txt").write_text("")
-    with pytest.raises(PermissionError):
-        (directory / "a.jpg").write_bytes(b"changed")
-    with pytest.raises(PermissionError):
-        (directory / "a.jpg").unlink()
-    assert (directory / "a.jpg").read_bytes() == b"one"
-
-
-def test_the_store_removes_copies_unused_for_30_days(tmp_path: Path) -> None:
-    store = tmp_path / "store"
-    pin, archive = _dataset(tmp_path, "data", "val/a.jpg", b"one", "registry")
-
-    def stored_copy(sha256: str, unused_days: int | None) -> None:
-        tree = store / sha256 / "dataset"
-        tree.mkdir(parents=True)
-        (tree / "a.jpg").write_bytes(b"one")
-        tree.chmod(0o555)
-        if unused_days is not None:
-            marker = store / sha256 / "complete"
-            marker.touch()
-            used = time.time() - unused_days * 24 * 3600
-            os.utime(marker, (used, used))
-
-    stored_copy("a" * 64, 31)
-    stored_copy("b" * 64, 29)
-    stored_copy("c" * 64, None)
-    stored_copy(pin["sha256"], 31)
-
-    # The job uses its copy before the removal runs, so that copy stays.
-    assert _unpack(tmp_path, [pin], {"data": archive})[0]["source"] == "board"
-    assert sorted(path.name for path in store.iterdir()) == sorted(["b" * 64, pin["sha256"]])
-    assert time.time() - (store / pin["sha256"] / "complete").stat().st_mtime < 600
-    assert _resolved(tmp_path) == []
+    assert _unpack(tmp_path, registry)[0]["source"] == "registry"
+    assert sorted(path.name for path in (tmp_path / "datasets/data").iterdir()) == ["val"]
+    assert (tmp_path / "datasets/data.unpacked").read_text() == f"{pin['sha256']} registry\n"
 
 
 def test_a_profile_without_accuracy_datasets_unpacks_nothing(tmp_path: Path) -> None:
-    assert _unpack(tmp_path, [], {}) == []
-    assert not (tmp_path / "store").exists()
+    assert _unpack(tmp_path, _stand_in_registry(tmp_path, [], {}, {})) == []
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["registry-python"]
 
 
 def test_the_job_summary_names_where_each_dataset_came_from(tmp_path: Path) -> None:
-    first, first_archive = _dataset(tmp_path, "first", "val/a.jpg", b"one", "share")
-    second, second_archive = _dataset(tmp_path, "second", "b.jpg", b"two", "registry")
-    registry = _stand_in_registry(tmp_path, [first, second], {"first": first_archive, "second": second_archive})
+    first, first_archive = _dataset(tmp_path, "first", "val/a.jpg", b"one")
+    second, second_archive = _dataset(tmp_path, "second", "b.jpg", b"two")
+    registry = _stand_in_registry(tmp_path, [first, second], {"first": str(first_archive)},
+                                  {"second": str(second_archive)})
     binaries = tmp_path / "bin"
     binaries.mkdir()
     (binaries / "mountpoint").write_text("#!/bin/sh\nexit 0\n")
@@ -853,31 +861,21 @@ def test_the_job_summary_names_where_each_dataset_came_from(tmp_path: Path) -> N
     summary = tmp_path / "summary.md"
     env = {**os.environ, "PATH": f"{binaries}{os.pathsep}{os.environ['PATH']}", "REGISTRY_PYTHON": str(registry),
            "NVME_MOUNT": str(tmp_path), "GITHUB_STEP_SUMMARY": str(summary), **_board_paths(tmp_path)}
-    store = tmp_path / "store"
+    datasets = tmp_path / "datasets"
 
-    def rows(source: dict[str, str]) -> list[str]:
-        return [
-            f"| first | `{first['sha256']}` | {first['size_bytes']} | {source['first']} | "
-            f"`{store / first['sha256'] / 'dataset/val'}` |",
-            f"| second | `{second['sha256']}` | {second['size_bytes']} | {source['second']} | "
-            f"`{store / second['sha256'] / 'dataset'}` |",
-        ]
+    subprocess.run([ROOT / "scripts/cache_accuracy_dataset.sh", ROOT / "models/resnet_50", "w8a8", datasets],
+                   env=env, check=True, capture_output=True, text=True)
 
-    def cache() -> list[str]:
-        subprocess.run([ROOT / "scripts/cache_accuracy_dataset.sh", ROOT / "models/resnet_50", "w8a8"], env=env,
-                       check=True, capture_output=True, text=True)
-        return summary.read_text(encoding="utf-8").splitlines()
-
-    assert cache() == [
+    assert summary.read_text(encoding="utf-8").splitlines() == [
         "### Accuracy datasets", "", "| Dataset | SHA-256 | Bytes | Source | Directory |", "|---|---|---|---|---|",
-        *rows({"first": "shared dataset archive share", "second": "Dataset Registry"}),
+        f"| first | `{first['sha256']}` | {first['size_bytes']} | shared dataset archive share | "
+        f"`{datasets / 'first/val'}` |",
+        f"| second | `{second['sha256']}` | {second['size_bytes']} | Dataset Registry | `{datasets / 'second'}` |",
     ]
-    # The next job finds both datasets on the board.
-    assert cache()[-2:] == rows({"first": "board's unpacked copy", "second": "board's unpacked copy"})
 
 
-@pytest.mark.parametrize("on_share", [True, False], ids=["from_the_share", "from_the_dataset_registry"])
-def test_the_store_fills_from_the_share_or_else_the_dataset_registry(tmp_path: Path, on_share: bool) -> None:
+@pytest.mark.parametrize("source", ["share", "registry", "share_with_another_archive"])
+def test_the_job_unpacks_from_the_share_or_else_the_dataset_registry(tmp_path: Path, source: str) -> None:
     """Run the unpack with the real model-registry commands and a stand-in dataset-registry on PATH."""
     archive = tmp_path / "imagenet-val.tgz"
     with tarfile.open(archive, "w:gz") as tar:
@@ -891,45 +889,60 @@ def test_the_store_fills_from_the_share_or_else_the_dataset_registry(tmp_path: P
     model["accuracy"]["datasets"] = [{"id": "imagenet-2012", "variant": "val", "sha256": digest, "size_bytes": size}]
     model_yaml.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
     board = _board_paths(tmp_path)
-    if on_share:
-        share = Path(board["SHARED_DATASET_ARCHIVES"])
+    share = Path(board["SHARED_DATASET_ARCHIVES"])
+    if source != "registry":
         (share / "imagenet").mkdir(parents=True)
-        shutil.copyfile(archive, share / "imagenet/val.tgz")
+        # The share's index lists the pin. The other archive has the pin's size but other bytes.
+        shared = archive.read_bytes() if source == "share" else bytes(size)
+        (share / "imagenet/val.tgz").write_bytes(shared)
         (share / "_release.json").write_text(json.dumps({"archives": [
             {"key": "datasets/artifactory/imagenet/val.tgz", "sha256": digest, "size": size},
         ]}))
     binaries = tmp_path / "bin"
     binaries.mkdir()
+    calls = tmp_path / "registry-calls"
     (binaries / "dataset-registry").write_text(
-        f"#!/bin/sh\necho \"$*\" >> '{tmp_path / 'registry-calls'}'\necho '{json.dumps({'path': str(archive)})}'\n"
+        f"#!/bin/sh\necho \"$*\" >> '{calls}'\necho '{json.dumps({'path': str(archive)})}'\n"
     )
     (binaries / "dataset-registry").chmod(0o755)
     env = {**os.environ, **board, "PATH": f"{binaries}{os.pathsep}{os.environ['PATH']}",
            "REGISTRY_PYTHON": sys.executable,
            "PYTHONPATH": os.pathsep.join([str(ROOT / "tools"), *filter(None, [os.environ.get("PYTHONPATH")])])}
+    datasets = tmp_path / "datasets"
 
     def unpack() -> tuple[dict, str]:
-        result = subprocess.run([ROOT / "scripts/unpack_benchmark_datasets.sh", model_dir, "w8a8"], env=env,
-                                check=True, capture_output=True, text=True)
+        result = subprocess.run([ROOT / "scripts/unpack_benchmark_datasets.sh", model_dir, "w8a8", datasets],
+                                env=env, check=True, capture_output=True, text=True)
         [line] = result.stdout.splitlines()
         return json.loads(line), result.stderr
 
+    before = set(tmp_path.rglob("*"))
     resolution, messages = unpack()
-    directory = tmp_path / "store" / digest / "dataset" / "val2012"
+    written = {path.relative_to(tmp_path).parts[0] for path in set(tmp_path.rglob("*")) - before}
+
+    origin = "share" if source == "share" else "registry"
+    directory = datasets / "imagenet-2012-val" / "val2012"
     assert resolution == {"name": "imagenet-2012-val", "sha256": digest, "size_bytes": size,
-                          "directory": str(directory), "source": "share" if on_share else "registry"}
+                          "directory": str(directory), "source": origin}
+    assert sorted(path.name for path in directory.parent.iterdir()) == ["val2012"]
     assert (directory / "image.JPEG").read_bytes() == b"img"
-    # A machine without the share says nothing about it and resolves through the Dataset Registry.
-    assert "shared dataset archive share" not in messages
-    calls = tmp_path / "registry-calls"
-    assert calls.exists() != on_share
-    if not on_share:
-        assert calls.read_text().split()[:4] == ["resolve", "imagenet-2012", "--variant", "val"]
-    # The next job takes the board's copy and reads neither source.
+    assert (datasets / "imagenet-2012-val.unpacked").read_text() == f"{digest} {origin}\n"
+    # The share is read in place, so a share job writes only the job's datasets. The Dataset Registry adds its
+    # archive cache and the lock that orders downloads.
+    assert written == ({"datasets"} if source == "share" else {"datasets", "cache", "locks", "registry-calls"})
+    assert calls.exists() == (origin == "registry")
+    if source == "registry":
+        # A machine without the share says nothing about it.
+        assert "shared dataset archive share" not in messages
+    if source == "share_with_another_archive":
+        assert messages.count("\n") == 1
+        assert messages.startswith("The shared dataset archive share cannot give imagenet-2012 val (dataset SHA-256 "
+                                   "mismatch")
+    # A later step of the job reuses the unpack and reads neither source.
     archive.unlink()
     shutil.rmtree(tmp_path / "unmounted", ignore_errors=True)
     calls.unlink(missing_ok=True)
-    assert unpack()[0]["source"] == "board"
+    assert unpack()[0] == resolution
     assert not calls.exists()
 
 
@@ -961,23 +974,21 @@ def test_the_devkit_downloads_the_build_files_without_credentials() -> None:
         assert "steps.build.outcome == 'success'" in step(steps, name)["if"], name
 
 
-def test_the_devkit_removes_the_build_files_however_the_job_ends_and_keeps_the_dataset_store(
-    tmp_path: Path,
-) -> None:
+def test_the_devkit_removes_the_build_files_and_datasets_however_the_job_ends(tmp_path: Path) -> None:
     benchmark = load_workflow()["jobs"]["benchmark"]
     cleanup = benchmark["steps"][-1]
 
-    assert cleanup["name"] == "Remove the build files and scratch folder from the DevKit"
+    assert cleanup["name"] == "Remove the build files and datasets from the DevKit"
     assert cleanup["if"] == "always()"
     assert benchmark["env"]["WORK_DIR"].startswith("/media/nvme/neat-tests/")
-    work = tmp_path / "scratch"
-    for path in (tmp_path / "_compiled/resnet_50/w8a8/model", work / "site-packages"):
+    assert benchmark["env"]["DATASET_DIR"].startswith("/media/nvme/neat-tests/")
+    work, datasets = tmp_path / "scratch", tmp_path / "datasets"
+    for path in (tmp_path / "_compiled/resnet_50/w8a8/model", work / "site-packages", datasets / "imagenet"):
         path.mkdir(parents=True)
-    subprocess.run(["bash", "-c", cleanup["run"]], cwd=tmp_path, check=True, env={**os.environ, "WORK_DIR": str(work)})
+    (datasets / "imagenet.unpacked").write_text("0" * 64 + " share\n")
+    subprocess.run(["bash", "-c", cleanup["run"]], cwd=tmp_path, check=True,
+                   env={**os.environ, "WORK_DIR": str(work), "DATASET_DIR": str(datasets)})
     assert sorted(path.name for path in tmp_path.iterdir()) == []
-    # Only the unpack script removes a copy from the board's dataset store, after 30 days without use.
-    workflow = BENCHMARK_WORKFLOW.read_text(encoding="utf-8")
-    assert "datasets/unpacked" not in workflow and "DATASET_STORE" not in workflow
 
 
 def test_benchmark_runs_only_on_its_source_branch() -> None:
@@ -1282,8 +1293,10 @@ command = sys.argv[3]
 if command == 'devkit-accuracy-datasets':
     print(json.dumps({{"name": "imagenet-2012-val", "sha256": "a" * 64, "size_bytes": 1,
                       **({{"samples": {samples!r}}} if {samples!r} else {{}})}}))
+elif command == 'unpack-shared-dataset':
+    sys.exit(1)
 elif command == 'resolve-accuracy-dataset':
-    print(json.dumps({{"path": {str(dataset)!r}, "source": "registry"}}))
+    print({str(dataset)!r})
 elif command == 'model-component-mpks':
     print('image_encoder=image.tar.gz\\ntext_encoder=text.tar.gz')
 elif command != 'check-report':
@@ -1320,11 +1333,9 @@ def test_accuracy_runner_passes_only_verified_local_resources(tmp_path, supporti
     if supporting_files:
         assert arguments[arguments.index("--resources") + 1] == str(profile)
     assert arguments.count("--mpk") == 2
-    # From the board's dataset store, looking through the archive's single top-level directory. The store outlives
-    # the runner's scratch folder.
-    dataset = tmp_path / "store" / ("a" * 64) / "dataset/val2012"
+    # Unpacked under the runner's scratch folder, looking through the archive's single top-level directory.
+    dataset = tmp_path / "scratch/datasets/imagenet-2012-val/val2012"
     assert arguments[arguments.index("--dataset") + 1] == f"imagenet-2012-val={dataset}"
-    assert (dataset / "image.JPEG").is_file()
 
 
 @pytest.mark.parametrize("samples", [None, 500])
