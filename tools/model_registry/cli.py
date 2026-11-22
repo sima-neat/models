@@ -740,7 +740,7 @@ def _check_main_merge(args: argparse.Namespace) -> int:
     for blocker in result["blockers"]:
         print(blocker)
     if result["blockers"]:
-        print("blocked: main would compile or show fewer results after this merge")
+        print("blocked: this merge would change what customers see on main")
         return 1
     print("main takes every build and result from develop")
     return 0

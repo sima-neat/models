@@ -131,7 +131,7 @@ later or never. Apply them while you write.
 - **Comment out a profile that fails the reference test on `develop` before the merge into
   `main`.** The DevKit accuracy test fails a measured accuracy more than
   `ACCURACY_ALLOWED_REFERENCE_DROP` below the reference score, but the stage still publishes
-  its report. `check-main-merge` (`find_main_merge_blockers` in `stage_plan.py`) checks only
+  its report. `check-main-merge` (`find_main_merge_blockers` in `stage_plan.py`) checks
   that each profile has a completed result, not its test outcome, so it lets the merge carry
   the profile to customers.
 

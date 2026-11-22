@@ -95,7 +95,7 @@ def test_promoted_benchmark_planning_command_reads_the_selected_catalog(monkeypa
 @pytest.mark.parametrize(("blockers", "exit_code", "last_line"), [
     ([], 0, "main takes every build and result from develop"),
     (["x/w8a8 has no accuracy result on develop"], 1,
-     "blocked: main would compile or show fewer results after this merge"),
+     "blocked: this merge would change what customers see on main"),
 ])
 def test_main_merge_check_command_prints_each_reason_and_fails_on_a_blocker(
     blockers, exit_code, last_line, monkeypatch, capsys,

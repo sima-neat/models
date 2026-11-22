@@ -243,9 +243,11 @@ lists `main`'s promoted builds and nothing else takes this one out:
   main](#promote-the-same-candidate-to-main)).
 - The browser lists every profile whose approval the registry returns, declared or not
   (`deploymentCatalog` in `artifact-browser/branch-builds.js`).
-- `check-main-merge` does not ask whether a promoted profile is still declared
-  (`find_main_merge_blockers` in `stage_plan.py`), so it does not block the merge into
-  `main` on it.
+
+`check-main-merge` fails a pull request into `main` while `develop`'s or `main`'s catalog
+still promotes such a profile, and names the branch to withdraw on
+([the merge check for main](ci-flow.md#the-merge-check-for-main)). Nothing checks a merge
+into `develop`.
 
 What the registry does with an approval whose profile is no longer declared is not
 verified here. Check the target catalog after the withdrawal.

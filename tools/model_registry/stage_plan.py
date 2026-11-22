@@ -342,8 +342,9 @@ def find_main_merge_blockers(
     """Say why merging the default branch's `head` into the production branch would change what customers see.
 
     `repository` is checked out at the merge result. A blocker means the production branch would compile,
-    or would show a model without the results it shows today. A warning names a promoted build the merge
-    leaves without results until it is promoted on the production branch too.
+    would show a model without the results it shows today, or would keep offering a promoted build of a
+    build profile the merge result no longer declares. A warning names a promoted build the merge leaves
+    without results until it is promoted on the production branch too.
     """
     root = Path(repository).expanduser().resolve()
     blockers: list[str] = []
@@ -383,6 +384,19 @@ def find_main_merge_blockers(
             for profile_id in shown
             for stage in _missing_results(read, read_api_url, model, profile_id)
         )
+    declared = {
+        model_id: {profile["id"] for profile in model["build_profiles"]}
+        for model_id, model in load_models(root).items()
+    }
+    # Only a withdrawal takes a promoted build out of a catalog, so the registry keeps offering this one.
+    blockers.extend(
+        f"{model['id']}/{profile_id} is promoted on {branch}, and model.yaml no longer declares it: "
+        f"withdraw the promotion on {branch}"
+        for branch, catalog in ((DEFAULT_BRANCH, document), (PRODUCTION_BRANCH, production or {}))
+        for model in catalog.get("models", [])
+        for profile_id in sorted(model.get("approved_deployments", {}))
+        if profile_id not in declared.get(model["id"], set())
+    )
     return {"blockers": blockers, "warnings": warnings}
 
 

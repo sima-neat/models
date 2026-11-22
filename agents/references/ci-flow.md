@@ -43,8 +43,8 @@ package and portal build. It compiles nothing, verifies no MPK, and measures not
 
 `main` takes its builds and results from `develop`
 ([merge into main](branch-catalogs.md#merge-into-main)). The `main-merge` job therefore
-fails a pull request into `main` when the merge would make `main` compile or show fewer
-results. It runs `model-registry check-main-merge` (`find_main_merge_blockers` in
+fails a pull request into `main` when the merge would make `main` compile, show fewer
+results, or keep a promoted build of a profile that is no longer declared. It runs `model-registry check-main-merge` (`find_main_merge_blockers` in
 `stage_plan.py`), which reads the production registry without credentials and prints one
 line for each of these blockers:
 
@@ -57,6 +57,10 @@ line for each of these blockers:
    completed run.
 5. An on-demand profile that `main` and `develop` promote to the same deployment has a
    benchmark fingerprint without a completed run. LLM and VLM profiles count.
+6. `develop`'s or `main`'s catalog promotes a profile that the merge result's `model.yaml`
+   no longer declares, or whose model folder is gone. The line names the branch to
+   withdraw the promotion on
+   ([when a promoted profile leaves `model.yaml`](promotion-operations.md#when-a-promoted-profile-leaves-modelyaml)).
 
 It prints a warning and still passes when `main` promotes an on-demand profile to a
 deployment that `develop` does not promote. That profile shows no results on `main` from
