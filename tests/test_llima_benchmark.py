@@ -1,6 +1,9 @@
 """GenAI measurement boundaries and registered compilation reuse."""
 
 import json
+import os
+import signal
+import sys
 from pathlib import Path
 
 import pytest
@@ -75,6 +78,29 @@ def report():
 )
 def test_buckets_cover_headroom_boundary(context, expected):
     assert bench.input_buckets(context) == expected
+
+
+def test_a_terminated_benchmark_exits_through_its_finally_blocks(monkeypatch, tmp_path):
+    stopped = []
+
+    def run_benchmark(deployment, output, baseline):
+        try:
+            os.kill(os.getpid(), signal.SIGTERM)
+        finally:
+            # BoardTelemetry.measure stops its Sentinel recording in a finally block like this one.
+            stopped.append(True)
+
+    monkeypatch.setattr(bench, "run_benchmark", run_benchmark)
+    monkeypatch.setattr(sys, "argv", ["performance.py", "--deployment", str(tmp_path), "--output", str(tmp_path)])
+    previous = signal.getsignal(signal.SIGTERM)
+    try:
+        with pytest.raises(SystemExit) as exit_request:
+            bench.main()
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+
+    assert exit_request.value.code == 128 + signal.SIGTERM
+    assert stopped
 
 
 def test_text_rate_uses_actual_decode_time_and_excludes_ttft():
