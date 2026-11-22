@@ -1042,6 +1042,18 @@ def _remaining_pending_builds(prior: JsonObject, document: JsonObject) -> list[J
 CATALOG_CONFLICT_RETRY_SECONDS = 180
 
 
+def _without_selections(model: JsonObject) -> JsonObject:
+    """A catalog entry without its server-owned selections and without the benchmark fingerprints of their
+    profiles, which the registry rejects once the builds they name are gone."""
+    selected = {profile_id for key in SERVER_OWNED_SELECTIONS for profile_id in model.get(key, {})}
+    entry = {key: value for key, value in model.items() if key not in SERVER_OWNED_SELECTIONS}
+    fingerprints = {profile_id: value for profile_id, value in entry.pop("benchmark_fingerprints", {}).items()
+                    if profile_id not in selected}
+    if fingerprints:
+        entry["benchmark_fingerprints"] = fingerprints
+    return entry
+
+
 def publish_catalog(
     *,
     repository: str | Path,
@@ -1153,9 +1165,7 @@ def publish_catalog(
                     if model["id"] in deferred:
                         # The registry fills in this ref's own approved and branch deployments and rejects a
                         # snapshot that carries another ref's, such as a base branch's promoted builds.
-                        previous["models"].append(
-                            {key: value for key, value in model.items() if key not in SERVER_OWNED_SELECTIONS}
-                        )
+                        previous["models"].append(_without_selections(model))
                         previous.setdefault("pending_builds", []).extend(
                             item for item in source.get("pending_builds", []) if item["model_id"] == model["id"]
                         )

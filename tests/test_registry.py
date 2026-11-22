@@ -1670,9 +1670,13 @@ def test_main_seeds_a_new_revision_with_the_builds_develop_finished(monkeypatch,
 
 def test_deferred_conversion_inheritance_leaves_base_branch_selections_to_the_registry(monkeypatch):
     """A dispatch that selects other conversions must not post a base branch's approved builds as its own."""
-    base = {"id": "deferred", "builds": [], "packages": [{"run_id": "base-package"}],
+    automatic = {"build_profile_id": "w16a16", "component_id": "model", "run_id": "base-build"}
+    base = {"id": "deferred", "builds": [automatic], "packages": [{"run_id": "base-package"}],
             "approved_deployments": {"w8a8": {"run_id": "approved"}},
-            "branch_deployments": {"w8a8": {"run_id": "branch"}}}
+            "branch_deployments": {"w8a16": {"run_id": "branch"}},
+            # The registry rejects fingerprints of a profile whose builds the snapshot does not hold.
+            "benchmark_fingerprints": {"w8a8": {"accuracy": "a"}, "w8a16": {"accuracy": "b"},
+                                       "w16a16": {"accuracy": "c"}}}
     monkeypatch.setattr("model_registry.registry.load_models", lambda root: {"deferred": object()})
     monkeypatch.setattr("model_registry.registry._catalog_models", lambda models: {})
     monkeypatch.setattr("model_registry.registry._head_matrix", lambda *args: [])
@@ -1686,7 +1690,8 @@ def test_deferred_conversion_inheritance_leaves_base_branch_selections_to_the_re
             {"document": {"models": [base], "pending_builds": []}} if url.endswith("develop") else None
         )},
     )["catalog"]
-    assert result["models"] == [{"id": "deferred", "builds": [], "packages": [{"run_id": "base-package"}]}]
+    assert result["models"] == [{"id": "deferred", "builds": [automatic], "packages": [{"run_id": "base-package"}],
+                                 "benchmark_fingerprints": {"w16a16": {"accuracy": "c"}}}]
 
 
 @pytest.mark.parametrize("continuing_revision", [False, True])
