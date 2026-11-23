@@ -45,3 +45,17 @@ def test_description_is_only_allowed_on_families(tmp_path: Path) -> None:
     path.write_text(yaml.safe_dump(taxonomy))
     with pytest.raises(ValidationError, match="unknown fields: description"):
         load_taxonomy(path)
+
+
+def test_a_loaded_taxonomy_is_the_file_as_it_is_now_and_the_caller_owns_it(tmp_path: Path) -> None:
+    """The parsed taxonomy is cached per file content, so neither an edit nor a caller's change may leak."""
+    path = tmp_path / "taxonomy.yaml"
+    path.write_text(TAXONOMY.read_text(encoding="utf-8"), encoding="utf-8")
+    first = load_taxonomy(path)
+    first["model_types"].clear()
+    assert load_taxonomy(path) == load_taxonomy(TAXONOMY)
+
+    edited = load_taxonomy(TAXONOMY)
+    edited["model_types"]["added"] = {"display_name": "Added"}
+    path.write_text(yaml.safe_dump(edited), encoding="utf-8")
+    assert "added" in load_taxonomy(path)["model_types"]

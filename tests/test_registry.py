@@ -1640,6 +1640,35 @@ def test_deferred_conversion_inheritance_respects_catalog_revision(monkeypatch, 
     assert result.get("pending_builds", []) == ([pending] if has_previous else [])
 
 
+@pytest.mark.parametrize("continuing_revision", [False, True])
+def test_main_seeds_a_new_revision_with_the_builds_develop_finished(monkeypatch, continuing_revision):
+    """A re-run of the same revision keeps the builds its first snapshot listed."""
+    def catalog(origin):
+        return {"models": [{"id": "x", "packages": [], "builds": [{
+            "build_profile_id": "w8a8", "component_id": "model", "compile_fingerprint": "k", "run_id": origin,
+        }]}]}
+
+    target = {"catalog_revision": ("a" if continuing_revision else "b") * 40, "canonical_sha256": "c" * 64,
+              "document": catalog("main")}
+    monkeypatch.setattr("model_registry.registry.load_models", lambda root: {"x": object()})
+    monkeypatch.setattr("model_registry.registry._catalog_models", lambda models: models)
+    monkeypatch.setattr("model_registry.registry._head_matrix", lambda *args: [
+        {"model_id": "x", "build_profile_id": "w8a8", "component_ids": ["model"], "compile_fingerprint": "k"},
+    ])
+    monkeypatch.setattr("model_registry.registry.build_catalog_snapshot", lambda **kwargs: kwargs["previous"])
+    monkeypatch.setattr("model_registry.registry._refresh_approved_benchmarks", lambda *args, **kwargs: None)
+    result = publish_catalog(
+        repository=ROOT, api_url="https://registry.example.invalid",
+        read_api_url="https://registry.example.invalid", aws_region="us-west-2",
+        branch="main", git_sha="a" * 40,
+        request=lambda *args: {"stored": True},
+        read_request=lambda url: {"catalog": {"document": catalog("develop")} if url.endswith("develop") else target},
+    )["catalog"]
+    assert [build["run_id"] for build in result["models"][0]["builds"]] == [
+        "main" if continuing_revision else "develop",
+    ]
+
+
 def test_deferred_conversion_inheritance_leaves_base_branch_selections_to_the_registry(monkeypatch):
     """A dispatch that selects other conversions must not post a base branch's approved builds as its own."""
     base = {"id": "deferred", "builds": [], "packages": [{"run_id": "base-package"}],

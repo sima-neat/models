@@ -27,7 +27,7 @@ from .model import (
 )
 from .model_tests import TEST_OUTCOMES, low_accuracy_variants
 from .runner_approval import authorize_runner_matrix
-from .stage_plan import plan_promoted_benchmarks, plan_stages, resolve_base_branches
+from .stage_plan import find_main_merge_blockers, plan_promoted_benchmarks, plan_stages, resolve_base_branches
 
 AUTHOR_COMMANDS = frozenset(
     {
@@ -184,6 +184,13 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     promoted.add_argument("--api-url", required=True)
     promoted.add_argument("--branch", required=True, choices=("develop", "main"))
     promoted.add_argument("--stages", default="performance,accuracy")
+
+    merge = subcommands.add_parser(
+        "check-main-merge", help="check that merging develop into main changes nothing customers see (CI only)"
+    )
+    merge.add_argument("--repository", type=Path, default=Path.cwd(), help="a checkout of the merge result")
+    merge.add_argument("--head", required=True, help="the develop commit being merged")
+    merge.add_argument("--api-url", required=True)
 
     authorize = subcommands.add_parser(
         "authorize-runner-matrix",
@@ -707,6 +714,23 @@ def _plan_stages(args: argparse.Namespace) -> int:
     return 0
 
 
+def _check_main_merge(args: argparse.Namespace) -> int:
+    from .registry import _public_registry_json
+
+    result = find_main_merge_blockers(
+        args.repository, head=args.head, read=_public_registry_json, read_api_url=args.api_url,
+    )
+    for warning in result["warnings"]:
+        print(f"warning: {warning}")
+    for blocker in result["blockers"]:
+        print(blocker)
+    if result["blockers"]:
+        print("blocked: main would compile or show fewer results after this merge")
+        return 1
+    print("main takes every build and result from develop")
+    return 0
+
+
 def _authorize_runner_matrix(args: argparse.Namespace) -> int:
     try:
         matrix = json.loads(args.matrix.read_text(encoding="utf-8"))
@@ -1108,6 +1132,8 @@ def _main(argv: Sequence[str] | None, *, author_safe: bool) -> int:
                 read=_public_registry_json, read_api_url=args.api_url,
             ), sort_keys=True))
             return 0
+        if args.command == "check-main-merge":
+            return _check_main_merge(args)
         if args.command == "authorize-runner-matrix":
             return _authorize_runner_matrix(args)
         if args.command == "resolve-base":

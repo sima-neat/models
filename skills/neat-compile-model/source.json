@@ -1,0 +1,79 @@
+{
+  "repository": "sima-neat/model-compiler",
+  "commit": "661044476aafd629f3aa7cacb53ba2d4031e29b1",
+  "note": "Each sha256 is the SHA-256 of its source file at this commit. SKILL.md, playbook.yml, the files under references/, and scripts/onnx_static_simplify.py were edited after the copy. The other files under scripts/ and the file under data/ are byte-identical to their sources.",
+  "files": {
+    "SKILL.md": [
+      {
+        "source": "skills/model_surgery/SKILL.md",
+        "sha256": "9843d8fc0dd2cde98394390a3f509ae353cb1c951bd405527556c20f15314c99"
+      },
+      {
+        "source": "skills/model_optimization/SKILL.md",
+        "sha256": "03bb4a79d7a46c6058b41e6365164ce8a9fd68e03b28095b3908575b65dde5c9"
+      },
+      {
+        "source": "skills/quantize_compile/SKILL.md",
+        "sha256": "15f55c39b1d56417883346e50e0cc1c3a928f8b063640ab6467d879b633ca08a"
+      }
+    ],
+    "playbook.yml": [
+      {
+        "source": "skills/model_surgery/playbook.yml",
+        "sha256": "bcac0b47434c11cab568a902aca626a4963b19109593604f322e9d5a612141a0"
+      },
+      {
+        "source": "skills/model_optimization/playbook.yml",
+        "sha256": "e4c1aba0d837bb459bf71c076d2c4e62143890932b893460020213a1e9c65e90"
+      },
+      {
+        "source": "skills/quantize_compile/playbook.yml",
+        "sha256": "b0ff74624856b1eac4c385d13ef1c3ee536a207f13f89eac0d509f222ae14cea"
+      }
+    ],
+    "data/supported_operators.json": {
+      "source": "skills/model_surgery/data/supported_operators.json",
+      "sha256": "d21c0beef790882dae71640d1b8fc10e3917ed3a9f34bdd99a41e209bf2e7e58"
+    },
+    "references/boxdecode.md": {
+      "source": "skills/model_surgery/references/boxdecode.md",
+      "sha256": "cf780e000cd5f04a4ccdc9fb7116860775c13dff9cad6325803cc11a7e276233"
+    },
+    "references/compatibility_patterns.md": {
+      "source": "skills/model_surgery/references/compatibility_patterns.md",
+      "sha256": "961b530ae5cb4fbe0692585ba9516dd25344d54542c401a85cf897f7b20a4bb8"
+    },
+    "references/composite_patterns.md": {
+      "source": "skills/model_surgery/references/composite_patterns.md",
+      "sha256": "446f64cbd7d748386101f525d6e0a1451171ecedacc8588b7f57c4aacf100c7b"
+    },
+    "references/operator_database.md": {
+      "source": "skills/model_surgery/references/operator_database.md",
+      "sha256": "61545c88c1e4ac8ca03b8ff2df27749fc170fc1fbcdbf99dc03b33443ac2a4b0"
+    },
+    "references/optimization_patterns.md": {
+      "source": "skills/model_optimization/references/optimization_patterns.md",
+      "sha256": "1d061d513acead82e756c16bc3bca1786e6535fc524045bc6727a02145d7d627"
+    },
+    "references/quantize_compile.md": {
+      "source": "skills/quantize_compile/SKILL.md",
+      "sha256": "15f55c39b1d56417883346e50e0cc1c3a928f8b063640ab6467d879b633ca08a"
+    },
+    "scripts/download_onnx.py": {
+      "source": "skills/model_surgery/scripts/download_onnx.py",
+      "sha256": "cb9cf6afc062b8266b5b1dcf877be17a771458cc94a0322eccb02738c371cb97"
+    },
+    "scripts/model_surgery_guard.py": {
+      "source": "skills/model_surgery/scripts/model_surgery_guard.py",
+      "sha256": "d28e7dd287ffc011c300855de40df156147d68a7b24a9e55af2f8bd859faaf8e"
+    },
+    "scripts/onnx_static_simplify.py": {
+      "source": "skills/model_surgery/scripts/onnx_static_simplify.py",
+      "sha256": "7e04dfa60994d7b3e393671c01a4b26beb9eb2efc133b2c2df72df7e516d35a8"
+    },
+    "scripts/quantize_compile.py": {
+      "source": "skills/quantize_compile/scripts/quantize_compile.py",
+      "sha256": "8c127255a1be8364cee485474297cf432d13925cc170e517e072fe5b7140b762"
+    }
+  }
+}

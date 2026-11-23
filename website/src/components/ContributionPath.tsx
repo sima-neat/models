@@ -30,7 +30,7 @@ const stages: Stage[] = [
     number: '03',
     title: 'Benchmark MPK',
     action: ['Run the exact MPK', 'on a Modalix DevKit'],
-    success: ['Machine-readable', 'performance result'],
+    success: ['Performance and', 'accuracy reports'],
     guide: 'benchmarking',
     guideLabel: 'Benchmarking',
   },
@@ -45,7 +45,7 @@ const stages: Stage[] = [
   {
     number: '05',
     title: 'PR validates',
-    action: ['Validate catalog + matrix', 'Keep contributor code off Vulcan'],
+    action: ['Lint, tests, catalog', 'No compile, no DevKit'],
     success: ['Safe, deterministic', 'review signal'],
     guide: 'contributing#ci-and-trust-boundaries',
     guideLabel: 'PR checks',
@@ -53,8 +53,8 @@ const stages: Stage[] = [
   {
     number: '06',
     title: 'Trusted automation',
-    action: ['Compile + measure accuracy', 'Publish + benchmark staging'],
-    success: ['Trusted evidence', 'and provenance'],
+    action: ['Compile changed builds', 'Measure on DevKits'],
+    success: ['Published results', 'and provenance'],
     guide: 'contributing#after-merge-trusted-staging-automation',
     guideLabel: 'After merge',
   },
