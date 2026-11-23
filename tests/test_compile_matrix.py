@@ -12,7 +12,12 @@ from model_registry.compile_matrix import build_matrix
 from model_registry.conversion import conversion_fingerprint
 from model_registry.dependencies import resolve_model_compiler
 from model_registry.errors import ValidationError
-from model_registry.fingerprints import COMPILE_TOOLING, benchmark_fingerprint, compile_fingerprint
+from model_registry.fingerprints import (
+    COMPILE_TOOLING,
+    SPEECH_ACCURACY_TOOLING,
+    benchmark_fingerprint,
+    compile_fingerprint,
+)
 from model_registry.model import load_and_validate_model, load_models
 from model_registry.registry import RegistryPublicationError, publish_catalog
 
@@ -393,7 +398,8 @@ def _copy_repository(repository: Path, model_id: str) -> Path:
     return repository / "models" / model_id
 
 
-def test_only_speech_accuracy_reruns_when_the_transcript_scorer_changes(tmp_path: Path) -> None:
+@pytest.mark.parametrize("scorer", SPEECH_ACCURACY_TOOLING)
+def test_only_speech_accuracy_reruns_when_the_transcript_scorer_changes(tmp_path: Path, scorer: str) -> None:
     """A scoring change reruns the accuracy of models that must report WER or CER, and no other model's."""
     model_dir = _copy_repository(tmp_path, "rf_detr_small")
     detector = load_and_validate_model(model_dir, tmp_path / "schemas" / "model.schema.json")
@@ -406,8 +412,8 @@ def test_only_speech_accuracy_reruns_when_the_transcript_scorer_changes(tmp_path
                 for model in (detector, transcriber)]
 
     before = fingerprints()
-    scorer = tmp_path / "tools" / "model_report" / "speech.py"
-    scorer.write_text(scorer.read_text(encoding="utf-8") + "# newer\n", encoding="utf-8")
+    path = tmp_path / scorer
+    path.write_text(path.read_text(encoding="utf-8") + "# newer\n", encoding="utf-8")
     after = fingerprints()
 
     assert after[0] == before[0]

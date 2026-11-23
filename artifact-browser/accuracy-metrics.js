@@ -62,6 +62,7 @@ export const ACCURACY_METRIC_LABELS = {
   delta1: "δ1",
   miou: "mIoU",
   wer: "WER",
+  wer_as_written: "WER as written",
   cer: "CER",
 };
 
@@ -71,6 +72,7 @@ export const ACCURACY_METRIC_SCALES = {
   d1_all: { unit: "%", direction: "lower" },
   abs_rel: { unit: "ratio", direction: "lower", display: {unit: "", scale: 1} },
   wer: { unit: "ratio", direction: "lower" },
+  wer_as_written: { unit: "ratio", direction: "lower" },
   cer: { unit: "ratio", direction: "lower" },
 };
 
