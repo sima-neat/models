@@ -1,0 +1,22 @@
+compile:
+  run_tests: true
+accuracy:
+  run_tests: true
+  expected:
+    w16a16:
+      oscd-default:
+        change_f1: 0.5448
+        change_precision: 0.5012
+        change_recall: 0.5968
+    w8a8:
+      oscd-default:
+        change_f1: 0.5452
+        change_precision: 0.5126
+        change_recall: 0.5821
+performance:
+  run_tests: true
+  expected:
+    w16a16:
+      throughput_fps: 178.5
+    w8a8:
+      throughput_fps: 277.5
