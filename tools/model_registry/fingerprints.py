@@ -65,7 +65,11 @@ ACCURACY_TOOLING = (
 # The shared transcript scorer, hashed only for models whose accuracy datasets require a speech metric, so a
 # scoring change reruns their accuracy and no other model's.
 SPEECH_METRICS = {"wer", "cer"}
-SPEECH_ACCURACY_TOOLING = ("tools/model_report/speech.py",)
+SPEECH_ACCURACY_TOOLING = (
+    "tools/model_report/english_normalizer.py",
+    "tools/model_report/english_spelling.json",
+    "tools/model_report/speech.py",
+)
 
 
 def _hash_files(digest: Any, root: Path, paths: set[Path] | list[Path]) -> None:

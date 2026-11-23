@@ -89,5 +89,7 @@ test('speech error rates are lower-is-better percentages that may exceed 100%', 
   assert.equal(formatAccuracy('wer', 0.0842), '8.42%');
   assert.equal(formatAccuracy('wer', 1.25), '125.00%');
   assert.deepEqual(accuracyDisplay('cer', 0.031), {number: 3.1, unit: '%', direction: 'lower'});
-  assert.deepEqual(orderedMetricNames(['cer', 'wer']), ['wer', 'cer']);
+  assert.equal(accuracyMetricLabel('wer_as_written'), 'WER as written');
+  assert.equal(formatAccuracy('wer_as_written', 0.0651), '6.51%');
+  assert.deepEqual(orderedMetricNames(['cer', 'wer_as_written', 'wer']), ['wer', 'wer_as_written', 'cer']);
 });
