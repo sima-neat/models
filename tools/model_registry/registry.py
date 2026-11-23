@@ -452,6 +452,7 @@ def _refresh_approved_benchmarks(
                 continue
             builds = {build["component_id"]: build for build in _catalog_outputs({
                 "approved_deployments": {selected_profile: selection},
+                "build_requirements": previous[entry["id"]].get("build_requirements", {}),
             })[0]}
             if set(builds) != {component["id"] for component in model["components"]}:
                 continue

@@ -1199,6 +1199,26 @@ def test_approved_profile_without_a_benchmark_declaration_drops_legacy_fingerpri
     assert "benchmark_fingerprints" not in document["models"][0]
 
 
+def test_approved_selection_without_requirements_takes_the_source_models_build_requirements(monkeypatch):
+    from model_registry.registry import _refresh_approved_benchmarks
+
+    model_id, profile = "resnet_50", "w8a8"
+    model = load_models(ROOT)[model_id]
+    components = [component["id"] for component in model["components"]]
+    selection = {"deployment_id": "d", "manifest_digest": "e" * 64, "artifacts": [
+        {"role": f"compile-{component}", "component_id": component, "run_id": f"run-{component}",
+         "artifact_name": "mpk"} for component in components]}
+    requirements = {"packages": [], "invocations": [
+        {"id": profile, "component_ids": components, "compile_fingerprint": "f" * 64}]}
+    source = {"models": [{"id": model_id, "approved_deployments": {profile: selection},
+                          "build_requirements": {profile: requirements}}]}
+    document = {"git_ref": "refs/heads/develop", "models": [{"id": model_id, "builds": []}]}
+    monkeypatch.setattr("model_registry.registry.load_and_validate_model", lambda *args: model)
+    _refresh_approved_benchmarks(
+        ROOT, document, source, "https://reader.example.invalid", lambda url: {"artifact": {"sha256": "a" * 64}})
+    assert set(document["models"][0]["benchmark_fingerprints"][profile]) == {"performance", "accuracy"}
+
+
 def test_publish_catalog_keys_bind_dispatch_specific_documentation_receipts(monkeypatch) -> None:
     calls: list[tuple[str, str, dict | None, str]] = []
     target_catalog = {"canonical_sha256": "c" * 64, "catalog_revision": "b" * 40, "document": {"models": []}}

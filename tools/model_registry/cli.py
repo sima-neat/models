@@ -40,6 +40,7 @@ AUTHOR_COMMANDS = frozenset(
         "authorize-runner-matrix",
         "assemble-package",
         "resolve-compiler",
+        "resolve-devkit-datasets",
         "simulate-mla-stages",
         "validate",
         "validate-models",
