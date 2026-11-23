@@ -12,6 +12,7 @@ from model_registry.fingerprints import (
     LLIMA_PERFORMANCE_TOOLING,
     PERFORMANCE_TOOLING,
     SPEECH_ACCURACY_TOOLING,
+    TRANSCRIPTION_PERFORMANCE_TOOLING,
 )
 
 from tests.test_compile_workflow import evaluate
@@ -856,6 +857,8 @@ def test_cleanup_removes_input_and_both_evidence_artifacts(tmp_path: Path) -> No
     ("tools/model_registry/model.py", "core", True),
     ("tools/model_report/generation_benchmark.py", "core", False),
     ("tools/model_report/generation_benchmark.py", "llima", True),
+    ("tools/model_report/transcription_benchmark.py", "core", False),
+    ("tools/model_report/transcription_benchmark.py", "llima", True),
     ("tools/model_report/speech.py", "core", True),
 ])
 def test_board_runs_require_the_measured_revisions_tooling(tmp_path, relative, backend, rejected) -> None:
@@ -865,6 +868,7 @@ def test_board_runs_require_the_measured_revisions_tooling(tmp_path, relative, b
     assert stage["steps"].index(step(stage["steps"], "Resolve benchmark job settings")) < stage["steps"].index(guard)
     source = tmp_path / "_source"
     for item in {*PERFORMANCE_TOOLING, *ACCURACY_TOOLING, *LLIMA_PERFORMANCE_TOOLING, *SPEECH_ACCURACY_TOOLING,
+                 *TRANSCRIPTION_PERFORMANCE_TOOLING,
                  "tools/model_registry/benchmark_declarations.py", "tools/model_registry/model.py"}:
         (source / item).parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / item, source / item)

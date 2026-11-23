@@ -1,3 +1,6 @@
 compile:
   run_tests: false
   skip_reason: Model-specific tests are deferred; the shared LLiMa artifact verifier checks deployment files and checksums.
+performance:
+  run_tests: false
+  skip_reason: Initial baseline collection; regression thresholds will be set from the first DevKit measurement.

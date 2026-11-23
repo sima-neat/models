@@ -41,3 +41,10 @@ build_profiles:
     components:
       model:
         parameters: {precision: a16w8, use_future_token_mask: true, enable_log_probe: true}
+
+performance:
+  dataset:
+    id: fleurs
+    variant: en-us-test
+    sha256: c2b7984079a73f169b147f531699af5ffe0eb60bb071277ac9f4a455e786acb2
+    size_bytes: 289947446

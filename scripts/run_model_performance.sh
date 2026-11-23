@@ -49,16 +49,21 @@ json_field() {
   "$REGISTRY_PYTHON" -c 'import json, sys; print(json.load(sys.stdin)[sys.argv[1]])' "$1"
 }
 
-backend="$("$REGISTRY_PYTHON" -c '
+# A Core model runs in PyNeat. A native LLiMa model runs in MoLE, except a speech recognition model such as
+# Whisper, which PyNeat runs through Neat's GenAI server.
+read -r backend runner < <("$REGISTRY_PYTHON" -c '
 import sys
+from model_registry.benchmark_declarations import transcription_benchmark
 from model_registry.model import load_model
-print("llima" if load_model(sys.argv[1])["components"][0]["interface"]["format"] == "huggingface" else "core")
-' "$MODEL_DIR")"
+model = load_model(sys.argv[1])
+native = model["components"][0]["interface"]["format"] == "huggingface"
+print("llima" if native else "core", "pyneat" if not native or transcription_benchmark(model) else "mole")
+' "$MODEL_DIR")
 
 # The script takes its performance dataset, falling back to the first accuracy dataset, as <name>=<path>.
 # Unpack it and look through a single top-level directory. A model without either input gets none.
 dataset=()
-if [[ "$backend" == core ]]; then
+if [[ "$runner" == pyneat ]]; then
 mkdir -p "$DATASET_CACHE" "$(dirname "$DATASET_LOCK")"
 resolutions="$(flock --wait "$DATASET_LOCK_SECONDS" --close "$DATASET_LOCK" \
   timeout --signal=TERM --kill-after=30s "$RESOLVE_TIMEOUT_SECONDS" "$REGISTRY_PYTHON" -m model_registry resolve-devkit-datasets "$MODEL_DIR" --stage performance \
@@ -123,7 +128,7 @@ if (( cpu_frequency_khz != CPU_FREQUENCY_KHZ )); then
 fi
 
 mkdir -p "$OUTPUT_DIR"
-if [[ "$backend" == llima ]]; then
+if [[ "$runner" == mole ]]; then
   deployment="$(dirname "${inputs[0]#*=}")/deployment"
   export HF_HOME="${HF_HOME:-/media/nvme/huggingface}"
   baseline=()
@@ -132,6 +137,10 @@ if [[ "$backend" == llima ]]; then
   fi
   PYTHONPATH="$REPOSITORY/tools" PYTHONDONTWRITEBYTECODE=1 "$LLIMA_MOLE_PYTHON" "$MODEL_DIR/scripts/performance.py" \
     --deployment "$deployment" "${baseline[@]}" --output "$OUTPUT_DIR" 2>&1 | tee "$OUTPUT_DIR/performance.log"
+elif [[ "$backend" == llima ]]; then
+  PYTHONPATH="$REPOSITORY/tools:$site" PYTHONDONTWRITEBYTECODE=1 "$PYNEAT_PYTHON" "$MODEL_DIR/scripts/performance.py" \
+    --deployment "$(dirname "${inputs[0]#*=}")/deployment" "${dataset[@]}" --output "$OUTPUT_DIR" 2>&1 |
+    tee "$OUTPUT_DIR/performance.log"
 else
   PYTHONPATH="$REPOSITORY/tools:$site" PYTHONDONTWRITEBYTECODE=1 "$PYNEAT_PYTHON" "$MODEL_DIR/scripts/performance.py" \
     "${mpks[@]}" "${dataset[@]}" "${resources[@]}" --output "$OUTPUT_DIR" 2>&1 | tee "$OUTPUT_DIR/performance.log"

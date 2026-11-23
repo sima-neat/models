@@ -29,6 +29,11 @@ DATASET_REQUIREMENTS_DIR = "datasets"
 DATASET_REQUIREMENTS_SCHEMA = "schemas/dataset-requirements.schema.json"
 
 
+def transcription_benchmark(model: dict[str, Any]) -> bool:
+    """A native speech recognition model, such as Whisper, measured through Neat's GenAI server instead of MoLE."""
+    return any(composition.get("entrypoint") == "transcribe" for composition in model.get("compositions", []))
+
+
 def benchmarked_profiles(model: dict[str, Any], stage: str) -> list[str]:
     """The build profiles the stage benchmarks, in model.yaml order."""
     declaration = model.get(stage)

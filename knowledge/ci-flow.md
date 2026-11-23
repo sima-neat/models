@@ -219,7 +219,10 @@ non-production Core index needs `--artifacts-base-url` or `NEAT_ARTIFACTS_BASE_U
 7. runs `check-report`, which validates the report and writes `environment.json`
 
 For the `llima` backend it skips steps 2 to 4 and passes `--deployment`, plus `--baseline`
-when the staged input holds `benchmark-baseline.json`.
+when the staged input holds `benchmark-baseline.json`, and runs the script with MoLE's Python. A
+speech recognition model (`entrypoint: transcribe`, such as Whisper) is the exception: it keeps
+step 2, runs with PyNeat's Python, and gets `--deployment` and `--dataset`, because its script
+measures the deployment through Neat's GenAI server (`tools/model_report/transcription_benchmark.py`).
 
 `run_model_accuracy.sh` resolves every declared dataset, lists the MPKs with
 `model-component-mpks`, passes the build's `runtime_files` folder as `--resources` when the

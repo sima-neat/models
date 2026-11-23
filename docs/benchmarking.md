@@ -503,3 +503,25 @@ For local runs, use MoLE with `PYTHONPATH=tools` and the model's `performance.py
 with `--deployment`, `--output` and, for speculative models, `--baseline` pointing
 to the staged baseline receipt. Results use `model-report.json`; raw reports
 retain request and token timings.
+
+## LLiMa speech recognition performance
+
+Whisper models (`entrypoint: transcribe`) declare `performance` with the FLEURS English
+test set as `dataset`. Their `performance.py` calls
+`tools/model_report/transcription_benchmark.py`, which runs in PyNeat's environment,
+loads the deployment into Neat's GenAI server, and sends `/v1/audio/transcriptions`
+requests with automatic language detection. The input is the same first 30 seconds of
+FLEURS speech that Nemotron and Parakeet measure. Whisper decodes one window per request
+and stops at its first end of text, so each recording's part of those 30 seconds goes in
+its own request, and one pass sends them all in order.
+
+The report has the Core metrics, with latency and throughput per pass, plus
+`real_time_factor` (processing seconds per audio second) and `time_to_first_text_ms`
+(mean of five streamed requests of the first recording, from upload to the first
+visible text). `asr-timings.json` keeps every pass, the server's own TTFT and tokens per
+second, and the transcript. Run it locally with PyNeat:
+
+```bash
+PYTHONPATH=tools ~/pyneat/bin/python models/whisper_small/scripts/performance.py \
+  --deployment <deployment folder> --dataset fleurs-en-us-test=<extracted dataset> --output /tmp/whisper
+```

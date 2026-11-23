@@ -185,6 +185,15 @@ def test_check_report_holds_the_report_to_model_yaml(
         check_report(tmp_path / REPORT_FILE, ROOT, model_id, profile_id, stage)
 
 
+def test_a_native_speech_recognition_model_reports_like_a_core_model(tmp_path: Path) -> None:
+    """Whisper runs inside Neat's GenAI server, so its report holds Core metrics, while an LLM still needs workloads."""
+    write_json(tmp_path / REPORT_FILE, performance_report(["model"]))
+
+    check_report(tmp_path / REPORT_FILE, ROOT, "whisper_small", "w8a16", "performance")
+    with pytest.raises(ValidationError, match="needs generation workloads"):
+        check_report(tmp_path / REPORT_FILE, ROOT, "qwen3_1_7b", "w4a16", "performance")
+
+
 @pytest.mark.parametrize(
     ("metric", "value", "message"),
     [

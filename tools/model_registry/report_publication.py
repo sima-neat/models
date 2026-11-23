@@ -23,7 +23,7 @@ from urllib.parse import quote
 from jsonschema import Draft202012Validator
 from model_report import CORE_REPORT_FILE, METRICS, REPORT_FILE, REQUIRED_PERFORMANCE_METRICS, accuracy_value_error
 
-from .benchmark_declarations import benchmarked_profiles
+from .benchmark_declarations import benchmarked_profiles, transcription_benchmark
 from .dependencies import resolve_benchmark_runtime
 from .errors import ValidationError
 from .fetch import sha256_file
@@ -191,7 +191,8 @@ def check_report(
             measured = report["datasets"][name]["metrics"]
             _check_metrics(f"{report_path}: {name}", stage, measured, dataset["required_metrics"])
         return report
-    native = model["components"][0]["interface"]["format"] == "huggingface"
+    # A native speech recognition model reports like a Core model: the GenAI server ran it, not MoLE.
+    native = model["components"][0]["interface"]["format"] == "huggingface" and not transcription_benchmark(model)
     if native:
         from model_report import telemetry_metrics
         from model_report.generation_benchmark import validate_report
@@ -344,8 +345,10 @@ def publish_report(
             raise ValidationError("baseline report does not match its registered compilation")
     fingerprint = benchmark_fingerprint(root, model, build_profile_id, builds, stage)
     run_type = BENCHMARK_RUN_TYPES[stage]
-    native = "generation" in report
-    tool = "llima" if native else "pyneat"
+    generation = "generation" in report
+    tool = "llima" if generation else "pyneat"
+    # A native build is a LLiMa deployment even when Neat's GenAI server measured it, as for Whisper.
+    native = model["components"][0]["interface"]["format"] == "huggingface"
     board = {**_read_json(output / ENVIRONMENT_FILE, "runner environment"), tool: report["runtime"][tool]}
     runtime = resolve_benchmark_runtime(root)
     report_digest = canonical_sha256(report)
@@ -420,7 +423,7 @@ def publish_report(
 
     files = {"model-report": (REPORT_FILE, "model-report", "application/json")}
     if (output / CORE_REPORT_FILE).is_file():
-        files["llima-benchmark-report" if native else "core-benchmark-report"] = (
+        files["llima-benchmark-report" if generation else "core-benchmark-report"] = (
             CORE_REPORT_FILE, "benchmark-report", "application/json"
         )
     if stage == "performance":
