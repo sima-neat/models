@@ -105,6 +105,11 @@ architectures:
     description: Segments an object through a video from a click or a box on one frame, with a memory of earlier frames.
     paradigm: transformer
     allowed_model_types: [vision]
+  faster_rcnn:
+    display_name: Faster R-CNN
+    description: Detects objects and their bounding boxes in images with two-stage region-based detectors.
+    paradigm: cnn
+    allowed_model_types: [vision]
   gemma4:
     display_name: Gemma4
     description: Generates text and supports conversational tasks with text and multimodal inputs.
