@@ -85,6 +85,7 @@
   "delta1": {"stage": "accuracy", "label": "δ1", "unit": "ratio", "direction": "higher", "registry_name": "model.accuracy.delta1", "aggregation": "raw", "digits": 3},
   "miou": {"stage": "accuracy", "label": "mIoU", "unit": "ratio", "direction": "higher", "registry_name": "model.accuracy.miou", "aggregation": "raw", "digits": 3},
   "wer": {"stage": "accuracy", "label": "WER", "unit": "ratio", "direction": "lower", "bounds": [0, null], "registry_name": "model.accuracy.wer", "aggregation": "raw", "digits": 4},
+  "wer_as_written": {"stage": "accuracy", "label": "WER as written", "unit": "ratio", "direction": "lower", "bounds": [0, null], "registry_name": "model.accuracy.wer_as_written", "aggregation": "raw", "digits": 4},
   "cer": {"stage": "accuracy", "label": "CER", "unit": "ratio", "direction": "lower", "bounds": [0, null], "registry_name": "model.accuracy.cer", "aggregation": "raw", "digits": 4},
   "ttft_ms": {"stage": "performance", "label": "Time to first token", "unit": "ms", "direction": "lower", "registry_name": "model.generation.ttft", "aggregation": "mean", "digits": 1},
   "prefill_tps": {"stage": "performance", "label": "Prefill throughput", "unit": "tokens/s", "direction": "higher", "registry_name": "model.generation.prefill_rate", "aggregation": "mean", "digits": 1},

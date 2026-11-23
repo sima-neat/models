@@ -180,10 +180,10 @@ SAMPLES = {"split": "val", "evaluated_samples": 1, "available_samples": 1}
 
 
 def test_speech_error_rates_are_unbounded_because_insertions_can_exceed_the_reference(tmp_path):
-    result = {**SAMPLES, "metrics": {"wer": 1.2, "cer": 0.0731}}
+    result = {**SAMPLES, "metrics": {"wer": 1.2, "wer_as_written": 1.3, "cer": 0.0731}}
     model_report.from_accuracy({"fleurs-en-us-test": result}).save(tmp_path)
     assert saved_report(tmp_path)["datasets"]["fleurs-en-us-test"]["metrics"] == result["metrics"]
-    assert {model_report.METRICS[name]["direction"] for name in ("wer", "cer")} == {"lower"}
+    assert {model_report.METRICS[name]["direction"] for name in result["metrics"]} == {"lower"}
 
 
 def test_depth_error_is_unbounded_but_threshold_accuracy_is_a_fraction(tmp_path):
