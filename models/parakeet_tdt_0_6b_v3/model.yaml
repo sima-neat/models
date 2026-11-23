@@ -89,4 +89,4 @@ reference_metrics:
   dataset: {id: fleurs, split: test}
   conditions: FP32 ONNX encoder, predictor and joiner on ONNX Runtime CPU; 14-second windows with a 2-second chunk; no language given; 647 English recordings
   note: Audio and transcriptions from google/fleurs on Hugging Face rather than the registry's pinned archive; not compared byte for byte.
-  metrics: {wer: 0.0651, cer: 0.0351}
+  metrics: {wer: 0.0524, wer_as_written: 0.0651, cer: 0.0241}

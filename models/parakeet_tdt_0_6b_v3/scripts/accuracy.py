@@ -5,7 +5,7 @@ Usage: PYTHONPATH=tools python accuracy.py --mpk model=encoder_mpk.tar.gz --reso
 
 Transcribes every recording of test.tsv in filename order with automatic language detection, one recording per
 window sequence, and scores the transcripts against FLEURS's raw transcriptions with model_report.speech:
-one shared normalization and corpus word and character error rates.
+word and character error rates with the shared English normalization, and the word error rate as written.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ from pathlib import Path
 
 import model_report
 from benchmark_runtime import Transcriber, read_audio, runtime_directory
-from model_report.speech import char_error_rate, word_error_rate
+from model_report.speech import char_error_rate, word_error_rate, word_error_rate_as_written
 
 DATASET = "fleurs-en-us-test"
 LANGUAGE = "auto"
@@ -37,6 +37,14 @@ def transcribe(transcriber, audio):
     for text in transcriber.transcribe(audio, LANGUAGE):
         pass
     return text
+
+
+def scores(references, transcripts):
+    return {
+        "wer": word_error_rate(references, transcripts, "en"),
+        "wer_as_written": word_error_rate_as_written(references, transcripts),
+        "cer": char_error_rate(references, transcripts, "en"),
+    }
 
 
 def main():
@@ -66,10 +74,7 @@ def main():
             transcripts.append(transcribe(transcriber, audio))
     report = model_report.from_accuracy({
         DATASET: {
-            "metrics": {
-                "wer": word_error_rate(references, transcripts),
-                "cer": char_error_rate(references, transcripts),
-            },
+            "metrics": scores(references, transcripts),
             "split": "test",
             "evaluated_samples": len(selected),
             "available_samples": len(rows),

@@ -78,12 +78,12 @@ performance:
     sha256: c2b7984079a73f169b147f531699af5ffe0eb60bb071277ac9f4a455e786acb2
     size_bytes: 289947446
 
-# The model card's FLEURS English score covers en-US and en-GB and normalizes numerals, so it does not match this
-# package's scorer. scripts/fp32_baseline_accuracy.py measures the FP32 baseline with the package's own pipeline.
+# The model card's FLEURS English score covers en-US and en-GB, and its exact normalizer is not published.
+# scripts/fp32_baseline_accuracy.py measures the FP32 baseline with the package's own pipeline.
 reference_metrics:
 - origin: fp32_baseline
   script: scripts/fp32_baseline_accuracy.py
   dataset: {id: fleurs, split: test}
   conditions: FP32 ONNX encoder, predictor and joiner on ONNX Runtime CPU; 560 ms cached chunks; en-US language prompt; 647 English recordings
   note: Audio and transcriptions from google/fleurs on Hugging Face rather than the registry's pinned archive; not compared byte for byte.
-  metrics: {wer: 0.1081, cer: 0.0644}
+  metrics: {wer: 0.0826, wer_as_written: 0.1081, cer: 0.0376}

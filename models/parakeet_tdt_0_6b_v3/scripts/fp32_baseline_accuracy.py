@@ -10,7 +10,7 @@ surgery.py exports the FP32 encoder, predictor and joiner ONNX graphs from the p
 --graphs already holds them). benchmark_runtime.Transcriber then runs unchanged except for where the tensors go:
 the encoder runs as FP32 ONNX on ONNX Runtime instead of the BF16 MLA archive, and the predictor and joiner run
 unquantized instead of INT8. Windowing, the log-mel frontend, greedy decoding, the recording order and the
-model_report.speech scorer are accuracy.py's own, so the difference is the BF16 encoder and INT8 CPU models.
+scorer are accuracy.py's own, so the difference is the BF16 encoder and INT8 CPU models.
 """
 
 from __future__ import annotations
@@ -26,7 +26,6 @@ import numpy as np
 import onnx
 import onnxruntime as ort
 from benchmark_runtime import Transcriber, read_audio
-from model_report.speech import char_error_rate, word_error_rate
 from tokenizers import Tokenizer
 
 
@@ -123,10 +122,7 @@ def main():
         "language": accuracy.LANGUAGE,
         "precision": "fp32",
         "inference_seconds": round(time.monotonic() - started, 1),
-        "metrics": {
-            "wer": word_error_rate(references, transcripts),
-            "cer": char_error_rate(references, transcripts),
-        },
+        "metrics": accuracy.scores(references, transcripts),
         "transcripts": [
             dict(file=row[1], reference=reference, transcript=text)
             for row, reference, text in zip(selected, references, transcripts, strict=True)
