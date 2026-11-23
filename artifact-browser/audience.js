@@ -9,6 +9,8 @@ export function audienceFacts(uiMode) {
     buildHistory: developer,
     // The compiler filter of the catalog.
     compilerFilter: developer,
+    // Branch runs can augment the published catalog for developers.
+    catalogRunMetadata: developer,
     // The Details section of a model page: components, build provenance, package and source inputs.
     buildDetails: developer,
     // The commit and workflow that measured a result.

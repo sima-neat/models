@@ -32,6 +32,8 @@ Both outputs are on an 80×60 grid, one cell per 8×8 pixels.
 
 Postprocessing:
 
+[BoxDecode](https://developer.sima.ai/software/reference/boxdecode_decode_types) with decode type `SuperPoint` and profile `MagicLeapDemoV1` runs these steps for you:
+
 1. Apply softmax over each cell's 65 values, drop the last, and place the other 64 on the cell's pixels, row by row. This gives a 640×480 score map.
 2. Keep the pixels scoring at least 0.015.
 3. Go through the kept pixels from the highest score down. Keep each one as a keypoint and remove every other pixel within 4 pixels of it.

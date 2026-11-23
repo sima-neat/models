@@ -41,19 +41,22 @@ The product name is Model Browser. Commands, code, and paths keep `model-registr
 
 ```text
 .github/workflows/         every workflow (ci-flow.md)
+agents/                    for agents working in this repository, never shipped: rules.md,
+                           change-map.md, coding-style.md, skills/, and references/, which
+                           explains tooling, CI, publication, and operations
 artifact-browser/          the model browser app, preview.py, licenses.json, fixtures
 config/                    model-browser-deployment-environment.json: protection settings of
                            the GitHub environment that gates manual browser deployment
 datasets/                  <dataset id>.yaml: the accuracy metrics each task must report
 deps/                      manifest.json: platform, Model Compiler, Core, and LLiMa pins
 docs/                      the published site, for people who reproduce or add a model
-knowledge/                 how tooling, CI, publication, and operations work
 models/<model_id>/         model.yaml, README.md, hero.png, scripts/, tests/
 packaging/model-registry/  build, installer, and checks for the author package
 schemas/                   JSON Schemas: model, model tests, dataset requirements, package
                            manifest, model report, numerical fidelity, MLA stage
                            simulation, licenses
 scripts/                   one runner script per stage, and CI helper scripts
+skills/                    skills for customers' agents, which sima-cli ships alone
 taxonomies/                model-taxonomy.yaml: model categories and display labels
 tests/                     repository-wide tests, browser tests in tests/browser/, fixtures
 tools/model_registry/      the model-registry command and the shared lifecycle code
@@ -84,7 +87,7 @@ marked CI only from the author package.
 | `model.py` | Loading and validating `model.yaml` and the model folder (`load_models`). Expanding it into components, build profiles with their one compile invocation, and the `default` package. MPK file names (`mpk_filename`). |
 | `compile_matrix.py` | The compile matrix: one entry per compile invocation, with its compile fingerprint and the benchmark stages that measure it (`build_matrix`). |
 | `fingerprints.py` | `compile_fingerprint`, `benchmark_fingerprint`, the shared files each one hashes, and each benchmark's run type. |
-| `stage_plan.py` | Which builds compile and which benchmarks run (`plan_stages`), the registry reads that decision needs, base-branch resolution, and the merge of source catalogs. |
+| `stage_plan.py` | Which builds compile and which benchmarks run (`plan_stages`), the registry reads that decision needs, base-branch resolution, the merge of source catalogs, and the check that `main` can take a merge from `develop` without compiling (`find_main_merge_blockers`). |
 | `conversion.py` | The conversion fingerprint, declared outputs, bundles, conversion publication, the saved selection a plan records, and exact downloads. |
 | `registry_http.py` | The signed HTTP transport, and registry reads that sign only the configured IAM API. |
 | `registry.py` (CI only) | Publishing compile runs, packages with their fidelity report and MLA stage simulation, model documentation, and the branch catalog. Restoring a published build for a benchmark. |
@@ -92,7 +95,7 @@ marked CI only from the author package.
 | `promotions.py` (CI only) | Promotion requests, decisions, receipts, and the benchmark reference refresh after a promotion. |
 | `report_publication.py` (CI only) | Checking a `model-report.json` against `model.yaml` (`check_report`) and publishing one benchmark run (`publish_report`). |
 | `neat_core.py` (CI only) | Resolving the selected Core artifact and installing it only when the installed one differs. |
-| `benchmark_declarations.py` | The `performance` and `accuracy` declarations: benchmarked profiles, stage scripts, required metrics, and `reference_metrics` validation. |
+| `benchmark_declarations.py` | The `performance` and `accuracy` declarations: benchmarked profiles, stage scripts, required metrics, `reference_metrics` validation, and the dataset names the model browser shows. |
 | `artifact.py` | `compile-outputs.json` validation, MPK and LLiMa deployment verification, the LLiMa reproduction recipe, and deployment file indexes. |
 | `runtime_files.py` | Path and checksum validation of a compile's `runtime_files`, and their restoration from a package ZIP. |
 | `mla_stage_simulation.py` | The simulator's operation counts and latency for each MLA stage (`simulate-mla-stages`). |
@@ -101,7 +104,7 @@ marked CI only from the author package.
 | `fetch.py` | Verified downloads, the cache, dataset resolution, and unsigned registry reads. |
 | `source.py` | The approved source hosts (`HTTPS_HOST_CHECKS`), source identity, and URL redaction. |
 | `taxonomy.py` | Loading the taxonomy and validating a model's categories. |
-| `documentation.py` | Loading and validating a model's README and hero image. |
+| `documentation.py` | Loading and validating a model's README and hero image, and the example application page the model browser links. |
 | `runner_approval.py` | Authorizing requested compile runner classes and markets, and selecting the runner audit fields a compile run records. |
 | `model_tests.py` | Each model's test files and `tests/tests.yaml`, the comparison of a report with its expected values, the test outcomes, and the variants the model browser hides for low accuracy. |
 | `errors.py` | The error types every module raises. |
@@ -149,7 +152,7 @@ the truth for what each fingerprint hashes:
 | benchmark | Each component's compile run ID, plus its MPK SHA-256 for an ONNX build. The stage's `model.yaml` declaration without `build_profiles`. For accuracy it includes the metrics each dataset's `datasets/<id>.yaml` requires for the model's tasks. The stage script and its optional requirements file. `PERFORMANCE_TOOLING` or `ACCURACY_TOOLING`, plus `LLIMA_PERFORMANCE_TOOLING` for LLiMa performance. The DevKit runtime pins. A performance fingerprint adds the profile's `benchmark_baseline` with that baseline's compile fingerprint. |
 | conversion | `conversion.source`, `conversion.outputs`, `FINGERPRINT_VERSION`, and the model's conversion files under `scripts/`. No shared file. |
 
-[What a change reruns](../docs/adding-a-model.md#9-know-what-a-change-reruns) lists each
+[What a change reruns](../../docs/adding-a-model.md#9-know-what-a-change-reruns) lists each
 kind of change and the stages it reruns. Keep it in step with the code.
 
 Rules for changing what a stage depends on:

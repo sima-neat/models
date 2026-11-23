@@ -26,10 +26,26 @@ export async function api(path) {
   return payload;
 }
 
-// Each benchmark stage of a build profile is its own registry run, found by the benchmark fingerprint the
-// catalog records for that profile. No run means the stage has not benchmarked this build.
-async function loadBenchmarkRun(stage, benchmarkFingerprint) {
-  if (!benchmarkFingerprint) return null;
+// Keep resolved reports by stage and fingerprint so Table, Compare, and model pages share their requests.
+const benchmarkRuns = new Map();
+
+function loadBenchmarkRun(stage, fingerprint) {
+  if (!fingerprint) return null;
+  const key = `${stage}:${fingerprint}`;
+  if (!benchmarkRuns.has(key)) {
+    const pending = fetchBenchmarkRun(stage, fingerprint).then((result) => {
+      if (!result) benchmarkRuns.delete(key);
+      return result;
+    }, (error) => {
+      benchmarkRuns.delete(key);
+      throw error;
+    });
+    benchmarkRuns.set(key, pending);
+  }
+  return benchmarkRuns.get(key);
+}
+
+async function fetchBenchmarkRun(stage, benchmarkFingerprint) {
   const repo = state.repository;
   const query = new URLSearchParams({ run_type: BENCHMARK_RUN_TYPES[stage], fingerprint: benchmarkFingerprint });
   let resolved;
@@ -97,7 +113,8 @@ function catalogCacheKey() {
   const categories = branchSnapshot ? [] : Object.entries(categoryFilters()).filter(([, value]) => value).sort();
   const search = branchSnapshot ? "" : elements.search.value.trim();
   const compiler = branchSnapshot ? "any" : elements["compiler-filter"].value || "any";
-  return `sima-neat-model-catalog:v5:${state.apiBase}:${repo.organization}/${repo.name}:${history}:${branch}:${compiler}:${search}:${JSON.stringify(categories)}`;
+  const audience = shows.lowAccuracyVariants ? "developer" : "customer";
+  return `sima-neat-model-catalog:v6:${audience}:${state.apiBase}:${repo.organization}/${repo.name}:${history}:${branch}:${compiler}:${search}:${JSON.stringify(categories)}`;
 }
 
 function branchCatalogCacheKey() {
@@ -159,16 +176,13 @@ export function readCachedCatalog() {
 
 export function writeCachedCatalog() {
   try {
+    const payload = state.catalogMode === "models"
+      ? { catalogDefinitions: state.catalogDefinitions }
+      : { runs: state.runs, cursor: state.cursor, hasMore: state.hasMore };
     localStorage.setItem(catalogCacheKey(), JSON.stringify({
-      savedAt: new Date().toISOString(),
       mode: state.catalogMode,
-      runs: state.runs,
-      compileRuns: state.compileRuns,
-      packageRuns: state.packageRuns,
-      catalogDefinitions: state.catalogDefinitions,
-      cursor: state.cursor,
-      hasMore: state.hasMore,
       taxonomy: state.taxonomy,
+      ...payload,
     }));
   } catch {
     // Storage may be disabled; the live registry remains fully functional.
@@ -193,11 +207,26 @@ function catalogCategories(model) {
     architecture_id: modelCategory(model, "architecture_id", architecture.id),
     architecture_paradigm: modelCategory(model, "architecture_paradigm", architecture.paradigm),
     tasks: modelCategory(model, "tasks", categories.tasks) || [],
-    input_modalities: modelCategory(model, "input_modalities", categories.input_modalities) || [],
-    output_modalities: modelCategory(model, "output_modalities", categories.output_modalities) || [],
+    input_modalities: modelCategory(model, "input_modalities", categories.modalities?.inputs ?? categories.input_modalities) || [],
+    output_modalities: modelCategory(model, "output_modalities", categories.modalities?.outputs ?? categories.output_modalities) || [],
     model_tags: modelCategory(model, "model_tags", categories.tags) || [],
     model_categories: categories,
   };
+}
+
+// The snapshot holds pending builds at the document level and categories under each model.
+export function snapshotModels(document) {
+  const pendingByModel = new Map();
+  for (const build of document.pending_builds || []) {
+    if (!pendingByModel.has(build.model_id)) pendingByModel.set(build.model_id, []);
+    pendingByModel.get(build.model_id).push(build);
+  }
+  return document.models.map((model) => ({
+    ...model,
+    ...catalogCategories(model),
+    model_id: model.id,
+    pending_builds: pendingByModel.get(model.id) || [],
+  }));
 }
 
 // branchModels gives every shown build the compile run that produced it.
@@ -296,6 +325,26 @@ export async function audienceCatalog(catalogModels) {
   return withoutProfiles(catalogModels, await lowAccuracyVariants);
 }
 
+// The name of each dataset by its Dataset Registry ID, from datasets/<id>.yaml when the portal is built.
+// Without the list the page names a dataset by its ID, so a failed fetch is not an error.
+let datasetNames = null;
+function loadDatasetNames() {
+  datasetNames ||= fetch(new URL("./dataset-names.json", import.meta.url))
+    .then((response) => (response.ok ? response.json() : {}))
+    .catch(() => ({}));
+  return datasetNames;
+}
+
+// The Apps portal page of an example application that runs each model, from `example_app` in model.yaml when
+// the portal is built. Without it the model page shows no application link, so a failed fetch is not an error.
+let exampleApps = null;
+function loadExampleApp(modelId) {
+  exampleApps ||= fetch(new URL("./example-apps.json", import.meta.url))
+    .then((response) => (response.ok ? response.json() : {}))
+    .catch(() => ({}));
+  return exampleApps.then((apps) => apps[modelId] || null);
+}
+
 // The licenses a model may declare, from licenses.json beside this module. Without the list the page
 // cannot tell whether a license permits redistribution, so it offers no download.
 let licenseList = null;
@@ -335,17 +384,21 @@ export async function loadVariant(anchor) {
   const runs = details.map((detail) => detail.summary.run);
   const packageRun = variantPackage(componentRuns);
   const fingerprints = await benchmarkFingerprints(runs, runProfile(anchor));
-  const [performance, accuracy, [packageSummary, packageTests], pipeline, reference, licenses] = await Promise.all([
+  const [performance, accuracy, [packageSummary, packageTests], pipeline, reference, licenses, names, exampleApp] = await Promise.all([
     loadBenchmarkRun("performance", fingerprints.performance),
     loadBenchmarkRun("accuracy", fingerprints.accuracy),
     packageRun ? loadPackageRun(packageRun.run_id) : [null, null],
     loadComponentPipeline(anchor.metadata?.model_id),
     loadReferenceMetrics(anchor.metadata?.model_id),
     loadLicenses(),
+    loadDatasetNames(),
+    loadExampleApp(anchor.metadata?.model_id),
   ]);
+  // readAccuracy names each dataset of the report from this list.
   const variant = {
-    key, modelId: anchor.metadata?.model_id, profile: runProfile(anchor), anchor, runs, details, performance, accuracy,
-    packageSummary, packageTests, requestedPackageId: packageRun?.run_id || null, pipeline, reference, licenses,
+    key, modelId: anchor.metadata?.model_id, profile: runProfile(anchor), anchor, runs, details, performance,
+    accuracy: accuracy && { ...accuracy, datasetNames: names },
+    packageSummary, packageTests, requestedPackageId: packageRun?.run_id || null, pipeline, reference, licenses, exampleApp,
   };
   state.variantCache.set(key, variant);
   return variant;

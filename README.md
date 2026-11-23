@@ -14,7 +14,7 @@
   <a href="docs/getting-started.md"><b>Getting Started</b></a> ·
   <a href="docs/adding-a-model.md">Add a Model</a> ·
   <a href="docs/README.md">Documentation</a> ·
-  <a href="knowledge/architecture.md">Architecture</a> ·
+  <a href="agents/references/architecture.md">Architecture</a> ·
   <a href="https://github.com/sima-neat/models/issues">Issues</a>
 </p>
 
@@ -94,10 +94,11 @@ scripts/                stage runner scripts and CI helpers
 schemas/                JSON Schemas for model.yaml, tests, and reports
 artifact-browser/       the Model Browser
 docs/                   the public guides: reproduce, add, or update a model
-knowledge/              how the tooling, CI, and publication work
+agents/                 rules, skills, and references for agents working in this repository
+skills/                 agent skills for customers, which sima-cli installs
 ```
 
-The [architecture](knowledge/architecture.md) describes every directory.
+The [architecture](agents/references/architecture.md) describes every directory.
 
 ## Documentation
 
@@ -106,6 +107,6 @@ The [architecture](knowledge/architecture.md) describes every directory.
   on your own DevKit.
 - [Documentation](docs/README.md): the contribution path from `model.yaml`
   to review.
-- [Architecture](knowledge/architecture.md) and [CI flow](knowledge/ci-flow.md):
+- [Architecture](agents/references/architecture.md) and [CI flow](agents/references/ci-flow.md):
   the components, the shared tooling, and what each workflow does.
 - [Model taxonomy](docs/model-taxonomy.md): sanctioned category IDs.

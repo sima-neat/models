@@ -32,6 +32,8 @@ Preprocessing:
 
 Postprocessing:
 
+[BoxDecode](https://developer.sima.ai/software/reference/boxdecode_decode_types) with decode type `YoloV26Obb` runs steps 1 to 6 for one window:
+
 1. The cell in column c and row r has its center at (c + 0.5, r + 0.5).
 2. The box is left + right wide and top + bottom high.
 3. Its center is the cell center plus half of (right − left, bottom − top), rotated by the angle.

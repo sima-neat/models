@@ -60,6 +60,8 @@ runs on the CPU and the tensors it passes on. Leave the section out otherwise.>
 
 Postprocessing:
 
+<Only when `scripts/performance.py` selects a BoxDecode type: [BoxDecode](https://developer.sima.ai/software/reference/boxdecode_decode_types) with decode type `<type>` runs these steps for you:>
+
 1. <Each decode step, in order, one line per step.>
 
 <The class-index mapping.>
@@ -137,6 +139,7 @@ the model alone. A reviewer checks each point:
 - For a model with several components, give each step the application runs between them under `## Between the components`.
 - Open `## Outputs` with a table that names each actual output tensor, with its size and what it holds. A model with one output may state it in a sentence.
 - Under `Postprocessing:`, write the decode steps as a numbered list, in the order the application performs them. Leave the list out when the output needs no decoding.
+- When `scripts/performance.py` selects a `BoxDecodeType`, write one line between `Postprocessing:` and the list, such as "[BoxDecode](https://developer.sima.ai/software/reference/boxdecode_decode_types) with decode type `YoloV26` runs these steps for you:". Name the type the script selects, and the option or profile when it sets one. When BoxDecode covers only some of the steps or returns a different result, say so in that line, as `yolo26n_obb` and `yolo26n_seg` do. A model whose script selects no type has no such line. `python -m pytest tests/test_documentation.py` checks the type against the script.
 - Give the class-index mapping.
 - State what to do, not what to prefer: no advice, no comparison of paths, no reasons that the steps do not need.
 - Write each step in full, so that a reader can implement it without guessing, and so that it holds for every input. To shorten a long prompt, set the tokenizer's truncation, because cutting the token list drops its end token.

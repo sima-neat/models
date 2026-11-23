@@ -19,6 +19,9 @@ at one revision. It may list builds that another branch compiled.
 | long-lived | `develop`, `main`, `release-*`, `integration/*` | its own catalog only. On its first push, the closest base branch that has a catalog. |
 | feature | every other branch | its own catalog, then each base branch's catalog, closest first |
 
+`main` is the one exception. Customers read its catalog, so a new revision of `main` first
+takes the builds `develop` finished ([merge into main](#merge-into-main)).
+
 ## Base branches
 
 Git does not record which branch another was cut from. The `select` job therefore runs
@@ -98,6 +101,35 @@ A feature branch that later merges `develop` does not repeat that work. It leave
 `develop` each profile `develop` is compiling and each benchmark whose fingerprint
 `develop`'s catalog records.
 
+## Merge into main
+
+`main` ships what `develop` built and measured. On a push to `main`,
+`read_default_branch_builds` reads `develop`'s catalog and returns each automatic build
+profile that `develop` built at the head compile fingerprints. `plan_stages` and
+`publish_catalog` put that source ahead of `main`'s own catalog, so:
+
+- `main`'s catalog lists the compile runs `develop` measured. Its benchmark fingerprints
+  equal `develop`'s, and the results `develop` published apply without a new measurement.
+- `develop`'s builds win even when `main` holds its own builds of the same fingerprints.
+  A benchmark fingerprint names the compile runs, so `main`'s own builds would have no
+  results.
+- `main` compiles a profile that `develop` has not built at the head fingerprints. It
+  never waits for `develop`.
+- An on-demand profile keeps `main`'s own entry. The registry rejects a snapshot that
+  replaces the builds of a profile promoted on that branch, and `develop`'s catalog holds
+  builds that `main`'s promotion does not name.
+- Both callers take `develop`'s builds for a new revision only, like every base branch.
+  A second run of the same commit keeps the builds its first snapshot listed.
+- The plan and the publication each read `develop`'s catalog. A build stays in the
+  source while `develop` compiles its replacement, so a push to `develop` between the
+  two reads changes nothing. If `develop` finishes that replacement between them,
+  `main`'s snapshot can list the profile as pending with no job compiling it. Re-run
+  the orchestrator on `main` to compile it.
+
+A merge therefore changes customers' view only when `develop` is complete at the merged
+commit. The `main-merge` job of `Target Branch Checks` checks that on every pull request
+into `main` ([CI flow](ci-flow.md#the-merge-check-for-main)).
+
 ## Concurrent pushes
 
 - A newer push to the same ref cancels the running orchestrator with its compiles and
@@ -114,19 +146,26 @@ A feature branch that later merges `develop` does not repeat that work. It leave
 
 ## What the model browser shows
 
-`branchModels` in `artifact-browser/branch-builds.js` builds a branch's view:
+The customer browser reads the published Main snapshot once. The developer
+browser renders the selected branch's snapshot while the branch's compile and
+package lists load. Each browser saves the definitions and taxonomy locally for
+repeat visits.
 
-- The view lists the catalog's builds. Every push publishes a catalog, so a branch that
-  changes no fingerprint still lists every model.
-- A completed build compiled on the branch that is newer than the catalog entry for its
-  model and build profile replaces that entry. A build missing from the catalog therefore
-  still shows.
-- Each build keeps its own compile run's branch, commit, and compiler. A reused build
-  names the branch that compiled it.
-- A profile keeps its benchmark fingerprints only while the view shows the catalog's own
-  build.
-- A deployment selection replaces a profile's catalog builds and packages
+`branchModels` in `artifact-browser/branch-builds.js` assembles the view:
+
+- It lists published builds, including inherited ones. A deployment selection
+  replaces its profile's builds and packages
   (`deploymentCatalog`, [on-demand builds](on-demand-builds.md)).
+- The developer view can overlay a newer completed build compiled on the
+  selected branch when both builds' ages are known. It also shows completed
+  builds for declared pending profiles. The customer view shows what the
+  snapshot publishes.
+- The developer view looks up missing exact run IDs in batches of up to 40.
+  The run identifies its build's source branch, commit, and compiler. Without
+  that data, the catalog can still show the published build, and a compiler
+  filter only matches builds with a known compiler.
+- A profile keeps its benchmark fingerprints only while the view shows the
+  catalog's own build. A package must match every shown component's run ID.
 
 ## Design decisions
 
@@ -135,6 +174,8 @@ A feature branch that later merges `develop` does not repeat that work. It leave
 | Catalogs are per branch and runs are shared. | A branch can deliver a build it did not compile, and a new branch needs no copy of anything. |
 | The compile decision reads the catalog, and the benchmark decision reads runs. | The catalog pins which compile runs a branch delivers. A benchmark fingerprint already names those runs, so any matching run is a result for the same build. |
 | A long-lived branch reads only its own catalog. | A merge recompiles what it changed, so every automatic build `develop` delivers comes from a `develop` run. |
+| `main` takes `develop`'s finished automatic builds first. | Customers read `main`. Compiling and measuring every model again after each merge left it without results for about a day. |
+| `main` never waits for a build `develop` is compiling. | A pending entry on `main` that only `develop` can finish would stay if `develop` moved on. |
 | A feature branch leaves pending profiles and recorded benchmarks to its closest base branch. | The work a merge started on `develop` is not repeated on each branch that merges `develop`. |
 | Feature branches are never base branches. | Graph distance cannot tell a sibling from the branch both were cut from. |
 | Base branches seed a new revision only. | During a revision, a base branch could otherwise restore a package the revision withheld, or replace a published one when the base branch finishes rebuilding first. |

@@ -88,6 +88,33 @@ def test_github_raw_file_requires_a_full_commit(path: str) -> None:
     assert source.filename == "LICENSE"
 
 
+OPENMMLAB_CHECKPOINT = (
+    "https://download.openmmlab.com/mmsegmentation/v0.5/hrnet/fcn_hr18_512x512_160k_ade20k/"
+    "fcn_hr18_512x512_160k_ade20k_20200614_214426-ca961836.pth"
+)
+
+
+def test_openmmlab_released_checkpoint_is_a_source() -> None:
+    source = SourceSpec(uri=OPENMMLAB_CHECKPOINT, sha256=DIGEST, size_bytes=10)
+    assert source.resolve_url() == OPENMMLAB_CHECKPOINT
+    assert source.filename == "fcn_hr18_512x512_160k_ade20k_20200614_214426-ca961836.pth"
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "mmsegmentation/v0.5/hrnet/fcn_hr18_512x512_160k_ade20k/fcn_hr18_512x512_160k_ade20k.pth",
+        "mmsegmentation/latest/hrnet/fcn_hr18/fcn_hr18_20200614_214426-ca961836.pth",
+        "mmsegmentation/v0.5/hrnet/fcn_hr18/fcn_hr18_20200614_214426-ca961836.onnx",
+        "mmsegmentation/v0.5/fcn_hr18_20200614_214426-ca961836.pth",
+        "misc/v0.5/hrnet/fcn_hr18/fcn_hr18_20200614_214426-ca961836.pth",
+    ],
+)
+def test_other_openmmlab_files_are_not_sources(path: str) -> None:
+    with pytest.raises(SourcePolicyError, match="released checkpoint"):
+        SourceSpec(uri=f"https://download.openmmlab.com/{path}", sha256=DIGEST, size_bytes=10).resolve_url()
+
+
 @pytest.mark.parametrize(
     ("uri", "reason"),
     [

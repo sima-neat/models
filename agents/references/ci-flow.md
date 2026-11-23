@@ -18,6 +18,7 @@ is in [branch catalogs](branch-catalogs.md).
 | Vulcan Model Convert | `vulcan-model-convert.yml` | manual dispatch | Converts one model and publishes the bundle. |
 | Build and Publish Model Registry | `vulcan-model-registry.yml` | push that changes tooling, models, schemas, tests, or workflows, manual dispatch | Builds and publishes the author package. |
 | Model Registry Package | `model-registry-package.yml` | called | Lints, tests, and builds the author package. Publishes nothing. |
+| Main Merge Check | `main-merge-check.yml` | called | Checks that a merge into `main` changes nothing customers see. Publishes nothing. |
 | Developer Docs Validation | `developer-docs.yml` | called, manual dispatch | Builds and smoke-tests the portal. |
 | Deploy Model Browser & Docs | `deploy-model-browser.yml` | manual dispatch | Publishes the portal to staging or production after an owner approves. |
 | Model branch lifecycle | `model-branch-lifecycle.yml` | branch created or deleted, manual dispatch | Cancels a deleted branch's runs and purges or restores its registry state. |
@@ -31,11 +32,54 @@ is in [branch catalogs](branch-catalogs.md).
 
 | Job | Calls | Runs |
 | --- | --- | --- |
-| `package` | `model-registry-package.yml`, job `build` | `ruff check .`, `python -m pytest`, a collect-only pass over every model's stage-output tests, `packaging/model-registry/build.sh`, and `verify_package.sh` |
+| `package` | `model-registry-package.yml`, job `build` | `ruff check .`, `python -m pytest -n auto` (one worker per runner core), a collect-only pass over every model's stage-output tests, `packaging/model-registry/build.sh`, and `verify_package.sh` |
 | `portal` | `developer-docs.yml`, job `build` | `npm ci`, the TypeScript check, `npm run build:portal`, `node --test tests/browser/*.test.mjs`, and the Chromium smoke test |
+
+| `main-merge` | `main-merge-check.yml`, job `check`, only when the base branch is `main` | `scripts/check_main_merge.sh` with the pull request's head commit |
 
 A passing pull request shows that the definitions validate, the host tests pass, and the
 package and portal build. It compiles nothing, verifies no MPK, and measures nothing.
+
+### The merge check for main
+
+`main` takes its builds and results from `develop`
+([merge into main](branch-catalogs.md#merge-into-main)). The `main-merge` job therefore
+fails a pull request into `main` when the merge would make `main` compile or show fewer
+results. It runs `model-registry check-main-merge` (`find_main_merge_blockers` in
+`stage_plan.py`), which reads the production registry without credentials and prints one
+line for each of these blockers:
+
+1. The merge result differs from the pull request's head. `main` has a change that
+   `develop` lacks, so its compile or benchmark fingerprints could differ from `develop`'s.
+2. `develop`'s catalog is not at the head commit. The orchestrator run of that commit has
+   not published yet, or the commit skipped CI.
+3. `develop`'s catalog lists a pending build.
+4. An automatic profile in `develop`'s catalog has a benchmark fingerprint without a
+   completed run.
+5. An on-demand profile that `main` and `develop` promote to the same deployment has a
+   benchmark fingerprint without a completed run. LLM and VLM profiles count.
+
+It prints a warning and still passes when `main` promotes an on-demand profile to a
+deployment that `develop` does not promote. That profile shows no results on `main` from
+the merge until the `develop` deployment is promoted on `main`
+([promotion operations](promotion-operations.md#promote-the-same-candidate-to-main)),
+which needs the merged definition first.
+
+To merge `develop` into `main`:
+
+1. Merge every change into `develop` first, and do not skip CI on a commit you will merge.
+2. Open the pull request from `develop` into `main`. The first run of the check usually
+   fails, because `develop`'s orchestrator has not finished.
+3. Measure each missing on-demand result on `develop`. `promoted_missing` queues every
+   profile except LLMs and VLMs, and each of those needs a single-model dispatch
+   ([manual dispatch](#manual-dispatch)).
+4. Re-run the failed `main-merge` job. Nothing re-runs it for you when a benchmark finishes.
+5. Merge. The orchestrator on `main` compiles and measures nothing and publishes one
+   catalog snapshot.
+
+After a forced rebuild on `develop`, merge into `main` within 30 days. The registry
+deletes the files of a replaced compile run after that time, and `main`'s catalog may
+still list it. To undo a release, revert on `develop` and merge again.
 
 ## Push: Vulcan Model Orchestrator
 
@@ -320,7 +364,7 @@ The manual workflow runs from `main` or `develop`. `authorize` waits on the
 with administrator bypass disabled, a first attempt, and an approval by the dispatching
 actor. Every later job also requires attempt 1 and the original actor, so a rerun cannot
 reuse an approval. The manual publish keeps files that the new site no longer has.
-[The browser README](../artifact-browser/README.md) owns the release and rollback steps.
+[The browser README](../../artifact-browser/README.md) owns the release and rollback steps.
 
 ## Other workflows
 
@@ -329,7 +373,7 @@ reuse an approval. The manual publish keeps files that the new site no longer ha
 `model-branch-lifecycle.yml` has two jobs. `cancel-branch-runs` runs
 `scripts/cancel_branch_runs.sh` for a deleted branch and cancels its unfinished runs.
 `update-registry` calls the registry's `purge` endpoint for a deleted branch and `restore`
-for a created one, then waits up to five minutes for a purge to complete. It refuses
+for a created one, then waits up to 15 minutes for a purge to complete. It refuses
 `main`, `develop`, and `release-*`. It does not refuse `integration/*`, although
 `is_long_lived` treats those branches as long-lived. The job runs once for the staging
 registry and once for the production registry, each in its own GitHub environment. A

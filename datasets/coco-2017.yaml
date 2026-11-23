@@ -1,4 +1,5 @@
 # What every model evaluating its accuracy on COCO 2017 must report, by the model's task.
+name: COCO 2017
 required_metrics:
   object_detection: [coco_map]
   instance_segmentation: [coco_mask_map]

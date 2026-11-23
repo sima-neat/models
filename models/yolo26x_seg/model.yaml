@@ -2,6 +2,7 @@
 build-on-demand: true
 display_name: YOLO26x-seg
 description: The largest YOLO26 instance segmenter here, for COCO objects.
+example_app: https://developer.sima.ai/examples/app/segmentation%2Fsingle-stream-instance-segmenter
 model_type: vision
 tasks: [instance_segmentation]
 

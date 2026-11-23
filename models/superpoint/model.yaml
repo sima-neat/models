@@ -1,5 +1,6 @@
 display_name: SuperPoint
 description: Detects keypoints and computes their descriptors in a grayscale image.
+example_app: https://developer.sima.ai/examples/app/feature-extraction%2Fsuperpoint-feature-extractor
 model_type: vision
 tasks: [feature_point_detection]
 

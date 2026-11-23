@@ -52,6 +52,7 @@ def test_benchmark_job_scopes_baseline_and_timeout(model, profile, stages, backe
         "benchmark-job",
         "stage-registry-build",
         "plan-promoted-benchmarks",
+        "check-main-merge",
     ],
 )
 def test_author_cli_rejects_ci_only_commands(command: str, capsys: pytest.CaptureFixture[str]) -> None:
@@ -84,6 +85,26 @@ def test_promoted_benchmark_planning_command_reads_the_selected_catalog(monkeypa
     assert json.loads(capsys.readouterr().out) == {
         "source_branch": "main", "source_sha": "a" * 40, "include": [], "skipped": [],
     }
+
+
+@pytest.mark.parametrize(("blockers", "exit_code", "last_line"), [
+    ([], 0, "main takes every build and result from develop"),
+    (["x/w8a8 has no accuracy result on develop"], 1,
+     "blocked: main would compile or show fewer results after this merge"),
+])
+def test_main_merge_check_command_prints_each_reason_and_fails_on_a_blocker(
+    blockers, exit_code, last_line, monkeypatch, capsys,
+):
+    def find(repository, *, head, read, read_api_url):
+        assert (repository, head, read_api_url) == (ROOT, "a" * 40, "https://registry.example.invalid")
+        return {"blockers": blockers, "warnings": ["y/w8a8 is promoted to another build on develop"]}
+
+    monkeypatch.setattr(cli, "find_main_merge_blockers", find)
+    arguments = ["--repository", str(ROOT), "--head", "a" * 40, "--api-url", "https://registry.example.invalid"]
+    assert main(["check-main-merge", *arguments]) == exit_code
+    assert capsys.readouterr().out.splitlines() == [
+        "warning: y/w8a8 is promoted to another build on develop", *blockers, last_line,
+    ]
 
 
 @pytest.mark.parametrize("entrypoint", [main, cli.author_main])
@@ -357,6 +378,24 @@ def test_reference_metrics_writes_each_models_published_scores(tmp_path: Path) -
     assert "whisper_small" not in reference
     assert reference["resnet_50"][0]["dataset"] == {"id": "imagenet-2012", "split": "val"}
     assert reference["resnet_50"][0]["metrics"] == {"top1_accuracy": 0.80382, "top5_accuracy": 0.94598}
+
+
+def test_example_apps_writes_the_page_of_each_model_that_declares_one(tmp_path: Path) -> None:
+    output = tmp_path / "example-apps.json"
+    assert main(["example-apps", "--repository", str(ROOT), "--output", str(output)]) == 0
+
+    apps = json.loads(output.read_text(encoding="utf-8"))
+    assert apps["yolo26m"] == "https://developer.sima.ai/examples/app/object-detection%2Fyolo26-object-detector"
+    assert "vgg_11" not in apps
+
+
+def test_dataset_names_writes_a_name_for_every_dataset_file(tmp_path: Path) -> None:
+    output = tmp_path / "dataset-names.json"
+    assert main(["dataset-names", "--repository", str(ROOT), "--output", str(output)]) == 0
+
+    names = json.loads(output.read_text(encoding="utf-8"))
+    assert set(names) == {path.stem for path in (ROOT / "datasets").glob("*.yaml")}
+    assert names["coco-2017"] == "COCO 2017"
 
 
 def test_low_accuracy_variants_writes_declared_build_profiles(tmp_path: Path) -> None:

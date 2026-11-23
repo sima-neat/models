@@ -29,6 +29,8 @@ Preprocessing:
 
 Postprocessing:
 
+[BoxDecode](https://developer.sima.ai/software/reference/boxdecode_decode_types) with decode type `YoloV8` runs these steps for you:
+
 1. The cell in column c and row r has its center at (c + 0.5, r + 0.5).
 2. Apply a softmax over each edge's 16 bins. The edge distance in cells is the probability-weighted mean bin index, from 0 to 15.
 3. The box corners are the center minus the left and top distances, and the center plus the right and bottom distances, times the stride.

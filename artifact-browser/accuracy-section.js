@@ -1,12 +1,15 @@
 // Accuracy section of the model page: measured scores, coverage, and published and FP32 baseline scores.
 import {
   REFERENCE_ORIGINS, accuracyDisplay, accuracyMetricLabel, datasetName, formatAccuracy, orderedMetricNames,
-  referenceNotes, referenceOrigin, referenceScores,
+  referenceNotes, referenceOrigin, referenceScores, registryArchive,
 } from "./accuracy-metrics.js";
+import { formatDate } from "./metrics.js";
 import { readAccuracy } from "./model-report.js";
 import { shows } from "./state.js";
 import { icons, escapeHtml, disclosure } from "./ui.js";
-import { humanize, keyValue, measurementSource, trustedHttpsUrl, variantSectionTitle } from "./page-parts.js";
+import {
+  humanize, infoMark, keyValue, measurementSource, targetName, trustedHttpsUrl, variantSectionTitle,
+} from "./page-parts.js";
 
 // The first metrics in display order are shown as tiles; any further metrics are listed in a table.
 const ACCURACY_SUMMARY_TILES = 4;
@@ -50,15 +53,15 @@ export function accuracyPanel(variant, modelId) {
       ${referenceMarkup}
     </section>`;
   }
-  const { datasets, tool } = result.value;
-  const sourceMarkup = measurementSource(variant.accuracy.run, modelId);
-  // One dataset keeps its coverage beside the section title; several each title their own result.
-  const badge = datasets.length === 1 ? coverageBadge(datasets[0].dataset) : "";
+  const { datasets, tool, timestamp } = result.value;
+  const measured = `${timestamp ? `Measured ${escapeHtml(formatDate(timestamp, false))}` : ""}${measurementSource(variant.accuracy.run, modelId)}`;
+  const target = targetName(variant.accuracy.run);
   const results = datasets.map((entry) => accuracyResult(
-    entry, tool, datasetReferences(reference, entry.dataset.id), sourceMarkup, datasets.length > 1,
+    entry, tool, target, datasetReferences(reference, entry.dataset.id), measured, datasets.length > 1,
   )).join("");
+  // One dataset is described beside the section title; several each describe their own result.
   return `<section id="accuracy-section" class="accuracy-section" tabindex="-1">
-    ${variantSectionTitle("Accuracy", variant, badge)}
+    ${variantSectionTitle("Accuracy", variant, datasets.length === 1 ? evaluatedOn(datasets[0].dataset, target) : "")}
     ${results}
     ${referenceMarkup}
   </section>`;
@@ -166,29 +169,37 @@ function fullCoverage(dataset) {
   return Number.isInteger(dataset.evaluated_samples) && dataset.evaluated_samples === dataset.available_samples;
 }
 
-function coverageBadge(dataset) {
-  const full = fullCoverage(dataset);
-  return `<span class="status-badge ${full ? "qualification" : "provisional"}">${full ? "Full coverage" : "Sampled coverage"}</span>`;
+// How much of the dataset the run evaluated, such as "using 5,000 samples" or "using 500 of its 5,000 samples".
+function sampleCount(dataset) {
+  if (!Number.isInteger(dataset.evaluated_samples) || !Number.isInteger(dataset.available_samples)) return "";
+  const evaluated = dataset.evaluated_samples.toLocaleString();
+  return fullCoverage(dataset)
+    ? `using ${evaluated} samples`
+    : `using ${evaluated} of its ${dataset.available_samples.toLocaleString()} samples`;
 }
 
-// One dataset's result. With several, each is titled by its model.yaml name and shows its own coverage.
-function accuracyResult({ name, metrics, dataset, details }, tool, { scores, sources }, sourceMarkup, titled) {
+// How an accuracy result was measured, such as "The compiled model ran on the Modalix DevKit and was evaluated
+// on COCO 2017 using 5,000 samples."
+function evaluatedOn(dataset, target) {
+  const samples = sampleCount(dataset);
+  return `The compiled model ran on the ${target} DevKit and was evaluated on ${datasetName(dataset) || "an unnamed dataset"}${samples ? ` ${samples}` : ""}.`;
+}
+
+// One dataset's result. With several, each is titled by its model.yaml name.
+function accuracyResult({ name, metrics, dataset, details }, tool, target, { scores, sources }, measured, titled) {
   const full = fullCoverage(dataset);
   const coverageLabel = full ? "Full coverage" : "Sampled coverage";
   const coverageExplanation = full
     ? "Every sample in the dataset split was evaluated."
     : "A deterministic subset of the dataset split was evaluated.";
-  const sampleText = Number.isInteger(dataset.evaluated_samples) && Number.isInteger(dataset.available_samples)
-    ? `${dataset.evaluated_samples.toLocaleString()} of ${dataset.available_samples.toLocaleString()} samples`
-    : "Sample count unavailable";
-  const context = `${keyValue("Measured on", "DevKit")}${keyValue("Runtime", tool)}${Object.entries(details)
+  const context = `${keyValue("Dataset archive", registryArchive(dataset))}${keyValue("Measured on", "DevKit")}${keyValue("Runtime", tool)}${Object.entries(details)
     .map(([key, value]) => keyValue(humanize(key), typeof value === "object" ? JSON.stringify(value) : String(value))).join("")}`;
   const evaluation = `<p class="disclosure-text"><strong>${coverageLabel}.</strong> ${escapeHtml(coverageExplanation)}</p>
       <dl class="key-grid">${context}</dl>
       ${accuracyMetricTable(metrics, scores)}`;
   return `<div class="accuracy-dataset" data-accuracy-dataset="${escapeHtml(name)}">
-    ${titled ? `<div class="accuracy-dataset-title"><h4>${escapeHtml(name)}</h4>${coverageBadge(dataset)}</div>` : ""}
-    <p class="accuracy-scope">${full ? "" : `<strong>${escapeHtml(sampleText)}</strong> · `}${escapeHtml(datasetName(dataset) || "Dataset unavailable")}${sourceMarkup}</p>
+    ${titled ? `<div class="accuracy-dataset-title"><h4>${escapeHtml(name)}${infoMark(evaluatedOn(dataset, target))}</h4></div>` : ""}
+    <p class="accuracy-scope">${measured}</p>
     <div class="accuracy-summary">${accuracyMetricTiles(metrics, scores, sources)}</div>
     ${shows.evaluationDetails ? disclosure(`accuracy:${name}`, "Evaluation details", evaluation, coverageLabel) : ""}
   </div>`;

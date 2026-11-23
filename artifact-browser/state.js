@@ -33,7 +33,6 @@ export const state = {
   availableBranches: [],
   runsRequestId: 0,
   navigationId: 0,
-  taxonomyRequestId: 0,
   selectedId: new URLSearchParams(location.search).get("run"),
   preferredBranch: null,
   urlBranch: false,
@@ -54,6 +53,7 @@ export const state = {
   compareWorkload: initialQuery.get("compare_workload") || "",
   activeProfileByModel: new Map(),
   taxonomy: null,
+  taxonomyBranch: null,
   categorySelection: Object.fromEntries(
     Object.entries(CATEGORY_QUERY_FIELDS).map(([elementId, queryName]) => [elementId, initialQuery.get(queryName) || ""]),
   ),

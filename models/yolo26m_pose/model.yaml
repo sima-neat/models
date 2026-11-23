@@ -1,5 +1,6 @@
 display_name: YOLO26m-pose
 description: A mid-size YOLO26 pose estimator for people and their 17 COCO keypoints.
+example_app: https://developer.sima.ai/examples/app/pose-estimation%2Fmulti-stream-pose-estimator
 model_type: vision
 tasks: [pose_estimation]
 

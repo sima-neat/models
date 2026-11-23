@@ -97,3 +97,16 @@ test('generation exports keep the deployment identity, workload and decoding rol
   assert.equal(new Set(exports.map(filename)).size, exports.length);
   assert.equal(filename({modelId: 'resnet_50', buildProfileId: 'w8a8'}), 'resnet_50-w8a8-performance.csv');
 });
+
+test('the Performance info mark names the runtime that ran the model', () => {
+  const methodStart = source.indexOf('function performanceMethod(');
+  const performanceMethod = new Function('readPerformance', 'targetName',
+    `return (${source.slice(methodStart, source.indexOf('\nfunction modelPerformance(', methodStart))}\n);`)(
+    readPerformance, () => 'Modalix');
+  const method = report => performanceMethod({performance: {run: {id: 'run'}, report}});
+  assert.equal(method({...base, scope: 'model', metrics: {throughput_fps: 30}, telemetry: {}, components: {model: stats}}),
+    'Measured on the Modalix DevKit, running the compiled model with the Neat Model API.');
+  assert.equal(method({...base, runtime: {llima: 'test', mole: 'test'}, metrics: {}, generation: {settings: {}, workloads: []}}),
+    'Measured on the Modalix DevKit, running the compiled model with LLiMa.');
+  assert.equal(performanceMethod({performance: null}), '');
+});

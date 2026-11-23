@@ -10,6 +10,7 @@ const sidebars: SidebarsConfig = {
       items: [
         {type: 'doc', id: 'getting-started', label: 'Getting started'},
         {type: 'doc', id: 'concepts', label: 'Concepts'},
+        {type: 'doc', id: 'downloading-models', label: 'Download a model'},
       ],
     },
     {

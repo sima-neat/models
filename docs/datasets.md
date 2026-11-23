@@ -114,11 +114,13 @@ contracts.
 ## Required accuracy metrics
 
 A dataset that models evaluate accuracy on has a file `datasets/<registry
-id>.yaml` in this repository. It lists, per model task, the metrics every
-accuracy report on that dataset must hold:
+id>.yaml` in this repository. It gives the dataset's `name` as its authors write
+it, which the model browser shows in place of the registry ID, and it lists, per
+model task, the metrics every accuracy report on that dataset must hold:
 
 ```yaml
 # datasets/coco-2017.yaml
+name: COCO 2017
 required_metrics:
   object_detection: [coco_map]
   instance_segmentation: [coco_mask_map]

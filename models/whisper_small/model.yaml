@@ -1,6 +1,7 @@
 build-on-demand: true
 display_name: Whisper Small
 description: Transcribes spoken audio into text with optional automatic language detection.
+example_app: https://developer.sima.ai/examples/app/genai%2Fneat-genai-studio
 model_type: audio
 tasks: [automatic_speech_recognition]
 

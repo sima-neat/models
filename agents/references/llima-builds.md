@@ -7,9 +7,9 @@ and when a LLiMa compile or publish job fails.
 
 The author's steps and the manifest fields are in `docs/`:
 
-- [LLiMa language and vision-language models](../docs/adding-a-model.md#llima-language-and-vision-language-models)
-- [Compile an LLM or VLM with LLiMa](../docs/local-development.md#compile-an-llm-or-vlm-with-llima)
-- [LLiMa checkpoint and deployment formats](../docs/metadata-schema.md#llima-checkpoint-and-deployment-formats)
+- [LLiMa language and vision-language models](../../docs/adding-a-model.md#llima-language-and-vision-language-models)
+- [Compile an LLM or VLM with LLiMa](../../docs/local-development.md#compile-an-llm-or-vlm-with-llima)
+- [LLiMa checkpoint and deployment formats](../../docs/metadata-schema.md#llima-checkpoint-and-deployment-formats)
 
 ## How CI recognizes a LLiMa build
 
@@ -214,5 +214,5 @@ so a speculative profile is measured against normal decoding.
 Only declared stages run. No push benchmarks an on-demand LLiMa build. Dispatch
 **Vulcan Model Benchmarking** for the model and profile
 ([manual dispatch](ci-flow.md#manual-dispatch)). The workloads and report fields are in
-[LLiMa text and image performance](../docs/benchmarking.md#llima-text-and-image-performance).
+[LLiMa text and image performance](../../docs/benchmarking.md#llima-text-and-image-performance).
 A LLiMa benchmark fingerprint holds each component's compile run ID and no file digest.

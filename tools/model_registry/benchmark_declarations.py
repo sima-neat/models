@@ -50,7 +50,20 @@ def resolve_accuracy_requirements(model: dict[str, Any], repository: Path, direc
         dataset["required_metrics"] = list(dict.fromkeys(required))
 
 
+def dataset_names(repository: str | Path) -> dict[str, str]:
+    """The name the model browser shows for each dataset, by its Dataset Registry ID."""
+    root = Path(repository)
+    return {
+        path.stem: _dataset_document(root, f"{DATASET_REQUIREMENTS_DIR}/{path.name}")["name"]
+        for path in sorted((root / DATASET_REQUIREMENTS_DIR).glob("*.yaml"))
+    }
+
+
 def _dataset_requirements(repository: Path, relative: str) -> dict[str, list[str]]:
+    return _dataset_document(repository, relative)["required_metrics"]
+
+
+def _dataset_document(repository: Path, relative: str) -> dict[str, Any]:
     path = repository / relative
     try:
         document = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -67,7 +80,7 @@ def _dataset_requirements(repository: Path, relative: str) -> dict[str, list[str
     )
     if unknown:
         raise ValidationError(f"{path}: requires metrics model_report does not define: {', '.join(unknown)}")
-    return document["required_metrics"]
+    return document
 
 
 def validate_benchmark_declarations(model: dict[str, Any], directory: Path) -> None:

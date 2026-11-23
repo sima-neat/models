@@ -23,6 +23,11 @@ GITHUB_RELEASE_RE = re.compile(
     r"^/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/releases/download/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$"
 )
 GITHUB_RAW_RE = re.compile(r"^/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/[a-f0-9]{40}/.+$")
+# An OpenMMLab model-zoo checkpoint: /<project>/<version>/<config folders>/<name>-<first 8 hex digits of its
+# SHA-256>.pth. OpenMMLab never replaces a published file under the same name.
+OPENMMLAB_CHECKPOINT_RE = re.compile(
+    r"^/mm[a-z0-9]+/v[0-9]+(?:\.[0-9]+)*/(?:[A-Za-z0-9._-]+/)+[A-Za-z0-9._-]+-[a-f0-9]{8}\.pth$"
+)
 
 
 def _require_hugging_face_commit(path: str) -> None:
@@ -45,9 +50,17 @@ def _require_github_raw_commit(path: str) -> None:
         raise SourcePolicyError("Raw GitHub sources must use a full commit and file path")
 
 
+def _require_openmmlab_checkpoint(path: str) -> None:
+    if not OPENMMLAB_CHECKPOINT_RE.fullmatch(path):
+        raise SourcePolicyError(
+            "OpenMMLab sources must be a released checkpoint named with the first 8 hex digits of its SHA-256"
+        )
+
+
 # Every approved HTTPS host and the check its URL path must pass. Approving a host is one entry here.
 HTTPS_HOST_CHECKS: dict[str, Callable[[str], None]] = {
     "artifacts.stg.neat.sima.ai": _require_vulcan_onnx,
+    "download.openmmlab.com": _require_openmmlab_checkpoint,
     "github.com": _require_github_release_file,
     "huggingface.co": _require_hugging_face_commit,
     "raw.githubusercontent.com": _require_github_raw_commit,

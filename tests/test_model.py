@@ -184,6 +184,26 @@ def test_model_card_must_be_https(model_card: str) -> None:
         validate_model(FIXTURE, authored, SCHEMA)
 
 
+def test_example_app_accepts_an_apps_portal_page() -> None:
+    authored = _authored()
+    authored["example_app"] = "https://developer.sima.ai/examples/app/object-detection%2Fyolo26-object-detector"
+    assert validate_model(FIXTURE, authored, SCHEMA)["example_app"] == authored["example_app"]
+
+
+@pytest.mark.parametrize("example_app", (
+    "https://developer.sima.ai/examples",
+    "https://developer.sima.ai/examples/app/",
+    "https://developer.sima.ai/examples/app/yolo26?next=https://example.org",
+    "https://example.org/examples/app/yolo26",
+    "http://developer.sima.ai/examples/app/yolo26",
+))
+def test_example_app_must_be_an_apps_portal_application_page(example_app: str) -> None:
+    authored = _authored()
+    authored["example_app"] = example_app
+    with pytest.raises(ValidationError, match="example_app: .* does not match"):
+        validate_model(FIXTURE, authored, SCHEMA)
+
+
 def test_missing_compile_script_fails(tmp_path: Path) -> None:
     directory = tmp_path / "fixture_model"
     shutil.copytree(FIXTURE, directory)
@@ -301,7 +321,7 @@ def _repository_requiring(tmp_path: Path, requirements: dict | None) -> Path:
     (repository / "datasets").mkdir()
     if requirements is not None:
         (repository / "datasets" / "imagenet-2012.yaml").write_text(
-            yaml.safe_dump({"required_metrics": requirements}), encoding="utf-8"
+            yaml.safe_dump({"name": "ImageNet 2012", "required_metrics": requirements}), encoding="utf-8"
         )
     return repository / "schemas" / "model.schema.json"
 
@@ -345,6 +365,17 @@ def test_accuracy_dataset_requirements_are_validated(tmp_path: Path, requirement
     directory, authored = _benchmarked_model(tmp_path, "accuracy")
     schema = _repository_requiring(tmp_path, requirements)
     with pytest.raises(ValidationError, match=expected):
+        validate_model(directory, authored, schema)
+
+
+def test_a_dataset_file_must_name_its_dataset(tmp_path: Path) -> None:
+    directory, authored = _benchmarked_model(tmp_path, "accuracy")
+    schema = _repository_requiring(tmp_path, {"image_classification": ["top1_accuracy"]})
+    requirements = tmp_path / "repository" / "datasets" / "imagenet-2012.yaml"
+    requirements.write_text(
+        yaml.safe_dump({"required_metrics": {"image_classification": ["top1_accuracy"]}}), encoding="utf-8"
+    )
+    with pytest.raises(ValidationError, match="'name' is a required property"):
         validate_model(directory, authored, schema)
 
 

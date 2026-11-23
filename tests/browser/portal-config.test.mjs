@@ -55,3 +55,16 @@ test('Deployment identity survives a staging preview of production data', async 
   assert.equal(preview.build.branch, 'feature/browser');
   assert.equal(portalConfig({MODEL_BROWSER_ENVIRONMENT: 'production'}).deploymentEnvironment, 'production');
 });
+
+test('Each environment reports to its own Developer Center GA4 stream on its own host', () => {
+  const staging = portalConfig({});
+  assert.deepEqual(staging.analytics, {measurementId: 'G-T1D371DW1K', host: 'developer-stg.sima.ai'});
+  const production = portalConfig({MODEL_BROWSER_ENVIRONMENT: 'production'});
+  assert.deepEqual(production.analytics, {measurementId: 'G-Y6YREB4EG5', host: 'developer.sima.ai'});
+});
+
+test('Analytics can be disabled, pointed at a local host, and rejects a malformed ID', () => {
+  assert.equal(portalConfig({MODEL_BROWSER_GA_MEASUREMENT_ID: ''}).analytics.measurementId, '');
+  assert.equal(portalConfig({MODEL_BROWSER_ANALYTICS_HOST: '127.0.0.1'}).analytics.host, '127.0.0.1');
+  assert.throws(() => portalConfig({MODEL_BROWSER_GA_MEASUREMENT_ID: 'UA-123'}), /GA4 measurement ID/);
+});

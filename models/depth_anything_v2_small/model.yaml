@@ -1,5 +1,6 @@
 display_name: Depth Anything V2 Small
 description: Estimates relative depth for every pixel of an image with a ViT-S encoder and DPT head.
+example_app: https://developer.sima.ai/examples/app/depth-estimation%2Fdepth-estimator
 model_type: vision
 tasks: [depth_estimation]
 

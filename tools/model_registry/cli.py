@@ -9,10 +9,10 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 from .artifact import record_compile_outputs, validate_compile_outputs, verify_artifact, verify_mpk
-from .benchmark_declarations import BENCHMARK_STAGES, benchmarked_profiles, reference_metrics_by_model
+from .benchmark_declarations import BENCHMARK_STAGES, benchmarked_profiles, dataset_names, reference_metrics_by_model
 from .compile_matrix import build_matrix
 from .dependencies import resolve_benchmark_runtime, resolve_model_compiler
-from .documentation import load_model_documentation
+from .documentation import example_apps, load_model_documentation
 from .errors import ModelRegistryError
 from .fetch import Fetcher, resolve_dataset
 from .mla_stage_simulation import write_mla_stage_simulation
@@ -26,7 +26,7 @@ from .model import (
 )
 from .model_tests import TEST_OUTCOMES, low_accuracy_variants
 from .runner_approval import authorize_runner_matrix
-from .stage_plan import plan_promoted_benchmarks, plan_stages, resolve_base_branches
+from .stage_plan import find_main_merge_blockers, plan_promoted_benchmarks, plan_stages, resolve_base_branches
 
 AUTHOR_COMMANDS = frozenset(
     {
@@ -148,6 +148,18 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     low_accuracy.add_argument("--repository", type=Path, default=Path.cwd())
     low_accuracy.add_argument("--output", type=Path, required=True)
 
+    names = subcommands.add_parser(
+        "dataset-names", help="write the name of each dataset in datasets/, for the model browser"
+    )
+    names.add_argument("--repository", type=Path, default=Path.cwd())
+    names.add_argument("--output", type=Path, required=True)
+
+    apps = subcommands.add_parser(
+        "example-apps", help="write each model's example application page, for the model browser"
+    )
+    apps.add_argument("--repository", type=Path, default=Path.cwd())
+    apps.add_argument("--output", type=Path, required=True)
+
     stages = subcommands.add_parser(
         "plan-stages", help="select changed compile invocations and the benchmarks reused builds still need"
     )
@@ -171,6 +183,13 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     promoted.add_argument("--api-url", required=True)
     promoted.add_argument("--branch", required=True, choices=("develop", "main"))
     promoted.add_argument("--stages", default="performance,accuracy")
+
+    merge = subcommands.add_parser(
+        "check-main-merge", help="check that merging develop into main changes nothing customers see (CI only)"
+    )
+    merge.add_argument("--repository", type=Path, default=Path.cwd(), help="a checkout of the merge result")
+    merge.add_argument("--head", required=True, help="the develop commit being merged")
+    merge.add_argument("--api-url", required=True)
 
     authorize = subcommands.add_parser(
         "authorize-runner-matrix",
@@ -659,6 +678,18 @@ def _low_accuracy_variants(args: argparse.Namespace) -> int:
     return 0
 
 
+def _dataset_names(args: argparse.Namespace) -> int:
+    names = dataset_names(args.repository)
+    args.output.write_text(json.dumps(names, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")
+    return 0
+
+
+def _example_apps(args: argparse.Namespace) -> int:
+    apps = example_apps(load_models(args.repository))
+    args.output.write_text(json.dumps(apps, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")
+    return 0
+
+
 def _plan_stages(args: argparse.Namespace) -> int:
     from .registry import SigV4RegistryClient, _public_registry_json
 
@@ -679,6 +710,23 @@ def _plan_stages(args: argparse.Namespace) -> int:
         conversion_client=SigV4RegistryClient(args.api_url, args.aws_region) if args.api_url else None,
     )
     print(json.dumps(result, sort_keys=True, separators=(",", ":")))
+    return 0
+
+
+def _check_main_merge(args: argparse.Namespace) -> int:
+    from .registry import _public_registry_json
+
+    result = find_main_merge_blockers(
+        args.repository, head=args.head, read=_public_registry_json, read_api_url=args.api_url,
+    )
+    for warning in result["warnings"]:
+        print(f"warning: {warning}")
+    for blocker in result["blockers"]:
+        print(blocker)
+    if result["blockers"]:
+        print("blocked: main would compile or show fewer results after this merge")
+        return 1
+    print("main takes every build and result from develop")
     return 0
 
 
@@ -1058,6 +1106,10 @@ def _main(argv: Sequence[str] | None, *, author_safe: bool) -> int:
             return _reference_metrics(args)
         if args.command == "low-accuracy-variants":
             return _low_accuracy_variants(args)
+        if args.command == "dataset-names":
+            return _dataset_names(args)
+        if args.command == "example-apps":
+            return _example_apps(args)
         if args.command == "plan-stages":
             return _plan_stages(args)
         if args.command == "plan-promoted-benchmarks":
@@ -1068,6 +1120,8 @@ def _main(argv: Sequence[str] | None, *, author_safe: bool) -> int:
                 read=_public_registry_json, read_api_url=args.api_url,
             ), sort_keys=True))
             return 0
+        if args.command == "check-main-merge":
+            return _check_main_merge(args)
         if args.command == "authorize-runner-matrix":
             return _authorize_runner_matrix(args)
         if args.command == "resolve-base":
