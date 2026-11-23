@@ -72,19 +72,89 @@ def test_calibration_draws_a_seeded_sample_from_cal2017_only(
         calibration.calibration_names(archive, 7)
 
 
-def _source_graph(load_script: Callable[[str], ModuleType], constant_weight: bool = False) -> onnx.ModelProto:
+ATTENTION_HEADS, KEY_DIM, VALUE_DIM = 2, 2, 4
+ATTENTION_CHANNELS = ATTENTION_HEADS * VALUE_DIM
+
+
+def _attention_blocks(count: int) -> tuple[list[onnx.NodeProto], list[onnx.TensorProto]]:
+    """A stride-32 Conv on images into after_0, then `count` Attention blocks as Ultralytics exports them, block
+    `index` reading after_{index} and writing after_{index + 1}."""
+    helper, rng = onnx.helper, np.random.default_rng(1)
+    nodes, initializers = [], []
+    head_channels = 2 * KEY_DIM + VALUE_DIM
+
+    def constant(name: str, value: np.ndarray) -> str:
+        initializers.append(onnx.numpy_helper.from_array(value, name))
+        return name
+
+    def conv(name: str, source: str, output: str, weight_shape: tuple[int, ...], **attributes: object) -> None:
+        # Weights scaled by their fan-in keep every activation near one, where float32 rounding stays small.
+        fan_in = np.prod(weight_shape[1:])
+        weight = constant(f"{name}_w", (rng.standard_normal(weight_shape) / np.sqrt(fan_in)).astype(np.float32))
+        bias = constant(f"{name}_b", rng.standard_normal(weight_shape[0]).astype(np.float32))
+        nodes.append(helper.make_node("Conv", [source, weight, bias], [output], name=name, **attributes))
+
+    conv("stem", "images", "after_0", (ATTENTION_CHANNELS, 3, 32, 32), strides=[32, 32])
+    for index in range(count):
+        at = f"attn{index}/"
+        heads_shape = constant(at + "heads_shape", np.array([1, ATTENTION_HEADS, head_channels, 400]))
+        image_shape = constant(at + "image_shape", np.array([1, ATTENTION_CHANNELS, 20, 20]))
+        scale = constant(at + "scale", np.array(KEY_DIM**-0.5, np.float32))
+        conv(at + "qkv", f"after_{index}", at + "qkv", (ATTENTION_HEADS * head_channels, ATTENTION_CHANNELS, 1, 1))
+        nodes += [
+            helper.make_node("Reshape", [at + "qkv", heads_shape], [at + "heads"], name=at + "Reshape"),
+            helper.make_node(
+                "Split",
+                [at + "heads"],
+                [at + "q", at + "k", at + "v"],
+                name=at + "Split",
+                axis=2,
+                split=[KEY_DIM, KEY_DIM, VALUE_DIM],
+            ),
+            helper.make_node("Transpose", [at + "q"], [at + "q_rows"], name=at + "Transpose", perm=[0, 1, 3, 2]),
+            helper.make_node("MatMul", [at + "q_rows", at + "k"], [at + "scores"], name=at + "MatMul"),
+            helper.make_node("Mul", [at + "scores", scale], [at + "scaled"], name=at + "Mul"),
+            helper.make_node("Softmax", [at + "scaled"], [at + "weights"], name=at + "Softmax", axis=3),
+            helper.make_node(
+                "Transpose", [at + "weights"], [at + "weight_columns"], name=at + "Transpose_1", perm=[0, 1, 3, 2]
+            ),
+            helper.make_node("MatMul", [at + "v", at + "weight_columns"], [at + "values"], name=at + "MatMul_1"),
+            helper.make_node("Reshape", [at + "values", image_shape], [at + "image"], name=at + "Reshape_1"),
+            helper.make_node("Reshape", [at + "v", image_shape], [at + "v_image"], name=at + "Reshape_2"),
+        ]
+        conv(
+            at + "pe",
+            at + "v_image",
+            at + "position",
+            (ATTENTION_CHANNELS, 1, 3, 3),
+            group=ATTENTION_CHANNELS,
+            pads=[1] * 4,
+        )
+        nodes.append(helper.make_node("Add", [at + "image", at + "position"], [at + "sum"], name=at + "Add"))
+        conv(at + "proj", at + "sum", f"after_{index + 1}", (ATTENTION_CHANNELS, ATTENTION_CHANNELS, 1, 1))
+    return nodes, initializers
+
+
+def _source_graph(
+    load_script: Callable[[str], ModuleType], constant_weight: bool = False, attention_blocks: int | None = None
+) -> onnx.ModelProto:
     """Six strided Convs at the Ultralytics head names, plus an unrelated output0 the cut drops."""
     surgery = load_script("surgery")
     helper = onnx.helper
-    nodes, initializers = [], []
+    rng = np.random.default_rng(0)
+    block_count = surgery.ATTENTION_BLOCKS if attention_blocks is None else attention_blocks
+    nodes, initializers = _attention_blocks(block_count)
     for (name, head), shape in zip(surgery.HEADS.items(), surgery.OUTPUT_SHAPES.values()):
-        stride = 640 // shape[2]
-        weight = np.zeros((shape[1], 3, stride, stride), np.float32)
+        # The last box head reads the attention blocks, so the cut keeps them.
+        source, channels, stride = (
+            (f"after_{block_count}", ATTENTION_CHANNELS, 1) if name == "bbox_2" else ("images", 3, 640 // shape[2])
+        )
+        weight = rng.standard_normal((shape[1], channels, stride, stride)).astype(np.float32) / (channels * stride**2)
         if constant_weight and name == "bbox_0":
             nodes.append(helper.make_node("Constant", [], [f"{name}_w"], value=onnx.numpy_helper.from_array(weight)))
         else:
             initializers.append(onnx.numpy_helper.from_array(weight, f"{name}_w"))
-        nodes.append(helper.make_node("Conv", ["images", f"{name}_w"], [head], strides=[stride, stride]))
+        nodes.append(helper.make_node("Conv", [source, f"{name}_w"], [head], strides=[stride, stride]))
     nodes.append(
         helper.make_node(
             "Constant", [], ["output0"], value=onnx.numpy_helper.from_array(np.zeros((1, 300, 6), np.float32))
@@ -97,10 +167,11 @@ def _source_graph(load_script: Callable[[str], ModuleType], constant_weight: boo
         [helper.make_tensor_value_info("output0", onnx.TensorProto.FLOAT, [1, 300, 6])],
         initializers,
     )
-    return helper.make_model(graph, opset_imports=[helper.make_opsetid("", 12)])
+    return helper.make_model(graph, opset_imports=[helper.make_opsetid("", 12)], ir_version=7)
 
 
 def test_surgery_cuts_at_the_six_raw_heads_in_order(tmp_path: Path, load_script: Callable[[str], ModuleType]) -> None:
+    pytest.importorskip("onnxruntime")
     surgery = load_script("surgery")
     source = tmp_path / "source.onnx"
     onnx.save(_source_graph(load_script), source)
@@ -111,7 +182,7 @@ def test_surgery_cuts_at_the_six_raw_heads_in_order(tmp_path: Path, load_script:
     assert list(outputs) == surgery.OUTPUTS == [f"bbox_{i}" for i in range(3)] + [f"class_logit_{i}" for i in range(3)]
     assert outputs == surgery.OUTPUT_SHAPES
     assert outputs["bbox_0"] == [1, 4, 80, 80] and outputs["class_logit_2"] == [1, 80, 20, 20]
-    assert [node.op_type for node in cut.graph.node] == ["Conv"] * 6
+    assert "Constant" not in {node.op_type for node in cut.graph.node}
 
 
 def test_surgery_requires_a_folded_source(tmp_path: Path, load_script: Callable[[str], ModuleType]) -> None:
@@ -120,6 +191,49 @@ def test_surgery_requires_a_folded_source(tmp_path: Path, load_script: Callable[
     onnx.save(_source_graph(load_script, constant_weight=True), source)
 
     with pytest.raises(ValueError, match="fold the source with onnxsim first"):
+        surgery.prepare_model(source, tmp_path / "out")
+
+
+def test_attention_rewrite_runs_each_head_as_mla_einsums(
+    tmp_path: Path, load_script: Callable[[str], ModuleType]
+) -> None:
+    ort = pytest.importorskip("onnxruntime")
+    surgery = load_script("surgery")
+    source = _source_graph(load_script)
+    onnx.save(source, tmp_path / "source.onnx")
+
+    rewritten = onnx.load(surgery.prepare_model(tmp_path / "source.onnx", tmp_path / "out"))
+
+    operations = [node.op_type for node in rewritten.graph.node]
+    head_count = ATTENTION_HEADS * surgery.ATTENTION_BLOCKS
+    equations = [
+        onnx.helper.get_attribute_value(node.attribute[0]) for node in rewritten.graph.node if node.op_type == "Einsum"
+    ]
+    # The Model Compiler places only matmuls batched over the height axis of both inputs on the MLA.
+    assert equations == [b"nchw,nchq->nqhw", b"nkhw,nchk->nchw"] * head_count
+    assert not {"MatMul", "Transpose"} & set(operations)
+    softmax_axes = [
+        onnx.helper.get_attribute_value(node.attribute[0]) for node in rewritten.graph.node if node.op_type == "Softmax"
+    ]
+    assert softmax_axes == [1] * head_count
+    # The fixture's last box head is the output that reads the attention blocks.
+    source.graph.output.append(onnx.helper.make_empty_tensor_value_info(surgery.HEADS["bbox_2"]))
+    image = np.random.default_rng(2).random((1, 3, 640, 640), dtype=np.float32)
+    expected, actual = (
+        ort.InferenceSession(model.SerializeToString(), providers=["CPUExecutionProvider"]).run(
+            [name], {"images": image}
+        )[0]
+        for model, name in ((source, surgery.HEADS["bbox_2"]), (rewritten, "bbox_2"))
+    )
+    np.testing.assert_allclose(actual, expected, rtol=1e-4, atol=1e-4)
+
+
+def test_surgery_requires_every_attention_block(tmp_path: Path, load_script: Callable[[str], ModuleType]) -> None:
+    surgery = load_script("surgery")
+    source = tmp_path / "source.onnx"
+    onnx.save(_source_graph(load_script, attention_blocks=surgery.ATTENTION_BLOCKS - 1), source)
+
+    with pytest.raises(ValueError, match=f"expected {surgery.ATTENTION_BLOCKS} attention blocks"):
         surgery.prepare_model(source, tmp_path / "out")
 
 
