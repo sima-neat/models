@@ -1,3 +1,4 @@
+import ast
 import json
 import runpy
 import shutil
@@ -79,12 +80,19 @@ def test_energy_per_inference_does_not_depend_on_the_compiled_batch(tmp_path):
     batched = model_report.from_performance(Saved(CORE_REPORT), {"model": Model("m", 4)}, workload="w")
 
     assert batched.document["metrics"]["energy_per_inference_joules"] == pytest.approx(
-        single.document["metrics"]["energy_per_inference_joules"])
+        single.document["metrics"]["energy_per_inference_joules"]
+    )
 
 
 def test_a_value_core_did_not_measure_is_absent(tmp_path):
-    unmeasured = {**CORE_REPORT, "latency_p99_ms": 0.0, "telemetry": {**CORE_REPORT["telemetry"], "power_som_watts": {
-        **CORE_REPORT["telemetry"]["power_som_watts"], "samples": 0}}}
+    unmeasured = {
+        **CORE_REPORT,
+        "latency_p99_ms": 0.0,
+        "telemetry": {
+            **CORE_REPORT["telemetry"],
+            "power_som_watts": {**CORE_REPORT["telemetry"]["power_som_watts"], "samples": 0},
+        },
+    }
 
     metrics = model_report.from_performance(Saved(unmeasured), {"model": Model("m")}, workload="w").document["metrics"]
 
@@ -104,15 +112,20 @@ def test_memory_is_mla_and_ev74_memory_and_never_the_cma_pool():
     earlier = {key: value for key, value in telemetry.items() if key != "ev74_memory_mib"}
     earlier["cma_memory_mib"] = {**telemetry["mla_memory_mib"], "key": "ev74_cma_used_mb", "mean": 863.8}
     metrics = model_report.from_performance(
-        Saved({**CORE_REPORT, "telemetry": earlier}), {"model": Model("m")}, workload="w").document["metrics"]
+        Saved({**CORE_REPORT, "telemetry": earlier}), {"model": Model("m")}, workload="w"
+    ).document["metrics"]
 
     assert not any("ev74" in name or "cma" in name for name in metrics)
 
 
 def test_a_script_timed_model_passes_its_telemetry_and_each_components_mla_stats(tmp_path):
     # A hand-filled BenchmarkReport holds no MLA stats; each component's come from its own Core benchmark.
-    measured = {**CORE_REPORT, "telemetry": {}, "mla_layer_stats": {"status": "not requested", "layers": []},
-                "mla_stage_stats": {"status": "not requested", "stages": []}}
+    measured = {
+        **CORE_REPORT,
+        "telemetry": {},
+        "mla_layer_stats": {"status": "not requested", "layers": []},
+        "mla_stage_stats": {"status": "not requested", "stages": []},
+    }
     layer_stats = {"backbone": CORE_REPORT["mla_layer_stats"], "decoder": {"status": "mla-rt not found", "layers": []}}
     stage_stats = {"backbone": CORE_REPORT["mla_stage_stats"], "decoder": {"status": "mla-rt not found", "stages": []}}
 
@@ -148,17 +161,23 @@ def test_telemetry_in_an_unexpected_unit_is_rejected():
 
 def test_accuracy_report_validates_against_the_schema(tmp_path):
     coco = {"split": "val2017", "evaluated_samples": 5000, "available_samples": 5000}
-    model_report.from_accuracy({
-        "validation": {**coco, "metrics": {"coco_map": 0.4, "coco_ap50": 0.55}, "details": {"detections": 12}},
-        "sampled": {**coco, "evaluated_samples": 500, "metrics": {"coco_map": 0.39}},
-    }).save(tmp_path)
+    model_report.from_accuracy(
+        {
+            "validation": {**coco, "metrics": {"coco_map": 0.4, "coco_ap50": 0.55}, "details": {"detections": 12}},
+            "sampled": {**coco, "evaluated_samples": 500, "metrics": {"coco_map": 0.39}},
+        }
+    ).save(tmp_path)
 
     report = saved_report(tmp_path)
     assert report["stage"] == "accuracy"
     assert list(report["datasets"]) == ["validation", "sampled"]
     assert report["datasets"]["validation"]["metrics"] == {"coco_map": 0.4, "coco_ap50": 0.55}
-    assert report["datasets"]["sampled"] == {**coco, "evaluated_samples": 500, "metrics": {"coco_map": 0.39},
-                                             "details": {}}
+    assert report["datasets"]["sampled"] == {
+        **coco,
+        "evaluated_samples": 500,
+        "metrics": {"coco_map": 0.39},
+        "details": {},
+    }
 
 
 def test_accuracy_report_keeps_disparity_errors_in_their_units(tmp_path):
@@ -210,22 +229,43 @@ def test_every_metric_names_its_stage_unit_direction_and_measurement():
         assert metric["unit"] and metric["label"] and metric["registry_name"], name
         assert not metric.get("required") or metric["stage"] == "performance", name
     assert model_report.REQUIRED_PERFORMANCE_METRICS == [
-        "latency_avg_ms", "throughput_fps", "avg_power_watts", "energy_per_inference_joules"
+        "latency_avg_ms",
+        "throughput_fps",
+        "avg_power_watts",
+        "energy_per_inference_joules",
     ]
 
 
-def test_the_package_needs_only_the_standard_library():
+def stdlib_import_probe(package_root):
     probe = (
         "import sys, model_report, model_report.generation_benchmark, model_report.board_telemetry; "
         "third_party = {name.partition('.')[0] for name in sys.modules} - set(sys.stdlib_module_names); "
         "print(sorted(third_party - {'model_report', '__main__'}))"
     )
-    result = subprocess.run(
-        # Exclude site packages and system sitecustomize; the package promises a standard-library-only import.
-        [sys.executable, "-I", "-S", "-c", f"import sys; sys.path.insert(0, {str(REPOSITORY / 'tools')!r}); {probe}"],
-        capture_output=True, text=True, check=True,
+    # Neither user/site packages nor system sitecustomize belong to this dependency probe.
+    return subprocess.run(
+        [sys.executable, "-I", "-S", "-c", f"import sys; sys.path.insert(0, {str(package_root)!r}); {probe}"],
+        capture_output=True,
+        text=True,
+        check=True,
     )
+
+
+def test_the_package_needs_only_the_standard_library():
+    result = stdlib_import_probe(REPOSITORY / "tools")
     assert result.stdout.strip() == "[]"
+
+
+def test_standard_library_probe_detects_a_nonstandard_dependency(tmp_path):
+    # A package shaped like model_report, with the submodules the probe imports, that needs a non-standard module.
+    package = tmp_path / "model_report"
+    package.mkdir()
+    (package / "__init__.py").write_text("import nonstandard_dependency\n", encoding="utf-8")
+    for submodule in ("generation_benchmark", "board_telemetry"):
+        (package / f"{submodule}.py").write_text("", encoding="utf-8")
+    (tmp_path / "nonstandard_dependency.py").write_text("# importable negative control\n", encoding="utf-8")
+    result = stdlib_import_probe(tmp_path)
+    assert result.stdout.strip() == "['nonstandard_dependency']"
 
 
 def test_native_performance_script_runs_without_registry_package(tmp_path):
@@ -243,7 +283,12 @@ class BenchmarkOptions:
     """PyNeat's BenchmarkOptions, which rejects a field Core does not have."""
 
     __slots__ = (
-        "num_samples", "min_duration_ms", "include_mla_layer_stats", "include_mla_stage_stats", "resize_mode", "inputs"
+        "num_samples",
+        "min_duration_ms",
+        "include_mla_layer_stats",
+        "include_mla_stage_stats",
+        "resize_mode",
+        "inputs",
     )
 
 
@@ -378,6 +423,14 @@ def performance_scripts(*, components: bool, accuracy: bool | None = None) -> li
     return scripts
 
 
+def custom_pipeline(script: Path) -> bool:
+    """Custom pipelines time external CPU work; their model-local tests verify those per-frame steps."""
+    return any(
+        isinstance(node, ast.FunctionDef) and node.name == "benchmark_pipeline"
+        for node in ast.parse(script.read_text()).body
+    )
+
+
 def takes_images(script: Path) -> bool:
     """Whether the model a performance script measures declares an image input."""
     model = yaml.safe_load((script.parents[1] / "model.yaml").read_text(encoding="utf-8"))
@@ -387,7 +440,8 @@ def takes_images(script: Path) -> bool:
 # A model whose inputs are not images, such as a keypoint matcher, benchmarks tensors its own tests cover.
 @pytest.mark.parametrize(
     "script",
-    [path for path in performance_scripts(components=False) if takes_images(path) and first_accuracy_dataset(path)],
+    [path for path in performance_scripts(components=False)
+     if takes_images(path) and first_accuracy_dataset(path) and not custom_pipeline(path)],
     ids=lambda path: path.parents[1].name,
 )
 def test_every_single_component_script_benchmarks_a_dataset_image(script, monkeypatch, tmp_path):
@@ -405,10 +459,19 @@ def test_every_single_component_script_benchmarks_a_dataset_image(script, monkey
         def info(self):
             return types.SimpleNamespace(selection=types.SimpleNamespace(selected_post_kind="boxdecode"))
 
-    monkeypatch.setitem(sys.modules, "pyneat", types.SimpleNamespace(
-        __version__="3.0.0", build_info=lambda: {"version": "3.0.0"}, Model=ScriptModel,
-        ModelOptions=ModelOptions, BenchmarkOptions=BenchmarkOptions, Tensor=Tensor, **SCRIPT_PYNEAT,
-    ))
+    monkeypatch.setitem(
+        sys.modules,
+        "pyneat",
+        types.SimpleNamespace(
+            __version__="3.0.0",
+            build_info=lambda: {"version": "3.0.0"},
+            Model=ScriptModel,
+            ModelOptions=ModelOptions,
+            BenchmarkOptions=BenchmarkOptions,
+            Tensor=Tensor,
+            **SCRIPT_PYNEAT,
+        ),
+    )
     dataset = benchmark_dataset(tmp_path / "dataset")
     output = tmp_path / "output"
     declaration = yaml.safe_load((script.parents[1] / "model.yaml").read_text())["accuracy"]["datasets"][0]
@@ -420,13 +483,16 @@ def test_every_single_component_script_benchmarks_a_dataset_image(script, monkey
     runpy.run_path(str(script), run_name="__main__")
 
     assert [args[0] for args in loaded] == ["model.tar.gz"]
-    assert [(r.num_samples, r.min_duration_ms, r.include_mla_layer_stats, r.include_mla_stage_stats)
-            for r in requests] == [(1000, 60000, True, True)]
+    assert [
+        (r.num_samples, r.min_duration_ms, r.include_mla_layer_stats, r.include_mla_stage_stats) for r in requests
+    ] == [(1000, 60000, True, True)]
     # Neat preprocesses the frame inside the measured pipeline.
     options = loaded[0][1]
     assert options.preprocess.kind == "Image"
     assert (options.preprocess.enable, options.preprocess.resize.enable, options.preprocess.normalize.enable) == (
-        "On", "On", "On"
+        "On",
+        "On",
+        "On",
     )
     (frame,) = requests[0].inputs
     # Neat sizes its input buffers, which the execution plan shows as its input, for the benchmark frame.
@@ -455,7 +521,9 @@ def test_every_single_component_script_benchmarks_a_dataset_image(script, monkey
         elif options.decode_type == "YoloX":
             color, normalize = options.preprocess.color_convert, options.preprocess.normalize
             assert (color.enable, color.input_format, color.output_format) == (
-                "On", "PreprocessColorFormat.RGB", "PreprocessColorFormat.BGR"
+                "On",
+                "PreprocessColorFormat.RGB",
+                "PreprocessColorFormat.BGR",
             )
             assert options.decode_type_option == "Split3Interleaved"
             assert options.preprocess.resize.pad_value == 114
@@ -465,7 +533,9 @@ def test_every_single_component_script_benchmarks_a_dataset_image(script, monkey
             assert "NMS IoU 0.65" in report["workload"]
         # Pose accuracy scores only images with a labelled person; oriented boxes measure DOTA's aerial images.
         expected = {
-            "YoloV26Pose": "000000000002.jpg", "YoloV8Obb": "P0003.jpg", "YoloV26Obb": "P0003.jpg",
+            "YoloV26Pose": "000000000002.jpg",
+            "YoloV8Obb": "P0003.jpg",
+            "YoloV26Obb": "P0003.jpg",
         }.get(options.decode_type, ".jpg")
         assert expected in report["workload"]
     elif getattr(options, "decode_type", "") == "Detr":
@@ -483,7 +553,10 @@ def test_every_single_component_script_benchmarks_a_dataset_image(script, monkey
         assert_letterboxed_frame(frame)
         color = options.preprocess.color_convert
         assert (options.preprocess.resize.mode, color.enable, color.input_format, color.output_format) == (
-            "Stretch", "On", "PreprocessColorFormat.RGB", "PreprocessColorFormat.GRAY8"
+            "Stretch",
+            "On",
+            "PreprocessColorFormat.RGB",
+            "PreprocessColorFormat.GRAY8",
         )
         assert not hasattr(options.preprocess, "preset")
         assert (options.superpoint.profile, options.top_k) == ("MagicLeapDemoV1", 1000)
@@ -573,18 +646,23 @@ def test_every_single_component_script_without_a_dataset_benchmarks_a_fixed_fram
 
 
 @pytest.mark.parametrize(
-    "script", [path for path in performance_scripts(components=True)
-               if yaml.safe_load((path.parents[1] / "model.yaml").read_text())["performance"].get("scope")
-               != "components"],
+    "script",
+    [
+        path
+        for group in (False, True)
+        for path in performance_scripts(components=group)
+        if custom_pipeline(path)
+        and yaml.safe_load((path.parents[1] / "model.yaml").read_text())["performance"].get("scope") != "components"
+    ],
     ids=lambda path: path.parents[1].name,
 )
-def test_every_multi_component_script_keeps_cores_mla_stats(script, monkeypatch):
+def test_every_custom_pipeline_script_keeps_cores_mla_stats(script, monkeypatch):
     requests = []
 
     def rows(stats, field):
-        return types.SimpleNamespace(status=stats["status"], **{field: [
-            types.SimpleNamespace(**row) for row in stats[field]
-        ]})
+        return types.SimpleNamespace(
+            status=stats["status"], **{field: [types.SimpleNamespace(**row) for row in stats[field]]}
+        )
 
     class ScriptModel:
         def __init__(self, mpk):
@@ -601,6 +679,7 @@ def test_every_multi_component_script_keeps_cores_mla_stats(script, monkeypatch)
     monkeypatch.setitem(sys.modules, "pyneat", pyneat)
     monkeypatch.setitem(sys.modules, "onnxruntime", types.SimpleNamespace())
 
+    monkeypatch.syspath_prepend(str(script.parent))
     layer_stats, stage_stats = runpy.run_path(str(script))["mla_stats"](Path("backbone.tar.gz"))
 
     assert [(r.include_mla_layer_stats, r.include_mla_stage_stats) for r in requests] == [(True, True)]
@@ -614,9 +693,15 @@ def test_every_multi_component_script_keeps_cores_mla_stats(script, monkeypatch)
     ids=lambda path: path.parents[1].name,
 )
 def test_every_multi_component_script_feeds_its_backbone_a_dataset_frame(script, monkeypatch, tmp_path):
-    monkeypatch.setitem(sys.modules, "pyneat", types.SimpleNamespace(
-        ModelOptions=ModelOptions, Tensor=Tensor, **SCRIPT_PYNEAT,
-    ))
+    monkeypatch.setitem(
+        sys.modules,
+        "pyneat",
+        types.SimpleNamespace(
+            ModelOptions=ModelOptions,
+            Tensor=Tensor,
+            **SCRIPT_PYNEAT,
+        ),
+    )
     functions = runpy.run_path(str(script))
 
     image = functions["sample_image"](benchmark_dataset(tmp_path))
@@ -655,9 +740,15 @@ def test_model_code_uses_cores_mla_stats_names():
 
 def test_independent_components_keep_their_own_metrics_telemetry_and_evidence(tmp_path):
     image = model_report.from_performance(Saved(CORE_REPORT), {"image_encoder": Model("image")}, workload="image")
-    text_core = {**CORE_REPORT, "fps": 600.0, "latency_ms": 2.0,
-                 "telemetry": {**CORE_REPORT["telemetry"], "power_som_watts": {
-                     **CORE_REPORT["telemetry"]["power_som_watts"], "mean": 4.0}}}
+    text_core = {
+        **CORE_REPORT,
+        "fps": 600.0,
+        "latency_ms": 2.0,
+        "telemetry": {
+            **CORE_REPORT["telemetry"],
+            "power_som_watts": {**CORE_REPORT["telemetry"]["power_som_watts"], "mean": 4.0},
+        },
+    }
     text = model_report.from_performance(Saved(text_core), {"text_encoder": Model("text")}, workload="text")
     model_report.from_component_performance({"image_encoder": image, "text_encoder": text}).save(tmp_path)
     report = saved_report(tmp_path)
