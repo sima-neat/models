@@ -221,7 +221,10 @@ Dispatch **Promote model** from `develop` with the operation, the existing
 
 - `withdraw` posts to the promotion's `withdraw` endpoint and requires a
   `result_snapshot` in the reply (`withdraw` in `promotions.py`). Vulcan keeps the request
-  in state `promoted` and decides what the catalog then shows for the profile.
+  in state `promoted`. In the target catalog the profile loses its `approved_deployments`
+  entry and its `benchmark_fingerprints` entry and keeps its `build_requirements` entry.
+  No other profile, model, or branch catalog changes, so each branch needs its own
+  withdrawal.
 - Rejecting or cancelling the GitHub job does not reject or cancel the request in Vulcan.
   Run `status`, then `cancel` when the request should end. Otherwise the pending hold
   stays until it expires.
@@ -249,8 +252,8 @@ still promotes such a profile, and names the branch to withdraw on
 ([the merge check for main](ci-flow.md#the-merge-check-for-main)). Nothing checks a merge
 into `develop`.
 
-What the registry does with an approval whose profile is no longer declared is not
-verified here. Check the target catalog after the withdrawal.
+What the registry does with an approval that is left in place after its profile is no
+longer declared is not verified here.
 
 ## Recover a failed run
 
