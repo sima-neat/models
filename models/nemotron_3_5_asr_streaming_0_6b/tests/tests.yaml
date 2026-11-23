@@ -7,8 +7,9 @@ accuracy:
   expected:
     w8a16:
       fleurs-en-us-test:
-        wer: 0.1098
-        cer: 0.0643
+        wer: 0.0848
+        wer_as_written: 0.1098
+        cer: 0.0378
 performance:
   run_tests: true
   expected:
