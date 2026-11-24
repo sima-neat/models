@@ -74,8 +74,9 @@ ACCURACY_TOOLING = (
     "scripts/run_model_accuracy.sh",
 )
 # The shared transcript scorer, hashed only for models whose accuracy datasets require a speech metric, so a
-# scoring change reruns their accuracy and no other model's.
-SPEECH_METRICS = {"wer", "cer"}
+# scoring change reruns their accuracy and no other model's. Every metric the scorer computes belongs here:
+# wer_as_written reads the same module, so leaving it out would reuse a result from an older implementation.
+SPEECH_METRICS = {"wer", "wer_as_written", "cer"}
 SPEECH_ACCURACY_TOOLING = (
     "tools/model_report/english_normalizer.py",
     "tools/model_report/english_spelling.json",

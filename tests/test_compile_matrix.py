@@ -16,6 +16,7 @@ from model_registry.fingerprints import (
     COMPILE_TOOLING,
     FIDELITY_TOOLING,
     SPEECH_ACCURACY_TOOLING,
+    SPEECH_METRICS,
     benchmark_fingerprint,
     compile_fingerprint,
 )
@@ -426,14 +427,17 @@ def _copy_repository(repository: Path, model_id: str) -> Path:
     return repository / "models" / model_id
 
 
+@pytest.mark.parametrize("metric", sorted(SPEECH_METRICS))
 @pytest.mark.parametrize("scorer", SPEECH_ACCURACY_TOOLING)
-def test_only_speech_accuracy_reruns_when_the_transcript_scorer_changes(tmp_path: Path, scorer: str) -> None:
-    """A scoring change reruns the accuracy of models that must report WER or CER, and no other model's."""
+def test_only_speech_accuracy_reruns_when_the_transcript_scorer_changes(
+    tmp_path: Path, scorer: str, metric: str
+) -> None:
+    """A scoring change reruns the accuracy of models reporting any speech metric, and no other model's."""
     model_dir = _copy_repository(tmp_path, "rf_detr_small")
     detector = load_and_validate_model(model_dir, tmp_path / "schemas" / "model.schema.json")
     transcriber = copy.deepcopy(detector)
     for dataset in transcriber["accuracy"]["datasets"].values():
-        dataset["required_metrics"] = ["wer"]
+        dataset["required_metrics"] = [metric]
 
     def fingerprints() -> list[str]:
         return [benchmark_fingerprint(tmp_path, model, "w8a8_w16a16", RF_DETR_BUILDS, "accuracy")
