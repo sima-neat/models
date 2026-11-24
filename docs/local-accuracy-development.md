@@ -5,7 +5,7 @@ whole model:
 
 | Section | Question it answers | Measured by | Stage |
 | --- | --- | --- | --- |
-| `numerical_fidelity` | Does the compiled model produce the same numbers as the source model? | `scripts/compile.py` | compile |
+| `numerical_fidelity` | Does the quantized graph produce the same numbers as the source model? | `scripts/compile.py` | compile |
 | `accuracy` | How well does the compiled model do its task? | `scripts/accuracy.py` on a DevKit | accuracy |
 
 Fidelity is a numerical diagnostic, not task accuracy. Neither is calibration:
@@ -17,8 +17,9 @@ Artifactory access.
 
 ## Compile-time fidelity
 
-`numerical_fidelity` asks the recipe to compare every build profile's compiled
-model with the source model on a fixed sample of a registered dataset:
+`numerical_fidelity` asks the recipe to compare every build profile's quantized
+graph, run in the Model Compiler, with the ONNX source. The MPK does not run in
+this measurement. The recipe compares on a fixed sample of a registered dataset:
 
 ```yaml
 numerical_fidelity:
@@ -91,6 +92,15 @@ It scores the whole model on each dataset and hands the scores to
 ```python
 dataset_id, dataset_dir = args.dataset.split("=", 1)  # imagenet-2012-val, <directory>
 ...
+model = pyneat.Model(str(parse_mpks(args.mpk)))
+runner = None
+...
+for count, (name, image) in enumerate(zip(names, images), start=1):
+    tensor = pyneat.Tensor.from_numpy(image, copy=False)
+    if runner is None:
+        runner = model.build([tensor])
+    logits = runner.run([tensor], timeout_ms=120000)[0].to_numpy(copy=False).reshape(-1)
+    ...
 report = model_report.from_accuracy({
     dataset_id: {
         "metrics": {"top1_accuracy": top1 / len(names), "top5_accuracy": top5 / len(names)},
@@ -103,6 +113,10 @@ report = model_report.from_accuracy({
 report.save(args.output)
 ```
 
+The example is ResNet-50's script. It builds the runner once, from the first tensor. Each
+`image` is one preprocessed float32 array in height, width, channel order, without a
+batch axis.
+
 How the script evaluates each dataset is up to the model. Every score is
 named as an accuracy metric in
 [`tools/model_report/metrics.json`](../tools/model_report/metrics.json) and
@@ -112,6 +126,9 @@ for `d1_all`, and pixels for `epe`. Each dataset's
 result must hold every metric its requirements file lists for
 the model's tasks. Other known accuracy metrics are allowed. Existing scripts also accept
 `--limit <images>` to evaluate a subset for a quick local check.
+
+The script prints progress with `log()` from `model_report`, which writes to standard
+error. It prints one JSON line with the scores as the last line of standard output.
 
 CI passes `--limit` only when `model.yaml` sets `accuracy.samples`
 ([accuracy](metadata-schema.md#accuracy)). The report then records how many
@@ -168,8 +185,10 @@ PYTHONPATH=tools ~/pyneat/bin/python models/resnet_50/scripts/accuracy.py \
   --output /tmp/resnet50-accuracy --limit 500
 ```
 
-A model whose `accuracy.py` imports another file under `scripts/`, such as
-ResNet-50's `calibration.py`, needs that file beside it.
+Copy the whole model folder, `tools/model_report`, and `tools/model_inputs` to the
+DevKit, because `accuracy.py` imports `calibration.py`, which imports
+`model_inputs.images`. Install `requirements-accuracy.txt` first, as
+[step 8 of Getting started](getting-started.md#8-measure-accuracy) does.
 
 ### FP32 baseline
 

@@ -79,6 +79,7 @@ customers see would be a line such as `customerNotice: !developer`.
 | --- | --- |
 | `buildHistory` | build history, and a link to one registry run |
 | `compilerFilter` | the compiler filter of the catalog |
+| `catalogRunMetadata` | the branch's completed compile and package runs, which `app.js` loads from the registry and adds to the published catalog |
 | `buildDetails` | the Details section of a model page: components, build provenance, package and source inputs |
 | `measurementSource` | the commit and workflow that measured a result |
 | `rawResult` | the model report as the registry stores it |

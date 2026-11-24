@@ -35,20 +35,25 @@ depends on.
   compile input, except `convert.py`, `performance.py`, `accuracy.py`, and
   `fp32_baseline_accuracy.py` (`NON_COMPILE_SCRIPTS`). Editing a comment in a
   compile input recompiles and then remeasures the model.
-- No fingerprint reads a model's `README.md`, `hero.png`, `tests/`, `license`,
-  the taxonomy, `docs/`, `agents/`, `skills/`, or `AGENTS.md`. Editing them reruns
-  nothing.
+- No fingerprint reads a model's `README.md`, `hero.png`, `tests/`, its `license`
+  field, the taxonomy, `docs/`, `agents/`, `skills/`, or `AGENTS.md`. Editing them
+  reruns nothing. The `license` resource pin is a compile input, like every
+  resource.
 
 ## Before a push
 
 A push reruns each build whose fingerprint changed. Some files are fingerprint inputs of every
 model: `scripts/run_model_compilation.sh`, the compile helpers in
 `tools/model_registry/compile_script.py`, the image listing in `tools/model_inputs/images.py`,
-the benchmark frame in `tools/model_inputs/frame.py`, `scripts/unpack_benchmark_datasets.sh`, and the other
-entries of `COMPILE_TOOLING`, `BOARD_STAGE_TOOLING`, `PERFORMANCE_TOOLING`, and `ACCURACY_TOOLING`
-in `fingerprints.py`, the compiler pin, the Core runtime target, and `FINGERPRINT_VERSION` in
-`conversion.py`. An edit to one of them, even a comment made while working on one model,
-recompiles or remeasures models the pull request has nothing to do with.
+`scripts/unpack_benchmark_datasets.sh`, and the other entries of `COMPILE_TOOLING`,
+`BOARD_STAGE_TOOLING`, `PERFORMANCE_TOOLING`, and `ACCURACY_TOOLING` in `fingerprints.py`, the
+compiler pin, the Core runtime target, and `FINGERPRINT_VERSION` in `conversion.py`. Three
+more lists there each cover part of the models: `FIDELITY_TOOLING` recompiles each model that
+declares `numerical_fidelity`, `FRAME_TOOLING`, the benchmark frame in
+`tools/model_inputs/frame.py`, remeasures the performance of each model PyNeat measures, and
+`LLIMA_PERFORMANCE_TOOLING` that of each model MoLE measures. An edit to one of them, even a
+comment made while working on one model, recompiles or remeasures models the pull request has
+nothing to do with.
 
 - Before each push, list the changed files and check each against those inputs.
 - When one matches, say so before pushing, in these terms: the file, the stages it reruns, and
@@ -79,13 +84,20 @@ later or never. Apply them while you write.
   heads before the upstream decode, or starts after an upstream step
   ([what `convert.py` exports](../docs/conversion-artifacts.md#what-convertpy-exports)).
 - **Read conversion output names from `model.yaml`.** When a model declares
-  `conversion.outputs`, every script reads the names with
-  `conversion_outputs()`, so renaming a file changes only `model.yaml`.
+  `conversion.outputs`, `convert.py`, `compile.py`, and the build tests read
+  the names with `conversion_outputs()`, so renaming a file changes only
+  `model.yaml`. The benchmark scripts take their paths as arguments, because
+  they run without `model_registry`.
 
 ### Compile
 
 - **Hide an unready variant by commenting it out.** A commented-out profile in
-  `model.yaml` is neither compiled nor benchmarked, and its tests skip.
+  `model.yaml` is neither compiled nor benchmarked, and its tests skip. A promoted
+  build of it stays promoted, and `check-main-merge` blocks the merge into `main`
+  while the catalog of `develop` or `main` promotes a profile `model.yaml` no
+  longer declares, so a maintainer first withdraws it on each of those branches
+  ([when a promoted profile leaves
+  `model.yaml`](references/promotion-operations.md#when-a-promoted-profile-leaves-modelyaml)).
 - **Calibrate on at most 20 samples.** Keep each component's `calibration_samples` at 20 or
   fewer, because each sample adds compile time to every build and nothing validates the
   parameter.
@@ -106,6 +118,9 @@ later or never. Apply them while you write.
 - **Name a shared module once.** A fingerprint hashes a shared file's path with its
   content, so renaming or moving `fidelity.py`, `images.py`, or `frame.py` recompiles or
   remeasures every model that reads it.
+- **`tools/model_inputs/__init__.py` holds only its docstring.** `calibration.py` imports
+  the package where OpenCV may be absent, and no fingerprint or test reads that file, so
+  nothing reruns or catches an import added there.
 - **An LLM or VLM is one component.** Declare the complete model as one
   component with one 4K profile (`max_num_tokens: 4096` and
   `language_group_size`). Keep graph-changing options in component
@@ -120,10 +135,12 @@ later or never. Apply them while you write.
   `model.yaml` comments or in the docstrings of `convert.py`, `performance.py`,
   and `accuracy.py`.
 - **Benchmark scripts need only `tools/model_report` and `tools/model_inputs`.**
-  `performance.py` and `accuracy.py` run with those two folders on `PYTHONPATH`, without
-  `model_registry` imports, YAML configuration, registry credentials, or downloads. They
-  take verified local paths: `--mpk`, `--dataset`, `--output`, and `--resources` when the
-  model declares supporting files. `model_report` needs only the Python standard library,
+  `performance.py` and `accuracy.py` run with `tools/` on `PYTHONPATH` and import only those
+  two packages from it, without `model_registry` imports, YAML configuration, registry
+  credentials, or downloads. They take verified local paths: `--mpk`, or `--deployment` for
+  a build packaged as a deployment folder, `--dataset`, `--output`, and `--resources` when
+  the model declares supporting files. `accuracy.py` also takes `--limit`, the number of
+  samples to score. `model_report` needs only the Python standard library,
   and `model_inputs` only what PyNeat's environment has, so a customer copies both to a
   DevKit beside the model folder.
 - **The benchmark tooling asks who measures a model, not how it is packaged.** A speech
@@ -135,7 +152,9 @@ later or never. Apply them while you write.
 ### Tests
 
 - **DevKit tests import lazily.** Tests under `tests/benchmark/` also run on the
-  DevKit, in PyNeat, which has no `onnx`, `onnxruntime`, or `torch`. Import such
+  DevKit, in the registry tooling environment the job installs with
+  `pip install '.[tests]'`. It has NumPy and pytest, and no `pyneat`, `cv2`,
+  Pillow, `onnx`, `onnxruntime`, or `torch`. Import such
   a package inside the test with `pytest.importorskip("onnx")`. A module-level
   import stops collection on the DevKit, and the stage publishes no result
   ([the tests step](../docs/adding-a-model.md#10-write-the-models-tests)).

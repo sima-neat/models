@@ -219,3 +219,8 @@ Only declared stages run. No push benchmarks an on-demand LLiMa build. Dispatch
 ([manual dispatch](ci-flow.md#manual-dispatch)). The workloads and report fields are in
 [LLiMa text and image performance](../../docs/benchmarking.md#llima-text-and-image-performance).
 A LLiMa benchmark fingerprint holds each component's compile run ID and no file digest.
+
+MoLE measures only a deployment that generates text. PyNeat measures a speech deployment:
+`benchmark_runner` in `benchmark_declarations.py` returns `pyneat` for it, so the job
+unpacks its dataset, `check_report` holds its report to the whole-model requirements, and
+its performance fingerprint hashes `FRAME_TOOLING` in place of `LLIMA_PERFORMANCE_TOOLING`.

@@ -105,8 +105,10 @@ fidelity_json="$(model-registry fetch-fidelity-dataset \
 These commands delegate registered dataset resolution to Dataset Registry and
 then check the SHA-256 and size committed with the model.
 `scripts/run_model_compilation.sh` runs both and passes the paths to the
-recipe. On a DevKit, `scripts/run_model_accuracy.sh` resolves each accuracy
-dataset into a shared cache and extracts it for `accuracy.py`. Follow [Qualify
+recipe. On a DevKit, `scripts/run_model_accuracy.sh` unpacks each accuracy
+dataset for `accuracy.py` with `scripts/unpack_benchmark_datasets.sh`. By default
+it removes the unpacked copy when it ends
+([benchmark input](benchmarking.md#benchmark-input)). Follow [Qualify
 locally](local-development.md) for the complete command sequence and
 [Accuracy and fidelity](local-accuracy-development.md) for the entry
 contracts.

@@ -15,8 +15,7 @@ tasks: [image_classification]
 modalities:
   inputs: [image]
   outputs: [class_scores]
-architecture:
-  id: resnet
+architecture: resnet
 ```
 
 The facets are intentionally independent:
@@ -24,7 +23,7 @@ The facets are intentionally independent:
 - model type describes the broad product class, such as Vision, LLM, or VLM;
 - task describes what the model does;
 - modality describes semantic inputs and outputs;
-- `architecture.id` names the model family, the upstream model line without its
+- `architecture` names the model family, the upstream model line without its
   size: `yolo26_det`, not `yolo26n_det`, and `resnext`, not `resnext_50`. The
   model's `id` and `display_name` carry the size. The browser labels this filter
   Model family;
@@ -74,4 +73,6 @@ alias, deprecated entry, or taxonomy release number. Full-catalog validation
 rejects a model that still references a removed ID before publication.
 
 To remove a model or a build profile, delete it from the repository. After the
-next catalog publication, the model browser no longer lists it.
+next catalog publication, the model browser no longer lists it. A promoted build
+of a removed profile stays listed until a maintainer withdraws it on each branch
+([withdraw a promoted build](model-promotion.md#withdraw-a-promoted-build)).

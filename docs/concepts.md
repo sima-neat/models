@@ -44,7 +44,7 @@ and `accuracy`. Every build compiles. The performance and accuracy stages run wh
 
 | Stage | Where it runs | Model script | What it produces |
 | --- | --- | --- | --- |
-| compile | Model Compiler | `scripts/compile.py` | one [MPK](#mpk) per [model component](#model-component), plus `fidelity.json` when `model.yaml` declares `numerical_fidelity`, a comparison of the compiled model's outputs with the original's |
+| compile | Model Compiler | `scripts/compile.py` | one [MPK](#mpk) per [model component](#model-component), plus `fidelity.json` when `model.yaml` declares `numerical_fidelity`, a comparison of the quantized graph's outputs, run in the Model Compiler, with the original's |
 | performance | Modalix DevKit | `scripts/performance.py` | a model report with the performance of the whole model |
 | accuracy | Modalix DevKit | `scripts/accuracy.py` | a model report with the accuracy on each declared dataset |
 

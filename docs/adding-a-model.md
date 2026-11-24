@@ -177,7 +177,7 @@ every component's compiler parameters, keyed by component ID:
 ```yaml
 build_profiles:
   w8a8:
-    calibration_dataset: imagenet-2012-mini
+    calibration_dataset: imagenet-2012-cal
     components:
       model:
         parameters: {precision: w8a8}
@@ -213,9 +213,10 @@ scripts/compile.py --model <verified-source> --output-dir <new-directory> \
 profile names a calibration and `--fidelity-dataset` when `model.yaml`
 declares `numerical_fidelity`. The recipe does this:
 
-- It reads each component's `parameters` from `model.yaml` with
-  `component_parameters` from `model_registry.compile_script`, so that it
-  compiles with the values the compile fingerprint covers.
+- It reads each component's `parameters` from `model.yaml`, so that it
+  compiles with the values the compile fingerprint covers. A single-component
+  recipe calls `component_parameters` from `model_registry.compile_script`. A
+  recipe that reads every component's parameters at once keeps its own function.
 - It writes exactly one `<model-id>_<profile-id>_mpk.tar.gz` under
   `<output-dir>/<component-id>/` for each component, by passing
   `<model-id>_<profile-id>` to the compiler as the model name. A profile with
@@ -239,13 +240,13 @@ way. Import them instead of copying them:
 
 | Function | Module | What it does |
 | --- | --- | --- |
-| `parse_arguments(__doc__, MODEL_DIR)` | `model_registry.compile_script` | Parses the command line above when `--model` is an `.onnx` file. It stops when the compile invocation is not the build profile, a path does not exist, or `--fidelity-dataset` is missing while `model.yaml` declares `numerical_fidelity`. |
-| `component_parameters(MODEL_DIR, profile_id, component_id)` | `model_registry.compile_script` | Returns one component's parameters in a build profile, and fails for a profile or component `model.yaml` does not declare. |
+| `parse_arguments(__doc__, MODEL_DIR)` | `model_registry.compile_script` | Parses the command line above when `--model` is an `.onnx` file. It stops when the compile invocation is not the build profile, a path does not exist, or `--fidelity-dataset` is missing while `model.yaml` declares `numerical_fidelity`. It returns `model`, `output_dir`, `build_profile`, `dataset`, and `fidelity_dataset` with each path resolved. A dataset the runner did not pass is `None`. |
+| `component_parameters(MODEL_DIR, profile_id, component_id)` | `model_registry.compile_script` | Returns one component's parameters in a build profile. For a profile or component `model.yaml` does not declare, it raises `ValidationError`, such as `unknown build profile: <name>`. |
 | `read_mpk_manifest(archive)` | `model_registry.compile_script` | Returns an MPK's member names and its manifest, and refuses a link or a path outside the archive. |
 | `compiler_log_level()` | `model_registry.compile_script` | Returns the log level a recipe passes to `quantize` and `compile` as `log_level`: `DEBUG` in a GitHub Actions job, so a failed CI compile leaves its full log, and `INFO` anywhere else. |
-| `compare_with_onnx(onnx_path, quantized, samples, input_name, output_names)` | `model_registry.fidelity` | Runs each preprocessed sample through the ONNX source with ONNX Runtime and through the quantized graph, and returns each output's pair of arrays for every sample. It is for a model with one image input. |
-| `write_fidelity_report(MODEL_DIR, profile_id, compared, output_dir)` | `model_registry.fidelity` | Computes each output's agreement over the compared samples and writes `fidelity.json`. A recipe that compares outputs its own way, such as a multi-component model, passes its own `compared` pairs. |
-| `image_names(dataset, suffixes)` | `model_inputs.images` | Lists a dataset's images from its directory or its tar archive, sorted, without the `._` companion files macOS tar writes. |
+| `compare_with_onnx(onnx_path, quantized, samples, input_name, output_names)` | `model_registry.fidelity` | Runs each preprocessed sample through the ONNX source with ONNX Runtime and through the quantized graph, and returns each output's pair of arrays for every sample. Each sample is one float32 array, channels last, without the batch axis. `output_names` names every ONNX output in graph order. It is for a model with one image input. |
+| `write_fidelity_report(MODEL_DIR, profile_id, compared, output_dir)` | `model_registry.fidelity` | Computes each output's agreement over the compared samples and writes `fidelity.json` into `output_dir`, which must exist. A recipe that compares outputs its own way, such as a multi-component model, passes its own `compared` pairs. |
+| `image_names(dataset, suffixes)` | `model_inputs.images` | Lists a dataset's images from its directory or its tar archive, sorted, without the `._` companion files macOS tar writes. `suffixes` is a tuple of lower-case suffixes, such as `(".jpg", ".jpeg")`. |
 | `read_images(dataset, names)` | `model_inputs.images` | Returns the named images' encoded bytes, reading an archive through once. |
 
 The recipe stays in the model's scripts: quantization, the compile call,
@@ -412,9 +413,10 @@ request. Import a model script with the `load_script` fixture, as in
 `load_script("compile")`; it stubs Model Compiler and DevKit modules the host
 lacks. `build_profile` names the build profile of the given output.
 
-The tests under `tests/benchmark/` also run on the DevKit, in PyNeat, which has no
-`onnx`, `onnxruntime`, or `torch`. Import such a package inside the test that needs it,
-with `pytest.importorskip("onnx")`. An import at the top of the file stops pytest on the
+The tests under `tests/benchmark/` also run on the DevKit, in a separate environment that
+holds only this repository's package, NumPy, and pytest. Import any other package, such as
+`cv2`, `PIL`, `onnx`, or `torch`, inside the test that needs it, with
+`pytest.importorskip("onnx")`. An import at the top of the file stops pytest on the
 DevKit, and the benchmark then publishes no result for that stage. Pull request CI has
 these packages, so it does not catch the mistake.
 
@@ -477,7 +479,7 @@ accuracy:
   run_tests: true
   expected:
     w8a8:
-      imagenet-2012-mini:
+      imagenet-2012-val:
         top1_accuracy: 0.7764
         top5_accuracy: 0.9356
 performance:

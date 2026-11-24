@@ -19,7 +19,9 @@ Standalone previews retain local navigation when the shared header is unavailabl
 The browser has two views. The customer view shows the Main catalog and hides the
 branch and compiler filters, build history, the Details section and contributor
 navigation. It also leaves out the board's Linux memory, MLA Utilization, the
-**Raw result** download, and the commit and workflow links of each result. The
+**Raw result** download, and the commit and workflow links of each result. It leaves
+out each dataset's **Evaluation details** with the **Published scores** and
+**FP32 baseline** rows, and the branch in the copied CLI command. The
 developer view keeps all of them. Selecting a branch in the developer view changes
 the catalog, not the view.
 

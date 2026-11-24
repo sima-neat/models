@@ -201,8 +201,9 @@ PYTHONPATH=tools python models/yolo26n/scripts/compile.py \
 2. It quantizes the graph. The `w8a8` build profile uses 20 calibration images to choose its INT8 ranges.
 3. It writes one MPK per model component. An MPK is the archive a DevKit runs.
 
-`PYTHONPATH=tools` lets `compile.py` import the `model_registry` package from your clone,
-which reads `model.yaml`. `--compile-invocation` repeats the build profile name, because a
+`PYTHONPATH=tools` lets `compile.py` import two packages from your clone: `model_registry`,
+which reads `model.yaml`, and `model_inputs`, which lists the calibration images.
+`--compile-invocation` repeats the build profile name, because a
 build profile compiles in one invocation named after it.
 
 The compiler ends with a summary whose last line starts with `Compiled model:`. `compile.py`
@@ -340,10 +341,10 @@ The page's SoC power tile adds up separate power readings and matches no single 
 of the report, so compare throughput, latency, and accuracy.
 
 The clone also holds the published values. `models/yolo26n/tests/tests.yaml` lists the
-expected values of each build profile, which are `throughput_fps: 964.5` and
-`coco_map: 0.3808` for `w8a8`. CI fails a model's accuracy test when a score falls more
-than 5% below its expected value, and its performance test when throughput falls more
-than 10%.
+expected values of a build profile once CI has published its report. For `w8a8` they are
+`throughput_fps: 964.5` and `coco_map: 0.3808`. CI fails a model's accuracy test when a
+score falls more than 5% below its expected value, and its performance test when
+throughput falls more than 10%.
 
 ## Language models
 

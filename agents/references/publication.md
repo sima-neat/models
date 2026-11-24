@@ -118,22 +118,23 @@ not report fields. Publication records them on the run.
 | accuracy | exactly the datasets `model.yaml` declares, each with the metrics its `datasets/<id>.yaml` requires for the model's tasks, and every score within its metric's bounds |
 | performance, whole model | every metric `metrics.json` marks `required`, and the components in `model.yaml` order |
 | performance, `scope: components` | the required metrics for each component |
-| LLiMa performance | `generation` workloads with `ttft_ms` and `decode_tps`, plus `prefill_tps` for text workloads and `avg_power_watts` telemetry. A speculative report must use the declared `benchmark_baseline`. |
+| performance of a model MoLE measures | `generation` workloads with `ttft_ms` and `decode_tps`, plus `prefill_tps` for text workloads and `avg_power_watts` telemetry. A speculative report must use the declared `benchmark_baseline`. A speech deployment, which PyNeat measures, reports as a whole model, and `generation` workloads fail its check. |
 
 `publish_report` then publishes one run per stage:
 
 - The run's parent is the profile's package run. The staged input must hold each
   component's compile receipt and a package receipt that links exactly those runs.
 - It has one `compiled-model-<component>` input per component, and `baseline-model-…`
-  inputs for a speculative LLiMa report.
+  inputs for a speculative generation report.
 - Its artifacts are `model-report`, Core's report as `core-benchmark-report` (one per
-  component for `scope: components`, `llima-benchmark-report` for LLiMa), and `<stage>-log`.
+  component for `scope: components`, `llima-benchmark-report` for a report with `generation`
+  workloads), and `<stage>-log`.
 - Its test result `<stage>/model` holds the whole report as the summary and the model
-  test outcome as the status. An LLiMa summary leaves out per-request timings, which stay
-  in the artifact.
+  test outcome as the status. A generation report's summary leaves out per-request timings,
+  which stay in the artifact.
 - It has one measurement per metric, named by the metric's `registry_name`. An accuracy
   measurement has a `dataset` dimension. A component measurement has a `component_id`
-  dimension. An LLiMa measurement has workload, role, and decoding dimensions.
+  dimension. A generation measurement has workload, role, and decoding dimensions.
 - The run environment records the DevKit's clocks, CPU governor, and kernel from
   `environment.json`, which `check-report` wrote on the board.
 
@@ -191,8 +192,10 @@ commit.
 
 A model with a conversion source is refreshed only when the run's plan selected its
 conversion. An unselected one keeps its previous catalog entry, with fresh documentation
-and categories. A new conversion-backed model enters the catalog once a plan selects its
-conversion.
+and categories, and without its server-owned selections and the `benchmark_fingerprints` of
+their profiles (`_without_selections`), because the registry rejects fingerprints of a
+profile without a build. A new conversion-backed model enters the catalog once a plan
+selects its conversion.
 
 On `develop` and `main`, `_refresh_approved_benchmarks` recomputes the benchmark
 fingerprints of each approved deployment from its producing runs.

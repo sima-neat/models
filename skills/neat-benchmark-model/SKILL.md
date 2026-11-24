@@ -25,8 +25,10 @@ describes.
      [`deps/manifest.json`](https://github.com/sima-neat/models/blob/main/deps/manifest.json)
      pins as `platform-version` and `neat-core.install_target`. CI installs Core
      with `sima-cli neat install --env production --type minimal core@<branch>:<tag>`.
-     Core's board installer also installs Sentinel, the telemetry daemon that
-     supplies power, temperature, CPU, and memory readings.
+     For a target that names no tag, such as `core@v0.6.2`, CI installs the
+     newest published tag of that ref. Core's board installer also installs
+     Sentinel, the telemetry daemon that supplies power, temperature, CPU, and
+     memory readings.
    - Read the two clocks that throughput depends on. Published results use the
      MLA at 1 GHz and the CPU at 1.4 GHz:
 
@@ -50,8 +52,12 @@ describes.
    - From the machine that holds the build, copy the model's scripts,
      `tools/model_report`, `tools/model_inputs`, and the MPKs to the DevKit's
      NVMe drive, which keeps large files off the root filesystem. The scripts
-     import both `tools` folders. Copy the whole model folder, because
-     `accuracy.py` can import another file from its `scripts/` folder:
+     import both `tools` folders. Run the command from the root of a clone of
+     the Models repository that holds both, which
+     `ls tools/model_report tools/model_inputs` confirms. When it prints an
+     error, check out the branch or release this skill came from. Copy the
+     whole model folder, because `accuracy.py` can import another file from
+     its `scripts/` folder:
 
      ```bash
      tar -czf - models/<model-id> tools/model_report tools/model_inputs <build-folder> \

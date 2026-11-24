@@ -85,7 +85,9 @@ each finding cites the owning file and section.
   unusable ([review and merge
   expectations](../../../docs/contributing.md#review-and-merge-expectations)), or because its
   accuracy is more than 8% below its reference score. Its comment then gives the metric, both
-  values, and the gap.
+  values, and the gap. While `accuracy` in `tests/tests.yaml` sets `run_tests: false`, no
+  check applies the 8% rule, so compare each profile's measured accuracy with its reference
+  score yourself.
 
 ## Evidence
 

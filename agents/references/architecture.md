@@ -132,7 +132,7 @@ no compiler dependency.
 
 | Module | Owns |
 | --- | --- |
-| `images.py` | Listing a dataset's images from its directory or tar archive (`image_names`) and reading the named ones (`read_images`). It needs only the Python standard library, and it is in `COMPILE_TOOLING` because every `calibration.py` imports it. |
+| `images.py` | Listing a dataset's images from its directory or tar archive (`image_names`) and reading the named ones (`read_images`). It needs only the Python standard library. It is in `COMPILE_TOOLING`, so an edit recompiles every ONNX build, including those whose `calibration.py` does not import it. |
 | `frame.py` | The 720p benchmark frame of an image model: `read_rgb`, `letterbox_to_720p`, and the frame size. It needs OpenCV and NumPy, and a performance fingerprint hashes it for a model that PyNeat measures. |
 
 ## Stages and fingerprints

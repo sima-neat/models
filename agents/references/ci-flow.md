@@ -76,8 +76,11 @@ To merge `develop` into `main`:
 3. Measure each missing on-demand result on `develop`. `promoted_missing` queues every
    profile except LLMs and VLMs, and each of those needs a single-model dispatch
    ([manual dispatch](#manual-dispatch)).
-4. Re-run the failed `main-merge` job. Nothing re-runs it for you when a benchmark finishes.
-5. Merge. The orchestrator on `main` compiles and measures nothing and publishes one
+4. Confirm that no accuracy test failed on `develop`, and comment out each profile that
+   fails the reference test, because the check accepts a completed result whatever its test
+   outcome ([`rules.md` "Tests"](../rules.md#tests)).
+5. Re-run the failed `main-merge` job. Nothing re-runs it for you when a benchmark finishes.
+6. Merge. The orchestrator on `main` compiles and measures nothing and publishes one
    catalog snapshot.
 
 After a forced rebuild on `develop`, merge into `main` within 30 days. The registry
@@ -150,6 +153,8 @@ label, the runner class, the runner market, and `model-id-…`, `build-profile-i
    folders outside the read-only compiler image.
 4. It runs the runner script in the activated compiler environment:
    `scripts/run_model_compilation.sh`, or `scripts/run_llima_compilation.sh` for LLiMa.
+   A recipe logs the Model Compiler at DEBUG here and at INFO on a developer's machine,
+   because `compiler_log_level()` reads `GITHUB_ACTIONS`.
 5. `verify-artifact --write-manifest` checks each component and writes its
    `compile-result.json` with provenance: sources, calibration, compiler, fingerprint,
    commit, and runner.
@@ -289,8 +294,8 @@ non-production Core index needs `--artifacts-base-url` or `NEAT_ARTIFACTS_BASE_U
 
 For the `mole` runner it skips steps 2 to 4 and passes `--deployment`, plus `--baseline`
 when the staged input holds `benchmark-baseline.json`. A speech model is a deployment
-folder that PyNeat measures: it keeps steps 2 to 4 and passes `--deployment` with the
-dataset in place of the MPKs.
+folder that PyNeat measures: it keeps steps 2 to 4 and passes `--deployment` and the
+dataset, without the MPKs or `--resources`.
 
 `run_model_accuracy.sh` takes every declared dataset from `DATASET_DIR` with the same script.
 It lists the build with `model-component-artifacts` and passes each MPK as `--mpk`, or
@@ -358,7 +363,7 @@ source changes to `conversion` there.
 `vulcan-model-registry.yml` runs on a push that changes `deps/manifest.json`, `models/`,
 `schemas/`, `taxonomies/`, `datasets/`, `artifact-browser/`, `.github/workflows/`,
 `scripts/`, `tests/`, `conftest.py`, `packaging/model-registry/`, `tools/model_registry/`,
-`tools/model_report/`, or `pyproject.toml`.
+`tools/model_report/`, `tools/model_inputs/`, or `pyproject.toml`.
 
 | Job | Does |
 | --- | --- |
@@ -367,8 +372,8 @@ source changes to `conversion` there.
 | `publish` | Publishes the package files under `models-utils/model-registry` with the shared artifact publisher. |
 | `promote-latest` | On a branch, calls the shared `vulcan-update-latest-artifacts.yml`, which defines what the `latest` tag moves to. |
 
-The package holds `model_registry` without the CI-only modules, plus `model_report`
-([module map](architecture.md#module-map)).
+The package holds `model_registry` without the CI-only modules, plus `model_report` and
+`model_inputs` ([module map](architecture.md#module-map)).
 
 ## Model browser publication
 

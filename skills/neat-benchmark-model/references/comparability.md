@@ -48,5 +48,7 @@ value, and a throughput more than 10% below. They also fail an accuracy score
 more than 8% below the model's reference score for that dataset: its FP32
 baseline, else the score its authors published for the same split. A metric
 whose better direction is lower may rise by that much instead. Every model
-shares these limits, so a result inside them passes the model's test when that
-test runs.
+shares these limits. The reference check uses the first metric of that
+reference that `tests.yaml` expects. A model's performance test can check more,
+such as MLA stats with status `ok` and a 1280x720 benchmark frame, so read its
+`tests/benchmark/test_performance.py`.

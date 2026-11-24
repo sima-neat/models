@@ -28,6 +28,7 @@ A typical new-model change contains:
 
 ```text
 models/<model-id>/README.md
+models/<model-id>/hero.png                          # required, the image the README opens with
 models/<model-id>/model.yaml                        # identity, builds, fidelity, accuracy, performance
 models/<model-id>/scripts/compile.py
 models/<model-id>/scripts/performance.py
@@ -37,6 +38,11 @@ models/<model-id>/scripts/requirements-accuracy.txt # optional, with accuracy.py
 models/<model-id>/scripts/convert.py                # only with a declared conversion
 models/<model-id>/scripts/requirements-convert.txt  # required with convert.py
 models/<model-id>/scripts/surgery.py                # only when the recipe rewrites the graph
+models/<model-id>/tests/tests.yaml                  # required, one entry per stage the model has
+models/<model-id>/tests/build/test_compile.py       # one test file per stage whose tests run
+models/<model-id>/tests/build/test_conversion.py    # only with convert.py
+models/<model-id>/tests/benchmark/test_performance.py
+models/<model-id>/tests/benchmark/test_accuracy.py  # only with an accuracy declaration
 ```
 
 A taxonomy change may also be necessary, but it changes a repository-wide
@@ -148,7 +154,15 @@ A pull request runs `Target Branch Checks` on the merge result:
 - the model browser build and its checks
 - for a pull request into `main`, a check that `develop` has built and measured
   everything `main` will show. It reads the registry and prints each missing build
-  or result. A maintainer re-runs it once those exist.
+  or result. A maintainer re-runs it once those exist. It also fails while `develop`
+  or `main` still promotes a build of a profile that `model.yaml` no longer declares,
+  and it names the branch to withdraw it on
+  ([withdraw a promoted build](model-promotion.md#withdraw-a-promoted-build)).
+
+A pull request also runs `PR Sanitization`. A pull request into `main` must come from
+`develop` or a `release-*` branch. Any other pull request must target `develop`,
+`release-*`, or `integration/*`, and its description must reference a GitHub issue, as in
+`Refs #123`.
 
 A pull request never compiles a model, measures it on a DevKit, or publishes a
 result. Those steps run only after a push to this repository.
