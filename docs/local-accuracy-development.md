@@ -5,7 +5,7 @@ whole model:
 
 | Section | Question it answers | Measured by | Stage |
 | --- | --- | --- | --- |
-| `numerical_fidelity` | Does the compiled model produce the same numbers as the source model? | `scripts/compile.py` | compile |
+| `numerical_fidelity` | Does the quantized graph produce the same numbers as the source model? | `scripts/compile.py` | compile |
 | `accuracy` | How well does the compiled model do its task? | `scripts/accuracy.py` on a DevKit | accuracy |
 
 Fidelity is a numerical diagnostic, not task accuracy. Neither is calibration:
@@ -17,14 +17,15 @@ Artifactory access.
 
 ## Compile-time fidelity
 
-`numerical_fidelity` asks the recipe to compare every build profile's compiled
-model with the source model on a fixed sample of a registered dataset:
+`numerical_fidelity` asks the recipe to compare every build profile's quantized
+graph, run in the Model Compiler, with the ONNX source. The MPK does not run in
+this measurement. The recipe compares on a fixed sample of a registered dataset:
 
 ```yaml
 numerical_fidelity:
   status: diagnostic
   dataset: {id: imagenet-2012, variant: cal, sha256: e6c18b28…, size_bytes: 112710756}
-  selection: {method: seeded_random_without_replacement, seed: 42, offset: 0, samples: 50}
+  selection: {method: seeded_random_without_replacement, seed: 42, offset: 0, samples: 5}
   outputs: [logits]
 ```
 
@@ -91,6 +92,15 @@ It scores the whole model on each dataset and hands the scores to
 ```python
 dataset_id, dataset_dir = args.dataset.split("=", 1)  # imagenet-2012-val, <directory>
 ...
+model = pyneat.Model(str(parse_mpks(args.mpk)))
+runner = None
+...
+for count, (name, image) in enumerate(zip(names, images), start=1):
+    tensor = pyneat.Tensor.from_numpy(image, copy=False)
+    if runner is None:
+        runner = model.build([tensor])
+    logits = runner.run([tensor], timeout_ms=120000)[0].to_numpy(copy=False).reshape(-1)
+    ...
 report = model_report.from_accuracy({
     dataset_id: {
         "metrics": {"top1_accuracy": top1 / len(names), "top5_accuracy": top5 / len(names)},
@@ -103,6 +113,10 @@ report = model_report.from_accuracy({
 report.save(args.output)
 ```
 
+The example is ResNet-50's script. It builds the runner once, from the first tensor. Each
+`image` is one preprocessed float32 array in height, width, channel order, without a
+batch axis.
+
 How the script evaluates each dataset is up to the model. Every score is
 named as an accuracy metric in
 [`tools/model_report/metrics.json`](../tools/model_report/metrics.json) and
@@ -111,8 +125,15 @@ nonnegative ratio without an upper bound for `abs_rel`, a percentage from 0 to 1
 for `d1_all`, and pixels for `epe`. Each dataset's
 result must hold every metric its requirements file lists for
 the model's tasks. Other known accuracy metrics are allowed. Existing scripts also accept
-`--limit <images>` to evaluate a subset for a quick local check; CI never
-passes it.
+`--limit <images>` to evaluate a subset for a quick local check.
+
+The script prints progress with `log()` from `model_report`, which writes to standard
+error. It prints one JSON line with the scores as the last line of standard output.
+
+CI passes `--limit` only when `model.yaml` sets `accuracy.samples`
+([accuracy](metadata-schema.md#accuracy)). The report then records how many
+samples the script evaluated. The model's reference score is still the one for
+the whole split, and the model tests compare the capped score with it.
 
 ### Run it on a DevKit
 
@@ -128,21 +149,23 @@ PYNEAT_PYTHON=~/pyneat/bin/python \
 `<compile-output-root>` holds `<model-id>/<build-profile>/compile-outputs.json`
 and the MPKs it lists. The script does this:
 
-1. It resolves each declared dataset into `DATASET_CACHE` (default
-   `/media/nvme/datasets/artifacts`). A lock makes concurrent runs share one
-   download.
+1. It unpacks each declared dataset into `DATASET_DIR`, by default
+   `WORK_DIR/datasets`, with `scripts/unpack_benchmark_datasets.sh`
+   ([benchmark input](benchmarking.md#benchmark-input)).
 2. It lists each component's MPK with `model-registry model-component-mpks`.
 3. It finds the build's supporting files with `model-registry
    model-runtime-directory`. When the compile declared `runtime_files`, it
    passes the verified profile root to `accuracy.py` as `--resources`.
-4. It extracts each dataset under `WORK_DIR` and removes that directory when
-   it exits. The default is a folder for this run under
-   `/media/nvme/neat-tests/`, which a local run names `model-accuracy-local-1`.
-5. It installs `requirements-accuracy.txt` beside PyNeat.
-6. It runs `accuracy.py` with `--dataset <source id>=<directory>` for each
-   dataset and `PYTHONPATH` including `tools`. The script writes
-   `model-report.json`, and the runner saves its output to `accuracy.log`.
-7. It runs `model-registry check-report`, which validates the report against
+4. It installs `requirements-accuracy.txt` beside PyNeat, in `WORK_DIR`, which
+   it removes when it exits with the datasets unpacked there. The default
+   `WORK_DIR` is a folder for this run under `/media/nvme/neat-tests/`, which a
+   local run names `model-accuracy-local-1`. Set `WORK_DIR` before the command
+   to use another folder.
+5. It runs `accuracy.py` with `--dataset <source id>=<directory>` for each
+   dataset, `--limit` when `model.yaml` sets `accuracy.samples`, and
+   `PYTHONPATH` including `tools`. The script writes `model-report.json`, and
+   the runner saves its output to `accuracy.log`.
+6. It runs `model-registry check-report`, which validates the report against
    [`model-report.schema.json`](../schemas/model-report.schema.json), requires
    a result for exactly the declared datasets, each with its required metrics,
    and writes the board's installation to `environment.json`.
@@ -162,8 +185,10 @@ PYTHONPATH=tools ~/pyneat/bin/python models/resnet_50/scripts/accuracy.py \
   --output /tmp/resnet50-accuracy --limit 500
 ```
 
-A model whose `accuracy.py` imports another file under `scripts/`, such as
-ResNet-50's `calibration.py`, needs that file beside it.
+Copy the whole model folder, `tools/model_report`, and `tools/model_inputs` to the
+DevKit, because `accuracy.py` imports `calibration.py`, which imports
+`model_inputs.images`. Install `requirements-accuracy.txt` first, as
+[step 8 of Getting started](getting-started.md#8-measure-accuracy) does.
 
 ### FP32 baseline
 
@@ -201,7 +226,9 @@ On the DevKit, `scripts/run_model_tests.sh` runs the model's
 `tests/benchmark/test_accuracy.py` on the report, which compares each dataset's
 metrics with the build profile's expected values for that dataset in
 `tests/tests.yaml` ([set up
-`tests/tests.yaml`](adding-a-model.md#set-up-teststestsyaml)). CI then
+`tests/tests.yaml`](adding-a-model.md#set-up-teststestsyaml)). It also compares
+them with the model's reference score for that dataset ([comment out a variant
+far below its reference score](adding-a-model.md#comment-out-a-variant-far-below-its-reference-score)). CI then
 publishes the report with the test outcome: `passed`, `failed`, or `skipped`.
 A failed test still publishes the report, then fails the workflow run. See [CI
 and registry publication](benchmarking.md#ci-and-registry-publication) for the

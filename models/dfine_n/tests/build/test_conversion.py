@@ -5,6 +5,9 @@ import json
 import numpy as np
 import onnx
 import pytest
+from model_registry.dependencies import onnx_opset_version
+
+OPSET = onnx_opset_version()
 
 
 @pytest.fixture
@@ -67,7 +70,7 @@ def test_fixed_onnx_interface(tmp_path, converter, case):
     ]
     model = helper.make_model(
         helper.make_graph(nodes, "fixture", values[:1], values[1:]),
-        opset_imports=[helper.make_opsetid("", 18 if case == "opset" else 17)],
+        opset_imports=[helper.make_opsetid("", OPSET + 1 if case == "opset" else OPSET)],
     )
     metadata = dict(converter.METADATA)
     if case == "model_id":
@@ -205,7 +208,7 @@ def test_selection_diagnostics_do_not_modify_published_graph(tmp_path, converter
             [scores],
             [helper.make_tensor_value_info("values0", onnx.TensorProto.FLOAT, [1, 4])],
         ),
-        opset_imports=[helper.make_opsetid("", 17)],
+        opset_imports=[helper.make_opsetid("", OPSET)],
     )
     path = tmp_path / "model.onnx"
     onnx.save(model, path)

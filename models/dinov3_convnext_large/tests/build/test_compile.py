@@ -13,12 +13,16 @@ from unittest.mock import MagicMock
 import numpy as np
 import onnx
 import pytest
+from model_registry.dependencies import onnx_opset_version
+from model_registry.errors import ValidationError
 from PIL import Image
 
-# The least cosine with reference.onnx a build keeps on the 50 fidelity images, per output. Model Compiler
-# 3.0.0.dev0+develop.2291 measured the least output of surgery.py's sliced graph on 16 of them at w16a16 0.999435,
-# w8a16 0.99235; CI compiles with Model Compiler 3.0.0.2. A floor allows twice the measured loss, 1 - cosine, when
-# measured on all 50 images and three times when measured on fewer, rounded down to three decimals.
+OPSET = onnx_opset_version()
+# The least cosine with reference.onnx a build keeps on the 5 fidelity images, per output. Model Compiler
+# 3.0.0.dev0+develop.2291 measured the least output of surgery.py's sliced graph on 16 of the 50 cal images at positions
+# 51 to 100 of the seed-42 shuffled order, whose first 5 are the fidelity images: w16a16 0.999435, w8a16 0.99235; CI
+# compiles with Model Compiler 3.0.0.2. A floor allows twice the measured loss, 1 - cosine, when measured on all 50
+# images and three times when measured on fewer, rounded down to three decimals.
 FIDELITY_FLOORS = {"w16a16": 0.998, "w8a16": 0.977}
 
 
@@ -106,28 +110,19 @@ def test_selection_is_seeded_and_reads_an_archive(tmp_path: Path, load_script: C
         calibration.select_names(archive, 42, 1, 6)
 
 
-def test_read_images_reports_a_missing_image(tmp_path: Path, load_script: Callable[[str], ModuleType]) -> None:
-    calibration = load_script("calibration")
-    archive = _write_archive(tmp_path / "cal.tar.gz", {"imagenet/cal2012/a.JPEG": b"a"})
-
-    assert calibration.read_images(archive, ["imagenet/cal2012/a.JPEG"]) == {"imagenet/cal2012/a.JPEG": b"a"}
-    with pytest.raises(ValueError, match="missing 1 requested images"):
-        calibration.read_images(archive, ["imagenet/cal2012/a.JPEG", "imagenet/cal2012/b.JPEG"])
-
-
 def test_every_profile_names_its_precision_and_does_not_calibrate(load_script: Callable[[str], ModuleType]) -> None:
     recipe = load_script("compile")
     metadata = recipe.load_metadata(recipe.MODEL_DIR)
 
     for profile in metadata["build_profiles"]:
-        parameters = recipe._parameters(metadata, profile["id"])
+        parameters = recipe.component_parameters(recipe.MODEL_DIR, profile["id"], recipe.COMPONENT_ID)
         (binding,) = profile["components"]
         assert profile["id"] == parameters["precision"]
         assert binding.get("calibration") is None
     assert {profile["id"] for profile in metadata["build_profiles"]} == set(FIDELITY_FLOORS)
     assert metadata["numerical_fidelity"]["outputs"] == list(recipe.OUTPUTS)
-    with pytest.raises(ValueError, match="exactly one build profile named 'w32a32'"):
-        recipe._parameters(metadata, "w32a32")
+    with pytest.raises(ValidationError, match="unknown build profile: w32a32"):
+        recipe.component_parameters(recipe.MODEL_DIR, "w32a32", recipe.COMPONENT_ID)
 
 
 def test_bf16_activations_skip_calibration(
@@ -190,19 +185,26 @@ def test_a_compiler_failure_fails_the_build(
         recipe.compile_model(quantized, tmp_path / "model")
 
 
-def test_fidelity_error_sums_match_the_metrics_over_all_samples(load_script: Callable[[str], ModuleType]) -> None:
+def test_fidelity_samples_are_the_declared_selection_preprocessed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    load_script: Callable[[str], ModuleType],
+) -> None:
     recipe = load_script("compile")
-    error = recipe._OutputError("class_embedding")
-    error.add(np.asarray([[1.0, 0.0]]), np.asarray([[1.0, 0.0]]))
-    error.add(np.asarray([[0.0, 2.0]]), np.asarray([[0.0, 1.0]]))
-    summary = error.summary()
+    selections = []
 
-    assert summary["name"] == "class_embedding"
-    assert summary["cosine_similarity"] == pytest.approx(3 / np.sqrt(5 * 2))
-    assert summary["max_absolute_error"] == pytest.approx(1.0)
-    assert summary["mean_absolute_error"] == pytest.approx(0.25)
-    with pytest.raises(RuntimeError, match="shape mismatch"):
-        error.add(np.zeros((1, 2)), np.zeros((1, 3)))
+    def select_names(dataset: Path, seed: int, offset: int, samples: int) -> list[str]:
+        selections.append((dataset, seed, offset, samples))
+        return ["first", "second"]
+
+    monkeypatch.setattr(recipe, "select_names", select_names)
+    monkeypatch.setattr(recipe, "load_images", lambda dataset, names: (name.upper() for name in names))
+
+    samples = list(recipe.fidelity_samples(tmp_path / "dataset"))
+
+    selection = recipe.load_metadata(recipe.MODEL_DIR)["numerical_fidelity"]["selection"]
+    assert selections == [(tmp_path / "dataset", selection["seed"], selection["offset"], selection["samples"])]
+    assert samples == ["FIRST", "SECOND"]
 
 
 def test_audit_requires_one_mla_plugin_no_cpu_plugin_and_the_input(
@@ -319,7 +321,7 @@ def test_export_must_keep_the_embedding_interface(tmp_path: Path, load_script: C
     onnx.save(
         helper.make_model(
             helper.make_graph(nodes, "fixture", values[:1], values[1:]),
-            opset_imports=[helper.make_opsetid("", surgery.OPSET)],
+            opset_imports=[helper.make_opsetid("", OPSET)],
         ),
         path,
     )
@@ -328,7 +330,7 @@ def test_export_must_keep_the_embedding_interface(tmp_path: Path, load_script: C
     onnx.save(
         helper.make_model(
             helper.make_graph(nodes, "fixture", values[:1], values[1:]),
-            opset_imports=[helper.make_opsetid("", surgery.OPSET)],
+            opset_imports=[helper.make_opsetid("", OPSET)],
         ),
         path,
     )

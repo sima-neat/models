@@ -16,11 +16,10 @@ import logging
 import multiprocessing
 import os
 import shutil
-import tarfile
 import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -38,6 +37,7 @@ from afe.core.configs import QuantizationPrecision
 from afe.core.utils import convert_data_generator_to_iterable
 from afe.load.importers.general_importer import onnx_source
 from calibration import CalibrationSet, calibration_sets
+from model_registry.compile_script import compiler_log_level, read_mpk_manifest
 from model_registry.conversion import conversion_outputs
 from model_registry.fetch import sha256_file
 from model_registry.model import load_model as load_metadata
@@ -54,7 +54,7 @@ CHECK_FRAMES = 8
 OUTPUT_KERNELS = {"pass_through", "cast_transform", "dequantization_transform"}
 
 
-def component_parameters(profile_id: str) -> dict[str, dict[str, Any]]:
+def _component_parameters(profile_id: str) -> dict[str, dict[str, Any]]:
     profiles = [profile for profile in load_metadata(MODEL_DIR)["build_profiles"] if profile["id"] == profile_id]
     if len(profiles) != 1:
         raise ValueError(f"model.yaml declares no build profile {profile_id!r}")
@@ -148,26 +148,9 @@ def cosine(expected: np.ndarray, actual: np.ndarray) -> float:
     return float(expected @ actual / max(np.linalg.norm(expected) * np.linalg.norm(actual), 1e-12))
 
 
-def _read_mpk_manifest(archive: Path) -> tuple[list[str], dict[str, Any]]:
-    with tarfile.open(archive, "r:gz") as stream:
-        members = stream.getmembers()
-        for member in members:
-            path = PurePosixPath(member.name)
-            if path.is_absolute() or ".." in path.parts or member.issym() or member.islnk():
-                raise RuntimeError(f"unsafe MPK member: {member.name}")
-        names = [member.name for member in members]
-        manifests = [name for name in names if name.endswith("_mpk.json")]
-        if len(manifests) != 1:
-            raise RuntimeError(f"expected one MPK manifest, found {manifests}")
-        source = stream.extractfile(manifests[0])
-        if source is None:
-            raise RuntimeError(f"cannot read MPK manifest: {manifests[0]}")
-        return names, json.load(source)
-
-
 def audit_mpk(archive: Path, component: str) -> None:
     """Require the whole component on one MLA segment, with no host code, and its declared float32 interface."""
-    names, manifest = _read_mpk_manifest(archive)
+    names, manifest = read_mpk_manifest(archive)
     elfs = [name for name in names if name.endswith(".elf")]
     plugins = sorted(manifest.get("plugins", []), key=lambda item: item.get("sequence", 0))
     processors = [str(plugin.get("processor", "")).upper() for plugin in plugins]
@@ -220,7 +203,7 @@ def quantize_component(build: ComponentBuild, samples: list[dict[str, np.ndarray
             calibration_data=calibration_data(component, samples),
             quantization_config=quantization(parameters),
             model_name=build.model_name,
-            log_level=logging.INFO,
+            log_level=compiler_log_level(),
         )
     except SystemExit as error:
         raise RuntimeError(f"quantizing {component} failed; the AFE log above names the cause") from error
@@ -270,10 +253,9 @@ def compile_component(quantized: Any, build: ComponentBuild) -> None:
             output_path=str(build.build_dir),
             batch_size=1,
             compress=True,
-            log_level=logging.INFO,
+            log_level=compiler_log_level(),
             tessellate_parameters=None,
             l2_caching_mode=L2CachingMode.NONE,
-            deployable=True,
         )
     except SystemExit as error:
         raise RuntimeError(f"compiling {build.component} failed; the AFE log above names the cause") from error
@@ -328,7 +310,7 @@ def write_compile_outputs(
 def compile_model(
     image_encoder: Path, weights: Path, output_dir: Path, profile_id: str, dataset: Path
 ) -> dict[str, Path]:
-    parameters = component_parameters(profile_id)
+    parameters = _component_parameters(profile_id)
     check_profile_id(profile_id, parameters)
     if output_dir.exists():
         raise FileExistsError(f"output directory already exists: {output_dir}")

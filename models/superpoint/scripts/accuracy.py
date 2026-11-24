@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 import time
 from collections import deque
 from collections.abc import Callable, Iterator, Sequence
@@ -22,6 +21,7 @@ from pathlib import Path
 import model_report
 import numpy as np
 from keypoints import HEIGHT, WIDTH, decode_image, preprocess
+from model_report import log
 
 SPLIT = "val"
 SEQUENCES = 106
@@ -163,10 +163,6 @@ def parse_mpks(values: list[str]) -> Path:
     return Path(mpks["model"])
 
 
-def log(*values: object) -> None:
-    print(*values, file=sys.stderr, flush=True)
-
-
 def report(dataset_id: str, metrics: dict, sequences: int, keypoints: float, seconds: float) -> model_report.Report:
     return model_report.from_accuracy({
         dataset_id: {
@@ -184,7 +180,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--mpk", action="append", required=True, help="model=<path>")
     parser.add_argument("--dataset", required=True, help="hpatches-val=<extracted directory>")
     parser.add_argument("--output", type=Path, required=True, help="directory for model-report.json")
-    parser.add_argument("--limit", type=int, help="measure the first sequences only (local runs only)")
+    parser.add_argument("--limit", type=int, help="measure the first sequences only")
     args = parser.parse_args(argv)
     dataset_id, dataset_dir = args.dataset.split("=", 1)
     sequences = sequence_dirs(Path(dataset_dir))[: args.limit]

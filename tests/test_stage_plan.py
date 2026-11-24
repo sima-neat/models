@@ -17,6 +17,8 @@ from model_registry.fingerprints import (
     BENCHMARK_RUN_TYPES,
     BOARD_STAGE_TOOLING,
     COMPILE_TOOLING,
+    FIDELITY_TOOLING,
+    FRAME_TOOLING,
     PERFORMANCE_TOOLING,
     benchmark_fingerprint,
     compile_fingerprint,
@@ -384,7 +386,7 @@ READ_API = "https://reader.example.invalid"
 def stage_repository(tmp_path: Path) -> Path:
     repository = repository_without_w16a16_accuracy(tmp_path)
     for relative in ("deps/manifest.json",
-                     *COMPILE_TOOLING, *PERFORMANCE_TOOLING, *ACCURACY_TOOLING):
+                     *COMPILE_TOOLING, FIDELITY_TOOLING, *PERFORMANCE_TOOLING, FRAME_TOOLING, *ACCURACY_TOOLING):
         destination = repository / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / relative, destination)
@@ -633,7 +635,7 @@ def test_accuracy_script_change_measures_accuracy_only(stage_repository: Path) -
 
 
 @pytest.mark.parametrize(
-    "relative", sorted(set(ACCURACY_TOOLING) - set(BOARD_STAGE_TOOLING) - {"scripts/run_model_accuracy.sh"})
+    "relative", sorted(set(ACCURACY_TOOLING) - set(PERFORMANCE_TOOLING) - {"scripts/run_model_accuracy.sh"})
 )
 def test_shared_accuracy_tooling_change_measures_accuracy_only(stage_repository: Path, relative: str) -> None:
     document = _published_catalog(stage_repository)
@@ -644,6 +646,48 @@ def test_shared_accuracy_tooling_change_measures_accuracy_only(stage_repository:
 
     assert plan["compile"]["include"] == []
     assert _selected(plan, "benchmark") == [("w8a16", ["accuracy"]), ("w8a8", ["accuracy"])]
+
+
+def test_shared_dataset_unpack_change_measures_both_stages(stage_repository: Path) -> None:
+    document = _published_catalog(stage_repository)
+    registry = FakeRegistry({BRANCH: document}, _published_runs(document))
+    _edit(stage_repository, "../../scripts/unpack_benchmark_datasets.sh")
+
+    plan = _plan(stage_repository, registry)
+
+    # Both stages read the datasets that one script unpacks for the job.
+    assert plan["compile"]["include"] == []
+    assert _selected(plan, "benchmark") == [
+        ("w16a16", ["performance"]),
+        ("w8a16", ["performance", "accuracy"]),
+        ("w8a8", ["performance", "accuracy"]),
+    ]
+
+
+def _set_accuracy_samples(repository: Path, samples: int) -> None:
+    model_yaml = repository / "models" / PLAN_MODEL / "model.yaml"
+    model = yaml.safe_load(model_yaml.read_text(encoding="utf-8"))
+    model["accuracy"]["samples"] = samples
+    model_yaml.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
+
+
+def test_accuracy_sample_cap_measures_accuracy_only(stage_repository: Path) -> None:
+    document = _published_catalog(stage_repository)
+    registry = FakeRegistry({BRANCH: document}, _published_runs(document))
+    _set_accuracy_samples(stage_repository, 500)
+
+    plan = _plan(stage_repository, registry)
+
+    # A capped evaluation is another measurement, so the accuracy results rerun and performance stays.
+    assert plan["compile"]["include"] == []
+    assert _selected(plan, "benchmark") == [("w8a16", ["accuracy"]), ("w8a8", ["accuracy"])]
+
+
+def test_accuracy_sample_cap_must_be_positive(stage_repository: Path) -> None:
+    _set_accuracy_samples(stage_repository, 0)
+
+    with pytest.raises(ValidationError, match="samples"):
+        load_models(stage_repository)
 
 
 def test_artifact_verification_change_reruns_nothing(stage_repository: Path) -> None:
@@ -727,10 +771,11 @@ def test_metric_vocabulary_change_reruns_nothing(stage_repository: Path) -> None
     assert plan["benchmark"]["include"] == []
 
 
-def test_performance_runner_change_measures_performance_only(stage_repository: Path) -> None:
+@pytest.mark.parametrize("relative", ["scripts/run_model_performance.sh", FRAME_TOOLING])
+def test_shared_performance_tooling_change_measures_performance_only(stage_repository: Path, relative: str) -> None:
     document = _published_catalog(stage_repository)
     registry = FakeRegistry({BRANCH: document}, _published_runs(document))
-    _edit(stage_repository, "../../scripts/run_model_performance.sh")
+    _edit(stage_repository, f"../../{relative}")
 
     plan = _plan(stage_repository, registry)
 
@@ -1016,8 +1061,13 @@ def test_main_keeps_its_own_on_demand_builds(stage_repository: Path) -> None:
 
 
 @pytest.fixture
-def merge_repository(tmp_path: Path):
-    """A checkout of the result of merging develop into main, and the develop commit."""
+def merge_repository(tmp_path: Path, monkeypatch):
+    """A checkout of the result of merging develop into main, and the develop commit. Its two models declare
+    the build profiles the merge catalogs name."""
+    monkeypatch.setattr("model_registry.stage_plan.load_models", lambda root: {
+        "automatic": {"build_profiles": [{"id": "w8a8"}, {"id": "w16a16"}]},
+        "on_demand": {"build_profiles": [{"id": "w8a8"}, {"id": "unpromoted"}]},
+    })
     def git(*arguments: str) -> str:
         return subprocess.run(["git", *arguments], cwd=tmp_path, check=True, capture_output=True, text=True).stdout
 
@@ -1131,6 +1181,22 @@ def test_merge_check_warns_about_a_build_promoted_differently_on_develop(merge_r
         "on_demand/w8a8 is promoted to another build on develop: promote it on main after the merge, "
         "until then it has no results there",
     ]}
+
+
+def test_merge_check_blocks_a_promoted_build_whose_profile_the_merge_no_longer_declares(merge_repository) -> None:
+    repository, head, _ = merge_repository
+    develop, main = _merge_catalog(head), _merge_catalog(head)
+    main["models"][1]["approved_deployments"]["commented_out"] = {"deployment_id": "d2"}
+    develop["models"].append({"id": "removed", "build_on_demand": True,
+                              "approved_deployments": {"w8a8": {"deployment_id": "d3"}}})
+    registry = FakeRegistry({"develop": develop, "main": main}, MERGE_RUNS)
+
+    assert _merge_check(repository, head, registry)["blockers"] == [
+        "removed/w8a8 is promoted on develop, and model.yaml no longer declares it: "
+        "withdraw the promotion on develop",
+        "on_demand/commented_out is promoted on main, and model.yaml no longer declares it: "
+        "withdraw the promotion on main",
+    ]
 
 
 @pytest.mark.parametrize("base_branches", [None, [], ["develop"]])

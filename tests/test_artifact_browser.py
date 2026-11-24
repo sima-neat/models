@@ -265,7 +265,7 @@ def test_preview_serves_full_packages_as_the_publisher_records_them(preview: str
     assert artifacts["resnet_50"][0]["media_type"] == "application/zip"
     assert links["resnet_50"]["s3_key"].endswith("/resnet_50_w8a8_default.zip")
     assert artifacts["rf_detr_nano"][0]["media_type"] == "application/zip"
-    assert links["rf_detr_nano"]["s3_key"].endswith("/rf_detr_nano_w8a8_w16a16_default.zip")
+    assert links["rf_detr_nano"]["s3_key"].endswith("/rf_detr_nano_w8a8_mixed_w16a16_default.zip")
     assert 'item.artifact_type === "model-package"' in _browser_source("app.js", "download-dialog.js")
 
 
@@ -321,10 +321,10 @@ def test_preview_resolves_each_benchmark_fingerprint_to_a_model_report(preview: 
 
 
 def test_preview_measures_a_multi_component_model_as_one_report(preview: str) -> None:
-    measured = _benchmark_run(preview, "rf_detr_nano", "w8a8_w16a16", "performance")
+    measured = _benchmark_run(preview, "rf_detr_nano", "w8a8_mixed_w16a16", "performance")
 
     report = measured["tests"][0]["summary"]
-    builds = [build for build in measured["model"]["builds"] if build["build_profile_id"] == "w8a8_w16a16"]
+    builds = [build for build in measured["model"]["builds"] if build["build_profile_id"] == "w8a8_mixed_w16a16"]
     # One report for the whole model, its components in the jsonb key order the registry returns.
     assert list(report["components"]) == ["decoder", "backbone"]
     assert all(component["mla_layer_stats"]["layers"] and component["mla_stage_stats"]["stages"]
@@ -468,16 +468,11 @@ def test_assembled_portal_ships_the_model_data_api_fetches(tmp_path: Path) -> No
     licenses = json.loads((portal / "licenses.aaaaaaaaaaaa.json").read_text(encoding="utf-8"))
     assert licenses == json.loads((BROWSER / "licenses.json").read_text(encoding="utf-8"))
     api = (portal / "api.aaaaaaaaaaaa.js").read_text(encoding="utf-8")
-    hidden = json.loads((portal / "low-accuracy-variants.aaaaaaaaaaaa.json").read_text(encoding="utf-8"))
-    assert all(isinstance(profiles, list) and profiles for profiles in hidden.values())
     names = json.loads((portal / "dataset-names.aaaaaaaaaaaa.json").read_text(encoding="utf-8"))
     assert names["imagenet-2012"] == "ImageNet 2012"
     apps = json.loads((portal / "example-apps.aaaaaaaaaaaa.json").read_text(encoding="utf-8"))
     assert apps["rf_detr_nano"] == "https://developer.sima.ai/examples/app/object-detection%2Frfdetr-detection-segmentation"
-    model_data = (
-        "component-pipelines", "reference-metrics", "low-accuracy-variants", "dataset-names", "example-apps",
-        "licenses",
-    )
+    model_data = ("component-pipelines", "reference-metrics", "dataset-names", "example-apps", "licenses")
     for name in model_data:
         assert f'"./{name}.aaaaaaaaaaaa.json"' in api
         assert f'"./{name}.json"' not in api

@@ -2,9 +2,15 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
-from model_registry.dependencies import resolve_benchmark_runtime, resolve_model_compiler
+from model_registry.dependencies import (
+    onnx_opset_version,
+    require_onnx_opset_version,
+    resolve_benchmark_runtime,
+    resolve_model_compiler,
+)
 from model_registry.errors import ValidationError
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -116,3 +122,46 @@ def test_missing_model_compiler_dependency_fails(tmp_path: Path) -> None:
 
     with pytest.raises(ValidationError, match="must define model-compiler"):
         resolve_model_compiler(tmp_path)
+
+
+def _opset_manifest(root: Path, onnx: object) -> None:
+    path = root / "deps" / "manifest.json"
+    path.parent.mkdir()
+    path.write_text(json.dumps({"onnx": onnx}), encoding="utf-8")
+
+
+def test_onnx_opset_version_reads_the_manifest_of_the_working_directory(tmp_path, monkeypatch) -> None:
+    _opset_manifest(tmp_path, {"opset": 15})
+    monkeypatch.delenv("MODEL_REGISTRY_ROOT", raising=False)
+    monkeypatch.chdir(tmp_path)
+
+    assert onnx_opset_version() == 15
+    assert onnx_opset_version(ROOT) == json.loads((ROOT / "deps" / "manifest.json").read_text())["onnx"]["opset"]
+
+
+def test_onnx_opset_version_prefers_the_configured_repository(tmp_path, monkeypatch) -> None:
+    _opset_manifest(tmp_path, {"opset": 15})
+    monkeypatch.setenv("MODEL_REGISTRY_ROOT", str(tmp_path))
+
+    assert onnx_opset_version() == 15
+
+
+@pytest.mark.parametrize("onnx", [None, {}, {"opset": "17"}, {"opset": 17.0}, {"opset": True}, {"opset": 0}])
+def test_onnx_opset_version_requires_a_whole_number(tmp_path: Path, onnx: object) -> None:
+    _opset_manifest(tmp_path, onnx)
+
+    with pytest.raises(ValidationError, match="onnx.opset"):
+        onnx_opset_version(tmp_path)
+
+
+def test_require_onnx_opset_version_rejects_another_opset(tmp_path, monkeypatch) -> None:
+    _opset_manifest(tmp_path, {"opset": 15})
+    monkeypatch.setenv("MODEL_REGISTRY_ROOT", str(tmp_path))
+
+    def model(*opsets: tuple[str, int]) -> SimpleNamespace:
+        imports = [SimpleNamespace(domain=domain, version=version) for domain, version in opsets]
+        return SimpleNamespace(opset_import=imports)
+
+    require_onnx_opset_version(model(("", 15), ("ai.sima", 1)))
+    with pytest.raises(ValueError, match="requires opset 15, found \\[17\\]"):
+        require_onnx_opset_version(model(("", 17)))

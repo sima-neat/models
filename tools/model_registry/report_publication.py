@@ -23,7 +23,7 @@ from urllib.parse import quote
 from jsonschema import Draft202012Validator
 from model_report import CORE_REPORT_FILE, METRICS, REPORT_FILE, REQUIRED_PERFORMANCE_METRICS, accuracy_value_error
 
-from .benchmark_declarations import benchmarked_profiles
+from .benchmark_declarations import benchmark_runner, benchmarked_profiles
 from .dependencies import resolve_benchmark_runtime
 from .errors import ValidationError
 from .fetch import sha256_file
@@ -55,23 +55,37 @@ def _read_json(path: Path, label: str) -> Any:
         raise ValidationError(f"could not read {label} {path}: {exc}") from exc
 
 
-def compiled_components(compiled_dir: str | Path, model: JsonObject, build_profile_id: str) -> dict[str, JsonObject]:
-    """Each compiled component archive or native manifest, checked against compile-outputs.json."""
+def compiled_outputs(compiled_dir: str | Path, model: JsonObject, build_profile_id: str) -> dict[str, JsonObject]:
+    """Each component's archive or native manifest path and SHA-256, as compile-outputs.json records them."""
     profile_dir = Path(compiled_dir).expanduser().resolve() / model["id"] / build_profile_id
     outputs = _read_json(profile_dir / "compile-outputs.json", "compile outputs").get("outputs", [])
-    mpks = {}
+    recorded = {}
     for component in model["components"]:
         matches = [item for item in outputs if isinstance(item, dict) and item.get("component_id") == component["id"]]
         native = component["interface"]["format"] == "huggingface"
         path_field, sha_field = ("artifact_path", "artifact_sha256") if native else ("mpk_path", "mpk_sha256")
         if len(matches) != 1 or path_field not in matches[0]:
             raise ValidationError(f"{profile_dir}: the benchmark needs exactly one compiled {component['id']} artifact")
-        path = profile_dir / matches[0][path_field]
-        if sha256_file(path)[0] != matches[0].get(sha_field):
+        digest = matches[0].get(sha_field)
+        # The benchmark fingerprint and the published run name the build by this digest.
+        if not isinstance(digest, str) or len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest):
+            raise ValidationError(
+                f"{profile_dir}/compile-outputs.json: {sha_field} of {component['id']} must be a lowercase SHA-256 "
+                f"digest, not {digest!r}"
+            )
+        recorded[component["id"]] = {"path": profile_dir / matches[0][path_field], "sha256": digest}
+    return recorded
+
+
+def compiled_components(compiled_dir: str | Path, model: JsonObject, build_profile_id: str) -> dict[str, JsonObject]:
+    """Each compiled component archive or native manifest, checked against compile-outputs.json."""
+    components = compiled_outputs(compiled_dir, model, build_profile_id)
+    native = model["components"][0]["interface"]["format"] == "huggingface"
+    for output in components.values():
+        if sha256_file(output["path"])[0] != output["sha256"]:
             label = "artifact" if native else "MPK"
-            raise ValidationError(f"{path}: {label} SHA-256 does not match compile-outputs.json")
-        mpks[component["id"]] = {"path": path, "sha256": matches[0][sha_field]}
-    return mpks
+            raise ValidationError(f"{output['path']}: {label} SHA-256 does not match compile-outputs.json")
+    return components
 
 
 def compiled_mpks(compiled_dir: str | Path, model: JsonObject, build_profile_id: str) -> dict[str, JsonObject]:
@@ -102,10 +116,11 @@ def model_component_artifacts(
 def _registered_builds(
     compiled_dir: Path, model: JsonObject, build_profile_id: str
 ) -> tuple[dict[str, JsonObject], str]:
-    """Each component's compile run and MPK digest, and the profile's package run."""
+    """Each component's compile run and MPK digest, and the profile's package run, from the staged receipts and
+    compile-outputs.json alone: publication never holds the build's files."""
     profile_dir = compiled_dir / model["id"] / build_profile_id
     builds = {}
-    for component_id, mpk in compiled_components(compiled_dir, model, build_profile_id).items():
+    for component_id, mpk in compiled_outputs(compiled_dir, model, build_profile_id).items():
         path = profile_dir / component_id / "registry-publication.json"
         runs = _read_json(path, "compile publication").get("runs", [])
         if len(runs) != 1 or runs[0].get("component_id") != component_id:
@@ -191,13 +206,14 @@ def check_report(
             measured = report["datasets"][name]["metrics"]
             _check_metrics(f"{report_path}: {name}", stage, measured, dataset["required_metrics"])
         return report
-    native = model["components"][0]["interface"]["format"] == "huggingface"
-    if native:
+    # A speech model is packaged like a language model, and PyNeat measures it, so it reports like a vision model.
+    generates_text = benchmark_runner(model) == "mole"
+    if generates_text:
         from model_report import telemetry_metrics
         from model_report.generation_benchmark import validate_report
 
         if "generation" not in report:
-            raise ValidationError(f"{report_path}: a native LLiMa performance report needs generation workloads")
+            raise ValidationError(f"{report_path}: a text generation performance report needs generation workloads")
         try:
             validate_report(report["generation"])
         except ValueError as exc:
@@ -221,7 +237,7 @@ def check_report(
                 raise ValidationError("generation report does not use the declared benchmark baseline")
         return report
     if "generation" in report:
-        raise ValidationError(f"{report_path}: generation workloads require a native LLiMa model")
+        raise ValidationError(f"{report_path}: generation workloads require a model that generates text")
     scope = model["performance"].get("scope", "model")
     if report.get("scope", "model") != scope:
         raise ValidationError(f"{report_path}: performance scope must be {scope}")

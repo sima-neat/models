@@ -17,10 +17,9 @@ import logging
 import math
 import os
 import shutil
-import tarfile
 import tempfile
 from collections import Counter
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -38,6 +37,8 @@ from afe.apis.model import L2CachingMode
 from afe.core.configs import QuantizationPrecision
 from afe.core.utils import convert_data_generator_to_iterable
 from afe.load.importers.general_importer import onnx_source
+from model_registry.compile_script import compiler_log_level, component_parameters, read_mpk_manifest
+from model_registry.fidelity import fidelity_report
 from model_registry.model import load_model as load_metadata
 from scene_flow import INPUT, end_point_error, read_pairs, selected_pairs
 from sima_utils.data.data_generator import DataGenerator
@@ -58,16 +59,9 @@ def _metadata() -> dict[str, Any]:
     return load_metadata(MODEL_DIR)
 
 
-def _parameters(profile_id: str) -> dict[str, Any]:
-    profiles = [profile for profile in _metadata()["build_profiles"] if profile["id"] == profile_id]
-    if len(profiles) != 1:
-        raise ValueError(f"model.yaml declares no build profile {profile_id!r}")
-    return next(item["parameters"] for item in profiles[0]["components"] if item["id"] == COMPONENT_ID)
-
-
 def _bf16_regions(profile_id: str) -> list[str]:
     """Return the regions the build profile runs BF16, checking that its ID marks it mixed."""
-    parameters = _parameters(profile_id)
+    parameters = component_parameters(MODEL_DIR, profile_id, COMPONENT_ID)
     regions = parameters.get("bf16_regions", [])
     if regions and (parameters["precision"] != "w8a8" or len(set(regions)) != len(regions)):
         raise ValueError(f"bf16_regions must name distinct regions of a W8A8 build: {regions}")
@@ -121,26 +115,9 @@ def _require_bf16_readout(quantized: Any) -> None:
         raise RuntimeError(f"expected both read-out softmaxes in BF16, found {dict(counts)}")
 
 
-def _read_mpk_manifest(archive: Path) -> tuple[list[str], dict[str, Any]]:
-    with tarfile.open(archive, "r:gz") as stream:
-        members = stream.getmembers()
-        for member in members:
-            path = PurePosixPath(member.name)
-            if path.is_absolute() or ".." in path.parts or member.issym() or member.islnk():
-                raise RuntimeError(f"unsafe MPK member: {member.name}")
-        names = [member.name for member in members]
-        manifests = [name for name in names if name.endswith("_mpk.json")]
-        if len(manifests) != 1:
-            raise RuntimeError(f"expected one MPK manifest, found {manifests}")
-        source = stream.extractfile(manifests[0])
-        if source is None:
-            raise RuntimeError(f"cannot read MPK manifest: {manifests[0]}")
-        return names, json.load(source)
-
-
 def audit_mpk(archive: Path) -> None:
     """Require the whole network on one MLA segment, with no host code, and the declared interface."""
-    names, manifest = _read_mpk_manifest(archive)
+    names, manifest = read_mpk_manifest(archive)
     elfs = [name for name in names if name.endswith(".elf")]
     shared_objects = [name for name in names if name.endswith(".so") or ".so." in name]
     plugins = sorted(manifest.get("plugins", []), key=lambda item: item.get("sequence", 0))
@@ -161,7 +138,7 @@ def audit_mpk(archive: Path) -> None:
 
 def quantize(source: Path, profile_id: str, dataset: Path, seed: int) -> Any:
     """Quantize one build profile on the first calibration pairs of the seeded order."""
-    parameters = _parameters(profile_id)
+    parameters = component_parameters(MODEL_DIR, profile_id, COMPONENT_ID)
     quantization = _quantization(parameters)
     count = int(parameters["calibration_samples"])
     frames, _ = read_pairs(dataset, selected_pairs(dataset, seed, 0, count))
@@ -175,7 +152,7 @@ def quantize(source: Path, profile_id: str, dataset: Path, seed: int) -> Any:
             calibration_data=convert_data_generator_to_iterable(DataGenerator({InputName(INPUT): frames})),
             quantization_config=quantization,
             model_name=f"{MODEL_ID}_{profile_id}",
-            log_level=logging.INFO,
+            log_level=compiler_log_level(),
         )
     except SystemExit as error:
         # AFE reports a failed quantization or compile by raising SystemExit, which would exit with status 0.
@@ -193,10 +170,9 @@ def compile_model(quantized: Any, output_dir: Path, profile_id: str) -> Path:
                 output_path=str(build_dir / "mpk"),
                 batch_size=1,
                 compress=True,
-                log_level=logging.INFO,
+                log_level=compiler_log_level(),
                 tessellate_parameters=None,
                 l2_caching_mode=L2CachingMode.NONE,
-                deployable=True,
             )
         except SystemExit as error:
             raise RuntimeError(f"Model Compiler failed to compile {MODEL_ID} {profile_id}") from error
@@ -218,29 +194,20 @@ def measure_fidelity(
     selected = selected_pairs(dataset, int(selection["seed"]), int(selection["offset"]), int(selection["samples"]))
     frames, truths = read_pairs(dataset, selected)
     reference = ort.InferenceSession(str(source), providers=["CPUExecutionProvider"])
-    totals = {"count": 0, "dot": 0.0, "expected": 0.0, "actual": 0.0, "error": 0.0, "absolute": 0.0, "max": 0.0}
+    compared = []
     scores: dict[str, list[float]] = {"ONNX": [], "quantized": []}
     for index, (left, _, _) in enumerate(selected):
         frame = frames[index : index + 1]
         expected = reference.run([OUTPUT], {INPUT: frame.transpose(0, 3, 1, 2)})[0].astype(np.float64)
         outputs = candidate.execute(inputs={InputName(INPUT): frame}, use_jax=True)
         actual = np.asarray(outputs[0], dtype=np.float64).reshape(expected.shape)
-        if not (np.isfinite(expected).all() and np.isfinite(actual).all()):
-            raise RuntimeError(f"disparity for {left} contains non-finite values")
-        error = actual - expected
-        totals["count"] += expected.size
-        totals["dot"] += float(np.dot(expected.ravel(), actual.ravel()))
-        totals["expected"] += float(np.sum(expected**2))
-        totals["actual"] += float(np.sum(actual**2))
-        totals["error"] += float(np.sum(error**2))
-        totals["absolute"] += float(np.sum(np.abs(error)))
-        totals["max"] = max(totals["max"], float(np.max(np.abs(error))))
+        compared.append({OUTPUT: (expected, actual)})
         scores["ONNX"].append(end_point_error(expected, truths[index]))
         scores["quantized"].append(end_point_error(actual, truths[index]))
         LOG.info(
             "Fidelity %s: %.4f px from the ONNX; Scene Flow EPE %.3f px ONNX, %.3f px quantized",
             left,
-            float(np.mean(np.abs(error))),
+            float(np.mean(np.abs(actual - expected))),
             scores["ONNX"][-1],
             scores["quantized"][-1],
         )
@@ -252,29 +219,14 @@ def measure_fidelity(
         quantized_epe,
         100 * (quantized_epe / onnx_epe - 1),
     )
-    count = totals["count"]
-    expected_rms = max(np.sqrt(totals["expected"] / count), np.finfo(np.float64).eps)
-    norm = np.sqrt(totals["expected"] * totals["actual"])
-    return {
-        "schema_version": 1,
-        "model_id": MODEL_ID,
-        "build_profile_id": profile_id,
-        "status": config["status"],
-        "reference": "ONNX source (ONNX Runtime)",
-        "candidate": "Quantized AFE graph (JAX execute)",
-        "dataset": {key: config["dataset"][key] for key in ("id", "variant", "sha256")},
-        "selection": selection,
-        "samples": len(selected),
-        "metrics": [
-            {
-                "name": OUTPUT,
-                "cosine_similarity": float(np.clip(totals["dot"] / norm if norm else 1.0, -1.0, 1.0)),
-                "normalized_rmse": float(np.sqrt(totals["error"] / count) / expected_rms),
-                "mean_absolute_error": float(totals["absolute"] / count),
-                "max_absolute_error": totals["max"],
-            }
-        ],
-    }
+    return fidelity_report(
+        MODEL_ID,
+        profile_id,
+        config,
+        compared,
+        reference="ONNX source (ONNX Runtime)",
+        candidate="Quantized AFE graph (JAX execute)",
+    )
 
 
 def main() -> int:

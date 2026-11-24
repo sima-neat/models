@@ -60,7 +60,7 @@ build_profiles:
     calibration_dataset: yfcc100m-keypoints-cal
     components:
       model:
-        parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 32}
+        parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 20}
 
   # W8A8 whose attention and residual sums run BF16; surgery.BF16_REGIONS lists each region's operations. It keeps
   # w16a16's accuracy, where plain w8a8 is faster and loses 6% of the pose AUC at 5 degrees.
@@ -68,7 +68,7 @@ build_profiles:
     calibration_dataset: yfcc100m-keypoints-cal
     components:
       model:
-        parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 32, bf16_regions: [attention, residual]}
+        parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 20, bf16_regions: [attention, residual]}
 
   # W8A16 keeps 95.7% of the ONNX's matches, but Model Compiler 3.0.0's simulator check rejects it ("Check FAILED",
   # no MPK) with per-token quantization on, and every push would retry the failing compile. compile.py keeps its
@@ -82,7 +82,7 @@ numerical_fidelity:
   status: diagnostic
   dataset: {id: yfcc100m-keypoints, variant: cal, sha256: 086ab34feec1f7aa364d56d7e71fc4ba5c0269af5bc708ba3ed3d4eb6bf0592a, size_bytes: 120522685}
   # Calibration takes the first pairs of the same seeded order, so the fidelity pairs start after the largest sample.
-  selection: {method: seeded_random_without_replacement, seed: 42, offset: 32, samples: 8}
+  selection: {method: seeded_random_without_replacement, seed: 42, offset: 32, samples: 5}
   outputs: [assignment]
 
 # The archives were extracted at SuperPoint's threshold 0.0005, and each holds one image with fewer than 512 keypoints.

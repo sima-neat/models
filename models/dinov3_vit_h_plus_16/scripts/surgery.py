@@ -30,6 +30,7 @@ from pathlib import Path
 
 import numpy as np
 import onnx
+from model_registry.dependencies import onnx_opset_version, require_onnx_opset_version
 from onnx import numpy_helper
 
 IMAGE_SIZE = 224
@@ -51,7 +52,6 @@ INITIALIZERS = "initializers"
 INPUTS = {"pixel_values": [1, 3, IMAGE_SIZE, IMAGE_SIZE]}
 OUTPUTS = {"class_embedding": [1, HIDDEN_SIZE], "patch_embeddings": [1, PATCHES, HIDDEN_SIZE]}
 INTERFACE = {**INPUTS, **OUTPUTS}
-OPSET = 17
 SEEDS = range(123, 127)
 # The export's least cosine with reference.onnx per output on the seeded inputs; float32 rounding alone separates
 # them, and the least output measured 0.9999998.
@@ -205,8 +205,7 @@ def validate_export(path):
     model = onnx.load(path, load_external_data=False)
     # From the path, the checker finds the external data beside the file.
     onnx.checker.check_model(path)
-    if [item.version for item in model.opset_import if not item.domain] != [OPSET]:
-        raise ValueError(f"The DINOv3 export requires opset {OPSET}")
+    require_onnx_opset_version(model)
     values = [*model.graph.input, *model.graph.output]
     if [value.name for value in values] != list(INTERFACE):
         raise ValueError(f"Expected inputs and outputs {list(INTERFACE)}")
@@ -260,7 +259,7 @@ def export_encoder(weight_index, reference, output):
         exported = Path(temporary) / output.name
         torch.onnx.export(
             encoder, (torch.from_numpy(synthetic_pixels(SEEDS.start)),), str(exported), input_names=list(INPUTS),
-            output_names=list(OUTPUTS), opset_version=OPSET, do_constant_folding=True, dynamo=False,
+            output_names=list(OUTPUTS), opset_version=onnx_opset_version(), do_constant_folding=True, dynamo=False,
         )
         save_export(exported, output)
     validate_export(output)

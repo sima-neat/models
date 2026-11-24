@@ -90,6 +90,8 @@ review.
 ```text
 models/<model-id>/      model.yaml, README.md, hero.png, scripts/, tests/
 tools/model_registry/   shared CLI and lifecycle code
+tools/model_report/     the report writer a benchmark script hands its results to
+tools/model_inputs/     the image listing and benchmark frame that model scripts share
 scripts/                stage runner scripts and CI helpers
 schemas/                JSON Schemas for model.yaml, tests, and reports
 artifact-browser/       the Model Browser

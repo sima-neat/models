@@ -5,10 +5,10 @@ The network is timm's convnext_small written out in plain PyTorch, with timm's m
 strictly, and the outputs of convert.py's reference.onnx. One change is for the compiler: each GELU is its tanh
 approximation, x * sigmoid(x * (x * x * b + a)). The Model Compiler fuses the exact erf GELU into one operation whose
 BF16 erf loses fidelity: quantized to w16a16 by Model Compiler 3.0.0.dev0+develop.2291, the Large model's outputs
-keep cosine similarity 0.9951 (class) and 0.9758 (patches) with the exact reference on 16 of the numerical-fidelity
-images, and 0.9999 and 0.9995 with the tanh form. The tanh form runs as BF16 multiplies, one multiply-add and a
-sigmoid. In float, on the seeded inputs export_network checks, its least cosine similarity with the exact reference
-is 0.999960.
+keep cosine similarity 0.9951 (class) and 0.9758 (patches) with the exact reference on 16 of the imagenet-2012 cal
+images at positions 51 to 100 of the seed-42 shuffled order, and 0.9999 and 0.9995 with the tanh form. The tanh form
+runs as BF16 multiplies, one multiply-add and a sigmoid. In float, on the seeded inputs export_network checks, its
+least cosine similarity with the exact reference is 0.999960.
 
 compile.py calls export_network. To get the FP32 ONNX on a host, run:
 
@@ -25,6 +25,7 @@ from typing import Any
 
 import numpy as np
 import onnx
+from model_registry.dependencies import onnx_opset_version, require_onnx_opset_version
 
 DEPTHS = (3, 3, 27, 3)
 WIDTHS = (96, 192, 384, 768)
@@ -33,7 +34,6 @@ PATCHES = 49
 INPUT = "pixel_values"
 OUTPUTS = ("class_embedding", "patch_embeddings")
 INTERFACE = {INPUT: [1, 3, 224, 224], OUTPUTS[0]: [1, HIDDEN_SIZE], OUTPUTS[1]: [1, PATCHES, HIDDEN_SIZE]}
-OPSET = 17
 # timm's LayerNorm and LayerNorm2d default.
 EPSILON = 1e-6
 # GELU's tanh approximation 0.5 * x * (1 + tanh(sqrt(2 / pi) * (x + 0.044715 * x^3))), written as
@@ -132,8 +132,7 @@ def load_network(weights: Path) -> Any:
 def validate_export(path: Path) -> None:
     model = onnx.load(path, load_external_data=False)
     onnx.checker.check_model(model)
-    if [item.version for item in model.opset_import if not item.domain] != [OPSET]:
-        raise ValueError(f"The export requires opset {OPSET}")
+    require_onnx_opset_version(model)
     values = [*model.graph.input, *model.graph.output]
     if [value.name for value in values] != list(INTERFACE):
         raise ValueError(f"Expected the input {INPUT} and the outputs {OUTPUTS}")
@@ -195,7 +194,7 @@ def export_network(weights: Path, reference: Path, output: Path) -> Path:
             str(output),
             input_names=[INPUT],
             output_names=list(OUTPUTS),
-            opset_version=OPSET,
+            opset_version=onnx_opset_version(),
             dynamo=False,
         )
     fold_constants(output)

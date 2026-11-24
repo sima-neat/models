@@ -38,6 +38,7 @@ from calibration import (
     matches,
     normalized,
 )
+from model_registry.dependencies import onnx_opset_version, require_onnx_opset_version
 
 # LightGlueConfig of ETH-CVG/lightglue_superpoint, which convert.py checks config.json against, with early stopping
 # and keypoint pruning off. config validation rejects the integer -1, so they are floats.
@@ -66,7 +67,6 @@ INPUTS = {
 # it as [i, j].
 OUTPUT = {"assignment": [1, KEYPOINTS, 1, KEYPOINTS]}
 INTERFACE = {**INPUTS, **OUTPUT}
-OPSET = 17
 SEEDS = range(123, 128)
 # The operations a W8A8 build can run in BF16: each region's operations by the names the export gives them, and how
 # many the matcher's nine layers of self and cross attention on two images have.
@@ -83,8 +83,7 @@ LAYOUT_OPS = {"Reshape", "Transpose", "Split", "Concat", "Slice"}
 def validate_export(path):
     model = onnx.load(path, load_external_data=False)
     onnx.checker.check_model(model)
-    if [item.version for item in model.opset_import if not item.domain] != [OPSET]:
-        raise ValueError(f"LightGlue export requires opset {OPSET}")
+    require_onnx_opset_version(model)
     values = [*model.graph.input, *model.graph.output]
     if [value.name for value in values] != list(INTERFACE):
         raise ValueError(f"Expected inputs and outputs {list(INTERFACE)}")
@@ -390,7 +389,7 @@ def export_matcher(weights, output):
     example = tuple(torch.from_numpy(value) for value in onnx_inputs(sample_pair(SEEDS.start)).values())
     torch.onnx.export(
         matcher, example, str(output), input_names=list(INPUTS), output_names=list(OUTPUT),
-        opset_version=OPSET, do_constant_folding=True, dynamo=False,
+        opset_version=onnx_opset_version(), do_constant_folding=True, dynamo=False,
     )
     fold_constants(output)
     validate_export(output)

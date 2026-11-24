@@ -12,6 +12,7 @@ from types import ModuleType
 import numpy as np
 import onnx
 import pytest
+from model_registry.errors import ValidationError
 from onnx import helper, numpy_helper
 from PIL import Image
 
@@ -101,16 +102,7 @@ def test_validation_labels_come_from_the_labels_file(tmp_path: Path, load_script
         calibration.validation_labels(tmp_path)
 
 
-def test_read_images_reports_a_missing_image(tmp_path: Path, load_script: Callable[[str], ModuleType]) -> None:
-    calibration = load_script("calibration")
-    archive = _write_archive(tmp_path / "cal.tar.gz", {"imagenet/cal2012/a.JPEG": b"a"})
-
-    assert calibration.read_images(archive, ["imagenet/cal2012/a.JPEG"]) == {"imagenet/cal2012/a.JPEG": b"a"}
-    with pytest.raises(ValueError, match="missing 1 requested images"):
-        calibration.read_images(archive, ["imagenet/cal2012/a.JPEG", "imagenet/cal2012/b.JPEG"])
-
-
-def test_fidelity_selection_reads_the_cal_images_from_an_archive(
+def test_fidelity_selection_is_a_seeded_order_of_the_cal_images(
     tmp_path: Path,
     load_script: Callable[[str], ModuleType],
 ) -> None:
@@ -130,7 +122,6 @@ def test_fidelity_selection_reads_the_cal_images_from_an_archive(
     names = calibration.fidelity_names(archive, 42, 0, 2)
 
     assert names == expected
-    assert set(calibration.read_images(archive, names)) == set(names)
 
 
 def test_fidelity_selection_is_the_declared_seeded_sample(
@@ -276,7 +267,7 @@ def test_surgery_rejects_an_attention_scale_it_cannot_fold_exactly(
 @pytest.mark.parametrize("profile_id", ["w16a16", "w8a16"])
 def test_compile_reads_each_declared_build_profile(load_script: Callable[[str], ModuleType], profile_id: str) -> None:
     recipe = load_script("compile")
-    parameters = recipe._parameters(profile_id)
+    parameters = recipe.component_parameters(recipe.MODEL_DIR, profile_id, recipe.COMPONENT_ID)
 
     assert parameters["precision"] == profile_id
 
@@ -284,8 +275,8 @@ def test_compile_reads_each_declared_build_profile(load_script: Callable[[str], 
 def test_compile_rejects_an_undeclared_build_profile(load_script: Callable[[str], ModuleType]) -> None:
     recipe = load_script("compile")
 
-    with pytest.raises(ValueError, match="exactly one build profile named 'w32a32'"):
-        recipe._parameters("w32a32")
+    with pytest.raises(ValidationError, match="unknown build profile: w32a32"):
+        recipe.component_parameters(recipe.MODEL_DIR, "w32a32", recipe.COMPONENT_ID)
 
 
 def test_numerical_fidelity_compares_the_logits(load_script: Callable[[str], ModuleType]) -> None:
@@ -335,11 +326,35 @@ def test_compile_rejects_an_undeclared_precision_before_compiling(
     load_script: Callable[[str], ModuleType],
 ) -> None:
     recipe = load_script("compile")
-    monkeypatch.setattr(recipe, "_parameters", lambda profile_id: {"precision": "fp32"})
+    parameters = {"precision": "fp32"}
+    monkeypatch.setattr(recipe, "component_parameters", lambda model_dir, profile_id, component_id: parameters)
 
     with pytest.raises(ValueError, match="only the declared w16a16 and w8a16 build profiles"):
         recipe.compile_model(tmp_path / "model.onnx", tmp_path / "model", "w16a16")
     assert not (tmp_path / "model").exists()
+
+
+def test_fidelity_samples_are_the_declared_selection_preprocessed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    load_script: Callable[[str], ModuleType],
+) -> None:
+    recipe = load_script("compile")
+    selections = []
+
+    def fidelity_names(dataset: Path, seed: int, offset: int, samples: int) -> list[str]:
+        selections.append((dataset, seed, offset, samples))
+        return ["first", "second"]
+
+    monkeypatch.setattr(recipe, "fidelity_names", fidelity_names)
+    monkeypatch.setattr(recipe, "read_images", lambda dataset, names: {name: name.encode() for name in names})
+    monkeypatch.setattr(recipe, "preprocess_image", lambda content: content.decode().upper())
+
+    samples = recipe.fidelity_samples(tmp_path / "dataset")
+
+    selection = recipe.load_metadata(recipe.MODEL_DIR)["numerical_fidelity"]["selection"]
+    assert selections == [(tmp_path / "dataset", selection["seed"], selection["offset"], selection["samples"])]
+    assert samples == ["FIRST", "SECOND"]
 
 
 @pytest.mark.parametrize(

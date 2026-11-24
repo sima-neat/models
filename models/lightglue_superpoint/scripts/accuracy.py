@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -36,6 +35,7 @@ from calibration import (
     split_of,
     usable_pairs,
 )
+from model_report import log
 
 THRESHOLDS = (5, 10, 20)
 RANSAC_PIXELS = 1.0
@@ -198,16 +198,12 @@ def parse_mpks(values: list[str]) -> Path:
     return Path(mpks["model"])
 
 
-def log(*values: object) -> None:
-    print(*values, file=sys.stderr, flush=True)
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mpk", action="append", required=True, help="model=<path>")
     parser.add_argument("--dataset", required=True, help="yfcc100m-keypoints-val=<extracted directory>")
     parser.add_argument("--output", type=Path, required=True, help="directory for model-report.json")
-    parser.add_argument("--limit", type=int, help="measure the first pairs only (local runs only)")
+    parser.add_argument("--limit", type=int, help="measure the first pairs only")
     args = parser.parse_args(argv)
     dataset_id, dataset_dir = args.dataset.split("=", 1)
     root = dataset_root(Path(dataset_dir))

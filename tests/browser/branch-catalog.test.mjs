@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 
-const {deploymentCatalog, branchModels, catalogBuildRuns, withoutProfiles} = await import(new URL('../../artifact-browser/branch-builds.js', import.meta.url));
+const {deploymentCatalog, branchModels, catalogBuildRuns} = await import(new URL('../../artifact-browser/branch-builds.js', import.meta.url));
 
 const run = (id, model, ref, time, extra = {}) => ({
   id, repository: 'sima-neat/models', run_type: 'model_compile', status: 'completed', git_ref: ref,
@@ -266,23 +266,3 @@ for (const field of ['branch_deployments', 'approved_deployments']) {
     assert.deepEqual(model.benchmark_fingerprints, benchmark_fingerprints);
   });
 }
-
-test('a hidden profile leaves the catalog, and a model without a profile leaves with it', () => {
-  const wide = {...resnet, id: 'resnet-wide', metadata: {...resnet.metadata, build_profile_id: 'int16'}};
-  const twoProfiles = {...catalog[0], builds: [catalogBuild(resnet), {...catalogBuild(wide), build_profile_id: 'int16'}]};
-  const shown = withoutProfiles([twoProfiles, catalog[1]], {resnet_50: ['int8'], yolo: ['int8']});
-  assert.deepEqual(shown.map((model) => model.model_id), ['resnet_50']);
-  assert.deepEqual(shown[0].packages, []);
-  const [model] = branchModels([resnet, wide, yolo], [], shown);
-  assert.deepEqual(model.builds.map((build) => build.build_profile_id), ['int16']);
-  assert.deepEqual(withoutProfiles(catalog, {}), catalog);
-});
-
-test('a hidden profile takes its pending build and its deployment selection with it', () => {
-  const selection = {artifacts: [{run_id: resnet.id, component_id: 'model', artifact_name: 'mpk'}]};
-  const pending = {model_id: 'resnet_50', builds: [], pending_builds: [{build_profile_id: 'int8'}]};
-  const selected = {model_id: 'yolo', builds: [], approved_deployments: {int8: selection, int16: selection}};
-  const shown = withoutProfiles([pending, selected], {resnet_50: ['int8'], yolo: ['int8']});
-  assert.deepEqual(shown.map((model) => model.model_id), ['yolo']);
-  assert.deepEqual(Object.keys(shown[0].approved_deployments), ['int16']);
-});

@@ -12,7 +12,12 @@ from model_registry.compile_matrix import build_matrix
 from model_registry.conversion import conversion_fingerprint
 from model_registry.dependencies import resolve_model_compiler
 from model_registry.errors import ValidationError
-from model_registry.fingerprints import COMPILE_TOOLING, benchmark_fingerprint, compile_fingerprint
+from model_registry.fingerprints import (
+    COMPILE_TOOLING,
+    FIDELITY_TOOLING,
+    benchmark_fingerprint,
+    compile_fingerprint,
+)
 from model_registry.model import load_and_validate_model, load_models
 from model_registry.registry import RegistryPublicationError, publish_catalog
 
@@ -75,7 +80,7 @@ def model_repository(tmp_path: Path) -> Path:
     (tmp_path / "deps" / "manifest.json").write_text(
         (ROOT / "deps" / "manifest.json").read_text(encoding="utf-8"), encoding="utf-8"
     )
-    for relative in COMPILE_TOOLING:
+    for relative in (*COMPILE_TOOLING, FIDELITY_TOOLING):
         (tmp_path / relative).parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / relative, tmp_path / relative)
     _write_model(tmp_path, "alpha")
@@ -112,7 +117,6 @@ def test_matrix_entries_carry_the_stages_each_profile_benchmarks() -> None:
         ("resnet_50", "w8a8", ["model"], ["performance", "accuracy"]),
         ("rf_detr_small", "w8a16_w16a16", ["backbone", "decoder"], ["performance", "accuracy"]),
         ("rf_detr_small", "w8a8_mixed_w16a16", ["backbone", "decoder"], ["performance", "accuracy"]),
-        ("rf_detr_small", "w8a8_w16a16", ["backbone", "decoder"], ["performance", "accuracy"]),
     ]
 
 
@@ -191,6 +195,10 @@ def test_compile_fingerprint_invalidates_model_dependency_and_compiler_changes(m
     assert dependency_changed == model_changed
     assert _fingerprint(model_repository, "alpha", "2.1.4") != dependency_changed
 
+    dependency["onnx"]["opset"] += 1
+    manifest.write_text(json.dumps(dependency), encoding="utf-8")
+    assert _fingerprint(model_repository, "alpha", "2.1.3") != dependency_changed
+
 
 def test_calibrated_build_tracks_its_calibration_dataset_pin(model_repository: Path) -> None:
     manifest = model_repository / "models" / "alpha" / "model.yaml"
@@ -248,6 +256,30 @@ def test_numerical_fidelity_settings_invalidate_the_compile_fingerprint(model_re
     manifest.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
 
     assert compile_fingerprint(model_repository, "alpha", "fixture", "fixture", "2.1.3") != first
+
+
+def test_the_fidelity_module_recompiles_only_a_model_that_declares_fidelity(model_repository: Path) -> None:
+    manifest = model_repository / "models" / "alpha" / "model.yaml"
+    model = yaml.safe_load(manifest.read_text(encoding="utf-8"))
+    _declare_components(model)
+    model["numerical_fidelity"] = {
+        "status": "diagnostic",
+        "dataset": dict(DATASET),
+        "selection": {"method": "seeded_random_without_replacement", "seed": 1, "offset": 0, "samples": 1},
+        "outputs": ["output"],
+    }
+    manifest.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
+
+    def fingerprints() -> list[str]:
+        models = ("alpha", "bravo")
+        return [compile_fingerprint(model_repository, name, "fixture", "fixture", "2.1.3") for name in models]
+
+    declaring, plain = fingerprints()
+    module = model_repository / FIDELITY_TOOLING
+    module.write_text(module.read_text(encoding="utf-8") + "\n# tooling change\n", encoding="utf-8")
+
+    assert fingerprints()[0] != declaring
+    assert fingerprints()[1] == plain
 
 
 def test_package_resources_invalidate_only_their_models_compile_fingerprint(model_repository: Path) -> None:
@@ -351,8 +383,8 @@ def test_benchmark_fingerprints_ignore_display_name_and_description(stage: str) 
     model = load_and_validate_model(ROOT / "models" / "rf_detr_small", SCHEMA)
     renamed = {**model, "display_name": "Renamed", "description": "A rewritten one-line catalog description."}
 
-    assert benchmark_fingerprint(ROOT, renamed, "w8a8_w16a16", RF_DETR_BUILDS, stage) == benchmark_fingerprint(
-        ROOT, model, "w8a8_w16a16", RF_DETR_BUILDS, stage
+    assert benchmark_fingerprint(ROOT, renamed, "w8a8_mixed_w16a16", RF_DETR_BUILDS, stage) == benchmark_fingerprint(
+        ROOT, model, "w8a8_mixed_w16a16", RF_DETR_BUILDS, stage
     )
 
 
@@ -361,8 +393,8 @@ def test_benchmark_fingerprints_ignore_the_license(stage: str) -> None:
     model = load_and_validate_model(ROOT / "models" / "rf_detr_small", SCHEMA)
     relicensed = {**model, "license": RELICENSED}
 
-    assert benchmark_fingerprint(ROOT, relicensed, "w8a8_w16a16", RF_DETR_BUILDS, stage) == benchmark_fingerprint(
-        ROOT, model, "w8a8_w16a16", RF_DETR_BUILDS, stage
+    assert benchmark_fingerprint(ROOT, relicensed, "w8a8_mixed_w16a16", RF_DETR_BUILDS, stage) == benchmark_fingerprint(
+        ROOT, model, "w8a8_mixed_w16a16", RF_DETR_BUILDS, stage
     )
 
 
@@ -370,12 +402,12 @@ def test_benchmark_fingerprints_ignore_the_license(stage: str) -> None:
 def test_a_whole_model_benchmark_fingerprint_covers_every_component_build(stage: str) -> None:
     model = load_and_validate_model(ROOT / "models" / "rf_detr_small", SCHEMA)
     rebuilt = {**RF_DETR_BUILDS, "backbone": {"run_id": "run-backbone-2", "artifact_sha256": "b" * 64}}
-    fingerprint = benchmark_fingerprint(ROOT, model, "w8a8_w16a16", RF_DETR_BUILDS, stage)
+    fingerprint = benchmark_fingerprint(ROOT, model, "w8a8_mixed_w16a16", RF_DETR_BUILDS, stage)
 
-    assert benchmark_fingerprint(ROOT, model, "w8a8_w16a16", rebuilt, stage) != fingerprint
+    assert benchmark_fingerprint(ROOT, model, "w8a8_mixed_w16a16", rebuilt, stage) != fingerprint
     assert benchmark_fingerprint(ROOT, model, "w8a16_w16a16", RF_DETR_BUILDS, stage) != fingerprint
     with pytest.raises(ValidationError, match="needs compiled component 'decoder'"):
-        benchmark_fingerprint(ROOT, model, "w8a8_w16a16", {"backbone": RF_DETR_BUILDS["backbone"]}, stage)
+        benchmark_fingerprint(ROOT, model, "w8a8_mixed_w16a16", {"backbone": RF_DETR_BUILDS["backbone"]}, stage)
 
 
 def test_benchmark_fingerprint_requires_a_declared_stage() -> None:
@@ -407,7 +439,7 @@ def test_accuracy_fingerprint_covers_the_model_datasets_and_their_requirements(t
 
     def fingerprint() -> str:
         model = load_and_validate_model(model_dir, tmp_path / "schemas" / "model.schema.json")
-        return benchmark_fingerprint(tmp_path, model, "w8a8_w16a16", RF_DETR_BUILDS, "accuracy")
+        return benchmark_fingerprint(tmp_path, model, "w8a8_mixed_w16a16", RF_DETR_BUILDS, "accuracy")
 
     def edit(path: Path, change: Callable[[dict], None]) -> str:
         for original, text in authored.items():
@@ -434,7 +466,7 @@ def test_accuracy_fingerprint_covers_the_model_datasets_and_their_requirements(t
         ),
         "another dataset file": edit(tmp_path / "datasets" / "imagenet-2012.yaml",
                                      lambda d: d["required_metrics"]["image_classification"].append("top5_accuracy")),
-        "the build profiles": edit(manifest, lambda d: d["accuracy"].update(build_profiles=["w8a8_w16a16"])),
+        "the build profiles": edit(manifest, lambda d: d["accuracy"].update(build_profiles=["w8a8_mixed_w16a16"])),
         # The name is what the model browser shows; it changes no measurement.
         "the dataset's name": edit(coco, lambda d: d.update(name="Common Objects in Context 2017")),
     }
@@ -455,11 +487,11 @@ def test_fingerprints_ignore_the_models_tests(tmp_path: Path) -> None:
         }}
         return [
             compile_fingerprint(
-                repository, "rf_detr_small", "w8a8_w16a16", "w8a8_w16a16", COMPILER_VERSION,
+                repository, "rf_detr_small", "w8a8_mixed_w16a16", "w8a8_mixed_w16a16", COMPILER_VERSION,
                 conversion_sources=selected,
             ),
-            benchmark_fingerprint(repository, model, "w8a8_w16a16", RF_DETR_BUILDS, "performance"),
-            benchmark_fingerprint(repository, model, "w8a8_w16a16", RF_DETR_BUILDS, "accuracy"),
+            benchmark_fingerprint(repository, model, "w8a8_mixed_w16a16", RF_DETR_BUILDS, "performance"),
+            benchmark_fingerprint(repository, model, "w8a8_mixed_w16a16", RF_DETR_BUILDS, "accuracy"),
         ]
 
     first = fingerprints()
@@ -481,10 +513,10 @@ def test_family_description_keeps_all_stage_fingerprints(tmp_path: Path) -> None
         return {
             "conversion": converted,
             "compile": compile_fingerprint(
-                tmp_path, model["id"], "w8a8_w16a16", "w8a8_w16a16", COMPILER_VERSION,
+                tmp_path, model["id"], "w8a8_mixed_w16a16", "w8a8_mixed_w16a16", COMPILER_VERSION,
                 conversion_sources={model["id"]: {"sha256": "a" * 64, "conversion_fingerprint": converted}},
             ),
-            **{stage: benchmark_fingerprint(tmp_path, model, "w8a8_w16a16", RF_DETR_BUILDS, stage)
+            **{stage: benchmark_fingerprint(tmp_path, model, "w8a8_mixed_w16a16", RF_DETR_BUILDS, stage)
                for stage in ("performance", "accuracy")},
         }
 
@@ -508,10 +540,10 @@ def test_benchmark_requirements_rerun_only_their_stage(tmp_path: Path, stage: st
         return {
             "conversion": conversion_fingerprint(tmp_path, model),
             "compile": compile_fingerprint(
-                tmp_path, "rf_detr_small", "w8a8_w16a16", "w8a8_w16a16", COMPILER_VERSION,
+                tmp_path, "rf_detr_small", "w8a8_mixed_w16a16", "w8a8_mixed_w16a16", COMPILER_VERSION,
                 conversion_sources=selected,
             ),
-            **{name: benchmark_fingerprint(tmp_path, model, "w8a8_w16a16", RF_DETR_BUILDS, name)
+            **{name: benchmark_fingerprint(tmp_path, model, "w8a8_mixed_w16a16", RF_DETR_BUILDS, name)
                for name in ("performance", "accuracy")},
         }
 
@@ -667,7 +699,11 @@ def test_compile_fingerprint_ignores_performance_and_accuracy_declarations(
         ("tools/model_registry/neat_core.py", False),
         ("tools/model_registry/cli.py", False),
         ("tools/model_registry/model.py", True),
+        ("tools/model_registry/compile_script.py", True),
         ("tools/model_registry/mla_stage_simulation.py", True),
+        ("tools/model_registry/fidelity.py", True),
+        ("tools/model_inputs/images.py", True),
+        ("tools/model_inputs/frame.py", False),
         ("tools/model_registry/compile_matrix.py", False),
         ("models/qwen3_5_0_8b/scripts/compile.sh", False),
         ("scripts/run_model_compilation.sh", True),
@@ -791,15 +827,15 @@ def test_speculative_compile_fingerprint_tracks_weights_not_benchmark_baseline(t
 def test_benchmark_baseline_changes_only_its_profiles_performance_fingerprint():
     model = load_and_validate_model(ROOT / "models/rf_detr_small")
     builds = {name: {"run_id": name, "artifact_sha256": "a" * 64} for name in ("backbone", "decoder")}
-    before = benchmark_fingerprint(ROOT, model, "w8a8_w16a16", builds, "performance")
-    other = benchmark_fingerprint(ROOT, model, "w8a16_w16a16", builds, "performance")
-    accuracy = benchmark_fingerprint(ROOT, model, "w8a8_w16a16", builds, "accuracy")
+    before = benchmark_fingerprint(ROOT, model, "w8a16_w16a16", builds, "performance")
+    other = benchmark_fingerprint(ROOT, model, "w8a8_mixed_w16a16", builds, "performance")
+    accuracy = benchmark_fingerprint(ROOT, model, "w8a16_w16a16", builds, "accuracy")
     model["build_profiles"][0]["benchmark_baseline"] = {"model_id": "resnet_50", "build_profile": "w16a16"}
-    assert benchmark_fingerprint(ROOT, model, "w8a8_w16a16", builds, "performance") != before
-    assert benchmark_fingerprint(ROOT, model, "w8a16_w16a16", builds, "performance") == other
-    assert benchmark_fingerprint(ROOT, model, "w8a8_w16a16", builds, "accuracy") == accuracy
+    assert benchmark_fingerprint(ROOT, model, "w8a16_w16a16", builds, "performance") != before
+    assert benchmark_fingerprint(ROOT, model, "w8a8_mixed_w16a16", builds, "performance") == other
+    assert benchmark_fingerprint(ROOT, model, "w8a16_w16a16", builds, "accuracy") == accuracy
     model["build_profiles"][0].pop("benchmark_baseline")
-    assert benchmark_fingerprint(ROOT, model, "w8a8_w16a16", builds, "performance") == before
+    assert benchmark_fingerprint(ROOT, model, "w8a16_w16a16", builds, "performance") == before
 
 
 @pytest.mark.parametrize("dependency", ["neat-core", "llima"])
@@ -819,13 +855,13 @@ def test_native_performance_fingerprint_tracks_core_and_mole(tmp_path, dependenc
 def test_performance_scope_changes_performance_fingerprint_without_changing_accuracy():
     model = load_and_validate_model(ROOT / "models/rf_detr_small")
     builds = {name: {"run_id": name, "artifact_sha256": "a" * 64} for name in ("backbone", "decoder")}
-    before = benchmark_fingerprint(ROOT, model, "w8a8_w16a16", builds, "performance")
-    accuracy = benchmark_fingerprint(ROOT, model, "w8a8_w16a16", builds, "accuracy")
+    before = benchmark_fingerprint(ROOT, model, "w8a8_mixed_w16a16", builds, "performance")
+    accuracy = benchmark_fingerprint(ROOT, model, "w8a8_mixed_w16a16", builds, "accuracy")
 
     model["performance"]["scope"] = "components"
 
-    assert benchmark_fingerprint(ROOT, model, "w8a8_w16a16", builds, "performance") != before
-    assert benchmark_fingerprint(ROOT, model, "w8a8_w16a16", builds, "accuracy") == accuracy
+    assert benchmark_fingerprint(ROOT, model, "w8a8_mixed_w16a16", builds, "performance") != before
+    assert benchmark_fingerprint(ROOT, model, "w8a8_mixed_w16a16", builds, "accuracy") == accuracy
 
 
 def test_yolo26x_pose_requests_moderate_on_demand():

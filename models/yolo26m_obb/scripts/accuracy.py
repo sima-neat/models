@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import json
 import random
-import sys
 import time
 from collections import deque
 from collections.abc import Callable, Iterator, Sequence
@@ -17,6 +16,7 @@ import numpy as np
 import pyneat
 import shapely
 from calibration import IMAGE_SIZE, decode_image, letterbox_geometry, preprocess_tile, tile_windows
+from model_report import log
 
 IMAGES = "val/images"
 LABELS = "val/labelTxt"
@@ -279,16 +279,12 @@ def parse_mpks(values: list[str]) -> Path:
     return Path(mpks["model"])
 
 
-def log(*values: object) -> None:
-    print(*values, file=sys.stderr, flush=True)
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mpk", action="append", required=True, help="model=<path>")
     parser.add_argument("--dataset", required=True, help="dota-v1-0-val=<extracted directory>")
     parser.add_argument("--output", type=Path, required=True, help="directory for model-report.json")
-    parser.add_argument("--limit", type=int, help="measure a seeded sample of images (local runs only)")
+    parser.add_argument("--limit", type=int, help="measure a seeded sample of images")
     args = parser.parse_args(argv)
     dataset_id, dataset_dir = args.dataset.split("=", 1)
     dataset = Path(dataset_dir)

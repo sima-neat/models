@@ -6,6 +6,7 @@ from pathlib import Path
 
 import numpy as np
 import onnx
+from model_registry.dependencies import onnx_opset_version, require_onnx_opset_version
 from model_registry.fetch import Fetcher
 from model_registry.model import load_and_validate_model
 from PIL import Image
@@ -48,8 +49,7 @@ def validate_config(directory):
 def validate_export(path):
     model = onnx.load(path, load_external_data=False)
     onnx.checker.check_model(model)
-    if [item.version for item in model.opset_import if not item.domain] != [17]:
-        raise ValueError("DETR export requires opset 17")
+    require_onnx_opset_version(model)
     names = ([value.name for value in model.graph.input], [value.name for value in model.graph.output])
     if names != (["input"], list(OUTPUTS)):
         raise ValueError(f"Expected input, logits and pred_boxes in that order, found {names}")
@@ -140,7 +140,7 @@ def convert(source, output_dir):
             str(output),
             input_names=["input"],
             output_names=list(OUTPUTS),
-            opset_version=17,
+            opset_version=onnx_opset_version(),
             dynamo=False,
         )
     fold_constants(output)

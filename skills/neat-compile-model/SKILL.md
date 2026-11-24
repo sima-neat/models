@@ -116,6 +116,11 @@ steps to `convert.py`, `surgery.py`, `calibration.py`, and `compile.py`.
      --build_dir /abs/path/build
    ```
 
+   For an INT8 build, add
+   `--real_data --dataset_images <folder> --num_calib_samples 20`, because
+   without `--real_data` the script calibrates on random values, which only
+   shows that the model compiles.
+
    [Quantize and compile](references/quantize_compile.md) covers PyTorch, dynamic
    shapes, calibration images, precision, QAT QDQ exports, memory errors, and the
    import API for other inputs. Done when `<build_dir>/<model_basename>/` holds

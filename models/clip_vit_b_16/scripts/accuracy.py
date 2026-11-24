@@ -13,7 +13,6 @@ import argparse
 import hashlib
 import io
 import json
-import sys
 import time
 from collections import deque
 from collections.abc import Callable, Iterator, Sequence
@@ -24,6 +23,7 @@ import model_report
 import numpy as np
 import pyneat
 from calibration import CLASS_NAMES, TEMPLATES, VALIDATION_SPLIT, preprocess_image, validation_labels
+from model_report import log
 
 COMPONENTS = {"image_encoder", "text_encoder"}
 EMBED_DIM = 512
@@ -134,10 +134,6 @@ def build_class_embeddings(mpk: Path, tokenizer, table: np.ndarray, class_names=
     return np.stack(classes).astype(np.float32)
 
 
-def log(*values: object) -> None:
-    print(*values, file=sys.stderr, flush=True)
-
-
 def load_text_probe(path: Path = TEXT_PROBE) -> dict[str, np.ndarray]:
     content = path.read_bytes()
     if hashlib.sha256(content).hexdigest() != TEXT_PROBE_SHA256:
@@ -190,7 +186,7 @@ def main(argv: list[str] | None = None) -> int:
         required=True,
         help="package root containing text_encoder/tokenizer.json and token_embeddings.npy",
     )
-    parser.add_argument("--limit", type=int, help="measure the first images only (local runs only)")
+    parser.add_argument("--limit", type=int, help="measure the first images only")
     args = parser.parse_args(argv)
     dataset_id, dataset_dir = args.dataset.split("=", 1)
     dataset = Path(dataset_dir)

@@ -51,6 +51,12 @@ def saved_report(path):
     return report
 
 
+def test_log_prints_to_standard_error_and_keeps_standard_output_clean(capsys):
+    model_report.log("evaluated", 5, "images")
+
+    assert capsys.readouterr() == ("", "evaluated 5 images\n")
+
+
 def test_performance_report_reads_core_report_and_saves_it_as_evidence(tmp_path):
     model_report.from_performance(Saved(CORE_REPORT), {"model": Model("resnet")}, workload="MPK default").save(tmp_path)
 

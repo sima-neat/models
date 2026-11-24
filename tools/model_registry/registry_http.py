@@ -98,12 +98,17 @@ class SigV4RegistryClient:
 
 
 
+def iam_read_api_url() -> str:
+    """The registry API whose reads read_registry_json_authenticated signs, or "" when it signs none."""
+    return os.environ.get("MODEL_REGISTRY_IAM_READ_API_URL", "").rstrip("/")
+
+
 def read_registry_json_authenticated(url: str) -> JsonObject:
     from .errors import FetchError
     from .fetch import read_registry_json
 
     # Sign only the explicitly configured API, never artifact download URLs.
-    iam_api = os.environ.get("MODEL_REGISTRY_IAM_READ_API_URL", "").rstrip("/")
+    iam_api = iam_read_api_url()
     if iam_api and url.startswith(iam_api + "/v1/"):
         region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION")
         if not region:

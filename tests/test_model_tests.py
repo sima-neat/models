@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -14,8 +15,8 @@ from model_registry.errors import ValidationError
 from model_registry.model_tests import (
     TEST_GROUPS,
     load_model_tests,
-    low_accuracy_variants,
     measured_shortfalls,
+    require_reference_accuracy,
     skip_reason,
     stage_test_file,
     validate_model_tests,
@@ -197,36 +198,51 @@ def test_a_test_with_its_own_fixture_of_a_stage_output_name_still_runs(model_dir
     assert "deselected" not in result.stdout
 
 
+def accuracy_model_dir(directory: Path, expected: dict, reference_metrics: list[dict] | None = None) -> Path:
+    """A model folder whose model.yaml evaluates ImageNet and COCO val, named imagenet-val and coco-val, and whose
+    tests.yaml expects `expected` of w8a8."""
+    model = {
+        "architecture": "demo",
+        "compilation": {"format": "onnx", "source": "conversion"},
+        "build_profiles": {"w8a8": {"components": {"model": {"parameters": {"precision": "w8a8"}}}}},
+        "accuracy": {"datasets": [{"id": "imagenet", "variant": "val"}, {"id": "coco", "variant": "val"}]},
+        "reference_metrics": reference_metrics or [],
+    }
+    (directory / "tests").mkdir(parents=True)
+    (directory / "model.yaml").write_text(yaml.safe_dump(model), encoding="utf-8")
+    (directory / "tests" / "tests.yaml").write_text(
+        yaml.safe_dump({"accuracy": {"run_tests": True, "expected": {"w8a8": expected}}}, sort_keys=False),
+        encoding="utf-8",
+    )
+    return directory
+
+
 @pytest.mark.parametrize(
     ("datasets", "shortfalls"),
     [
-        ({"imagenet": {"top1_accuracy": 0.80, "top5_accuracy": 0.95}, "coco": {"coco_map": 0.4}}, []),
-        ({"imagenet": {"top1_accuracy": 0.7601, "top5_accuracy": 0.95}, "coco": {"coco_map": 0.4}}, []),
+        ({"imagenet-val": {"top1_accuracy": 0.80, "top5_accuracy": 0.95}, "coco-val": {"coco_map": 0.4}}, []),
+        ({"imagenet-val": {"top1_accuracy": 0.7601, "top5_accuracy": 0.95}, "coco-val": {"coco_map": 0.4}}, []),
         (
-            {"imagenet": {"top1_accuracy": 0.7599, "top5_accuracy": 0.95}, "coco": {"coco_map": 0.3}},
-            ["imagenet: top1_accuracy 0.7599 is below 0.8 by more than 5%",
-             "coco: coco_map 0.3 is below 0.4 by more than 5%"],
+            {"imagenet-val": {"top1_accuracy": 0.7599, "top5_accuracy": 0.95}, "coco-val": {"coco_map": 0.3}},
+            ["imagenet-val: top1_accuracy 0.7599 is below 0.8 by more than 5%",
+             "coco-val: coco_map 0.3 is below 0.4 by more than 5%"],
         ),
         (
-            {"imagenet": {"top1_accuracy": 0.80}, "coco": {"coco_map": 0.4}},
-            ["imagenet: top5_accuracy was not measured"],
+            {"imagenet-val": {"top1_accuracy": 0.80}, "coco-val": {"coco_map": 0.4}},
+            ["imagenet-val: top5_accuracy was not measured"],
         ),
-        ({"imagenet": {"top1_accuracy": 0.80, "top5_accuracy": 0.95}}, ["coco was not evaluated"]),
+        ({"imagenet-val": {"top1_accuracy": 0.80, "top5_accuracy": 0.95}}, ["coco-val was not evaluated"]),
     ],
     ids=["equal", "within the allowed drop", "below the allowed drop", "missing metric", "missing dataset"],
 )
 def test_measured_shortfalls_compare_each_expected_value_on_each_dataset(
     tmp_path: Path, datasets: dict[str, dict[str, float]], shortfalls: list[str]
 ) -> None:
-    (tmp_path / "tests").mkdir()
-    (tmp_path / "tests" / "tests.yaml").write_text(
-        "accuracy:\n  run_tests: true\n  expected:\n    w8a8:\n"
-        "      imagenet: {top1_accuracy: 0.80, top5_accuracy: 0.95}\n      coco: {coco_map: 0.4}\n",
-        encoding="utf-8",
-    )
+    expected = {"imagenet-val": {"top1_accuracy": 0.80, "top5_accuracy": 0.95}, "coco-val": {"coco_map": 0.4}}
+    model_dir = accuracy_model_dir(tmp_path, expected)
     report = {"datasets": {name: {"metrics": metrics} for name, metrics in datasets.items()}}
 
-    assert measured_shortfalls(tmp_path, "accuracy", "w8a8", report) == shortfalls
+    assert measured_shortfalls(model_dir, "accuracy", "w8a8", report) == shortfalls
 
 
 def test_measured_shortfalls_need_values_expected_of_the_build_profile(tmp_path: Path) -> None:
@@ -353,48 +369,82 @@ def test_component_expectations_gate_each_result_without_combining(model_dir):
 
 
 def _reference(origin: str, split: str, **metrics: float) -> dict:
-    return {"origin": origin, "dataset": {"id": "coco-2017", "split": split}, "metrics": metrics}
+    return {"origin": origin, "dataset": {"id": "coco", "split": split}, "metrics": metrics}
 
 
 @pytest.mark.parametrize(
-    ("reference_metrics", "expected", "hidden"),
+    ("reference_metrics", "expected", "error"),
     [
         # 0.45 is 10% below the published 0.5 and 0.47 is 6% below it.
-        ([_reference("published", "val", coco_map=0.5)], {"coco_map": 0.45}, True),
-        ([_reference("published", "val", coco_map=0.5)], {"coco_map": 0.47}, False),
+        (
+            [_reference("published", "val", coco_map=0.5)],
+            {"coco_map": 0.45},
+            "coco_map 0.45 is below the reference 0.5 by more than 8%",
+        ),
+        ([_reference("published", "val", coco_map=0.5)], {"coco_map": 0.47}, None),
         # A score published for another split is not comparable.
-        ([_reference("published", "test", coco_map=0.9)], {"coco_map": 0.45}, False),
+        ([_reference("published", "test", coco_map=0.9)], {"coco_map": 0.45}, None),
         # The FP32 baseline decides when the model has one, whatever its authors published.
         (
             [_reference("published", "val", coco_map=0.5), _reference("fp32_baseline", "val", coco_map=0.46)],
             {"coco_map": 0.45},
-            False,
+            None,
         ),
         (
             [_reference("published", "val", coco_map=0.45), _reference("fp32_baseline", "val", coco_map=0.5)],
             {"coco_map": 0.45},
-            True,
+            "coco_map 0.45 is below the reference 0.5 by more than 8%",
         ),
         # The first reference metric tests.yaml expects decides.
-        ([_reference("published", "val", coco_map=0.5, coco_ap50=0.9)], {"coco_map": 0.47, "coco_ap50": 0.6}, False),
+        ([_reference("published", "val", coco_map=0.5, coco_ap50=0.9)], {"coco_map": 0.47, "coco_ap50": 0.6}, None),
         # A lower-is-better metric misses its reference by rising.
-        ([_reference("published", "val", epe=0.6)], {"epe": 0.7}, True),
-        ([], {"coco_map": 0.1}, False),
+        ([_reference("published", "val", epe=0.6)], {"epe": 0.7}, "epe 0.7 is above the reference 0.6 by more than 8%"),
+        ([], {"coco_map": 0.1}, None),
     ],
 )
-def test_low_accuracy_variants_compare_expected_accuracy_with_a_comparable_reference(
-    tmp_path: Path, reference_metrics: list[dict], expected: dict, hidden: bool
+def test_reference_rule_rejects_expected_accuracy_far_below_a_comparable_reference(
+    model_dir: Path, reference_metrics: list[dict], expected: dict, error: str | None
 ) -> None:
-    tests = tmp_path / "models" / "demo" / "tests"
-    tests.mkdir(parents=True)
-    profiles = {"w8a8": {"coco-2017-val": expected}, "w16a16": {"coco-2017-val": {"coco_map": 0.5, "epe": 0.6}}}
-    (tests / "tests.yaml").write_text(yaml.safe_dump({"accuracy": {"expected": profiles}}), encoding="utf-8")
+    tests = model_dir / "tests"
+    (tests / "build").mkdir()
+    (tests / "build" / "test_compile.py").write_text("", encoding="utf-8")
+    (tests / "benchmark" / "test_accuracy.py").write_text("", encoding="utf-8")
+    profiles = {"w8a8": {"coco-val": expected}, "w16a16": {"coco-val": {"coco_map": 0.5, "epe": 0.6}}}
+    (tests / "tests.yaml").write_text(
+        yaml.safe_dump({"compile": {"run_tests": True}, "accuracy": {"run_tests": True, "expected": profiles}}),
+        encoding="utf-8",
+    )
     model = {
         "build_profiles": [{"id": "w8a8"}, {"id": "w16a16"}],
-        "accuracy": {"datasets": {"coco-2017-val": {"id": "coco-2017", "variant": "val"}}},
+        "accuracy": {"datasets": {"coco-val": {"id": "coco", "variant": "val", "required_metrics": []}}},
         "reference_metrics": reference_metrics,
     }
+    # Loading a model checks its tests.yaml without the reference rule.
+    validate_model_tests(model_dir, model, ROOT / "schemas" / "model-tests.schema.json")
 
-    variants = low_accuracy_variants(tmp_path, {"demo": model, "unmeasured": {"build_profiles": [{"id": "w8a8"}]}})
+    if error is None:
+        require_reference_accuracy(model_dir, model)
+    else:
+        message = f"accuracy.expected.w8a8.coco-val: {error}; comment the w8a8 profile out in model.yaml"
+        with pytest.raises(ValidationError, match=re.escape(message)):
+            require_reference_accuracy(model_dir, model)
 
-    assert variants == ({"demo": ["w8a8"]} if hidden else {})
+
+@pytest.mark.parametrize(
+    ("split", "shortfalls"),
+    [
+        # 0.455 is within 5% of the expected 0.47 but 9% below the published 0.5.
+        ("val", ["coco-val: coco_map 0.455 is below the reference 0.5 by more than 8%"]),
+        # A score published for another split is not comparable, so it decides nothing.
+        ("test", []),
+    ],
+)
+def test_measured_shortfalls_hold_measured_accuracy_to_a_comparable_reference(
+    tmp_path: Path, split: str, shortfalls: list[str]
+) -> None:
+    model_dir = accuracy_model_dir(
+        tmp_path, {"coco-val": {"coco_map": 0.47}}, [_reference("published", split, coco_map=0.5)]
+    )
+    report = {"datasets": {"coco-val": {"metrics": {"coco_map": 0.455}}}}
+
+    assert measured_shortfalls(model_dir, "accuracy", "w8a8", report) == shortfalls

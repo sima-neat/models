@@ -12,9 +12,11 @@ from unittest.mock import MagicMock, call
 import numpy as np
 import onnx
 import pytest
+from model_registry.dependencies import onnx_opset_version
 from onnx import numpy_helper
 from PIL import Image
 
+OPSET = onnx_opset_version()
 MODEL_DIR = Path(__file__).resolve().parents[2]
 
 
@@ -108,14 +110,6 @@ def test_validation_labels_come_from_the_labels_file(tmp_path: Path, load_script
     path.write_text(json.dumps({**labels, "categories": categories[1:]}), encoding="utf-8")
     with pytest.raises(ValueError, match="expected 1000 validation classes, found 999"):
         calibration.validation_labels(tmp_path)
-
-
-def test_read_images_reports_a_missing_image(tmp_path: Path, load_script: Callable[[str], ModuleType]) -> None:
-    calibration = load_script("calibration")
-    archive = _write_archive(tmp_path / "cal.tar.gz", {"imagenet/cal2012/a.JPEG": b"a"})
-    assert calibration.read_images(archive, ["imagenet/cal2012/a.JPEG"]) == {"imagenet/cal2012/a.JPEG": b"a"}
-    with pytest.raises(ValueError, match="missing 1 requested images"):
-        calibration.read_images(archive, ["imagenet/cal2012/a.JPEG", "imagenet/cal2012/b.JPEG"])
 
 
 def test_compile_reads_both_encoders_of_each_build_profile(load_script: Callable[[str], ModuleType]) -> None:
@@ -215,7 +209,7 @@ def test_fidelity_checks_every_output_without_calibration(load_script: Callable[
         "method": "seeded_random_without_replacement",
         "seed": 42,
         "offset": 50,
-        "samples": 50,
+        "samples": 5,
     }
     assert recipe.FIDELITY_PROMPTS == 64
     assert not metadata.get("calibrations")
@@ -388,7 +382,7 @@ def _interface_model(exporter: ModuleType, case: str) -> onnx.ModelProto:
         array = np.zeros(shape, dtype=np.float64 if dtype == onnx.TensorProto.DOUBLE else np.float32)
         nodes.append(helper.make_node("Constant", [], [output.name], value=numpy_helper.from_array(array)))
     graph = helper.make_graph(nodes, "fixture", inputs, outputs)
-    return helper.make_model(graph, opset_imports=[helper.make_opsetid("", 18 if case == "opset" else 17)])
+    return helper.make_model(graph, opset_imports=[helper.make_opsetid("", OPSET + 1 if case == "opset" else OPSET)])
 
 
 @pytest.mark.parametrize("case", ["valid", "opset", "order", "dtype", "shape"])

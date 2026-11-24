@@ -10,7 +10,7 @@ import {
 } from "./state.js";
 import { icons, branchName, showToast, variantLabel } from "./ui.js";
 import {
-  api, audienceCatalog, snapshotModels, readBranchPreference, writeBranchPreference, readCachedBranches, readCachedCatalog,
+  api, snapshotModels, readBranchPreference, writeBranchPreference, readCachedBranches, readCachedCatalog,
   writeCachedBranches,
   runFromCatalogBuild, loadRunDetail, variantPackage, loadVariant, loadPackageRun, loadHistoricalCatalogModel,
   selectedCatalogBuild,
@@ -190,7 +190,7 @@ async function loadRuns({ append = false, branch = elements["branch-filter"].val
       return allPages(api, `${base}/runs`, query, "runs");
     })) : null;
     const document = await fetchSnapshot();
-    const catalogDefinitions = document ? await audienceCatalog(snapshotModels(document)) : [];
+    const catalogDefinitions = document ? snapshotModels(document) : [];
     if (requestId !== state.runsRequestId) return;
     applyTaxonomy(document?.taxonomy || null, snapshotBranch);
     const payload = { mode: "models", catalogDefinitions };

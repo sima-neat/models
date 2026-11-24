@@ -28,6 +28,9 @@ depends on.
 
 - A tooling change reruns a stage only when the changed file is in that stage's
   tooling list in `fingerprints.py`. No shared file is a conversion input.
+- The ONNX opset, `onnx.opset` in `deps/manifest.json`, is a conversion input and
+  an ONNX compile input. Changing it means Vulcan Model Convert for every
+  conversion-backed model, and every ONNX build then recompiles.
 - Raise `FINGERPRINT_VERSION` in `conversion.py` in the change that makes shared
   tooling convert the same inputs to a different model. Planning then fails
   until Vulcan Model Convert reruns for every conversion-backed model.
@@ -35,18 +38,25 @@ depends on.
   compile input, except `convert.py`, `performance.py`, `accuracy.py`, and
   `fp32_baseline_accuracy.py` (`NON_COMPILE_SCRIPTS`). Editing a comment in a
   compile input recompiles and then remeasures the model.
-- No fingerprint reads a model's `README.md`, `hero.png`, `tests/`, `license`,
-  the taxonomy, `docs/`, `agents/`, `skills/`, or `AGENTS.md`. Editing them reruns
-  nothing.
+- No fingerprint reads a model's `README.md`, `hero.png`, `tests/`, its `license`
+  field, the taxonomy, `docs/`, `agents/`, `skills/`, or `AGENTS.md`. Editing them
+  reruns nothing. The `license` resource pin is a compile input, like every
+  resource.
 
 ## Before a push
 
 A push reruns each build whose fingerprint changed. Some files are fingerprint inputs of every
-model: `scripts/run_model_compilation.sh` and the other entries of `COMPILE_TOOLING`,
+model: `scripts/run_model_compilation.sh`, the compile helpers in
+`tools/model_registry/compile_script.py`, the image listing in `tools/model_inputs/images.py`,
+`scripts/unpack_benchmark_datasets.sh`, and the other entries of `COMPILE_TOOLING`,
 `BOARD_STAGE_TOOLING`, `PERFORMANCE_TOOLING`, and `ACCURACY_TOOLING` in `fingerprints.py`, the
-compiler pin, the Core runtime target, and `FINGERPRINT_VERSION` in `conversion.py`. An edit to
-one of them, even a comment made while working on one model, recompiles or remeasures models
-the pull request has nothing to do with.
+compiler pin, the Core runtime target, and `FINGERPRINT_VERSION` in `conversion.py`. Three
+more lists there each cover part of the models: `FIDELITY_TOOLING` recompiles each model that
+declares `numerical_fidelity`, `FRAME_TOOLING`, the benchmark frame in
+`tools/model_inputs/frame.py`, remeasures the performance of each model PyNeat measures, and
+`LLIMA_PERFORMANCE_TOOLING` that of each model MoLE measures. An edit to one of them, even a
+comment made while working on one model, recompiles or remeasures models the pull request has
+nothing to do with.
 
 - Before each push, list the changed files and check each against those inputs.
 - When one matches, say so before pushing, in these terms: the file, the stages it reruns, and
@@ -77,13 +87,47 @@ later or never. Apply them while you write.
   heads before the upstream decode, or starts after an upstream step
   ([what `convert.py` exports](../docs/conversion-artifacts.md#what-convertpy-exports)).
 - **Read conversion output names from `model.yaml`.** When a model declares
-  `conversion.outputs`, every script reads the names with
-  `conversion_outputs()`, so renaming a file changes only `model.yaml`.
+  `conversion.outputs`, `convert.py`, `compile.py`, and the build tests read
+  the names with `conversion_outputs()`, so renaming a file changes only
+  `model.yaml`. The benchmark scripts take their paths as arguments, because
+  they run without `model_registry`.
 
 ### Compile
 
 - **Hide an unready variant by commenting it out.** A commented-out profile in
-  `model.yaml` is neither compiled nor benchmarked, and its tests skip.
+  `model.yaml` is neither compiled nor benchmarked, and its tests skip. A promoted
+  build of it stays promoted, and `check-main-merge` blocks the merge into `main`
+  while the catalog of `develop` or `main` promotes a profile `model.yaml` no
+  longer declares, so a maintainer first withdraws it on each of those branches
+  ([when a promoted profile leaves
+  `model.yaml`](references/promotion-operations.md#when-a-promoted-profile-leaves-modelyaml)).
+- **Calibrate on at most 20 samples.** Keep each component's `calibration_samples` at 20 or
+  fewer, because each sample adds compile time to every build and nothing validates the
+  parameter.
+- **A shared helper holds what every recipe does the same way, never a recipe step.**
+  `tools/model_registry/compile_script.py` holds the command line, one component's
+  parameters, the MPK manifest, and the compiler log level. `tools/model_registry/fidelity.py`
+  runs samples through the ONNX source and the quantized graph and writes `fidelity.json`.
+  `tools/model_inputs/images.py` lists and reads a dataset's images. Quantization, the
+  compile call, preprocessing, which samples calibrate the model and which measure
+  fidelity, graph surgery, and the MPK audit stay in the model's scripts, because they
+  show how the model reaches its MPK. A script whose step differs from a helper keeps its
+  own code, because a per-model branch or flag in a helper recompiles every ONNX build
+  when one model changes.
+- **Every model exports at the opset `deps/manifest.json` sets.** An export passes
+  `onnx_opset_version()` as its opset, and `validate_export` calls
+  `require_onnx_opset_version(model)`, both from `model_registry.dependencies`. A model
+  script or test writes no opset number, so one edit to the manifest moves every model.
+- **A recipe takes its compiler log level from `compiler_log_level()`.** It passes the
+  result to every `quantize` and `compile` call as `log_level`, so CI keeps the full log
+  of a failed compile and a local compile stays readable. A hard-coded level loses one of
+  the two.
+- **Name a shared module once.** A fingerprint hashes a shared file's path with its
+  content, so renaming or moving `fidelity.py`, `images.py`, or `frame.py` recompiles or
+  remeasures every model that reads it.
+- **`tools/model_inputs/__init__.py` holds only its docstring.** `calibration.py` imports
+  the package where OpenCV may be absent, and no fingerprint or test reads that file, so
+  nothing reruns or catches an import added there.
 - **An LLM or VLM is one component.** Declare the complete model as one
   component with one 4K profile (`max_num_tokens: 4096` and
   `language_group_size`). Keep graph-changing options in component
@@ -97,23 +141,43 @@ later or never. Apply them while you write.
   module under `scripts/` is a compile input. Put maintainer explanations in
   `model.yaml` comments or in the docstrings of `convert.py`, `performance.py`,
   and `accuracy.py`.
-- **Benchmark scripts stand alone.** `performance.py` and `accuracy.py` run
-  with `tools/model_report` on `PYTHONPATH`, without `model_registry` imports,
-  YAML configuration, registry credentials, or downloads. They take verified
-  local paths: `--mpk`, `--dataset`, `--output`, and `--resources` when the
-  model declares supporting files.
+- **Benchmark scripts need only `tools/model_report` and `tools/model_inputs`.**
+  `performance.py` and `accuracy.py` run with `tools/` on `PYTHONPATH` and import only those
+  two packages from it, without `model_registry` imports, YAML configuration, registry
+  credentials, or downloads. They take verified local paths: `--mpk`, or `--deployment` for
+  a build packaged as a deployment folder, `--dataset`, `--output`, and `--resources` when
+  the model declares supporting files. `accuracy.py` also takes `--limit`, the number of
+  samples to score. `model_report` needs only the Python standard library,
+  and `model_inputs` only what PyNeat's environment has, so a customer copies both to a
+  DevKit beside the model folder.
+- **The benchmark tooling asks who measures a model, not how it is packaged.** A speech
+  model is a deployment folder like a language model, and PyNeat measures it like a
+  vision model. Shared benchmark code that must tell them apart calls `benchmark_runner`
+  in `benchmark_declarations.py`, which returns `mole` only for a deployment that
+  generates text.
 
 ### Tests
 
 - **DevKit tests import lazily.** Tests under `tests/benchmark/` also run on the
-  DevKit, in PyNeat, which has no `onnx`, `onnxruntime`, or `torch`. Import such
+  DevKit, in the registry tooling environment the job installs with
+  `pip install '.[tests]'`. It has NumPy and pytest, and no `pyneat`, `cv2`,
+  Pillow, `onnx`, `onnxruntime`, or `torch`. Import such
   a package inside the test with `pytest.importorskip("onnx")`. A module-level
   import stops collection on the DevKit, and the stage publishes no result
   ([the tests step](../docs/adding-a-model.md#10-write-the-models-tests)).
 - **Expected values follow published results.** When a reviewed change moves a
   published value, set `expected` in `tests/tests.yaml` to the new published
   result. Leave `ACCURACY_ALLOWED_DROP` and `PERFORMANCE_ALLOWED_DROP` alone:
-  every model shares them.
+  every model shares them. When the new accuracy is more than
+  `ACCURACY_ALLOWED_REFERENCE_DROP` below the reference score, comment the profile out
+  instead ([the reference rule](../docs/adding-a-model.md#comment-out-a-variant-far-below-its-reference-score)),
+  because `model-registry validate` fails that `expected` value.
+- **Comment out a profile that fails the reference test on `develop` before the merge into
+  `main`.** The DevKit accuracy test fails a measured accuracy more than
+  `ACCURACY_ALLOWED_REFERENCE_DROP` below the reference score, but the stage still publishes
+  its report. `check-main-merge` (`find_main_merge_blockers` in `stage_plan.py`) checks
+  that each profile has a completed result, not its test outcome, so it lets the merge carry
+  the profile to customers.
 
 ### Publication and approval
 
@@ -144,7 +208,8 @@ The code holds each limit, and this table names where. A change to a limit updat
 | A committed file is neither excluded by `.gitignore` nor larger than this, unless `ALLOWED_FILES` lists it | `MAX_FILE_BYTES` in `tests/test_target_branch_checks.py` | 2 MiB |
 | How far an accuracy measurement may be worse than its `expected` value in `tests/tests.yaml`, relative to that value, and still pass | `ACCURACY_ALLOWED_DROP` in `tools/model_registry/model_tests.py` | 0.05 |
 | How far a performance measurement may be worse than its `expected` value, relative to that value, and still pass | `PERFORMANCE_ALLOWED_DROP` in `model_tests.py` | 0.10 |
-| How far a profile's expected accuracy may be worse than the source model's reference score before the customer view leaves the profile out | `ACCURACY_ALLOWED_REFERENCE_DROP` in `model_tests.py` | 0.08 |
+| How far a profile's expected or measured accuracy may be worse than the source model's reference score, relative to that score, before `model-registry validate`, `model-registry validate-models`, or the DevKit accuracy test fails | `ACCURACY_ALLOWED_REFERENCE_DROP` in `model_tests.py` | 0.08 |
+| Samples a model's numerical fidelity compares during each compile | `maximum` of `numerical_fidelity.selection.samples` in `schemas/model.schema.json` | 5 |
 | The conversion fingerprint's version, raised as [Stages and fingerprints](#stages-and-fingerprints) says | `FINGERPRINT_VERSION` in `tools/model_registry/conversion.py` | 1 |
 | Words in a model README after the hero | `MAX_README_WORDS` in `tools/model_registry/documentation.py` | 400 |
 | Words in the README's Overview, in one or two paragraphs | the check in `load_model_documentation` in `documentation.py` | 50 to 120 |
@@ -153,7 +218,7 @@ The code holds each limit, and this table names where. A change to a limit updat
 | Pixel size of a model's `hero.png` | `HERO_WIDTH` and `HERO_HEIGHT` in `documentation.py` | 1200 by 480 |
 | Clock cycles and seconds the MLA stage simulation runs before it stops | `CYCLE_LIMIT` and `TIMEOUT_S` in `tools/model_registry/mla_stage_simulation.py` | 2,000,000,000 cycles, 600 s |
 | Roles and required names in one Vulcan candidate | the check in `tools/model_registry/candidates.py` | 32 roles, 4096 names |
-| Lines in `AGENTS.md`, which every agent session loads | `AGENTS_LINE_BUDGET` in `tests/test_docs.py` | 130 |
+| Lines in `AGENTS.md`, which every agent session loads | `AGENTS_LINE_BUDGET` in `tests/test_docs.py` | 155 |
 
 ## Where a lesson goes
 

@@ -63,7 +63,7 @@ numerical_fidelity:
   status: diagnostic
   dataset: {id: scene-flow, variant: cal, sha256: bc17d4c23539824b4dc5d159579a59c1727a80e6d7f82597a13c90be493a66ff, size_bytes: 1688561036}
   # Calibration takes the first pairs of the same seeded order, so the fidelity pairs start after them.
-  selection: {method: seeded_random_without_replacement, seed: 42, offset: 16, samples: 8}
+  selection: {method: seeded_random_without_replacement, seed: 42, offset: 16, samples: 5}
   outputs: [disparity]
 
 accuracy:

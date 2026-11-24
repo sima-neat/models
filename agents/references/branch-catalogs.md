@@ -132,11 +132,20 @@ into `main` ([CI flow](ci-flow.md#the-merge-check-for-main)).
 
 ## Concurrent pushes
 
-- A newer push to the same ref cancels the running orchestrator with its compiles and
-  benchmarks. Builds and benchmark runs that already published stay. The next run plans
-  the builds left pending and the benchmarks without a completed run.
-- A manual dispatch has its own concurrency group. It runs to completion, also beside
-  a push run of the same ref.
+[Concurrency and cancellation](ci-flow.md#concurrency-and-cancellation) says which run
+waits, cancels, or runs beside another. This section owns what that does to the catalog.
+
+- A push run that a newer push cancels, on a branch other than `develop` and `main`, leaves
+  the builds and benchmark runs it published. The next run plans the builds left pending
+  and the benchmarks without a completed run.
+- A manual dispatch runs beside a waiting or running push run of the same ref, and a
+  dispatch that names no profile or component publishes the catalog at its commit. A
+  benchmark stage job that stages from its own branch's catalog requires that catalog's
+  `catalog_revision` to equal the job's source commit (`stage_catalog_build` in
+  `registry.py`). When the two runs are at different commits and either one publishes the
+  catalog, the other run's later stage jobs therefore stop with `current catalog does not
+  match the requested catalog revision`. The next run plans each benchmark that still has
+  no completed run.
 - The builds of one run publish in parallel, each on its own. Every catalog write is a
   compare-and-swap that re-reads the catalog on a conflict
   ([catalog snapshots](publication.md#catalog-snapshots)).

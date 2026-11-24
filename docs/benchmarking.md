@@ -51,8 +51,8 @@ The runner user therefore needs passwordless `sudo` for both writes.
 ## The performance script
 
 Every model that declares `performance` includes `scripts/performance.py` in
-its own GitHub folder. CI runs that same script. Copy the model folder and
-`tools/model_report` to the DevKit, extract the model's accuracy dataset, and
+its own GitHub folder. CI runs that same script. Copy the model folder,
+`tools/model_report` and `tools/model_inputs` to the DevKit, extract the model's accuracy dataset, and
 run the script with PyNeat; no registry installation or YAML configuration is
 needed:
 
@@ -139,6 +139,32 @@ The script runs once per benchmarked build profile, with every component's MPK.
 CI passes `--dataset` with the model's first accuracy dataset, and only for a build
 profile that accuracy measures.
 
+`scripts/unpack_benchmark_datasets.sh` unpacks each dataset into a dataset folder. A
+marker beside each unpack lets a later step of the same job reuse it without reading the
+archive again. The archive comes from the DevKit pool's shared dataset archive share when
+the share's index lists the dataset's SHA-256 and size and the share answers a listing
+within 20 seconds. The script reads that archive once, in place, and checks its SHA-256
+and size against `model.yaml` as it unpacks it. When the share cannot give the archive or
+the check fails, the script removes what it unpacked, and the Dataset Registry downloads
+the archive into a cache on the NVMe. The script checks that archive before it unpacks it.
+
+In CI the dataset step unpacks into the job's dataset folder, both stages reuse it, and
+the job removes it when it ends. On your own DevKit, `scripts/run_model_performance.sh`
+and `scripts/run_model_accuracy.sh` each unpack the datasets into their own work folder
+and remove it when they end. To unpack once for both, set `DATASET_DIR` to a folder
+outside that work folder, and delete it when you are done.
+
+These environment variables set the locations:
+
+| Variable | Default | Holds |
+|---|---|---|
+| `DATASET_DIR` | `$WORK_DIR/datasets` | the unpacked datasets |
+| `DATASET_CACHE` | `/media/nvme/datasets/artifacts` | the archives the Dataset Registry downloads |
+| `DATASET_LOCK` | `/media/nvme/datasets/locks/prepare.lock` | the lock that lets one run at a time download an archive |
+| `SHARED_DATASET_ARCHIVES` | `/mnt/dataset-private/current` | the shared dataset archive share. Without it, each archive comes from the Dataset Registry |
+
+`NVME_MOUNT`, by default `/media/nvme`, moves `DATASET_CACHE` and `DATASET_LOCK` together.
+
 For an image model, the benchmark repeats one real camera-sized frame, so its
 throughput is what an application gets from a 720p frame to decoded results,
 not the MPK alone:
@@ -146,10 +172,10 @@ not the MPK alone:
 1. The script picks one image from the dataset's validation split with
    `random.Random(0)`, so every run measures the same image. Pose models pick
    among the images with labelled people, which pose accuracy scores.
-2. It reads the image as RGB and letterboxes it into a 1280x720 frame with
-   `letterbox_to_720p`: scaled to fit, centered, and padded with grey (114).
-   The function is OpenCV and NumPy code inside the script, not a shared
-   module.
+2. It reads the image as RGB with `read_rgb` and letterboxes it into a
+   1280x720 frame with `letterbox_to_720p`: scaled to fit, centered, and padded
+   with grey (114). Both come from `model_inputs.frame`, a shared module of
+   OpenCV and NumPy code under `tools/`.
 3. It passes the frame to Core in `BenchmarkOptions.inputs` as an RGB
    `pyneat.Tensor`. The Model uses the image route
    (`preprocess.kind = InputKind.Image`), so Neat's preprocessing resizes,
@@ -227,8 +253,8 @@ component, in `model.yaml` order:
 
 ```bash
 PYTHONPATH=tools ~/pyneat/bin/python models/rf_detr_nano/scripts/performance.py \
-  --mpk backbone=/workspace/rf_detr_nano_w8a8_w16a16_backbone_mpk.tar.gz \
-  --mpk decoder=/workspace/rf_detr_nano_w8a8_w16a16_decoder_mpk.tar.gz \
+  --mpk backbone=/workspace/rf_detr_nano_w8a16_w16a16_backbone_mpk.tar.gz \
+  --mpk decoder=/workspace/rf_detr_nano_w8a16_w16a16_decoder_mpk.tar.gz \
   --dataset coco-2017-val=/media/nvme/datasets/coco-2017-val \
   --output /workspace/performance
 ```

@@ -11,7 +11,6 @@ import contextlib
 import io
 import json
 import random
-import sys
 import time
 from collections import deque
 from collections.abc import Callable, Iterator, Sequence
@@ -22,6 +21,7 @@ import model_report
 import numpy as np
 import pyneat
 from faster_coco_eval import COCO, COCOeval_faster
+from model_report import log
 from PIL import Image
 
 QUERY_COUNT = 300
@@ -208,16 +208,12 @@ def parse_mpks(values: list[str]) -> dict[str, Path]:
     return {name: Path(path) for name, path in mpks.items()}
 
 
-def log(*values: object) -> None:
-    print(*values, file=sys.stderr, flush=True)
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mpk", action="append", required=True, help="backbone=<path> and decoder=<path>")
     parser.add_argument("--dataset", required=True, help="coco-2017-val=<directory>")
     parser.add_argument("--output", type=Path, required=True, help="directory for model-report.json")
-    parser.add_argument("--limit", type=int, help="seeded sample for local checks only; default evaluates all images")
+    parser.add_argument("--limit", type=int, help="seeded sample; default evaluates all images")
     args = parser.parse_args(argv)
     dataset_id, dataset_dir = args.dataset.split("=", 1)
     if dataset_id != "coco-2017-val":

@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -24,6 +23,7 @@ from pathlib import Path
 
 import model_report
 import numpy as np
+from model_report import log
 
 DATASET = "yfcc100m-keypoints-val"
 PAIRS_FILE = "annotations/pairs_val.txt"
@@ -393,16 +393,12 @@ def parse_mpks(values: list[str]) -> Path:
     return Path(mpks["model"])
 
 
-def log(*values: object) -> None:
-    print(*values, file=sys.stderr, flush=True)
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mpk", action="append", required=True, help="model=<path>")
     parser.add_argument("--dataset", required=True, help=f"{DATASET}=<extracted directory>")
     parser.add_argument("--output", type=Path, required=True, help="directory for model-report.json")
-    parser.add_argument("--limit", type=int, help="measure the first pairs only (local runs only)")
+    parser.add_argument("--limit", type=int, help="measure the first pairs only")
     args = parser.parse_args(argv)
     dataset_id, directory = args.dataset.split("=", 1)
     if dataset_id != DATASET:

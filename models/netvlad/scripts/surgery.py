@@ -19,12 +19,12 @@ from typing import Any
 
 import numpy as np
 import onnx
+from model_registry.dependencies import onnx_opset_version, require_onnx_opset_version
 
 IMAGE_HEIGHT, IMAGE_WIDTH = 480, 640
 FEATURE_DIM = 512
 CLUSTERS = 64
 DESCRIPTOR_DIM = 4096
-OPSET = 17
 INTERFACE = {"image": [1, 3, IMAGE_HEIGHT, IMAGE_WIDTH], "descriptor": [1, DESCRIPTOR_DIM]}
 # torchvision's VGG16 configuration up to conv5_3: output channels of each 3x3 convolution, "M" for a 2x2 max pool.
 ENCODER_CONFIG = (64, 64, "M", 128, 128, "M", 256, 256, 256, "M", 512, 512, 512, "M", 512, 512, 512)
@@ -41,8 +41,7 @@ ATOL = 1e-4
 def validate_export(path: Path) -> None:
     model = onnx.load(path, load_external_data=False)
     onnx.checker.check_model(model)
-    if [item.version for item in model.opset_import if not item.domain] != [OPSET]:
-        raise ValueError(f"NetVLAD export requires opset {OPSET}")
+    require_onnx_opset_version(model)
     values = [*model.graph.input, *model.graph.output]
     if [value.name for value in values] != list(INTERFACE):
         raise ValueError("Expected input image and output descriptor")
@@ -243,7 +242,7 @@ def export_netvlad(weights: Path, output: Path) -> Path:
         str(output),
         input_names=["image"],
         output_names=["descriptor"],
-        opset_version=OPSET,
+        opset_version=onnx_opset_version(),
         dynamo=False,
     )
     fold_constants(output)

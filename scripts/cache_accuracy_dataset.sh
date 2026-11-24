@@ -1,41 +1,33 @@
 #!/usr/bin/env bash
-# Resolve each DevKit accuracy dataset of a build profile into the persistent NVMe cache.
+# Unpack each DevKit accuracy dataset of a build profile into the job's dataset folder, and report each one's source.
 #
-# Usage: cache_accuracy_dataset.sh <model_dir> <build_profile>
+# Usage: cache_accuracy_dataset.sh <model_dir> <build_profile> <dataset_dir>
 #
-# Runs with dataset credentials and no model code, so run_model_accuracy.sh later reads the archives from the
-# cache without them.
+# Runs with dataset credentials and no model code. It unpacks through unpack_benchmark_datasets.sh, so the stage
+# scripts later find each dataset in <dataset_dir> and need no credentials. The job summary names each dataset's
+# source: the shared dataset archive share or the Dataset Registry.
 
 set -euo pipefail
 
-if [[ $# -ne 2 ]]; then
-  echo "usage: $0 <model_dir> <build_profile>" >&2
+if [[ $# -ne 3 ]]; then
+  echo "usage: $0 <model_dir> <build_profile> <dataset_dir>" >&2
   exit 2
 fi
 MODEL_DIR="$1"
 BUILD_PROFILE_ID="$2"
+DATASET_DIR="$3"
 REGISTRY_PYTHON="${REGISTRY_PYTHON:-python3}"
 NVME_MOUNT="${NVME_MOUNT:-/media/nvme}"
-DATASET_CACHE="${DATASET_CACHE:-$NVME_MOUNT/datasets/artifacts}"
-DATASET_LOCK="${DATASET_LOCK:-$NVME_MOUNT/datasets/locks/prepare.lock}"
-DATASET_LOCK_SECONDS="${DATASET_LOCK_SECONDS:-1200}"
-RESOLVE_TIMEOUT_SECONDS="${RESOLVE_TIMEOUT_SECONDS:-600}"
 SUMMARY="${GITHUB_STEP_SUMMARY:-/dev/null}"
 
 if ! mountpoint -q "$NVME_MOUNT"; then
   echo "$NVME_MOUNT is not mounted; refusing to cache datasets on the root filesystem" >&2
   exit 1
 fi
-mkdir -p "$DATASET_CACHE" "$(dirname "$DATASET_LOCK")"
-# Receipts newer than this marker were written by a download in this run.
-started="$(mktemp)"
-trap 'rm -f "$started"' EXIT
-# The board-wide dataset lock run_model_accuracy.sh also takes, so concurrent jobs never download one archive twice.
 # One JSON line per dataset; none when the profile measures no accuracy.
-results="$(flock --wait "$DATASET_LOCK_SECONDS" --close "$DATASET_LOCK" \
-  timeout --signal=TERM --kill-after=30s "$RESOLVE_TIMEOUT_SECONDS" "$REGISTRY_PYTHON" -m model_registry resolve-devkit-accuracy "$MODEL_DIR" \
-  --build-profile "$BUILD_PROFILE_ID" --cache-dir "$DATASET_CACHE")"
-if [[ -z "$results" ]]; then
+datasets="$("$(dirname "${BASH_SOURCE[0]}")/unpack_benchmark_datasets.sh" "$MODEL_DIR" "$BUILD_PROFILE_ID" \
+  "$DATASET_DIR")"
+if [[ -z "$datasets" ]]; then
   echo "$(basename "$MODEL_DIR") declares no DevKit accuracy for $BUILD_PROFILE_ID."
   exit 0
 fi
@@ -46,16 +38,16 @@ json_field() {
 {
   echo "### Accuracy datasets"
   echo
-  echo "| Dataset | Path | SHA-256 | Bytes | Cache |"
+  echo "| Dataset | SHA-256 | Bytes | Source | Directory |"
   echo "|---|---|---|---|---|"
 } >> "$SUMMARY"
-while IFS= read -r result; do
-  path="$(json_field path <<< "$result")"
-  cache="hit"
-  if [[ "$(dirname "$path")/resolution-receipt.json" -nt "$started" ]]; then
-    cache="downloaded"
-  fi
-  row="| $(json_field name <<< "$result") | \`$path\` | \`$(json_field sha256 <<< "$result")\` | $(json_field size_bytes <<< "$result") | $cache |"
+while IFS= read -r dataset; do
+  case "$(json_field source <<< "$dataset")" in
+    share) origin="shared dataset archive share" ;;
+    registry) origin="Dataset Registry" ;;
+  esac
+  row="| $(json_field name <<< "$dataset") | \`$(json_field sha256 <<< "$dataset")\` | \
+$(json_field size_bytes <<< "$dataset") | $origin | \`$(json_field directory <<< "$dataset")\` |"
   echo "$row"
   echo "$row" >> "$SUMMARY"
-done <<< "$results"
+done <<< "$datasets"

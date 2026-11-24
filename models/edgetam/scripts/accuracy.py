@@ -20,7 +20,6 @@ import collections
 import io
 import json
 import random
-import sys
 import time
 from collections.abc import Callable, Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
@@ -31,6 +30,7 @@ import cv2
 import model_report
 import numpy as np
 import pyneat
+from model_report import log
 from PIL import Image
 
 COMPONENTS = ["image_encoder", "memory_attention", "mask_decoder", "memory_encoder"]
@@ -313,17 +313,13 @@ def parse_mpks(values: list[str]) -> dict[str, Path]:
     return {name: Path(mpks[name]) for name in COMPONENTS}
 
 
-def log(*values: object) -> None:
-    print(*values, file=sys.stderr, flush=True)
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--mpk", action="append", required=True, help="component=path, for each component")
     parser.add_argument("--dataset", required=True, help="davis-2017-val=<extracted davis directory>")
     parser.add_argument("--output", type=Path, required=True, help="directory for model-report.json")
     parser.add_argument("--resources", type=Path, help="package resource directory (license only)")
-    parser.add_argument("--limit", type=int, help="measure a seeded sample of sequences (local runs only)")
+    parser.add_argument("--limit", type=int, help="measure a seeded sample of sequences")
     args = parser.parse_args(argv)
     dataset_id, dataset_dir = args.dataset.split("=", 1)
     dataset = Path(dataset_dir)

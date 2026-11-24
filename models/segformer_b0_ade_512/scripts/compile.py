@@ -3,16 +3,14 @@
 
 from __future__ import annotations
 
-import argparse
 import json
 import logging
 import math
 import os
 import shutil
-import tarfile
 import tempfile
 from collections import Counter
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -32,7 +30,10 @@ from afe.apis.model import L2CachingMode
 from afe.core.configs import QuantizationPrecision
 from afe.core.utils import convert_data_generator_to_iterable
 from afe.load.importers.general_importer import onnx_source
-from calibration import IMAGE_SIZE, calibration_samples, fidelity_names, preprocess_image, read_images
+from calibration import IMAGE_SIZE, calibration_samples, fidelity_names, preprocess_image
+from model_inputs.images import read_images
+from model_registry.compile_script import compiler_log_level, component_parameters, parse_arguments, read_mpk_manifest
+from model_registry.fidelity import fidelity_report
 from model_registry.model import load_model as load_metadata
 from sima_utils.data.data_generator import DataGenerator
 from surgery import BF16_REGIONS, annotate_bf16_regions
@@ -55,14 +56,6 @@ REGION_BF16_OPERATIONS = {
     "norms": {("LayerNormOp",): 20, ("ConvAddActivationOp",): 24},
     "gelu": {("GeluOp", "ErfOp"): 8},
 }
-
-
-def _parameters(profile_id: str) -> dict[str, Any]:
-    model = load_metadata(MODEL_DIR)
-    profiles = [profile for profile in model["build_profiles"] if profile["id"] == profile_id]
-    if len(profiles) != 1:
-        raise ValueError(f"model.yaml declares no build profile {profile_id!r}")
-    return next(item["parameters"] for item in profiles[0]["components"] if item["id"] == COMPONENT_ID)
 
 
 def _bf16_regions(profile_id: str, parameters: dict[str, Any]) -> list[str]:
@@ -134,26 +127,9 @@ def _quantization(precision: str, calibration_bins: int | None) -> QuantizationP
     raise ValueError(f"unsupported precision: {precision}")
 
 
-def _read_mpk_manifest(archive: Path) -> tuple[list[str], dict[str, Any]]:
-    with tarfile.open(archive, "r:gz") as stream:
-        members = stream.getmembers()
-        for member in members:
-            path = PurePosixPath(member.name)
-            if path.is_absolute() or ".." in path.parts or member.issym() or member.islnk():
-                raise RuntimeError(f"unsafe MPK member: {member.name}")
-        names = [member.name for member in members]
-        manifests = [name for name in names if name.endswith("_mpk.json")]
-        if len(manifests) != 1:
-            raise RuntimeError(f"expected one MPK manifest, found {manifests}")
-        source = stream.extractfile(manifests[0])
-        if source is None:
-            raise RuntimeError(f"cannot read MPK manifest: {manifests[0]}")
-        return names, json.load(source)
-
-
 def audit_mpk(archive: Path) -> None:
     """Require the whole network on one MLA segment, with no host code, and the declared interface."""
-    names, manifest = _read_mpk_manifest(archive)
+    names, manifest = read_mpk_manifest(archive)
     elfs = [name for name in names if name.endswith(".elf")]
     shared_objects = [name for name in names if name.endswith(".so") or ".so." in name]
     plugins = sorted(manifest.get("plugins", []), key=lambda item: item.get("sequence", 0))
@@ -173,7 +149,7 @@ def audit_mpk(archive: Path) -> None:
 
 
 def compile_model(source: Path, output_dir: Path, profile_id: str, dataset: Path | None) -> tuple[Path, Any]:
-    parameters = _parameters(profile_id)
+    parameters = component_parameters(MODEL_DIR, profile_id, COMPONENT_ID)
     precision = str(parameters["precision"])
     regions = _bf16_regions(profile_id, parameters)
     calibration_bins = int(parameters["calibration_bins"]) if precision == "w8a8" else None
@@ -204,7 +180,7 @@ def compile_model(source: Path, output_dir: Path, profile_id: str, dataset: Path
             calibration_data=calibration_data,
             quantization_config=quantization,
             model_name=f"{MODEL_ID}_{profile_id}",
-            log_level=logging.INFO,
+            log_level=compiler_log_level(),
         )
         if regions:
             _check_precision(quantized, marks, regions)
@@ -212,10 +188,9 @@ def compile_model(source: Path, output_dir: Path, profile_id: str, dataset: Path
             output_path=str(build_dir),
             batch_size=1,
             compress=True,
-            log_level=logging.INFO,
+            log_level=compiler_log_level(),
             tessellate_parameters=None,
             l2_caching_mode=L2CachingMode.NONE,
-            deployable=True,
         )
         archives = sorted(build_dir.glob("*_mpk.tar.gz"))
         if len(archives) != 1:
@@ -242,87 +217,43 @@ def measure_fidelity(source: Path, candidate: Any, dataset: Path, config: dict[s
     names = fidelity_names(dataset, int(selection["seed"]), int(selection["offset"]), int(selection["samples"]))
     images = read_images(dataset, names)
     reference = ort.InferenceSession(str(source), providers=["CPUExecutionProvider"])
-    totals = {"count": 0, "dot": 0.0, "expected": 0.0, "actual": 0.0, "error": 0.0, "absolute": 0.0, "max": 0.0}
+    compared = []
     agreeing = pixels = 0
     for name in names:
         sample = preprocess_image(images[name])
-        expected = reference.run(None, {INPUT: sample.transpose(2, 0, 1)[None]})[0].astype(np.float64)
+        expected = reference.run(None, {INPUT: sample.transpose(2, 0, 1)[None]})[0]
         actual = _logits(candidate.execute(inputs={InputName(INPUT): sample[None]}, use_jax=True))
-        if not (np.isfinite(expected).all() and np.isfinite(actual).all()):
-            raise RuntimeError(f"logits for {name} contain non-finite values")
-        error = actual - expected
-        totals["count"] += expected.size
-        totals["dot"] += float(np.dot(expected.ravel(), actual.ravel()))
-        totals["expected"] += float(np.sum(expected**2))
-        totals["actual"] += float(np.sum(actual**2))
-        totals["error"] += float(np.sum(error**2))
-        totals["absolute"] += float(np.sum(np.abs(error)))
-        totals["max"] = max(totals["max"], float(np.max(np.abs(error))))
+        compared.append({"logits": (expected, actual)})
         agreeing += int(np.sum(actual.argmax(1) == expected.argmax(1)))
         pixels += expected.shape[2] * expected.shape[3]
     # The fidelity schema holds only the numerical metrics, so the class agreement goes to the log.
     logging.info("Per-pixel class agreement with the ONNX source: %.4f over %d images", agreeing / pixels, len(names))
-    count = totals["count"]
-    expected_rms = max(np.sqrt(totals["expected"] / count), np.finfo(np.float64).eps)
-    norm = np.sqrt(totals["expected"] * totals["actual"])
-    return {
-        "schema_version": 1,
-        "model_id": MODEL_ID,
-        "build_profile_id": profile_id,
-        "status": config["status"],
-        "reference": "ONNX source (ONNX Runtime)",
-        "candidate": "Quantized AFE graph (JAX execute)",
-        "dataset": {key: config["dataset"][key] for key in ("id", "variant", "sha256")},
-        "selection": selection,
-        "samples": len(names),
-        "metrics": [
-            {
-                "name": "logits",
-                "cosine_similarity": float(np.clip(totals["dot"] / norm if norm else 1.0, -1.0, 1.0)),
-                "normalized_rmse": float(np.sqrt(totals["error"] / count) / expected_rms),
-                "mean_absolute_error": float(totals["absolute"] / count),
-                "max_absolute_error": totals["max"],
-            }
-        ],
-    }
+    return fidelity_report(
+        MODEL_ID,
+        profile_id,
+        config,
+        compared,
+        reference="ONNX source (ONNX Runtime)",
+        candidate="Quantized AFE graph (JAX execute)",
+    )
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model", type=Path, required=True)
-    parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--build-profile", required=True)
-    parser.add_argument("--compile-invocation", required=True)
-    parser.add_argument("--dataset", type=Path, help="dataset-registry calibration archive")
-    parser.add_argument("--fidelity-dataset", type=Path, help="dataset-registry fidelity archive")
-    args = parser.parse_args()
-    if args.compile_invocation != args.build_profile:
-        parser.error("a build profile compiles in one invocation named after it")
-    source = args.model.expanduser().resolve()
-    if source.suffix != ".onnx":
-        parser.error("--model must be the verified ONNX from the conversion workflow")
-    if not source.is_file():
-        parser.error(f"model does not exist: {source}")
-    fidelity = load_metadata(MODEL_DIR).get("numerical_fidelity")
-    if fidelity is not None and args.fidelity_dataset is None:
-        parser.error("model.yaml declares numerical_fidelity; pass --fidelity-dataset")
-    dataset = args.dataset.expanduser().resolve() if args.dataset else None
-    if dataset is not None and not dataset.exists():
-        parser.error(f"dataset does not exist: {dataset}")
+    arguments = parse_arguments(__doc__, MODEL_DIR)
     # force replaces any handler an import installed first, which would otherwise drop these lines from the job log.
     logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s", force=True)
-    output_dir = args.output_dir.expanduser().resolve()
-    archive, quantized = compile_model(source, output_dir, args.build_profile, dataset)
+
+    fidelity = load_metadata(MODEL_DIR)["numerical_fidelity"]
+    archive, quantized = compile_model(
+        arguments.model, arguments.output_dir, arguments.build_profile, arguments.dataset
+    )
     logging.info("Compiled MPK: %s", archive)
-    if fidelity is not None:
-        logging.info("Measuring numerical fidelity on %d images", fidelity["selection"]["samples"])
-        report = measure_fidelity(
-            source, quantized, args.fidelity_dataset.expanduser().resolve(), fidelity, args.build_profile
-        )
-        (output_dir / "fidelity.json").write_text(
-            json.dumps(report, allow_nan=False, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-        )
-        logging.info("Fidelity: %s", report["metrics"][0])
+    logging.info("Measuring numerical fidelity on %d images", fidelity["selection"]["samples"])
+    report = measure_fidelity(arguments.model, quantized, arguments.fidelity_dataset, fidelity, arguments.build_profile)
+    (arguments.output_dir / "fidelity.json").write_text(
+        json.dumps(report, allow_nan=False, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    logging.info("Fidelity: %s", report["metrics"][0])
     return 0
 
 

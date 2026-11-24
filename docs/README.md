@@ -27,7 +27,7 @@ locally, and submit it for review, and what CI does after the merge.
 | Phase | What runs | What it shows |
 | --- | --- | --- |
 | Local development | Validation, verified downloads, the compile of each build, MPK checks, and the performance and accuracy stages on a DevKit. | You have reproducible results for every build you submit. |
-| Pull request | `Target Branch Checks`: lint, the repository tests and model tests, the `model-registry` package build, and the model browser checks. | The committed files are valid on the merge result. Pull requests do **not** run recipe or surgery code to compile or measure a model. |
+| Pull request | `Target Branch Checks`: lint, the repository tests and model tests, the `model-registry` package build, and the model browser checks. `PR Sanitization`: the target branch, and a GitHub issue reference in the description. | The committed files are valid on the merge result. Pull requests do **not** run recipe or surgery code to compile or measure a model. |
 | After a push | On every push to this repository, CI compiles and benchmarks each changed build and publishes the results. | The results come from the pushed revision. Customers see the `main` catalog. |
 
 The pinned Model Compiler and a compatible Modalix DevKit are submission

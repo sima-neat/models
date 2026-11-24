@@ -14,6 +14,7 @@ from pathlib import Path
 
 import numpy as np
 import onnx
+from model_registry.dependencies import onnx_opset_version
 from model_registry.fetch import sha256_file
 from onnx import TensorProto, helper, numpy_helper
 from onnx.reference import ReferenceEvaluator
@@ -133,7 +134,8 @@ def validate_source(model):
         metadata.get("box_format") == "normalized_cxcywh" and metadata.get("class_output") == "logits",
         "unexpected public output semantics",
     )
-    require([(x.domain, x.version) for x in model.opset_import] == [("", 17)], "expected ONNX opset 17")
+    opset = onnx_opset_version()
+    require([(x.domain, x.version) for x in model.opset_import] == [("", opset)], f"expected ONNX opset {opset}")
     require(
         {x.name: shape(x) for x in model.graph.input} == {"input": INPUT_SHAPE},
         "expected static batch-one 640 RGB input",

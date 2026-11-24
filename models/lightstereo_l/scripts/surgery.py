@@ -19,6 +19,7 @@ from typing import Any
 
 import numpy as np
 import onnx
+from model_registry.dependencies import onnx_opset_version, require_onnx_opset_version
 from onnx import helper
 from scene_flow import HEIGHT, INPUT, WIDTH
 
@@ -34,7 +35,6 @@ AGGREGATION_BLOCKS = (8, 16, 32)
 EXPANSION = 8
 OUTPUT = "disparity"
 INTERFACE = {INPUT: [1, 3, HEIGHT, 2 * WIDTH], OUTPUT: [1, 1, HEIGHT, WIDTH]}
-OPSET = 17
 # Upstream's cost volume writes slices in place and its upsampling unfolds patches, which export as ScatterND and
 # index arithmetic the MLA cannot run. Edge-mode Pad and INT8 InstanceNormalization do not compile either.
 FORBIDDEN_OPS = {
@@ -322,8 +322,7 @@ def side_by_side(network: Any) -> Any:
 def validate_export(path: Path) -> None:
     model = onnx.load(path, load_external_data=False)
     onnx.checker.check_model(model)
-    if [item.version for item in model.opset_import if not item.domain] != [OPSET]:
-        raise ValueError(f"LightStereo export requires opset {OPSET}")
+    require_onnx_opset_version(model)
     values = [*model.graph.input, *model.graph.output]
     if [value.name for value in values] != list(INTERFACE):
         raise ValueError(f"Expected input {INPUT} and output {OUTPUT} in that order")
@@ -448,7 +447,7 @@ def export_network(weights: Path, output: Path) -> Path:
             output,
             input_names=[INPUT],
             output_names=[OUTPUT],
-            opset_version=OPSET,
+            opset_version=onnx_opset_version(),
             dynamo=False,
         )
     fold_constants(output)

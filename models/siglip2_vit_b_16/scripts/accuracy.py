@@ -20,7 +20,6 @@ import io
 import json
 import re
 import string
-import sys
 import time
 from collections import deque
 from collections.abc import Callable, Iterator, Sequence
@@ -31,6 +30,7 @@ import model_report
 import numpy as np
 import pyneat
 from calibration import CLASS_NAMES, MEAN, RESCALE, STD, VALIDATION_SPLIT, validation_labels
+from model_report import log
 from PIL import Image
 
 # Big Vision commit 0127fb6b337ee2a27bf4e54dea79cff176527356:
@@ -261,10 +261,6 @@ def build_class_embeddings(mpk: Path, tokenizer, table: np.ndarray, class_names=
     return np.stack(classes).astype(np.float32)
 
 
-def log(*values: object) -> None:
-    print(*values, file=sys.stderr, flush=True)
-
-
 def load_text_check(path: Path = TEXT_CHECK, sha256: str = TEXT_CHECK_SHA256) -> dict[str, np.ndarray]:
     """The check's arrays, from a file with the SHA-256 the script names."""
     content = path.read_bytes()
@@ -322,7 +318,7 @@ def main(argv: list[str] | None = None) -> int:
         required=True,
         help="package root containing text_encoder/tokenizer.json and token_embeddings.npy",
     )
-    parser.add_argument("--limit", type=int, help="measure the first images only (local runs only)")
+    parser.add_argument("--limit", type=int, help="measure the first images only")
     args = parser.parse_args(argv)
     dataset_id, dataset_dir = args.dataset.split("=", 1)
     dataset = Path(dataset_dir)

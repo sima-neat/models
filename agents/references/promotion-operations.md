@@ -221,12 +221,39 @@ Dispatch **Promote model** from `develop` with the operation, the existing
 
 - `withdraw` posts to the promotion's `withdraw` endpoint and requires a
   `result_snapshot` in the reply (`withdraw` in `promotions.py`). Vulcan keeps the request
-  in state `promoted` and decides what the catalog then shows for the profile.
+  in state `promoted`. In the target catalog the profile loses its `approved_deployments`
+  entry and its `benchmark_fingerprints` entry and keeps its `build_requirements` entry.
+  No other profile, model, or branch catalog changes, so each branch needs its own
+  withdrawal.
 - Rejecting or cancelling the GitHub job does not reject or cancel the request in Vulcan.
   Run `status`, then `cancel` when the request should end. Otherwise the pending hold
   stays until it expires.
 - Cancel an abandoned pending request explicitly. Changing the workflow does not cancel
   it.
+
+### When a promoted profile leaves `model.yaml`
+
+When a change comments out or removes a profile that has a promoted build, `withdraw` each
+of its promotions, on `develop` and on `main`, with that promotion's environment and
+`target_branch`. Do it before the customer portal is deployed, because the customer view
+lists `main`'s promoted builds and nothing else takes this one out:
+
+- The repository never writes or removes an approval. A catalog snapshot carries no
+  `approved_deployments` or `branch_deployments` of its own (`SERVER_OWNED_SELECTIONS` in
+  `registry.py`), and the registry fills them in.
+- A run that defers a conversion-backed model, such as the Main metadata run, keeps that
+  model's previous catalog entry ([promote the same candidate to
+  main](#promote-the-same-candidate-to-main)).
+- The browser lists every profile whose approval the registry returns, declared or not
+  (`deploymentCatalog` in `artifact-browser/branch-builds.js`).
+
+`check-main-merge` fails a pull request into `main` while `develop`'s or `main`'s catalog
+still promotes such a profile, and names the branch to withdraw on
+([the merge check for main](ci-flow.md#the-merge-check-for-main)). Nothing checks a merge
+into `develop`.
+
+What the registry does with an approval that is left in place after its profile is no
+longer declared is not verified here.
 
 ## Recover a failed run
 

@@ -103,29 +103,6 @@ export function deploymentCatalog(model) {
   return { ...model, builds, packages };
 }
 
-// The catalog without the build profiles `hiddenProfiles` names for each model ID. A model left without a
-// profile is left out, because it has nothing to show.
-export function withoutProfiles(catalogModels, hiddenProfiles) {
-  return catalogModels.flatMap((model) => {
-    const hidden = new Set(hiddenProfiles[model.model_id]);
-    if (!hidden.size) return [model];
-    const shown = (items) => items?.filter((item) => !hidden.has(item.build_profile_id));
-    const shownSelections = (selections) => selections
-      && Object.fromEntries(Object.entries(selections).filter(([profile]) => !hidden.has(profile)));
-    const rest = {
-      ...model,
-      builds: shown(model.builds),
-      pending_builds: shown(model.pending_builds),
-      packages: shown(model.packages),
-      approved_deployments: shownSelections(model.approved_deployments),
-      branch_deployments: shownSelections(model.branch_deployments),
-    };
-    const profilesLeft = rest.builds?.length || rest.pending_builds?.length
-      || Object.keys({ ...rest.approved_deployments, ...rest.branch_deployments }).length;
-    return profilesLeft ? [rest] : [];
-  });
-}
-
 // Resolve exact deployment runs even if their source branch differs or the run was superseded.
 export async function catalogBuildRuns(catalogModels, knownRuns, fetchPage, repositoryPath) {
   const known = new Set(knownRuns.map((run) => run.id));

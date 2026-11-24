@@ -119,41 +119,67 @@ def accuracy_report(datasets: dict | None = None) -> dict:
 
 
 def test_model_component_mpks_name_each_components_verified_mpk_in_model_order(tmp_path: Path) -> None:
-    builds = registered_build(tmp_path, "rf_detr_nano", "w8a8_w16a16", ["decoder", "backbone"])
-    profile_dir = tmp_path / "rf_detr_nano" / "w8a8_w16a16"
+    builds = registered_build(tmp_path, "rf_detr_nano", "w8a8_mixed_w16a16", ["decoder", "backbone"])
+    profile_dir = tmp_path / "rf_detr_nano" / "w8a8_mixed_w16a16"
 
-    mpks = compiled_mpks(tmp_path, model("rf_detr_nano"), "w8a8_w16a16")
+    mpks = compiled_mpks(tmp_path, model("rf_detr_nano"), "w8a8_mixed_w16a16")
 
     assert list(mpks) == ["backbone", "decoder"]
     assert {component: mpk["sha256"] for component, mpk in mpks.items()} == {
         component: build["artifact_sha256"] for component, build in builds.items()
     }
-    assert model_component_mpks(tmp_path, ROOT, "rf_detr_nano", "w8a8_w16a16") == [
+    assert model_component_mpks(tmp_path, ROOT, "rf_detr_nano", "w8a8_mixed_w16a16") == [
         f"backbone={profile_dir / 'backbone' / 'backbone_mpk.tar.gz'}",
         f"decoder={profile_dir / 'decoder' / 'decoder_mpk.tar.gz'}",
     ]
 
 
 def test_compiled_mpks_reject_an_mpk_that_does_not_match_its_recorded_digest(tmp_path: Path) -> None:
-    registered_build(tmp_path, "rf_detr_nano", "w8a8_w16a16", ["backbone", "decoder"])
-    (tmp_path / "rf_detr_nano" / "w8a8_w16a16" / "decoder" / "decoder_mpk.tar.gz").write_bytes(b"rebuilt")
+    registered_build(tmp_path, "rf_detr_nano", "w8a8_mixed_w16a16", ["backbone", "decoder"])
+    (tmp_path / "rf_detr_nano" / "w8a8_mixed_w16a16" / "decoder" / "decoder_mpk.tar.gz").write_bytes(b"rebuilt")
 
     with pytest.raises(ValidationError, match="MPK SHA-256 does not match compile-outputs.json"):
-        compiled_mpks(tmp_path, model("rf_detr_nano"), "w8a8_w16a16")
+        compiled_mpks(tmp_path, model("rf_detr_nano"), "w8a8_mixed_w16a16")
 
 
 def test_registered_builds_require_the_package_to_link_the_benchmarked_builds(tmp_path: Path) -> None:
-    builds = registered_build(tmp_path, "rf_detr_nano", "w8a8_w16a16", ["backbone", "decoder"])
-    assert _registered_builds(tmp_path, model("rf_detr_nano"), "w8a8_w16a16") == (builds, PACKAGE_RUN)
+    builds = registered_build(tmp_path, "rf_detr_nano", "w8a8_mixed_w16a16", ["backbone", "decoder"])
+    assert _registered_builds(tmp_path, model("rf_detr_nano"), "w8a8_mixed_w16a16") == (builds, PACKAGE_RUN)
 
-    receipt = tmp_path / "rf_detr_nano" / "w8a8_w16a16" / "packages" / "default" / "registry-publication.json"
+    receipt = tmp_path / "rf_detr_nano" / "w8a8_mixed_w16a16" / "packages" / "default" / "registry-publication.json"
     document = json.loads(receipt.read_text(encoding="utf-8"))
     # A package published from an earlier backbone build does not cover this benchmark.
     document["packages"][0]["component_run_ids"]["backbone"] = "00000000-0000-4000-8000-000000000099"
     write_json(receipt, document)
 
     with pytest.raises(ValidationError, match="the package does not link the benchmarked component builds"):
-        _registered_builds(tmp_path, model("rf_detr_nano"), "w8a8_w16a16")
+        _registered_builds(tmp_path, model("rf_detr_nano"), "w8a8_mixed_w16a16")
+
+
+def test_publication_reads_the_registered_builds_without_their_files(tmp_path: Path) -> None:
+    builds = registered_build(tmp_path, "rf_detr_nano", "w8a8_mixed_w16a16", ["backbone", "decoder"])
+    # The publish job downloads the staged receipts and compile outputs, never the MPKs the DevKit measured.
+    for mpk in tmp_path.rglob("*_mpk.tar.gz"):
+        mpk.unlink()
+
+    assert _registered_builds(tmp_path, model("rf_detr_nano"), "w8a8_mixed_w16a16") == (builds, PACKAGE_RUN)
+
+
+@pytest.mark.parametrize("digest", [None, "b" * 63, "B" * 64], ids=["missing", "short", "uppercase"])
+def test_publication_requires_each_recorded_mpk_digest(tmp_path: Path, digest: str | None) -> None:
+    registered_build(tmp_path, "rf_detr_nano", "w8a8_mixed_w16a16", ["backbone", "decoder"])
+    outputs_path = tmp_path / "rf_detr_nano" / "w8a8_mixed_w16a16" / "compile-outputs.json"
+    document = json.loads(outputs_path.read_text(encoding="utf-8"))
+    decoder = document["outputs"][1]
+    if digest is None:
+        del decoder["mpk_sha256"]
+    else:
+        decoder["mpk_sha256"] = digest
+    write_json(outputs_path, document)
+
+    # The benchmark fingerprint would otherwise name the decoder build by this value.
+    with pytest.raises(ValidationError, match="mpk_sha256 of decoder must be a lowercase SHA-256 digest"):
+        _registered_builds(tmp_path, model("rf_detr_nano"), "w8a8_mixed_w16a16")
 
 
 @pytest.mark.parametrize(
@@ -172,7 +198,7 @@ def test_registered_builds_require_the_package_to_link_the_benchmarked_builds(tm
          r"missing \[\], undeclared \['other'\]"),
         ("resnet_50", "w8a8", "accuracy", {**accuracy_report(), "metrics": {"top1_accuracy": 0.77}},
          "is not valid under any of the given schemas"),
-        ("rf_detr_nano", "w8a8_w16a16", "performance", performance_report(["decoder", "backbone"]),
+        ("rf_detr_nano", "w8a8_mixed_w16a16", "performance", performance_report(["decoder", "backbone"]),
          r"must describe the components \['backbone', 'decoder'\], in order"),
     ],
 )  # fmt: skip
@@ -240,12 +266,12 @@ def publish(
 
 
 def test_publish_report_publishes_one_whole_model_run_under_the_package_run(tmp_path: Path) -> None:
-    builds = registered_build(tmp_path / "_compiled", "rf_detr_nano", "w8a8_w16a16", ["backbone", "decoder"])
+    builds = registered_build(tmp_path / "_compiled", "rf_detr_nano", "w8a8_mixed_w16a16", ["backbone", "decoder"])
     report = performance_report(["backbone", "decoder"])
 
-    calls, result = publish(tmp_path, "rf_detr_nano", "w8a8_w16a16", "performance", report)
+    calls, result = publish(tmp_path, "rf_detr_nano", "w8a8_mixed_w16a16", "performance", report)
 
-    fingerprint = benchmark_fingerprint(ROOT, model("rf_detr_nano"), "w8a8_w16a16", builds, "performance")
+    fingerprint = benchmark_fingerprint(ROOT, model("rf_detr_nano"), "w8a8_mixed_w16a16", builds, "performance")
     paths = [path for _, path, _ in calls]
     create = calls[0][2]
     assert create["run_type"] == "model_performance"
@@ -386,13 +412,13 @@ def test_component_publication_keeps_measurements_and_core_evidence_distinct(tmp
     definition = model("rf_detr_nano")
     definition["performance"]["scope"] = "components"
     monkeypatch.setattr(publication, "_model", lambda *args: definition)
-    registered_build(tmp_path / "_compiled", "rf_detr_nano", "w8a8_w16a16", ["backbone", "decoder"])
+    registered_build(tmp_path / "_compiled", "rf_detr_nano", "w8a8_mixed_w16a16", ["backbone", "decoder"])
     report = component_performance_report()
     output = tmp_path / "_performance"
     output.mkdir()
     for name in report["components"]:
         write_json(output / f"{name}-benchmark-report.json", {"fps": 1})
-    calls, _ = publish(tmp_path, "rf_detr_nano", "w8a8_w16a16", "performance", report)
+    calls, _ = publish(tmp_path, "rf_detr_nano", "w8a8_mixed_w16a16", "performance", report)
     measurements = next(body for _, path, body in calls if path.endswith("/measurements/batch"))["measurements"]
     rates = {
         item["dimensions"]["component_id"]: item["value"]
@@ -409,7 +435,7 @@ def test_component_publication_keeps_measurements_and_core_evidence_distinct(tmp
 def test_report_scope_must_match_the_model_declaration(tmp_path):
     write_json(tmp_path / REPORT_FILE, component_performance_report())
     with pytest.raises(ValidationError, match="performance scope must be model"):
-        check_report(tmp_path / REPORT_FILE, ROOT, "rf_detr_nano", "w8a8_w16a16", "performance")
+        check_report(tmp_path / REPORT_FILE, ROOT, "rf_detr_nano", "w8a8_mixed_w16a16", "performance")
 
 
 def test_every_component_requires_its_own_metrics(tmp_path, monkeypatch):
@@ -424,4 +450,4 @@ def test_every_component_requires_its_own_metrics(tmp_path, monkeypatch):
     with pytest.raises(
         ValidationError, match="decoder: required performance metrics were not measured: avg_power_watts"
     ):
-        check_report(tmp_path / REPORT_FILE, ROOT, "rf_detr_nano", "w8a8_w16a16", "performance")
+        check_report(tmp_path / REPORT_FILE, ROOT, "rf_detr_nano", "w8a8_mixed_w16a16", "performance")

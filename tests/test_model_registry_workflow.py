@@ -23,6 +23,7 @@ def test_model_registry_workflow_is_change_scoped_and_publishes_subpackage() -> 
     for path in (
         "tools/model_registry/**",
         "tools/model_report/**",
+        "tools/model_inputs/**",
         "packaging/model-registry/**",
         "tests/**",
         "conftest.py",

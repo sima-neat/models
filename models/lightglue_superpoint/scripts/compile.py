@@ -13,14 +13,11 @@ from __future__ import annotations
 
 import argparse
 import json
-import logging
 import math
 import os
-import tarfile
 import tempfile
 from collections import Counter
-from dataclasses import dataclass
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -40,6 +37,8 @@ from afe.core.configs import QuantizationPrecision
 from afe.core.utils import convert_data_generator_to_iterable
 from afe.load.importers.general_importer import onnx_source
 from calibration import INPUT_SHAPES, KEYPOINTS, calibration_inputs, fidelity_inputs, matches
+from model_registry.compile_script import compiler_log_level, component_parameters, read_mpk_manifest
+from model_registry.fidelity import fidelity_report
 from model_registry.model import load_model as load_metadata
 from sima_utils.data.data_generator import DataGenerator
 from surgery import BF16_REGIONS, INPUTS, annotate_bf16_regions, assignment_matrix, export_matcher
@@ -59,14 +58,6 @@ ATTENTION_SOFTMAXES = 36
 
 def _metadata() -> dict[str, Any]:
     return load_metadata(MODEL_DIR)
-
-
-def _parameters(metadata: dict[str, Any], profile_id: str) -> dict[str, Any]:
-    profiles = [item for item in metadata["build_profiles"] if item["id"] == profile_id]
-    if len(profiles) != 1:
-        raise ValueError(f"expected exactly one build profile named {profile_id!r}")
-    (binding,) = [item for item in profiles[0]["components"] if item["id"] == COMPONENT_ID]
-    return binding["parameters"]
 
 
 def _bf16_activations(precision: str) -> bool:
@@ -131,7 +122,7 @@ def _quantization_config(parameters: dict[str, Any]) -> QuantizationParams:
 
 def quantize(source: Path, profile_id: str, dataset: Path | None, seed: int) -> Any:
     """Quantize the ONNX; the INT8-activation build calibrates on the first pairs of the cal pairs' seeded order."""
-    parameters = _parameters(_metadata(), profile_id)
+    parameters = component_parameters(MODEL_DIR, profile_id, COMPONENT_ID)
     config = _quantization_config(parameters)
     regions = _bf16_regions(profile_id, parameters)
     graph = source
@@ -152,33 +143,16 @@ def quantize(source: Path, profile_id: str, dataset: Path | None, seed: int) -> 
         calibration_data=calibration_data,
         quantization_config=config,
         model_name=f"{MODEL_ID}_{profile_id}",
-        log_level=logging.INFO,
+        log_level=compiler_log_level(),
     )
     if regions:
         _require_bf16_regions(quantized, regions)
     return quantized
 
 
-def _read_mpk_manifest(archive: Path) -> tuple[list[str], dict[str, Any]]:
-    with tarfile.open(archive, "r:gz") as stream:
-        members = stream.getmembers()
-        for member in members:
-            path = PurePosixPath(member.name)
-            if path.is_absolute() or ".." in path.parts or member.issym() or member.islnk():
-                raise RuntimeError(f"unsafe MPK member: {member.name}")
-        names = [member.name for member in members]
-        manifests = [name for name in names if name.endswith("_mpk.json")]
-        if len(manifests) != 1:
-            raise RuntimeError(f"expected one MPK manifest, found {manifests}")
-        source = stream.extractfile(manifests[0])
-        if source is None:
-            raise RuntimeError(f"cannot read MPK manifest: {manifests[0]}")
-        return names, json.load(source)
-
-
 def audit_mpk(archive: Path) -> dict[str, Any]:
     """Require one MLA plugin, no CPU plugins and the matcher's four float32 inputs."""
-    names, manifest = _read_mpk_manifest(archive)
+    names, manifest = read_mpk_manifest(archive)
     elfs = [name for name in names if name.endswith(".elf")]
     shared_objects = [name for name in names if name.endswith(".so") or ".so." in name]
     plugins = manifest.get("plugins", [])
@@ -202,19 +176,12 @@ def compile_model(quantized: Any, component_dir: Path, precision: str) -> Path:
         output_path=str(component_dir),
         batch_size=1,
         compress=True,
-        log_level=logging.INFO,
+        log_level=compiler_log_level(),
         tessellate_parameters=None,
         l2_caching_mode=L2CachingMode.NONE,
         preserve=True,
-        deployable=True,
-        retained_temporary_directory_name=None,
-        use_power_limits=False,
-        max_mla_power=None,
         # The option applies to every layer norm, and INT8 ones reject it.
         layer_norm_use_fp32_intermediates=_bf16_activations(precision),
-        rms_norm_use_fp32_intermediates=False,
-        enable_filter_sharing=False,
-        layout_search_effort_level=0,
     )
     archives = sorted(component_dir.glob("*_mpk.tar.gz"))
     if len(archives) != 1:
@@ -222,49 +189,6 @@ def compile_model(quantized: Any, component_dir: Path, precision: str) -> Path:
     audit_mpk(archives[0])
     print(f"Compiled MPK: {archives[0]}", flush=True)
     return archives[0]
-
-
-@dataclass
-class _OutputError:
-    """Running sums of the assignment's error against the ONNX, over every fidelity pair."""
-
-    name: str
-    count: int = 0
-    dot: float = 0.0
-    expected_squared: float = 0.0
-    actual_squared: float = 0.0
-    error_squared: float = 0.0
-    error_absolute: float = 0.0
-    max_absolute_error: float = 0.0
-
-    def add(self, expected: np.ndarray, actual: np.ndarray) -> None:
-        expected = np.asarray(expected, dtype=np.float64)
-        actual = np.asarray(actual, dtype=np.float64)
-        if expected.shape != actual.shape:
-            raise RuntimeError(f"{self.name} shape mismatch: {expected.shape} != {actual.shape}")
-        if not np.isfinite(expected).all() or not np.isfinite(actual).all():
-            raise RuntimeError(f"{self.name} contains non-finite values")
-        error = actual - expected
-        absolute = np.abs(error)
-        self.count += expected.size
-        self.dot += float(np.dot(expected.ravel(), actual.ravel()))
-        self.expected_squared += float(np.sum(np.square(expected)))
-        self.actual_squared += float(np.sum(np.square(actual)))
-        self.error_squared += float(np.sum(np.square(error)))
-        self.error_absolute += float(np.sum(absolute))
-        self.max_absolute_error = max(self.max_absolute_error, float(np.max(absolute)))
-
-    def summary(self) -> dict[str, Any]:
-        expected_rms = max(np.sqrt(self.expected_squared / self.count), np.finfo(np.float64).eps)
-        norm = np.sqrt(self.expected_squared * self.actual_squared)
-        cosine = self.dot / norm if norm else float(self.expected_squared == self.actual_squared)
-        return {
-            "name": self.name,
-            "cosine_similarity": float(np.clip(cosine, -1.0, 1.0)),
-            "normalized_rmse": float(np.sqrt(self.error_squared / self.count) / expected_rms),
-            "mean_absolute_error": float(self.error_absolute / self.count),
-            "max_absolute_error": self.max_absolute_error,
-        }
 
 
 def match_overlap(assignments: list[tuple[np.ndarray, np.ndarray]]) -> float:
@@ -294,7 +218,7 @@ def measure_fidelity(
     selection = fidelity["selection"]
     samples = fidelity_inputs(dataset, int(selection["seed"]), int(selection["offset"]), int(selection["samples"]))
     reference = ort.InferenceSession(str(source), providers=["CPUExecutionProvider"])
-    error, assignments = _OutputError(OUTPUT_NAME), []
+    assignments = []
     for inputs in samples:
         # The inputs are channels-last, as the compiler takes them; the ONNX takes them channels-first.
         (output,) = reference.run(
@@ -306,21 +230,15 @@ def measure_fidelity(
         if actual.shape != (1, 1, KEYPOINTS, KEYPOINTS):
             raise RuntimeError(f"the quantized graph returns its assignment as {actual.shape}, expected "
                                f"{(1, 1, KEYPOINTS, KEYPOINTS)}")
-        actual = actual.reshape(KEYPOINTS, KEYPOINTS)
-        error.add(expected, actual)
-        assignments.append((expected, actual))
-    report = {
-        "schema_version": 1,
-        "model_id": MODEL_ID,
-        "build_profile_id": profile_id,
-        "status": fidelity["status"],
-        "reference": "ONNX source (ONNX Runtime)",
-        "candidate": "Quantized AFE graph (JAX execute)",
-        "dataset": {key: fidelity["dataset"][key] for key in ("id", "variant", "sha256")},
-        "selection": selection,
-        "samples": len(samples),
-        "metrics": [error.summary()],
-    }
+        assignments.append((expected, actual.reshape(KEYPOINTS, KEYPOINTS)))
+    report = fidelity_report(
+        MODEL_ID,
+        profile_id,
+        fidelity,
+        [{OUTPUT_NAME: assignment} for assignment in assignments],
+        reference="ONNX source (ONNX Runtime)",
+        candidate="Quantized AFE graph (JAX execute)",
+    )
     return report, match_overlap(assignments)
 
 
@@ -339,11 +257,10 @@ def main() -> int:
     weights = args.model.expanduser().resolve()
     if weights.suffix != ".pth" or not weights.is_file():
         parser.error(f"--model must be the converted weights.pth, not {weights}")
-    metadata = _metadata()
-    precision = str(_parameters(metadata, args.build_profile)["precision"])
+    precision = str(component_parameters(MODEL_DIR, args.build_profile, COMPONENT_ID)["precision"])
     if not _bf16_activations(precision) and args.dataset is None:
         parser.error(f"{args.build_profile} calibrates; pass --dataset")
-    fidelity = metadata["numerical_fidelity"]
+    fidelity = _metadata()["numerical_fidelity"]
     if args.fidelity_dataset is None:
         parser.error("model.yaml declares numerical_fidelity; pass --fidelity-dataset")
     output_dir = args.output_dir.expanduser().resolve()

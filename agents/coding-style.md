@@ -9,12 +9,16 @@ it in one pass. Two model folders are the reference:
 - [`models/rf_detr_nano`](../models/rf_detr_nano) for several components with host work
   between them: the backbone, the top 300 proposals on the CPU, then the decoder.
 
-Read both before writing or reviewing a model script. These rules cover ONNX models. An LLM or
+Read both before writing or reviewing a model script. Where a reference script or another
+model's script differs from a rule on this page, the rule wins, because some older recipes
+predate the rules: a `compile.py` without a temporary directory or an `audit_mpk`, or an
+`accuracy.py` that takes the first `--limit` images. These rules cover ONNX models. An LLM or
 VLM recipe follows [LLiMa language and vision-language
 models](../docs/adding-a-model.md#llima-language-and-vision-language-models).
 [`rules.md` "Rules no check catches"](rules.md#rules-no-check-catches) owns what `convert.py`
-exports and what `surgery.py` rewrites, where board-only code lives, how the benchmark scripts
-stand alone, how scripts read conversion output names, and how DevKit tests import. The rules
+exports and what `surgery.py` rewrites, what a shared helper may hold and what stays in
+the recipe, the calibration sample limit, where board-only code lives, what the benchmark scripts
+may import, how scripts read conversion output names, and how DevKit tests import. The rules
 below assume those.
 
 ## How the code reads
@@ -44,7 +48,7 @@ def compile_model(source: Path, output_dir: Path, profile_id: str, dataset: Path
 ```python
 # Good
 def compile_model(source: Path, output_dir: Path, profile_id: str, dataset: Path | None) -> Path:
-    parameters = _parameters(profile_id)
+    parameters = component_parameters(MODEL_DIR, profile_id, COMPONENT_ID)
     precision = str(parameters["precision"])
     quantization = _quantization(precision, calibration_bins)
     ...
@@ -148,8 +152,10 @@ LOGIT_FLOOR = -7.0  # sigmoid(-7) is about 0.0009.
 
 ### Every branch, option, and constant is reached
 
-Each one runs from this model's entry point. Remove a branch for a precision `model.yaml` does
-not declare, and a helper a copy from another model left unused. A test alone does not reach it.
+Each one runs from this model's entry point. Remove a branch for a precision no profile in
+`model.yaml` names, declared or commented out, and a helper a copy from another model left
+unused. A commented-out profile keeps its branch and its `tests.yaml` entries, so restoring it
+changes only `model.yaml`. A test alone does not reach it.
 
 ## Every script
 
@@ -161,8 +167,8 @@ not declare, and a helper a copy from another model left unused. A test alone do
   `# Calibration draws only from cal2017, so no scored val2017 image calibrates the model.` The
   reason for a build parameter sits beside it in `model.yaml`:
   `# 1,024 backbone bins scored 0.7 COCO val2017 mAP above 2,048.`
-- An error names the value it rejects and what was expected:
-  `model.yaml declares no build profile 'w32a32'`. A bad argument fails through
+- An error names the value it rejects and what was expected, as a recipe's own
+  `model.yaml declares no build profile 'w32a32'` does. A bad argument fails through
   `parser.error`. A board script exits with `SystemExit(<message>)` when an input is missing.
 
 ## convert.py
@@ -173,8 +179,10 @@ not declare, and a helper a copy from another model left unused. A test alone do
 - `validate_source` rejects a declared source other than the checkpoint the exporter expects.
   `requirements-convert.txt` pins the exporter
   ([pin every input](../docs/adding-a-model.md#3-pin-every-input)).
-- `validate_export` checks the written ONNX: the opset, the input and output names in order,
-  their float dtypes and static shapes, and that the file holds every tensor itself.
+- The export passes `onnx_opset_version()` from `model_registry.dependencies` as its opset.
+- `validate_export` checks the written ONNX: the opset with
+  `require_onnx_opset_version(model)`, the input and output names in order, their float
+  dtypes and static shapes, and that the file holds every tensor itself.
 - The script runs the upstream framework and ONNX Runtime on seeded random inputs (`SEEDS`),
   compares the tensors the package keeps with `np.testing.assert_allclose`, and prints one line
   that names the passed check and the output path.
@@ -195,14 +203,40 @@ not declare, and a helper a copy from another model left unused. A test alone do
 ## compile.py
 
 - The command line is the [ONNX recipe
-  interface](../docs/adding-a-model.md#6-define-build-profiles). `main` rejects a
-  `--compile-invocation` other than `--build-profile`, a `--model` that is not an existing
-  `.onnx` file, and a missing dataset path. It then calls `compile_model`, logs each MPK path,
-  and returns 0 to `raise SystemExit(main())`.
+  interface](../docs/adding-a-model.md#6-define-build-profiles). `main` parses it with
+  `parse_arguments(__doc__, MODEL_DIR)`, which rejects a `--compile-invocation` other than
+  `--build-profile`, a `--model` that is not an existing `.onnx` file, a dataset path that
+  does not exist, and a missing `--fidelity-dataset` when `model.yaml` declares
+  `numerical_fidelity`. It then
+  calls `compile_model`, logs each MPK path, and returns 0 to `raise SystemExit(main())`. A
+  recipe whose `--model` is a checkpoint, such as `weights.pth`, parses its own command line
+  with the same checks.
 - It imports the component interface from `surgery.py` and the preprocessing from
   `calibration.py`, and restates neither.
-- One function, `_parameters` or `_component_parameters`, reads the build profile from
-  `model.yaml` with `load_model` and raises for an undeclared profile.
+- It takes the registry formats from `model_registry.compile_script` and restates none of
+  them: `component_parameters(MODEL_DIR, profile_id, COMPONENT_ID)` reads a component's build
+  parameters and raises `ValidationError` from `model_registry.errors` for an undeclared
+  profile (`unknown build profile: w32a32`), and `audit_mpk` reads the MPK with
+  `read_mpk_manifest`. A recipe that reads every component's parameters at once keeps one
+  `_component_parameters` function, which reads them with `load_model` and raises
+  `ValueError` with its own text.
+- `audit_mpk` requires one ELF and one MLA plugin, no shared object and no host plugin, and
+  manifest input and output byte sizes equal to the declared interface. A recipe that expects
+  host stages states them in its audit.
+- Every `quantize` and `compile` call passes `log_level=compiler_log_level()`.
+- A model that declares `numerical_fidelity` keeps one `fidelity_samples(dataset)` function,
+  which returns the preprocessed samples `model.yaml` selects, each one float32 array,
+  channels last, without the batch axis. `compile_model` returns the quantized model to
+  `main`, which hands it with the samples to `compare_with_onnx` and the compared outputs to
+  `write_fidelity_report`, both from `model_registry.fidelity`. A recipe that compares
+  outputs its own way, such as a multi-component model or one that also scores against
+  ground truth, builds the compared pairs itself and writes the report with
+  `write_fidelity_report`, or builds it with `fidelity_report` and writes `fidelity.json`
+  itself. A recipe that keeps running sums of each output's error in its
+  component processes, in place of the pairs, writes the same schema itself.
+- It passes `Model.compile` no extra keyword argument at its default and none the compiler
+  does not read, as [`compile.py` in the model
+  recipe](../skills/neat-compile-model/references/model-recipe.md#compilepy) says.
 - One function turns a component's parameters into `QuantizationParams`, with one branch per
   precision, as [quantization in
   `compile.py`](../skills/neat-compile-model/references/model-recipe.md#quantization-in-compilepy)
@@ -220,8 +254,15 @@ not declare, and a helper a copy from another model left unused. A test alone do
 - It holds the preprocessing the README's Inputs section describes (`preprocess_image`), the
   calibration sample selection, and each host step between components, such as RF-DETR's
   `select_top_proposals`.
-- The selection reads a sorted list of names from a directory or a tar archive, draws with
-  `random.Random(<seed>)`, and fails with both counts when the dataset holds too few samples.
+- The selection lists the dataset's images with `image_names(dataset, IMAGE_SUFFIXES)` from
+  `model_inputs.images`, keeps those of its split when the dataset holds more than one, draws
+  with `random.Random(<seed>)`, and fails with both counts when the dataset holds too few
+  samples. It reads the selected images with `read_images` from the same module. A script
+  that reads another kind of file skips a name that starts with `._`, which macOS tar writes
+  beside a file and which holds no sample.
+- Pin each package `calibration.py` or `accuracy.py` imports beyond NumPy and OpenCV in
+  `scripts/requirements-accuracy.txt`, because the DevKit accuracy run installs only that
+  file.
 - `accuracy.py` imports the preprocessing and the host steps from `calibration.py`. A copy in
   `accuracy.py` or `performance.py` names, in its docstring, the `calibration.py` function whose
   values it matches: `"""calibration.select_top_proposals, without the Pillow import this stage
@@ -232,8 +273,14 @@ not declare, and a helper a copy from another model left unused. A test alone do
 - It follows the [canonical script](../docs/benchmarking.md#the-performance-script) and the
   [benchmark input](../docs/benchmarking.md#benchmark-input), or the [multi-component
   script](../docs/benchmarking.md#multi-component-models).
+- It takes `read_rgb`, `letterbox_to_720p`, and the frame size from `model_inputs.frame`, and
+  keeps `sample_image`, which says which image the model is measured on.
 - `workload` is one line that names the dataset, the image, the frame, the preprocessing, and
   the decoder settings the script chose.
+- It runs at module level, as the canonical script does, or under
+  `if __name__ == "__main__":`, and it ends without `raise SystemExit(main())`, because
+  `tests/test_model_report.py` runs each single-component script with `runpy` and checks
+  its options.
 
 ## accuracy.py
 
@@ -242,10 +289,13 @@ not declare, and a helper a copy from another model left unused. A test alone do
   `raise SystemExit(main())`.
 - `parse_mpks` accepts exactly the component IDs `model.yaml` declares and exits with them:
   `--mpk must name exactly backbone=<path> and decoder=<path>`.
-- `--limit <n>` scores `random.Random(0).sample(available, n)`.
+- `--limit <n>` scores `random.Random(0).sample(available, n)`, a seeded sample in place of
+  the first n, because CI passes `accuracy.samples` as `--limit` and the sample then decides
+  the published score. Correct a script that takes the first n before setting
+  `accuracy.samples` on its model.
 - `decode` turns one sample's MPK outputs into the scorer's rows. It first checks the output
   shapes and that every value is finite.
-- Progress and scorer messages go to stderr through `log()`. The last line on stdout is the
+- Progress and scorer messages go to stderr through `log()` from `model_report`. The last line on stdout is the
   rounded metrics as one JSON object.
 - Each dataset's report entry holds `metrics`, `split`, `evaluated_samples`,
   `available_samples`, and `details` with `inference_seconds`.

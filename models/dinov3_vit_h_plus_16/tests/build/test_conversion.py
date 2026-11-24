@@ -12,8 +12,10 @@ import numpy as np
 import onnx
 import pytest
 from model_registry.conversion import conversion_outputs
+from model_registry.dependencies import onnx_opset_version
 from model_registry.model import load_model as load_metadata
 
+OPSET = onnx_opset_version()
 MODEL_DIR = Path(__file__).resolve().parents[2]
 
 
@@ -89,7 +91,8 @@ def test_reference_interface(tmp_path: Path, converter: ModuleType, case: str) -
         nodes.append(helper.make_node("Constant", [], [value.name], value=zeros))
     graph = helper.make_graph(nodes, "fixture", values[:1], values[1:])
     path = tmp_path / "reference.onnx"
-    onnx.save(helper.make_model(graph, opset_imports=[helper.make_opsetid("", 18 if case == "opset" else 17)]), path)
+    opset = OPSET + 1 if case == "opset" else OPSET
+    onnx.save(helper.make_model(graph, opset_imports=[helper.make_opsetid("", opset)]), path)
     if case == "valid":
         converter.validate_export(path)
     else:

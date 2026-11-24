@@ -3,16 +3,12 @@
 
 from __future__ import annotations
 
-import argparse
-import json
 import logging
 import math
 import os
 import shutil
-import tarfile
 import tempfile
-from pathlib import Path, PurePosixPath
-from typing import Any
+from pathlib import Path
 
 from afe.apis.defines import (
     BiasCorrectionType,
@@ -30,7 +26,7 @@ from afe.apis.model import L2CachingMode
 from afe.core.utils import convert_data_generator_to_iterable
 from afe.load.importers.general_importer import onnx_source
 from calibration import calibration_tiles
-from model_registry.model import load_model as load_metadata
+from model_registry.compile_script import compiler_log_level, component_parameters, parse_arguments, read_mpk_manifest
 from sima_utils.data.data_generator import DataGenerator
 from surgery import INPUT, INPUT_SHAPE, OUTPUT_SHAPES, OUTPUTS, prepare_model
 
@@ -40,14 +36,6 @@ COMPONENT_ID = "model"
 # MPK manifests record each public tensor's size in bytes; the MPK keeps the ONNX float32 interface.
 INPUT_BYTES = {INPUT: math.prod(INPUT_SHAPE) * 4}
 OUTPUT_BYTES = [math.prod(OUTPUT_SHAPES[name]) * 4 for name in OUTPUTS]
-
-
-def _parameters(profile_id: str) -> dict[str, Any]:
-    model = load_metadata(MODEL_DIR)
-    profiles = [profile for profile in model["build_profiles"] if profile["id"] == profile_id]
-    if len(profiles) != 1:
-        raise ValueError(f"model.yaml declares no build profile {profile_id!r}")
-    return next(item["parameters"] for item in profiles[0]["components"] if item["id"] == COMPONENT_ID)
 
 
 def _quantization(precision: str, calibration_bins: int | None) -> QuantizationParams:
@@ -77,26 +65,9 @@ def _quantization(precision: str, calibration_bins: int | None) -> QuantizationP
     raise ValueError(f"unsupported precision: {precision}")
 
 
-def _read_mpk_manifest(archive: Path) -> tuple[list[str], dict[str, Any]]:
-    with tarfile.open(archive, "r:gz") as stream:
-        members = stream.getmembers()
-        for member in members:
-            path = PurePosixPath(member.name)
-            if path.is_absolute() or ".." in path.parts or member.issym() or member.islnk():
-                raise RuntimeError(f"unsafe MPK member: {member.name}")
-        names = [member.name for member in members]
-        manifests = [name for name in names if name.endswith("_mpk.json")]
-        if len(manifests) != 1:
-            raise RuntimeError(f"expected one MPK manifest, found {manifests}")
-        source = stream.extractfile(manifests[0])
-        if source is None:
-            raise RuntimeError(f"cannot read MPK manifest: {manifests[0]}")
-        return names, json.load(source)
-
-
 def audit_mpk(archive: Path) -> None:
     """Require the whole network on one MLA segment, with no host code, and the declared interface."""
-    names, manifest = _read_mpk_manifest(archive)
+    names, manifest = read_mpk_manifest(archive)
     elfs = [name for name in names if name.endswith(".elf")]
     shared_objects = [name for name in names if name.endswith(".so") or ".so." in name]
     plugins = sorted(manifest.get("plugins", []), key=lambda item: item.get("sequence", 0))
@@ -118,7 +89,7 @@ def audit_mpk(archive: Path) -> None:
 
 
 def compile_model(source: Path, output_dir: Path, profile_id: str, dataset: Path | None) -> Path:
-    parameters = _parameters(profile_id)
+    parameters = component_parameters(MODEL_DIR, profile_id, COMPONENT_ID)
     precision = str(parameters["precision"])
     calibration_bins = int(parameters["calibration_bins"]) if precision == "w8a8" else None
     quantization = _quantization(precision, calibration_bins)
@@ -143,16 +114,15 @@ def compile_model(source: Path, output_dir: Path, profile_id: str, dataset: Path
             calibration_data=calibration_data,
             quantization_config=quantization,
             model_name=f"{MODEL_ID}_{profile_id}",
-            log_level=logging.INFO,
+            log_level=compiler_log_level(),
         )
         quantized.compile(
             output_path=str(build_dir / "mpk"),
             batch_size=1,
             compress=True,
-            log_level=logging.INFO,
+            log_level=compiler_log_level(),
             tessellate_parameters=None,
             l2_caching_mode=L2CachingMode.NONE,
-            deployable=True,
         )
         archives = sorted((build_dir / "mpk").glob("*_mpk.tar.gz"))
         if len(archives) != 1:
@@ -164,25 +134,9 @@ def compile_model(source: Path, output_dir: Path, profile_id: str, dataset: Path
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model", type=Path, required=True)
-    parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--build-profile", required=True)
-    parser.add_argument("--compile-invocation", required=True)
-    parser.add_argument("--dataset", type=Path, help="dataset-registry calibration archive")
-    args = parser.parse_args()
-    if args.compile_invocation != args.build_profile:
-        parser.error("a build profile compiles in one invocation named after it")
-    source = args.model.expanduser().resolve()
-    if source.suffix != ".onnx":
-        parser.error("--model must be the verified ONNX from the conversion workflow")
-    if not source.is_file():
-        parser.error(f"model does not exist: {source}")
-    dataset = args.dataset.expanduser().resolve() if args.dataset else None
-    if dataset is not None and not dataset.exists():
-        parser.error(f"dataset does not exist: {dataset}")
+    arguments = parse_arguments(__doc__, MODEL_DIR)
     logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
-    archive = compile_model(source, args.output_dir.expanduser().resolve(), args.build_profile, dataset)
+    archive = compile_model(arguments.model, arguments.output_dir, arguments.build_profile, arguments.dataset)
     logging.info("Compiled MPK: %s", archive)
     return 0
 

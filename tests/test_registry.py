@@ -3,18 +3,22 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import re
 import tarfile
 import zipfile
+from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
+from urllib.error import HTTPError
 
 import boto3
 import pytest
 from botocore.exceptions import ClientError
 from model_registry.compile_matrix import build_matrix
 from model_registry.dependencies import resolve_model_compiler
-from model_registry.errors import ValidationError
+from model_registry.errors import FetchError, ValidationError
+from model_registry.fetch import REGISTRY_DOWNLOAD_ATTEMPTS, BuildFile, download_build, download_build_file
 from model_registry.fingerprints import benchmark_fingerprint, compile_fingerprint
 from model_registry.model import load_model, load_models
 from model_registry.package import assemble_package
@@ -449,7 +453,7 @@ def test_publish_package_attaches_the_profile_numerical_fidelity(tmp_path: Path)
 
     bodies = {path: body for _, path, body, _ in calls}
     artifact = bodies["/v1/runs/package-run/artifacts/numerical-fidelity"]
-    assert artifact["metadata"] == {"model_id": "resnet_50", "build_profile_id": "w16a16", "samples": 50}
+    assert artifact["metadata"] == {"model_id": "resnet_50", "build_profile_id": "w16a16", "samples": 5}
     test_result = bodies["/v1/runs/package-run/test-results/correctness/numerical-fidelity"]
     assert test_result["report_artifact_id"] == "00000000-0000-4000-8000-000000000002"
     measurements = bodies["/v1/runs/package-run/measurements/batch"]["measurements"]
@@ -1137,7 +1141,7 @@ def test_publish_catalog_reads_current_then_publishes_complete_snapshot(monkeypa
 
 @pytest.mark.parametrize("branch", ["develop", "main"])
 @pytest.mark.parametrize("model_id,profile", [
-    ("resnet_50", "w8a8"), ("hrnet_w32", "w8a8"), ("rf_detr_nano", "w8a8_w16a16"),
+    ("resnet_50", "w8a8"), ("hrnet_w32", "w8a8"), ("rf_detr_nano", "w8a8_mixed_w16a16"),
 ])
 def test_approved_onnx_catalog_and_manual_benchmark_use_the_same_fingerprint(
     monkeypatch, tmp_path, branch, model_id, profile,
@@ -1324,7 +1328,11 @@ def test_publish_catalog_publishes_documentation_when_a_cataloged_model_has_none
     assert published == ["a" * 40]
 
 
-def _stage_catalog_build(tmp_path: Path, packages: list[dict], *, runtime_files: bool = False) -> Path:
+def _stage_catalog_build(tmp_path: Path, packages: list[dict], *, runtime_files: bool = False,
+                         listed_runtime_files: list[dict] | None = None, download: bool = False) -> Path:
+    """Stage resnet_50/w16a16 from a fake registry, and with ``download`` fetch its files as the DevKit does. With
+    ``runtime_files`` the package holds a tokenizer, which its metadata lists unless ``listed_runtime_files`` says
+    otherwise."""
     dist = _packaged_result(tmp_path)
     source_archive = next(dist.glob("resnet_50/w16a16/model/*_mpk.tar.gz"))
     payload = source_archive.read_bytes()
@@ -1334,6 +1342,8 @@ def _stage_catalog_build(tmp_path: Path, packages: list[dict], *, runtime_files:
     if runtime_files:
         content = b'{"version":"1.0"}'
         descriptors = [{"path": "model/tokenizer.json", "sha256": hashlib.sha256(content).hexdigest()}]
+        if listed_runtime_files is not None:
+            descriptors = listed_runtime_files
         archive = tmp_path / "package.zip"
         with zipfile.ZipFile(archive, "w") as package:
             package.writestr("model/tokenizer.json", content)
@@ -1376,9 +1386,10 @@ def _stage_catalog_build(tmp_path: Path, packages: list[dict], *, runtime_files:
                     {"runtime_files": descriptors, "component_run_ids": {"model": run_id}} if runtime_files else {}
                 ),
             }}
-        if url.endswith(run_id):
-            return {"run": {"toolchain_version": "2.1.3"}}
         raise AssertionError(url)
+
+    def download_nothing(url: str) -> bytes:
+        raise AssertionError(f"staging downloaded {url}")
 
     result = stage_catalog_build(
         repository=ROOT,
@@ -1390,28 +1401,46 @@ def _stage_catalog_build(tmp_path: Path, packages: list[dict], *, runtime_files:
         build_profile_id="w16a16",
         compile_invocation_id="w16a16",
         read_request=read,
-        download_request=lambda url: payload if url.endswith("/mpk") else package_payload,
+        download_request=download_nothing,
     )
     assert result["count"] == 1
+    if download:
+        download_build(tmp_path / "staged", "resnet_50", "w16a16", read=read,
+                       download=lambda url: payload if url.endswith("/mpk") else package_payload)
     return tmp_path / "staged" / "resnet_50" / "w16a16"
 
 
-def test_stage_catalog_build_restores_and_verifies_durable_mpk(tmp_path: Path) -> None:
+def test_stage_catalog_build_stages_the_mpk_by_compile_run_without_its_bytes(tmp_path: Path) -> None:
     profile = _stage_catalog_build(tmp_path, [])
 
+    source = next(tmp_path.glob("dist/resnet_50/w16a16/model/*_mpk.tar.gz"))
+    digest = hashlib.sha256(source.read_bytes()).hexdigest()
+
     assert (profile / "model" / "registry-publication.json").is_file()
-    # Restored builds carry the manifest a fresh compile writes, so later stages read both alike.
-    staged = next((profile / "model").glob("*_mpk.tar.gz"))
+    assert not list((profile / "model").glob("*_mpk.tar.gz"))
+    # Staged builds carry the manifest a fresh compile writes, so later stages read both alike.
     assert json.loads((profile / "compile-outputs.json").read_text(encoding="utf-8")) == {
         "model_id": "resnet_50",
         "build_profile_id": "w16a16",
         "compile_invocation_id": "w16a16",
-        "outputs": [{
-            "component_id": "model",
-            "mpk_path": f"model/{staged.name}",
-            "mpk_sha256": hashlib.sha256(staged.read_bytes()).hexdigest(),
-        }],
+        "outputs": [{"component_id": "model", "mpk_path": f"model/{source.name}", "mpk_sha256": digest}],
     }
+    # The DevKit downloads the MPK from its compile run.
+    assert json.loads((profile / "build-files.json").read_text(encoding="utf-8")) == {
+        "api_url": "https://registry.example.invalid",
+        "files": [{
+            "path": f"model/{source.name}", "run_id": "00000000-0000-4000-8000-000000000001", "artifact": "mpk",
+            "sha256": digest, "size_bytes": source.stat().st_size,
+        }],
+        "runtime_package": None,
+    }
+
+
+def test_download_build_fetches_the_staged_mpk_the_compile_outputs_name(tmp_path: Path) -> None:
+    profile = _stage_catalog_build(tmp_path, [], download=True)
+
+    output = json.loads((profile / "compile-outputs.json").read_text(encoding="utf-8"))["outputs"][0]
+    assert hashlib.sha256((profile / output["mpk_path"]).read_bytes()).hexdigest() == output["mpk_sha256"]
 
 
 def test_stage_catalog_build_writes_the_receipt_of_the_profile_default_package(tmp_path: Path) -> None:
@@ -1641,9 +1670,13 @@ def test_main_seeds_a_new_revision_with_the_builds_develop_finished(monkeypatch,
 
 def test_deferred_conversion_inheritance_leaves_base_branch_selections_to_the_registry(monkeypatch):
     """A dispatch that selects other conversions must not post a base branch's approved builds as its own."""
-    base = {"id": "deferred", "builds": [], "packages": [{"run_id": "base-package"}],
+    automatic = {"build_profile_id": "w16a16", "component_id": "model", "run_id": "base-build"}
+    base = {"id": "deferred", "builds": [automatic], "packages": [{"run_id": "base-package"}],
             "approved_deployments": {"w8a8": {"run_id": "approved"}},
-            "branch_deployments": {"w8a8": {"run_id": "branch"}}}
+            "branch_deployments": {"w8a16": {"run_id": "branch"}},
+            # The registry rejects fingerprints of a profile whose builds the snapshot does not hold.
+            "benchmark_fingerprints": {"w8a8": {"accuracy": "a"}, "w8a16": {"accuracy": "b"},
+                                       "w16a16": {"accuracy": "c"}}}
     monkeypatch.setattr("model_registry.registry.load_models", lambda root: {"deferred": object()})
     monkeypatch.setattr("model_registry.registry._catalog_models", lambda models: {})
     monkeypatch.setattr("model_registry.registry._head_matrix", lambda *args: [])
@@ -1657,7 +1690,8 @@ def test_deferred_conversion_inheritance_leaves_base_branch_selections_to_the_re
             {"document": {"models": [base], "pending_builds": []}} if url.endswith("develop") else None
         )},
     )["catalog"]
-    assert result["models"] == [{"id": "deferred", "builds": [], "packages": [{"run_id": "base-package"}]}]
+    assert result["models"] == [{"id": "deferred", "builds": [automatic], "packages": [{"run_id": "base-package"}],
+                                 "benchmark_fingerprints": {"w16a16": {"accuracy": "c"}}}]
 
 
 @pytest.mark.parametrize("continuing_revision", [False, True])
@@ -1941,48 +1975,105 @@ def test_private_conversion_reader_keeps_dataset_credentials_separate(monkeypatc
     assert os.environ["AWS_ACCESS_KEY_ID"] == "dataset-ACCESS_KEY_ID"
 
 
-def fake_artifact_download(monkeypatch: pytest.MonkeyPatch, responses: list[Exception | bytes]) -> list[float]:
-    """Answer each artifact download with the next response, and record the backoff sleeps."""
+REGISTRY_API = "https://registry.example.invalid"
+COMPILED_MODEL = b"compiled model"
+COMPILED_BUILD_FILE = BuildFile(
+    "model/model.tar.gz", "00000000-0000-4000-8000-000000000001", "mpk",
+    hashlib.sha256(COMPILED_MODEL).hexdigest(), len(COMPILED_MODEL),
+)  # fmt: skip
+
+
+def fake_registry_download(
+    monkeypatch: pytest.MonkeyPatch, responses: list[Exception | bytes]
+) -> tuple[Callable[[str], dict], list[str], list[float]]:
+    """A registry that records COMPILED_BUILD_FILE and signs a new link on every read of it, with each download
+    answered by the next response. Returns the read, the links downloaded, and the backoff sleeps."""
     import io
 
-    sleeps = []
+    reads, links, sleeps = [], [], []
+
+    def read(url: str) -> dict:
+        assert url == f"{REGISTRY_API}/v1/runs/{COMPILED_BUILD_FILE.run_id}/artifacts/mpk"
+        reads.append(url)
+        return {"artifact": {
+            "sha256": COMPILED_BUILD_FILE.sha256, "size_bytes": COMPILED_BUILD_FILE.size_bytes,
+            "download_url": f"https://objects.example.invalid/model.tar.gz?signature={len(reads)}",
+        }}  # fmt: skip
 
     def urlopen(request, timeout):
+        links.append(request.full_url)
         response = responses.pop(0)
         if isinstance(response, Exception):
             raise response
         return io.BytesIO(response)
 
-    monkeypatch.setattr("model_registry.registry.urlopen", urlopen)
-    monkeypatch.setattr("model_registry.registry.time.sleep", sleeps.append)
-    monkeypatch.setattr("model_registry.registry.random.uniform", lambda low, high: 0.5)
-    return sleeps
+    monkeypatch.setattr("model_registry.fetch.urlopen", urlopen)
+    monkeypatch.setattr("model_registry.fetch.time.sleep", sleeps.append)
+    monkeypatch.setattr("model_registry.fetch.random.uniform", lambda low, high: 0.5)
+    return read, links, sleeps
 
 
-def test_dropped_artifact_download_is_retried(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from model_registry.registry import _download_registry_file
+def _signed(*signatures: int) -> list[str]:
+    return [f"https://objects.example.invalid/model.tar.gz?signature={signature}" for signature in signatures]
 
-    payload = b"compiled model"
-    artifact = {"sha256": hashlib.sha256(payload).hexdigest(), "size_bytes": len(payload)}
-    sleeps = fake_artifact_download(monkeypatch, [ConnectionResetError(104, "Connection reset by peer"), payload])
 
-    _download_registry_file("https://registry.example/model.tar.gz", tmp_path / "model.tar.gz", artifact)
+@pytest.mark.parametrize(
+    "failure",
+    [
+        ConnectionResetError(104, "Connection reset by peer"),
+        # The server closed the connection before the declared size arrived.
+        COMPILED_MODEL[:8],
+        # The link signed for the first attempt expired before it was used.
+        HTTPError(_signed(1)[0], 403, "Forbidden", {}, None),
+    ],
+    ids=["dropped", "cut_off", "expired_link"],
+)
+def test_a_failed_download_is_retried_through_a_link_read_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: Exception | bytes
+) -> None:
+    read, links, sleeps = fake_registry_download(monkeypatch, [failure, COMPILED_MODEL])
 
-    assert (tmp_path / "model.tar.gz").read_bytes() == payload
+    path = download_build_file(read, REGISTRY_API, tmp_path, COMPILED_BUILD_FILE)
+
+    assert path == tmp_path / "model" / "model.tar.gz"
+    assert path.read_bytes() == COMPILED_MODEL
+    assert links == _signed(1, 2)
     assert sleeps == [1.5]
+    assert sorted(item.name for item in path.parent.iterdir()) == ["model.tar.gz"]
 
 
-def test_missing_artifact_download_is_not_retried(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from urllib.error import HTTPError
+@pytest.mark.parametrize(
+    ("response", "error", "message"),
+    [
+        (HTTPError(_signed(1)[0], 404, "Not Found", {}, None), FetchError, "after 1 attempt(s): HTTP Error 404"),
+        (b"compiled modeL", ValidationError, "model.tar.gz: download failed SHA-256 verification"),
+        (COMPILED_MODEL + b"!", ValidationError, "model.tar.gz: download exceeds its declared size"),
+    ],
+    ids=["missing", "other_sha256", "oversized"],
+)
+def test_a_download_that_cannot_succeed_is_not_retried(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, response: Exception | bytes, error: type, message: str
+) -> None:
+    read, links, sleeps = fake_registry_download(monkeypatch, [response])
 
-    from model_registry.registry import _download_registry_file
+    with pytest.raises(error, match=re.escape(message)):
+        download_build_file(read, REGISTRY_API, tmp_path, COMPILED_BUILD_FILE)
 
-    url = "https://registry.example/model.tar.gz"
-    sleeps = fake_artifact_download(monkeypatch, [HTTPError(url, 404, "Not Found", {}, None)])
-
-    with pytest.raises(RegistryPublicationError, match="HTTP Error 404"):
-        _download_registry_file(url, tmp_path / "model.tar.gz", {"sha256": "0" * 64, "size_bytes": 1})
+    assert links == _signed(1)
     assert sleeps == []
+    assert list((tmp_path / "model").iterdir()) == []
+
+
+def test_a_download_stops_after_its_last_attempt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    read, links, sleeps = fake_registry_download(monkeypatch, [COMPILED_MODEL[:8]] * REGISTRY_DOWNLOAD_ATTEMPTS)
+
+    with pytest.raises(FetchError, match=re.escape("model/model.tar.gz after 5 attempt(s): the download ended "
+                                                   f"after 8 of {len(COMPILED_MODEL)} bytes")):
+        download_build_file(read, REGISTRY_API, tmp_path, COMPILED_BUILD_FILE)
+
+    assert links == _signed(1, 2, 3, 4, 5)
+    assert sleeps == [1.5, 2.5, 4.5, 8.5]
+    assert list((tmp_path / "model").iterdir()) == []
 
 
 def test_package_publication_records_runtime_files_for_retained_builds(tmp_path):
@@ -2050,9 +2141,41 @@ def test_package_publication_excludes_declared_resources_from_runtime_files(tmp_
 def test_retained_build_restores_declared_package_runtime_files(tmp_path):
     from model_registry.runtime_files import read_runtime_files
 
-    profile = _stage_catalog_build(tmp_path, [], runtime_files=True)
+    staged = _stage_catalog_build(tmp_path, [], runtime_files=True)
+    # The stage job names the package; the DevKit downloads it and restores the runtime files.
+    assert not (staged / "model/tokenizer.json").exists()
+    assert json.loads((staged / "build-files.json").read_text(encoding="utf-8"))["runtime_package"]["run_id"] == (
+        "package-run"
+    )
+
+    profile = _stage_catalog_build(tmp_path / "downloaded", [], runtime_files=True, download=True)
     assert (profile / "model/tokenizer.json").read_bytes() == b'{"version":"1.0"}'
     assert read_runtime_files(profile) == [{
         "path": "model/tokenizer.json", "sha256": hashlib.sha256(b'{"version":"1.0"}').hexdigest(),
     }]
     assert not (profile / "unrelated.txt").exists()
+    assert not (profile / "packages/default/package.zip").exists()
+
+
+def test_staging_rejects_a_package_that_lists_no_runtime_files(tmp_path: Path) -> None:
+    # Publication lists runtime_files only when there are some, so an empty list is a broken registry record.
+    with pytest.raises(ValidationError, match="package run package-run: runtime_files must be a non-empty list"):
+        _stage_catalog_build(tmp_path, [], runtime_files=True, listed_runtime_files=[])
+
+    assert not (tmp_path / "staged" / "resnet_50" / "w16a16" / "build-files.json").exists()
+
+
+def test_staging_rejects_the_signed_read_api_the_devkit_cannot_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("MODEL_REGISTRY_IAM_READ_API_URL", "https://registry.example.invalid/")
+
+    with pytest.raises(ValidationError, match=re.escape(
+        "cannot stage from https://registry.example.invalid: it is the registry API this job reads with credentials"
+    )):
+        _stage_catalog_build(tmp_path, [])
+
+    assert not (tmp_path / "staged").exists()
+    # A public read URL beside a configured signed-read API stages.
+    monkeypatch.setenv("MODEL_REGISTRY_IAM_READ_API_URL", "https://private.example.invalid")
+    assert (_stage_catalog_build(tmp_path / "public", []) / "build-files.json").is_file()

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from pathlib import Path
 from typing import Any
@@ -52,6 +53,34 @@ def resolve_model_compiler(repository: str | Path) -> dict[str, str]:
         "label": f"model-compiler-{channel}-{revision}",
         "version": version,
     }
+
+
+def _repository_root() -> Path:
+    """The clone that holds deps/manifest.json: MODEL_REGISTRY_ROOT, the working directory, or this package's."""
+    configured_root = os.environ.get("MODEL_REGISTRY_ROOT", "").strip()
+    here = Path(__file__).resolve()
+    candidates = [Path(configured_root).expanduser()] if configured_root else []
+    for candidate in (*candidates, Path.cwd(), *Path.cwd().parents, *here.parents):
+        if (candidate / "deps" / "manifest.json").is_file():
+            return candidate
+    raise ValidationError("could not locate deps/manifest.json; run inside the repository or set MODEL_REGISTRY_ROOT")
+
+
+def onnx_opset_version(repository: str | Path | None = None) -> int:
+    """The ONNX opset every model exports at, from deps/manifest.json."""
+    onnx = _load_manifest(repository or _repository_root()).get("onnx")
+    opset = onnx.get("opset") if isinstance(onnx, dict) else None
+    if not isinstance(opset, int) or isinstance(opset, bool) or opset < 1:
+        raise ValidationError("onnx.opset must be a whole number such as 17")
+    return opset
+
+
+def require_onnx_opset_version(model: Any) -> None:
+    """Raise unless the ONNX model uses the opset deps/manifest.json sets."""
+    opset = onnx_opset_version()
+    versions = [item.version for item in model.opset_import if not item.domain]
+    if versions != [opset]:
+        raise ValueError(f"The export requires opset {opset}, found {versions}")
 
 
 def resolve_benchmark_runtime(repository: str | Path) -> dict[str, Any]:

@@ -12,9 +12,11 @@ from unittest.mock import MagicMock
 import numpy as np
 import onnx
 import pytest
+from model_registry.dependencies import onnx_opset_version
 from model_registry.model import load_model as load_metadata
 from PIL import Image
 
+OPSET = onnx_opset_version()
 ROOT = Path(__file__).resolve().parents[4]
 MODEL_DIR = ROOT / "models" / "rf_detr_nano"
 SCRIPTS_DIR = MODEL_DIR / "scripts"
@@ -111,7 +113,7 @@ def _value(name: str, shape: list[int], dtype: int = onnx.TensorProto.FLOAT) -> 
 
 def _model(nodes, inputs, outputs, initializers=()) -> onnx.ModelProto:
     graph = onnx.helper.make_graph(nodes, "fixture", inputs, outputs, list(initializers))
-    return onnx.helper.make_model(graph, opset_imports=[onnx.helper.make_opsetid("", 17)])
+    return onnx.helper.make_model(graph, opset_imports=[onnx.helper.make_opsetid("", OPSET)])
 
 
 def test_surgery_requires_a_folded_source(load_script: Callable[[str], ModuleType]) -> None:
@@ -235,7 +237,7 @@ def test_surgery_folds_only_power_of_two_score_scales(load_script: Callable[[str
 def test_compile_recipe_uses_one_grouped_entrypoint_and_direct_afe_api() -> None:
     source = (SCRIPTS_DIR / "compile.py").read_text(encoding="utf-8")
 
-    assert 'parser.add_argument("--compile-invocation", required=True)' in source
+    assert "parse_arguments(__doc__, MODEL_DIR)" in source
     assert "export_model" not in source
     assert "prepare_model(source" in source
     assert "loaded.quantize(" in source
@@ -260,14 +262,14 @@ def _metadata() -> dict:
 @pytest.mark.parametrize(
     ("profile_id", "backbone"),
     [
-        ("w8a8_w16a16", {"precision": "w8a8", "calibration_bins": 1024, "calibration_samples": 50}),
+        ("w8a8_w16a16", {"precision": "w8a8", "calibration_bins": 1024, "calibration_samples": 20}),
         ("w8a16_w16a16", {"precision": "w8a16", "per_token": True}),
         (
             "w8a8_mixed_w16a16",
             {
                 "precision": "w8a8",
                 "calibration_bins": 1024,
-                "calibration_samples": 50,
+                "calibration_samples": 20,
                 "bf16_regions": ["residual", "attention_global", "projector", "head", "outputs"],
             },
         ),
@@ -278,7 +280,7 @@ def test_compile_reads_each_declared_build_profile(
 ) -> None:
     assert load_script("compile")._component_parameters(_metadata(), profile_id) == {
         "backbone": backbone,
-        "decoder": {"precision": "w16a16", "calibration_bins": 2048, "calibration_samples": 50},
+        "decoder": {"precision": "w16a16", "calibration_bins": 2048, "calibration_samples": 20},
     }
 
 
@@ -443,32 +445,6 @@ def test_backbone_outputs_survive_the_file_between_phases(
             assert getattr(loaded, name) is None, name
         else:
             np.testing.assert_array_equal(getattr(loaded, name), value)
-
-
-def test_fidelity_error_sums_match_the_metrics_over_all_images(load_script: Callable[[str], ModuleType]) -> None:
-    compile_module = load_script("compile")
-    rng = np.random.RandomState(0)
-    expected = rng.standard_normal((2, 3, 4))
-    actual = expected + rng.standard_normal((2, 3, 4)) * 0.1
-    error = compile_module._OutputError("dets")
-
-    for image in range(2):
-        error.add(expected[image], actual[image])
-    summary = error.summary()
-
-    difference = actual - expected
-    assert summary["name"] == "dets"
-    np.testing.assert_allclose(
-        summary["cosine_similarity"],
-        np.dot(expected.ravel(), actual.ravel()) / (np.linalg.norm(expected) * np.linalg.norm(actual)),
-    )
-    np.testing.assert_allclose(
-        summary["normalized_rmse"], np.sqrt(np.mean(difference**2)) / np.sqrt(np.mean(expected**2))
-    )
-    np.testing.assert_allclose(summary["mean_absolute_error"], np.mean(np.abs(difference)))
-    np.testing.assert_allclose(summary["max_absolute_error"], np.max(np.abs(difference)))
-    with pytest.raises(RuntimeError, match="dets shape mismatch"):
-        error.add(expected[0], actual[0, :2])
 
 
 def test_backbone_features_convert_to_the_onnx_boundary_layout(load_script: Callable[[str], ModuleType]) -> None:

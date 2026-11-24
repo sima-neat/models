@@ -46,8 +46,9 @@ above when it belongs to the model page.
 
 ## Customer view and developer view
 
-The build selects one audience through `uiMode`: `customer` on `main`, `developer`
-elsewhere (`website/scripts/portal-config.mjs`). The customer view is the developer view
+The build selects one audience through `uiMode`: `developer` by default, and `customer`
+only when `MODEL_BROWSER_UI_MODE=customer` is set (`portalConfig` in
+`website/scripts/portal-config.mjs`). No branch selects it. The customer view is the developer view
 without some parts. `audienceFacts` in `audience.js` names each of those parts once:
 
 ```js
@@ -78,6 +79,7 @@ customers see would be a line such as `customerNotice: !developer`.
 | --- | --- |
 | `buildHistory` | build history, and a link to one registry run |
 | `compilerFilter` | the compiler filter of the catalog |
+| `catalogRunMetadata` | the branch's completed compile and package runs, which `app.js` loads from the registry and adds to the published catalog |
 | `buildDetails` | the Details section of a model page: components, build provenance, package and source inputs |
 | `measurementSource` | the commit and workflow that measured a result |
 | `rawResult` | the model report as the registry stores it |
@@ -85,7 +87,6 @@ customers see would be a line such as `customerNotice: !developer`.
 | `mlaUtilization` | MLA Utilization under Performance |
 | `evaluationDetails` | how an accuracy run was evaluated |
 | `referenceTables` | the tables of published and FP32 baseline scores |
-| `lowAccuracyVariants` | variants whose accuracy falls more than 8% below the source model's reference score. `api.js` removes them from the catalog when the fact is false |
 | `commandBranch` | the `--branch` option in the copied CLI command. The customer command names no branch and downloads from `main` |
 
 Three customer-view rules live outside this list, and the header of `audience.js` names

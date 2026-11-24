@@ -13,9 +13,12 @@ from unittest.mock import MagicMock
 import numpy as np
 import onnx
 import pytest
+from model_registry.dependencies import onnx_opset_version
+from model_registry.errors import ValidationError
 from model_registry.model import load_model as load_metadata
 from PIL import Image
 
+OPSET = onnx_opset_version()
 PROFILES = ("w16a16", "w8a16", "w8a8_mixed")
 
 
@@ -102,10 +105,10 @@ def test_calibration_images_precede_the_fidelity_selection(
     fidelity = recipe.select_images(root, selection["seed"], selection["offset"], selection["samples"])
 
     for profile in PROFILES:
-        count = recipe.build_parameters(metadata, profile)["calibration_samples"]
+        count = recipe.component_parameters(model_dir, profile, recipe.COMPONENT_ID)["calibration_samples"]
         calibration = recipe.calibration_names(root, selection, count)
-        # model.yaml calibrates every build on 50 images and compares 10 more, starting at offset 50.
-        assert (len(calibration), len(fidelity)) == (50, 10)
+        # model.yaml calibrates every build on 20 images and compares 5 more, starting at offset 50.
+        assert (len(calibration), len(fidelity)) == (20, 5)
         assert not set(calibration) & set(fidelity)
     with pytest.raises(ValueError, match="must begin after the calibration images"):
         recipe.calibration_names(root, {**selection, "offset": 49}, 50)
@@ -180,18 +183,19 @@ def test_a_mixed_build_fails_unless_afe_runs_exactly_the_marked_convolutions_int
 def test_compile_reads_the_declared_build_parameters(model_dir: Path, load_script: Callable[[str], ModuleType]) -> None:
     recipe = load_script("compile")
     metadata = load_metadata(model_dir)
-    calibration = {"calibration_bins": 2048, "calibration_samples": 50}
+    component_id = recipe.COMPONENT_ID
+    calibration = {"calibration_bins": 2048, "calibration_samples": 20}
 
-    assert recipe.build_parameters(metadata, "w16a16") == {"precision": "w16a16", **calibration}
-    assert recipe.build_parameters(metadata, "w8a16") == {"precision": "w8a16", **calibration}
-    assert recipe.build_parameters(metadata, "w8a8_mixed") == {
+    assert recipe.component_parameters(model_dir, "w16a16", component_id) == {"precision": "w16a16", **calibration}
+    assert recipe.component_parameters(model_dir, "w8a16", component_id) == {"precision": "w8a16", **calibration}
+    assert recipe.component_parameters(model_dir, "w8a8_mixed", component_id) == {
         "precision": "w8a8",
         "bf16_regions": ["pooling"],
         **calibration,
     }
     assert metadata["numerical_fidelity"]["outputs"] == [recipe.OUTPUT]
-    with pytest.raises(ValueError, match="no build profile 'w32a32'"):
-        recipe.build_parameters(metadata, "w32a32")
+    with pytest.raises(ValidationError, match="unknown build profile: w32a32"):
+        recipe.component_parameters(model_dir, "w32a32", component_id)
 
 
 def _mpk_manifest() -> dict[str, Any]:
@@ -261,6 +265,37 @@ def test_compile_reports_the_compilers_silent_exit_as_an_error(
         recipe.compile_model(
             tmp_path / "model.onnx", tmp_path / "out", "w16a16", parameters, np.zeros((1, 480, 640, 3))
         )
+
+
+def test_fidelity_compares_the_quantized_descriptors_with_the_reference(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, load_script: Callable[[str], ModuleType]
+) -> None:
+    recipe = load_script("compile")
+    fidelity = load_metadata(recipe.MODEL_DIR)["numerical_fidelity"]
+    pixel_values = (1.0, 2.0)
+    images = np.stack([np.full((480, 640, 3), value) for value in pixel_values])
+    reference_inputs = []
+
+    def reference(image: np.ndarray) -> np.ndarray:
+        reference_inputs.append(image.shape)
+        return np.full(4096, image[0, 0, 0, 0], np.float64)
+
+    candidate = MagicMock()
+    # Each image's last descriptor value comes back 1 too high.
+    candidate.execute.side_effect = [
+        [np.append(np.full(4095, value), value + 1).reshape(1, 4096)] for value in pixel_values
+    ]
+    monkeypatch.setattr(recipe, "select_images", lambda dataset, seed, offset, samples: ["a.jpg", "b.jpg"])
+    monkeypatch.setattr(recipe, "load_images", lambda dataset, names: images)
+
+    report = recipe.measure_fidelity(reference, candidate, tmp_path / "cal", fidelity, "w8a8_mixed")
+
+    assert reference_inputs == [(1, 3, 480, 640)] * 2
+    assert (report["model_id"], report["build_profile_id"], report["samples"]) == ("netvlad", "w8a8_mixed", 2)
+    (metric,) = report["metrics"]
+    assert metric["name"] == "descriptor"
+    assert metric["max_absolute_error"] == 1.0
+    assert metric["mean_absolute_error"] == pytest.approx(1 / 4096)
 
 
 @pytest.mark.parametrize(
@@ -361,7 +396,7 @@ def test_fixed_onnx_interface(tmp_path: Path, case: str, builder: ModuleType) ->
     else:
         node = helper.make_node("Identity", ["zeros"], [values[1].name])
     graph = helper.make_graph([node], "fixture", values[:1], values[1:], [zeros])
-    model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 12 if case == "opset" else 17)])
+    model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", OPSET + 1 if case == "opset" else OPSET)])
     path = tmp_path / "model.onnx"
     onnx.save(model, path)
     if case == "valid":
@@ -409,7 +444,7 @@ def test_int8_marks_cover_the_encoder_up_to_conv5_3_and_leave_its_normalization_
     eps = onnx.numpy_helper.from_array(np.asarray(1e-12, np.float32), "eps")
     graph = helper.make_graph(nodes, "fixture", values[:1], values[1:], [eps])
     path = tmp_path / "model.onnx"
-    onnx.save(helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)]), path)
+    onnx.save(helper.make_model(graph, opset_imports=[helper.make_opsetid("", OPSET)]), path)
 
     assert builder.annotate_int8_encoder(path) == {"int8": 1, "bfloat16": 1}
 
@@ -433,7 +468,7 @@ def test_compiled_mpk_has_one_mla_segment_and_the_descriptor_interface(
 def test_compiled_build_reports_descriptor_fidelity(compiled: Path, build_profile: str) -> None:
     report = json.loads((compiled / "fidelity.json").read_text(encoding="utf-8"))
 
-    assert (report["build_profile_id"], report["samples"]) == (build_profile, 10)
+    assert (report["build_profile_id"], report["samples"]) == (build_profile, 5)
     (metric,) = report["metrics"]
     assert metric["name"] == "descriptor"
     assert np.isfinite([metric["cosine_similarity"], metric["normalized_rmse"]]).all()

@@ -100,7 +100,7 @@ line.
 | Runner | the build's Compile job in the Actions tab: its runner labels name the class, and its **Compile runner** summary names the requested, selected, and actual market. The package manifest's `provenance` keeps the same fields ([verify the result](../../../docs/runner-class-requests.md#verify-the-result-and-diagnose-failures)). Write `<class>, <actual market>`, and add the requested one in parentheses when it differs. |
 | Performance | the published `throughput_fps` in the model browser's developer view with the branch selected, or one value per component for `scope: components` |
 | Accuracy | the published value of the first metric `datasets/<id>.yaml` requires for the model's task, on its first accuracy dataset, with the digits `tools/model_report/metrics.json` gives |
-| Benchmark time | the durations of the `Measure performance on DevKit` and `Measure accuracy on DevKit` steps of the build's `Benchmark on DevKit` job, as `<performance> + <accuracy>`. No registry run records them. The job's own duration adds the DevKit setup: tooling, the dataset cache, and Core ([benchmark workflow](../../references/ci-flow.md#benchmark-workflow)). |
+| Benchmark time | the durations of the `Measure performance on DevKit` and `Measure accuracy on DevKit` steps of the build's `Benchmark on DevKit` job, as `<performance> + <accuracy>`. No registry run records them. The job's own duration adds the DevKit setup: tooling, the build's download from the registry, the dataset unpacked for the job, Core, and MoLE for a model it measures ([benchmark workflow](../../references/ci-flow.md#benchmark-workflow)). |
 | Reruns | [`rules.md` "Stages and fingerprints"](../../rules.md#stages-and-fingerprints) and [what a change reruns](../../../docs/adding-a-model.md#9-know-what-a-change-reruns), per model and build profile, with the input that causes each. When a shared file reruns models the pull request is not about, the line opens with that: the file, the stages, and all models or how many ([`rules.md` "Before a push"](../../rules.md#before-a-push)) |
 | Tested locally | the stages run before the push and the result of each: compile, `verify-artifact`, the compile tests, performance, and accuracy |
 | Links | the pull request that published the conversion when that was a separate one, and the Dataset Registry change when the change adds data |
@@ -170,10 +170,10 @@ appears, because the model already exists. The numbers are illustrative.
 
 ````markdown
 ## Summary
-Doubles the calibration images of the yolo26n `w8a8` build from 50 to 100, which raises its COCO mAP by 0.002.
+Doubles the calibration images of the yolo26n `w8a8` build from 10 to 20, which raises its COCO mAP by 0.002.
 
 ## yolo26n
-- **Quantization:** `w8a8` now calibrates on 100 coco-2017-cal images (was 50). `w8a16` and `w16a16` are unchanged.
+- **Quantization:** `w8a8` now calibrates on 20 coco-2017-cal images (was 10). `w8a16` and `w16a16` are unchanged.
 
 ```text
 How does an input become a result in yolo26n?

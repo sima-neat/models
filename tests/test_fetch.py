@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import gzip
 import hashlib
 import io
 import json
+import re
+import tarfile
 import threading
 from collections.abc import Iterator
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -10,8 +13,14 @@ from pathlib import Path
 from urllib.request import HTTPRedirectHandler, Request
 
 import pytest
-from model_registry.errors import FetchError
-from model_registry.fetch import Fetcher, open_verified_url, resolve_dataset
+from model_registry.errors import FetchError, ValidationError
+from model_registry.fetch import (
+    Fetcher,
+    _build_file_path,
+    open_verified_url,
+    resolve_dataset,
+    unpack_shared_dataset,
+)
 from model_registry.source import SourceSpec, source_identity
 
 PAYLOAD = b"model registry fixture\n"
@@ -429,3 +438,155 @@ def test_dataset_still_differing_after_refetch_fails(tmp_path: Path, monkeypatch
     with pytest.raises(FetchError, match="dataset size mismatch"):
         resolve_dataset(DATASET)
     assert len(calls) == 2
+
+
+def dataset_archive(content: bytes) -> bytes:
+    """A gzip tar archive holding val/a.jpg; contents of one length give archives of one size."""
+    buffer = io.BytesIO()
+    with gzip.GzipFile(fileobj=buffer, mode="wb", mtime=0) as compressed:
+        with tarfile.open(fileobj=compressed, mode="w") as archive:
+            info = tarfile.TarInfo("val/a.jpg")
+            info.size = len(content)
+            archive.addfile(info, io.BytesIO(content))
+    return buffer.getvalue()
+
+
+ARCHIVE = dataset_archive(b"one")
+SHARED_PIN = {"id": "fixture", "variant": "val", "sha256": hashlib.sha256(ARCHIVE).hexdigest(),
+              "size_bytes": len(ARCHIVE)}
+# The share's index entry for SHARED_PIN's archive, which the share holds at fixture/val.tgz.
+SHARED_ARCHIVE = {"key": "datasets/artifactory/fixture/val.tgz", "sha256": SHARED_PIN["sha256"],
+                  "size": len(ARCHIVE)}
+JUNK = b"not a gzip archive"
+JUNK_PIN = {**SHARED_PIN, "sha256": hashlib.sha256(JUNK).hexdigest(), "size_bytes": len(JUNK)}
+
+
+def shared_archives(tmp_path: Path, index: list[dict] | str, files: dict[str, bytes]) -> Path:
+    """A shared dataset archive share, reached through a link, whose index lists ``index`` and holds ``files``."""
+    folder = tmp_path / "share" / "releases" / "1"
+    folder.mkdir(parents=True)
+    for relative, payload in files.items():
+        (folder / relative).parent.mkdir(parents=True, exist_ok=True)
+        (folder / relative).write_bytes(payload)
+    text = index if isinstance(index, str) else json.dumps({"archives": index})
+    (folder / "_release.json").write_text(text, encoding="utf-8")
+    (tmp_path / "share" / "current").symlink_to("releases/1")
+    return tmp_path / "share" / "current"
+
+
+def test_the_share_unpacks_the_archive_its_index_lists_under_the_pin_in_place(
+    tmp_path: Path, capsys, monkeypatch
+) -> None:
+    other = {**SHARED_ARCHIVE, "key": "datasets/artifactory/fixture/other.tgz", "sha256": "0" * 64}
+    share = shared_archives(tmp_path, [other, SHARED_ARCHIVE], {"fixture/val.tgz": ARCHIVE,
+                                                               "fixture/other.tgz": b"other"})
+    archive = (tmp_path / "share/releases/1/fixture/val.tgz").resolve()
+    opened = []
+    open_path = Path.open
+
+    def counting_open(self: Path, *args, **kwargs):
+        opened.append(self.resolve())
+        return open_path(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", counting_open)
+    before = set(tmp_path.rglob("*"))
+
+    assert unpack_shared_dataset(SHARED_PIN, share, tmp_path / "dataset")
+
+    # The archive is read once, in place, and only its members are written.
+    assert opened.count(archive) == 1
+    assert set(tmp_path.rglob("*")) - before == {tmp_path / "dataset", tmp_path / "dataset/val",
+                                                 tmp_path / "dataset/val/a.jpg"}
+    assert (tmp_path / "dataset/val/a.jpg").read_bytes() == b"one"
+    assert capsys.readouterr().err == ""
+
+
+def test_a_machine_without_the_share_falls_back_quietly(tmp_path: Path, capsys) -> None:
+    assert not unpack_shared_dataset(SHARED_PIN, tmp_path / "absent" / "current", tmp_path / "dataset")
+    assert not (tmp_path / "dataset").exists()
+    assert capsys.readouterr().err == ""
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [{**SHARED_ARCHIVE, "sha256": "0" * 64}, {**SHARED_ARCHIVE, "size": len(ARCHIVE) + 1}],
+    ids=["other_sha256", "other_size"],
+)
+def test_the_share_gives_only_an_archive_whose_sha256_and_size_match_the_pin(
+    tmp_path: Path, capsys, entry: dict
+) -> None:
+    share = shared_archives(tmp_path, [entry], {"fixture/val.tgz": ARCHIVE})
+
+    assert not unpack_shared_dataset(SHARED_PIN, share, tmp_path / "dataset")
+    assert capsys.readouterr().err == (
+        "The shared dataset archive share does not hold fixture val. Resolving it through the Dataset Registry.\n"
+    )
+    assert not (tmp_path / "dataset").exists()
+
+
+def test_an_archive_of_one_length_has_one_size() -> None:
+    # The digest test below depends on it.
+    assert len(dataset_archive(b"two")) == len(ARCHIVE)
+
+
+@pytest.mark.parametrize(
+    ("index", "files", "pin", "reason"),
+    [
+        ("{not json", {}, SHARED_PIN, "Expecting property name"),
+        (json.dumps({"releases": []}), {}, SHARED_PIN, "'archives'"),
+        ([{"sha256": SHARED_PIN["sha256"], "size": len(ARCHIVE)}], {}, SHARED_PIN, "'key'"),
+        ([{**SHARED_ARCHIVE, "key": "fixture/val.tgz"}], {"fixture/val.tgz": ARCHIVE}, SHARED_PIN,
+         "does not start with"),
+        ([SHARED_ARCHIVE], {}, SHARED_PIN, "No such file"),
+        ([SHARED_ARCHIVE], {"fixture/val.tgz": dataset_archive(b"two")}, SHARED_PIN, "dataset SHA-256 mismatch"),
+        ([SHARED_ARCHIVE], {"fixture/val.tgz": ARCHIVE + b"x"}, SHARED_PIN, "dataset size mismatch"),
+        ([{**SHARED_ARCHIVE, "sha256": JUNK_PIN["sha256"], "size": len(JUNK)}], {"fixture/val.tgz": JUNK},
+         JUNK_PIN, "tar exited with"),
+    ],
+    ids=["malformed_index", "no_archives", "entry_without_key", "key_without_prefix", "listed_file_missing",
+         "other_archive_of_the_same_size", "wrong_size", "not_an_archive"],
+)
+def test_a_broken_share_falls_back_in_one_line_and_leaves_no_folder(
+    tmp_path: Path, capsys, index: list[dict] | str, files: dict[str, bytes], pin: dict, reason: str
+) -> None:
+    share = shared_archives(tmp_path, index, files)
+
+    assert not unpack_shared_dataset(pin, share, tmp_path / "dataset")
+    message = capsys.readouterr().err
+    assert message.startswith("The shared dataset archive share cannot give fixture val (")
+    assert reason in message
+    assert message.endswith("). Resolving it through the Dataset Registry.\n")
+    assert message.count("\n") == 1
+    # Whatever tar unpacked before the check failed is gone.
+    assert not (tmp_path / "dataset").exists()
+
+
+@pytest.mark.parametrize(
+    ("relative", "unsafe"),
+    [
+        ("model/deployment/devkit/vlm_config.json", False),
+        ("../model.tar.gz", True),
+        ("model/../../model.tar.gz", True),
+        ("/tmp/model.tar.gz", True),
+        ("model//model.tar.gz", True),
+        ("./model/model.tar.gz", True),
+        ("model/deployment/", True),
+        ("", True),
+        ("linked/model.tar.gz", True),
+        ("model/linked.tar.gz", True),
+    ],
+    ids=["valid", "parent", "inner_parent", "absolute", "double_slash", "dot", "trailing_slash", "empty",
+         "linked_parent", "linked_file"],
+)
+def test_a_staged_build_file_stays_inside_its_profile_folder(tmp_path: Path, relative: str, unsafe: bool) -> None:
+    profile_dir = tmp_path / "profile"
+    (profile_dir / "model").mkdir(parents=True)
+    (tmp_path / "elsewhere").mkdir()
+    (profile_dir / "linked").symlink_to(tmp_path / "elsewhere", target_is_directory=True)
+    (profile_dir / "model" / "linked.tar.gz").symlink_to(tmp_path / "elsewhere" / "model.tar.gz")
+
+    if unsafe:
+        with pytest.raises(ValidationError, match=re.escape(f"unsafe staged build file path: {relative!r}")):
+            _build_file_path(profile_dir, relative)
+    else:
+        assert _build_file_path(profile_dir, relative) == profile_dir / relative

@@ -35,13 +35,17 @@ permissions:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
-# A newer push supersedes a running push run on the same ref; the next run plans the
-# builds the cancelled one left pending. Each manual dispatch runs to completion.
+# A push to develop or main waits for the running push run of that ref, so a merge never cancels compiles in
+# flight. GitHub keeps one waiting run per group: a newer push replaces the waiting one, whose changes the newer
+# revision also holds. On any other branch a newer push cancels the running one; the next run plans the builds
+# it left pending. Each manual dispatch runs to completion.
 concurrency:
   group: >-
     model-compile-${{ github.ref }}-${{ vars.VULCAN_ENV }}${{
     github.event_name == 'workflow_dispatch' && format('-{0}', github.run_id) || '' }}
-  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
+  cancel-in-progress: >-
+    ${{ github.event_name != 'workflow_dispatch' &&
+    github.ref != 'refs/heads/develop' && github.ref != 'refs/heads/main' }}
 
 jobs:
   select:
@@ -608,8 +612,6 @@ jobs:
     uses: ./.github/workflows/vulcan-model-benchmarking.yml
     with:
       environment: ${{ needs.select.outputs.vulcan_environment }}
-      # A reused build is restored from the registry.
-      source_run_id: ""
       source_sha: ${{ github.sha }}
       source_branch: ${{ github.ref_name }}
       model_id: ${{ matrix.model_id }}
@@ -640,8 +642,6 @@ jobs:
     uses: ./.github/workflows/vulcan-model-benchmarking.yml
     with:
       environment: ${{ needs.select.outputs.vulcan_environment }}
-      # A reused build is restored from the registry.
-      source_run_id: ""
       source_sha: ${{ github.sha }}
       source_branch: ${{ github.ref_name }}
       model_id: ${{ matrix.model_id }}

@@ -93,7 +93,7 @@ build_profiles:
         parameters:
           precision: w8a8
           prompt_slots: 80
-          calibration_samples: 64
+          calibration_samples: 20
           calibration_method: mse
           bf16_regions: [projection_attention]
 pipeline:

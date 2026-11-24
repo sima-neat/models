@@ -9,14 +9,14 @@ import logging
 import multiprocessing
 import os
 import shutil
-import tarfile
 import tempfile
 from collections.abc import Callable
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from graph_tools import compare
+from model_registry.compile_script import compiler_log_level, read_mpk_manifest
 from model_registry.dependencies import resolve_model_compiler
 from model_registry.model import load_model as load_metadata
 from model_registry.model import mpk_filename
@@ -165,7 +165,7 @@ def _load_and_quantize(
         calibration_data=None,
         quantization_config=_quantization(parameters),
         model_name=model_name,
-        log_level=logging.INFO,
+        log_level=compiler_log_level(),
     )
     return loaded, quantized, afe_inputs
 
@@ -217,25 +217,8 @@ def _verify_quantized(
     ]
 
 
-def _read_mpk_manifest(archive: Path) -> tuple[list[str], dict[str, Any]]:
-    with tarfile.open(archive, "r:gz") as stream:
-        members = stream.getmembers()
-        for member in members:
-            path = PurePosixPath(member.name)
-            if path.is_absolute() or ".." in path.parts or member.issym() or member.islnk():
-                raise RuntimeError(f"unsafe MPK member: {member.name}")
-        names = [member.name for member in members]
-        manifests = [name for name in names if name.endswith("_mpk.json")]
-        if len(manifests) != 1:
-            raise RuntimeError(f"expected one MPK manifest, found {manifests}")
-        source = stream.extractfile(manifests[0])
-        if source is None:
-            raise RuntimeError(f"cannot read MPK manifest: {manifests[0]}")
-        return names, json.load(source)
-
-
 def audit_mpk(archive: Path, component_id: str, batch_size: int = 1) -> dict[str, Any]:
-    names, manifest = _read_mpk_manifest(archive)
+    names, manifest = read_mpk_manifest(archive)
     plugins = sorted(manifest.get("plugins", []), key=lambda item: item.get("sequence", 0))
     mla = [item for item in plugins if str(item.get("processor", "")).upper() == "MLA"]
     host = [item for item in plugins if str(item.get("processor", "")).upper() in {"A65", "APU"}]
@@ -268,7 +251,7 @@ def _compile(quantized: Any, build_dir: Path, component_id: str, batch_size: int
         batch_size=batch_size,
         compress=True,
         preserve=True,
-        log_level=logging.INFO,
+        log_level=compiler_log_level(),
         layer_norm_use_fp32_intermediates=True,
     )
     archives = sorted(build_dir.glob("*_mpk.tar.gz"))

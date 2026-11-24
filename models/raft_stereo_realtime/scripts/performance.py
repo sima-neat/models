@@ -10,10 +10,10 @@ import argparse
 import random
 from pathlib import Path
 
-import cv2
 import model_report
 import numpy as np
 import pyneat
+from model_inputs.frame import read_rgb
 
 # Each line names a pair's left view, right view and left-view disparity, relative to the dataset directory.
 TEST_LIST = "sceneflow_finalpass_test.txt"
@@ -27,13 +27,6 @@ def sample_pair(dataset: Path) -> tuple[str, str]:
         raise SystemExit(f"{dataset / TEST_LIST} lists no pairs")
     left, right = random.Random(0).choice(pairs)
     return left, right
-
-
-def read_rgb(path: Path) -> np.ndarray:
-    image = cv2.imread(str(path), cv2.IMREAD_COLOR | cv2.IMREAD_IGNORE_ORIENTATION)
-    if image is None:
-        raise SystemExit(f"could not read {path}")
-    return cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
 
 parser = argparse.ArgumentParser(description=__doc__)

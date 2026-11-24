@@ -4,15 +4,13 @@ import argparse
 import random
 from pathlib import Path
 
-import cv2
 import model_report
-import numpy as np
 import pyneat
+from model_inputs.frame import FRAME_HEIGHT, FRAME_WIDTH, letterbox_to_720p, read_rgb
 
 IMAGES = "val2017"
 # The benchmark input is a COCO image letterboxed into a 720p camera frame, which Neat stretches to the
 # model's 640x640 input.
-FRAME_WIDTH, FRAME_HEIGHT, FILL = 1280, 720, 114
 
 
 def sample_image(dataset: Path) -> Path:
@@ -21,23 +19,6 @@ def sample_image(dataset: Path) -> Path:
     if not images:
         raise SystemExit(f"{dataset} has no images under {IMAGES}/")
     return random.Random(0).choice(images)
-
-
-def read_rgb(path: Path) -> np.ndarray:
-    image = cv2.imread(str(path), cv2.IMREAD_COLOR | cv2.IMREAD_IGNORE_ORIENTATION)
-    if image is None:
-        raise SystemExit(f"could not read {path}")
-    return cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-
-
-def letterbox_to_720p(image: np.ndarray) -> np.ndarray:
-    """Scale an RGB image to fit a 1280x720 frame and pad it to the frame, centered."""
-    scale = min(FRAME_WIDTH / image.shape[1], FRAME_HEIGHT / image.shape[0])
-    width, height = round(image.shape[1] * scale), round(image.shape[0] * scale)
-    left, top = (FRAME_WIDTH - width) // 2, (FRAME_HEIGHT - height) // 2
-    frame = np.full((FRAME_HEIGHT, FRAME_WIDTH, 3), FILL, np.uint8)
-    frame[top : top + height, left : left + width] = cv2.resize(image, (width, height), interpolation=cv2.INTER_LINEAR)
-    return frame
 
 
 parser = argparse.ArgumentParser(description=__doc__)

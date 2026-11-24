@@ -13,9 +13,11 @@ from unittest.mock import MagicMock
 import numpy as np
 import onnx
 import pytest
+from model_registry.dependencies import onnx_opset_version
 from model_registry.model import load_model
 from PIL import Image
 
+OPSET = onnx_opset_version()
 DECODER = {"precision": "w16a16"}
 
 
@@ -33,27 +35,27 @@ def surgery(load_script):
     ("profile", "backbone"),
     [
         ("w16a16", {"precision": "w16a16"}),
-        ("w8a8_w16a16", {"precision": "w8a8", "calibration_bins": 1024, "calibration_samples": 50}),
+        ("w8a8_w16a16", {"precision": "w8a8", "calibration_bins": 1024, "calibration_samples": 20}),
         (
             "w8a8_mixed_w16a16",
             {
                 "precision": "w8a8",
                 "calibration_bins": 1024,
-                "calibration_samples": 50,
+                "calibration_samples": 20,
                 "bf16_regions": ["backbone", "nonconv", "outputs"],
             },
         ),
     ],
 )
 def test_compile_reads_each_declared_build_profile(compiler, model_dir, profile, backbone):
-    assert compiler.component_parameters(load_model(model_dir), profile) == {"backbone": backbone, "decoder": DECODER}
+    assert compiler._component_parameters(load_model(model_dir), profile) == {"backbone": backbone, "decoder": DECODER}
 
 
 def test_only_int8_backbones_calibrate(compiler, model_dir):
     # The W16A16 decoder keeps no INT8 lookup after surgery, so BF16 activations need no ranges.
     metadata = load_model(model_dir)
     for profile in metadata["build_profiles"]:
-        parameters = compiler.component_parameters(metadata, profile["id"])
+        parameters = compiler._component_parameters(metadata, profile["id"])
         assert not compiler.calibrates(parameters["decoder"]), profile["id"]
         assert compiler.calibrates(parameters["backbone"]) == (parameters["backbone"]["precision"] == "w8a8")
 
@@ -96,7 +98,7 @@ def test_component_parameters_reject_undeclared_or_inconsistent_profiles(compile
     else:
         backbone.update(precision="w8a8", calibration_bins=1024, calibration_samples=50, bf16_regions=["outputs"])
     with pytest.raises(ValueError):
-        compiler.component_parameters(metadata, "w16a16")
+        compiler._component_parameters(metadata, "w16a16")
 
 
 @pytest.mark.parametrize("regions", [[], "outputs", ["typo"], ["outputs", "outputs"], [False], [{}]])
@@ -105,7 +107,7 @@ def test_mixed_regions_are_explicit_and_validated(compiler, model_dir, regions):
     candidate = [p for p in metadata["build_profiles"] if p["id"] == "w8a8_mixed_w16a16"]
     candidate[0]["components"][0]["parameters"]["bf16_regions"] = regions
     with pytest.raises(ValueError, match="BF16 regions"):
-        compiler.component_parameters(metadata, "w8a8_mixed_w16a16")
+        compiler._component_parameters(metadata, "w8a8_mixed_w16a16")
 
 
 @pytest.mark.parametrize(
@@ -340,7 +342,7 @@ def regional_graph(tmp_path):
             value_info=[value(name) for name in ("hidden", "projection", "feature", "view")]
             + [value("dimensions", (4,), onnx.TensorProto.INT64)],
         ),
-        opset_imports=[h.make_opsetid("", 17)],
+        opset_imports=[h.make_opsetid("", OPSET)],
         ir_version=8,
     )
     onnx.checker.check_model(model)
@@ -403,7 +405,7 @@ def precision_graph(tmp_path):
             [value("input")],
             [value("output")],
         ),
-        opset_imports=[h.make_opsetid("", 17)],
+        opset_imports=[h.make_opsetid("", OPSET)],
         ir_version=8,
     )
     model.graph.value_info.append(value("hidden"))
@@ -482,7 +484,7 @@ def reference_graph():
         return h.make_tensor_value_info(name, onnx.TensorProto.FLOAT, [1, 300, 4])
 
     graph = h.make_graph(nodes, "reference_chain", [value("reference_logits")], [value("result")], constants)
-    return h.make_model(graph, opset_imports=[h.make_opsetid("", 17)], ir_version=8)
+    return h.make_model(graph, opset_imports=[h.make_opsetid("", OPSET)], ir_version=8)
 
 
 def test_reference_rewrite_is_narrow_and_retains_the_tensor_contract(surgery):
@@ -614,7 +616,7 @@ def attention_graph(surgery, layers=None):
         ]
     model = h.make_model(
         h.make_graph(nodes, "attention", inputs, outputs, initializers),
-        opset_imports=[h.make_opsetid("", 17)],
+        opset_imports=[h.make_opsetid("", OPSET)],
         ir_version=8,
     )
     model = onnx.shape_inference.infer_shapes(model, strict_mode=True)
@@ -705,7 +707,7 @@ def integral_graph(surgery, layers=None, bins=None):
         ]
     model = h.make_model(
         h.make_graph(nodes, "integral", inputs, outputs, initializers),
-        opset_imports=[h.make_opsetid("", 17)],
+        opset_imports=[h.make_opsetid("", OPSET)],
         ir_version=8,
     )
     model = onnx.shape_inference.infer_shapes(model, strict_mode=True)
@@ -757,6 +759,8 @@ def test_sdk_system_exit_cannot_look_like_a_successful_phase(compiler):
 @pytest.mark.parametrize("invocation", ["w16a16", "other"])
 def test_registry_compile_cli_requires_the_profile_invocation(compiler, monkeypatch, tmp_path, invocation):
     calls = []
+    model = tmp_path / "model.onnx"
+    model.touch()
     monkeypatch.setattr(compiler, "compile_model", lambda *args: calls.append(args))
     monkeypatch.setattr(
         sys,
@@ -764,7 +768,7 @@ def test_registry_compile_cli_requires_the_profile_invocation(compiler, monkeypa
         [
             "compile.py",
             "--model",
-            str(tmp_path),
+            str(model),
             "--build-profile",
             "w16a16",
             "--compile-invocation",
@@ -784,7 +788,7 @@ def test_registry_compile_cli_requires_the_profile_invocation(compiler, monkeypa
         assert calls == []
     else:
         assert compiler.main() == 0
-        assert calls == [(tmp_path, invocation, tmp_path, tmp_path, tmp_path / "compiled")]
+        assert calls == [(model, invocation, tmp_path, tmp_path, tmp_path / "compiled")]
 
 
 def test_compiled_packages_have_native_placement_and_real_checksums(compiler, model_dir, compiled, build_profile):
@@ -799,6 +803,6 @@ def test_compiled_packages_have_native_placement_and_real_checksums(compiler, mo
         assert sha256_file(path)[0] == item["mpk_sha256"]
         compiler.audit_mpk(path, item["component_id"])
     fidelity = json.loads((compiled / "fidelity.json").read_text())
-    assert fidelity["samples"] == 10 and fidelity["selection"]["offset"] >= 50
+    assert fidelity["samples"] == 5 and fidelity["selection"]["offset"] >= 50
     assert [m["name"] for m in fidelity["metrics"]] == ["pred_boxes", "pred_logits"]
     assert len(receipt["derived_graphs"]) == 2

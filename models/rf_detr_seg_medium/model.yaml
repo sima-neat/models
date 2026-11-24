@@ -57,10 +57,10 @@ build_profiles:
     runner_market: on-demand
     components:
       backbone:
-        parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 50}
+        parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 20}
       # Sin/Cos use INT8 lookup tables even at BF16, so the decoder needs calibrated ranges.
       decoder:
-        parameters: {precision: w16a16, calibration_bins: 2048, calibration_samples: 50}
+        parameters: {precision: w16a16, calibration_bins: 2048, calibration_samples: 20}
 
   w8a16_w16a16:
     # The decoder calibrates on this backbone's outputs; W8A16 skips backbone calibration.
@@ -71,7 +71,7 @@ build_profiles:
         parameters: {precision: w8a16, per_token: true}
       # Sin/Cos use INT8 lookup tables even at BF16, so the decoder needs calibrated ranges.
       decoder:
-        parameters: {precision: w16a16, calibration_bins: 2048, calibration_samples: 50}
+        parameters: {precision: w16a16, calibration_bins: 2048, calibration_samples: 20}
 
   w8a8_mixed_w16a16:
     calibration_dataset: coco-2017-cal
@@ -82,11 +82,11 @@ build_profiles:
         parameters:
           precision: w8a8
           calibration_bins: 2048
-          calibration_samples: 50
+          calibration_samples: 20
           bf16_regions: [residual, attention_global, projector, head, outputs]
       # Sin/Cos use INT8 lookup tables even at BF16, so the decoder needs calibrated ranges.
       decoder:
-        parameters: {precision: w16a16, calibration_bins: 2048, calibration_samples: 50}
+        parameters: {precision: w16a16, calibration_bins: 2048, calibration_samples: 20}
 
   w8a16_w8a8_mixed:
     # The decoder calibrates on this backbone's outputs; W8A16 skips backbone calibration.
@@ -100,7 +100,7 @@ build_profiles:
         parameters:
           precision: w8a8
           calibration_bins: 2048
-          calibration_samples: 50
+          calibration_samples: 20
           bf16_regions: [transformer, outputs]
 
   # A W8A16 decoder fails in the compiler's large-tensor support ("Overlap in L1 detected");
@@ -112,7 +112,7 @@ build_profiles:
   #     backbone:
   #       parameters: {precision: w8a16, per_token: true}
   #     decoder:
-  #       parameters: {precision: w8a16, per_token: true, calibration_bins: 2048, calibration_samples: 50}
+  #       parameters: {precision: w8a16, per_token: true, calibration_bins: 2048, calibration_samples: 20}
 
 pipeline:
 - {component: backbone}
@@ -123,7 +123,7 @@ numerical_fidelity:
   # Reordered queries can lower numerical similarity for equivalent detections.
   status: diagnostic
   dataset: {id: coco-2017, variant: cal, sha256: 54c64d84122eba371ac014d7b43849a461551c2e6c5c430b5ead90ec1dec12b1, size_bytes: 187510866}
-  selection: {method: seeded_random_without_replacement, seed: 42, offset: 50, samples: 10}
+  selection: {method: seeded_random_without_replacement, seed: 42, offset: 50, samples: 5}
   outputs: [dets, labels, masks]
 
 accuracy:

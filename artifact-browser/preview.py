@@ -45,7 +45,7 @@ from model_registry.model import (  # noqa: E402
     mpk_filename,
     profile_component_for,
 )
-from model_registry.model_tests import load_model_tests, low_accuracy_variants  # noqa: E402
+from model_registry.model_tests import load_model_tests  # noqa: E402
 from model_registry.registry import build_catalog_snapshot  # noqa: E402
 from model_report import METRICS  # noqa: E402
 
@@ -753,8 +753,6 @@ class PreviewHandler(SimpleHTTPRequestHandler):
             )
         elif path == "/reference-metrics.json":
             self._json(reference_metrics_by_model(_repository()["models"]))
-        elif path == "/low-accuracy-variants.json":
-            self._json(low_accuracy_variants(ROOT, _repository()["models"]))
         elif path == "/dataset-names.json":
             self._json(dataset_names(ROOT))
         elif path == "/example-apps.json":

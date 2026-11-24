@@ -10,8 +10,11 @@ from types import ModuleType
 import numpy as np
 import onnx
 import pytest
+from model_registry.dependencies import onnx_opset_version
+from model_registry.errors import ValidationError
 from model_registry.model import load_model as load_metadata
 
+OPSET = onnx_opset_version()
 ROOT = Path(__file__).resolve().parents[4]
 MODEL_DIR = ROOT / "models" / "yolo26m"
 
@@ -97,7 +100,7 @@ def _source_graph(load_script: Callable[[str], ModuleType], constant_weight: boo
         [helper.make_tensor_value_info("output0", onnx.TensorProto.FLOAT, [1, 300, 6])],
         initializers,
     )
-    return helper.make_model(graph, opset_imports=[helper.make_opsetid("", 12)])
+    return helper.make_model(graph, opset_imports=[helper.make_opsetid("", OPSET)])
 
 
 def test_surgery_cuts_at_the_six_raw_heads_in_order(tmp_path: Path, load_script: Callable[[str], ModuleType]) -> None:
@@ -178,14 +181,18 @@ def test_mpk_audit_requires_one_mla_segment_and_the_declared_interface(
 def test_compile_reads_the_declared_build_parameters(load_script: Callable[[str], ModuleType], profile_id: str) -> None:
     expected = {"precision": profile_id}
     if profile_id == "w8a8":
-        expected |= {"calibration_bins": 2048, "calibration_samples": 50}
+        expected |= {"calibration_bins": 2048, "calibration_samples": 20}
 
-    assert load_script("compile")._parameters(profile_id) == expected
+    recipe = load_script("compile")
+
+    assert recipe.component_parameters(recipe.MODEL_DIR, profile_id, recipe.COMPONENT_ID) == expected
 
 
 def test_compile_rejects_an_undeclared_build_profile(load_script: Callable[[str], ModuleType]) -> None:
-    with pytest.raises(ValueError, match="no build profile"):
-        load_script("compile")._parameters("w32a32")
+    recipe = load_script("compile")
+
+    with pytest.raises(ValidationError, match="unknown build profile: w32a32"):
+        recipe.component_parameters(recipe.MODEL_DIR, "w32a32", recipe.COMPONENT_ID)
 
 
 def test_model_preserves_compilation_and_quality_settings() -> None:
@@ -228,7 +235,7 @@ def test_only_the_int8_build_quantizes_with_calibration_data(
     parameters = {"precision": precision}
     if precision == "w8a8":
         parameters |= {"calibration_bins": 2048, "calibration_samples": 2}
-    monkeypatch.setattr(recipe, "_parameters", lambda profile_id: parameters)
+    monkeypatch.setattr(recipe, "component_parameters", lambda model_dir, profile_id, component_id: parameters)
     monkeypatch.setattr(recipe, "calibration_images", lambda dataset, count: np.zeros((count, 640, 640, 3), np.float32))
     monkeypatch.setattr(recipe, "prepare_model", lambda source, output_dir: output_dir / "cut.onnx")
 

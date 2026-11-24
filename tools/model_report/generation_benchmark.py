@@ -6,9 +6,11 @@ import argparse
 import hashlib
 import json
 import math
+import signal
 import socket
 import statistics
 import subprocess
+import sys
 from contextlib import contextmanager
 from importlib.metadata import version
 from pathlib import Path
@@ -412,4 +414,6 @@ def main() -> None:
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--baseline", type=Path, help="staged ordinary benchmark baseline receipt")
     args = parser.parse_args()
+    # A cancelled job terminates the benchmark. Exit through the finally blocks, which stop the Sentinel recording.
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(128 + signal.SIGTERM))
     run_benchmark(args.deployment, args.output, args.baseline)

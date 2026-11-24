@@ -122,10 +122,17 @@ build_profiles:
 
 Name a profile by the precision token of each component, in component order,
 with a repeated token written once: `w8a8`, `w16a16`, or `w8a8_w16a16` for an
-INT8 backbone followed by a BF16 decoder. The recipe maps
-`parameters.precision` to compiler settings, and the target is `modalix`. A
-profile commented out in `model.yaml` is not supported. `model.yaml` names no
-compiler version.
+INT8 backbone followed by a BF16 decoder. `mixed` follows a component's token
+when some of its operations run above that precision, as in RF-DETR Nano's
+`w8a8_mixed_w16a16`. The recipe maps `parameters.precision` to compiler
+settings, and the target is `modalix`. A profile commented out in `model.yaml`
+is not supported, and the comment above it gives the reason.
+`model-registry validate` rejects a declared profile whose expected accuracy
+falls below the model's reference score by more than the limit that the
+`neat-benchmark-model` skill's
+[comparable measurements](https://github.com/sima-neat/models/blob/main/skills/neat-benchmark-model/references/comparability.md#compare-with-the-expected-values)
+gives, so `model.yaml` comments such a profile out with its measured gap.
+`model.yaml` names no compiler version.
 
 ### Datasets
 
@@ -145,6 +152,12 @@ folding, when that keeps the same inputs, outputs, and computation.
   `model.onnx` there, or the files `conversion.outputs` names.
 - YOLO26n's `convert.py` downloads its checkpoint, checks it against the SHA-256
   in `model.yaml`, and then exports it.
+- It exports at the ONNX opset `deps/manifest.json` sets as `onnx.opset`, which it
+  reads with `onnx_opset_version()` from `model_registry.dependencies`, and checks
+  the written file with `require_onnx_opset_version(model)`. The repository exports at
+  opset 17, because the [operator database](operator_database.md) supports `ReduceL1`,
+  `ReduceLogSum`, `ReduceLogSumExp`, and `ReduceSumSquare` only up to opset 17, where
+  their axes are an attribute.
 - `requirements-convert.txt` pins its packages.
   `requirements-convert-nodeps.txt` optionally pins packages to install without
   their dependencies.
@@ -180,22 +193,29 @@ makes.
 ## `calibration.py`
 
 `calibration.py` is a helper beside `compile.py` for model-specific calibration
-code, such as reading the calibration images and picking the samples with a
-fixed seed. ResNet-50's
+code: the preprocessing, and picking the samples with a fixed seed. In the
+Models repository it lists and reads the dataset's images with `image_names`
+and `read_images` from `model_inputs.images`, a shared module under `tools/`
+that also skips the `._` companion files macOS tar writes into an archive.
+Pass `image_names` the suffixes as a tuple of lower-case strings, such as
+`(".jpg", ".jpeg")`. ResNet-50's
 [`calibration.py`](https://github.com/sima-neat/models/blob/main/models/resnet_50/scripts/calibration.py)
 is one example.
 
 - Calibration feeds quantization: the compiler runs sample images to choose the
   INT8 value ranges. It is not accuracy evidence.
 - Only a profile with a `calibration_dataset` needs it. In YOLO26n, `w8a8`
-  calibrates on 50 images from a folder named `cal2017`, and `w16a16` and
+  calibrates on 20 images from a folder named `cal2017`, and `w16a16` and
   `w8a16` take no calibration dataset.
+- Each sample adds compile time. The Models repository keeps a component's
+  `calibration_samples` at 20 or fewer. `model-registry validate` rejects a
+  `numerical_fidelity` selection of more than 5 samples.
 - The recipe calibrates the first component on the profile's calibration
   dataset and later components on its outputs.
 - Results match the published ones only when calibration reads the same
   samples. Other images give a different INT8 model.
 - When `accuracy.py` imports it, as ResNet-50's does, copy it to the DevKit
-  beside `accuracy.py`. It stays a compile input.
+  beside `accuracy.py`, with `tools/model_inputs`. It stays a compile input.
 
 ## `compile.py`
 
@@ -213,7 +233,35 @@ its components in one invocation named after it. The recipe does this:
 - It builds only a declared build profile, and stops with an error that names
   any other.
 - It reads its build profile from `model.yaml`. In the Models repository it
-  uses `model_registry.model.load_model`.
+  uses `component_parameters` from `model_registry.compile_script`. That module
+  also parses this command line (`parse_arguments`), reads the MPK manifest
+  (`read_mpk_manifest`), and gives the log level the recipe passes to
+  `quantize` and `compile` (`compiler_log_level`: `DEBUG` in a GitHub Actions
+  job, `INFO` anywhere else). `model_registry.fidelity` runs the fidelity
+  samples through the ONNX source and the quantized graph (`compare_with_onnx`)
+  and writes `fidelity.json` (`write_fidelity_report`). Give
+  `compare_with_onnx` float32 samples, channels last and without the batch
+  axis, for a model with one input, and give `write_fidelity_report` an output
+  directory that exists. The recipe does not copy any of them. The recipe
+  itself stays in the model's scripts:
+  quantization, the compile call, preprocessing, which samples calibrate the
+  model and which measure fidelity, graph surgery, and the MPK audit. A recipe
+  whose step differs from a helper keeps its own code, such as one that takes
+  a checkpoint like `weights.pth` as `--model` and parses its own command line,
+  or one that compares outputs between several components.
+- When a compile fails without a clear error, compile again at `DEBUG`. Run a
+  Models recipe with the environment variable `GITHUB_ACTIONS=true` set, which
+  `compiler_log_level` reads. In your own recipe, pass
+  `log_level=logging.DEBUG` to `quantize` and `compile`. Model Compiler 3.0.0.2
+  then logs the quantization configuration and each MLA scheduling and memory
+  decision. For ResNet-18 `w8a8` that is about 6,700 log lines in place of 70,
+  with the compile time unchanged at about a minute.
+- It passes `Model.compile` an extra keyword argument only when the compiler
+  reads that argument and the value differs from its default. In Model
+  Compiler 3.0.0.2, `Model.compile` takes extra keyword arguments through
+  `**kwargs` and raises no error for one it never reads, so a leftover argument
+  looks like a setting and changes nothing. For example, 77 Models recipes
+  passed `deployable=True`, which that compiler reads nowhere.
 - It rewrites the graph with `surgery.py` and quantizes it. It then writes
   exactly one `<model-id>_<profile-id>_mpk.tar.gz` under
   `<output-dir>/<component-id>/` for each component, by passing
@@ -230,7 +278,8 @@ its components in one invocation named after it. The recipe does this:
 ### Quantization in `compile.py`
 
 One `QuantizationParams` call per precision sets every field that build needs, so a reader sees
-a build's settings in one place.
+a build's settings in one place. The blocks below show that structure. Each model chooses its own
+calibration method and options.
 
 ```python
 # Bad: both builds share one chain, so no single place shows what w8a16 gets.
@@ -282,6 +331,9 @@ if "calibration_samples" in parameters:
 [Getting started](https://github.com/sima-neat/models/blob/main/docs/getting-started.md)
 walks through YOLO26n `w8a8`. Replace `yolo26n` and `w8a8` for another model or
 variant. Run each command from the root of a clone of the Models repository.
+The clone must hold the shared modules these commands use, which
+`ls tools/model_inputs tools/model_registry/compile_script.py` confirms. When
+it prints an error, check out the branch or release this skill came from.
 
 | You need | Check it |
 | --- | --- |
@@ -291,7 +343,7 @@ variant. Run each command from the root of a clone of the Models repository.
 
 1. Pick a build profile declared in `models/yolo26n/model.yaml`.
 2. Get the calibration images. Without SiMa access, create a folder named
-   `cal2017` with at least 50 COCO images from outside `val2017`, and set
+   `cal2017` with at least 20 COCO images from outside `val2017`, and set
    `calibration` to the directory that holds it. On SiMa's private network or
    VPN, with Dataset Registry access as
    [Datasets](https://github.com/sima-neat/models/blob/main/docs/datasets.md#set-up-artifactory-access-first)
@@ -307,6 +359,14 @@ variant. Run each command from the root of a clone of the Models repository.
    scripts/run_model_conversion.sh models/yolo26n default build/yolo26n/onnx
    ```
 
+   A model that pins its ONNX under `compilation.source`, such as `resnet_50`,
+   has no `convert.py`, and this script stops for it. Fetch the verified file
+   instead, and pass `"$model"` as `--model` in step 4:
+
+   ```bash
+   model="$(PYTHONPATH=tools python -m model_registry fetch models/resnet_50 --json | jq -r .path)"
+   ```
+
 4. Compile, with the Model Compiler environment active:
 
    ```bash
@@ -319,8 +379,18 @@ variant. Run each command from the root of a clone of the Models repository.
    ```
 
    `PYTHONPATH=tools` lets `compile.py` import the `model_registry` package that
-   reads `model.yaml`. The compiler's summary ends with a line that starts with
-   `Compiled model:`.
+   reads `model.yaml`, and lets `calibration.py` import `model_inputs`. The
+   compiler's summary ends with a line that starts with `Compiled model:`.
+
+   A model that declares `numerical_fidelity`, such as `resnet_50`, also takes
+   `--fidelity-dataset "$fidelity"`. Set `fidelity` to a directory of the
+   dataset that `numerical_fidelity.dataset` names, or, with the access step 2
+   names, resolve the registered archive:
+
+   ```bash
+   fidelity="$(PYTHONPATH=tools python -m model_registry fetch-fidelity-dataset models/resnet_50 \
+     --build-profile w8a8 --component model --json | jq -r .path)"
+   ```
 5. Check the archive:
 
    ```bash
@@ -338,11 +408,15 @@ instead.
 | What you see | Fix |
 | --- | --- |
 | `No module named 'afe'` | Activate the Model Compiler environment. In the Neat SDK, run `activate-model-compiler`. |
-| `No module named 'model_registry'` | Run from the repository root with `PYTHONPATH=tools`. |
+| `No module named 'model_registry'` or `No module named 'model_inputs'` | Run from the repository root with `PYTHONPATH=tools`. |
 | `FileExistsError` from `convert.py` or `compile.py` | Delete the output directory, or name a new one. |
-| `model.yaml declares no build profile` or `expected exactly one build profile` | Pass a name from `build_profiles`. |
+| `--model must be the verified ONNX source, not <path>` | Pass a file whose name ends in `.onnx`. |
+| `model does not exist: <path>` | Pass the ONNX that step 3 wrote or fetched. |
+| `a build profile compiles in one invocation named after it` | Pass the same profile ID as `--build-profile` and `--compile-invocation`. |
+| `unknown build profile` or `model.yaml declares no build profile` | Pass a name from `build_profiles`. |
 | `the INT8 build requires --dataset from dataset-registry` | Pass the calibration archive or directory. |
-| `cannot select 50 calibration images from 0 cal2017 images` | Put at least 50 images in a folder named `cal2017`. |
+| `dataset does not exist: <path>` | Pass `--dataset` an existing calibration archive or directory. |
+| `cannot select 20 calibration images from 0 cal2017 images` | Put at least 20 images in a folder named `cal2017`. |
 | `model.yaml declares numerical_fidelity; pass --fidelity-dataset` | Pass the dataset that `numerical_fidelity.dataset` names. |
 | `yolo26n: resolve conversion with plan-stages before compilation` | Pass your own ONNX to `compile.py` with `--model`. |
 

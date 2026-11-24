@@ -27,13 +27,13 @@ from model_registry.artifact import (
 from model_registry.candidates import DEPLOYMENTS, publish_candidate
 from model_registry.dependencies import resolve_model_compiler
 from model_registry.errors import ValidationError
+from model_registry.fetch import BuildFile, download_build, download_build_file
 from model_registry.fingerprints import COMPILE_TOOLING, benchmark_fingerprint, compile_fingerprint
 from model_registry.model import load_and_validate_model, load_models, mpk_filename
 from model_registry.registry import (
     RegistryPublicationError,
     S3ArtifactStore,
     S3Object,
-    _download_registry_file,
     _preflight_compilations,
     canonical_sha256,
     publish_catalog,
@@ -329,11 +329,6 @@ def test_native_deployment_publish_package_and_retrieve_without_archiving(
         assert restored_package["component_run_ids"] == {"model": compile_run}
         with pytest.raises(ValidationError, match="current model/compiler"):
             stage_catalog_build(**restore_args, expected_compile_fingerprint="f" * 64)
-    restored = tmp_path / "restored" / MODEL / PROFILE / "model/deployment"
-    assert verify_llima(restored) == verify_llima(source)
-    assert json.loads((restored / "devkit/vlm_config.json").read_text())["vm_cfg"]["image_size"] == [448, 448]
-    stale = restored / "removed-by-newer-build.bin"
-    stale.write_bytes(b"old payload")
     downloads = []
 
     def download(url):
@@ -341,9 +336,16 @@ def test_native_deployment_publish_package_and_retrieve_without_archiving(
         return registry.objects[url]
 
     stage_catalog_build(**{**restore_args, "download_request": download})
-    assert not stale.exists()
-    assert len(downloads) == 1  # Only the manifest is fetched; verified payload files are reused.
+    staged = tmp_path / "restored" / MODEL / PROFILE / "model"
+    # Staging fetches only the deployment manifest; the DevKit downloads each file it lists by compile run.
+    assert len(downloads) == 1
+    assert not (staged / "deployment").exists()
+
+    counts = download_build(tmp_path / "restored", MODEL, PROFILE, read=read, download=download)
+    restored = staged / "deployment"
+    assert counts == {f"{MODEL}/{PROFILE}": len(downloads) - 1}
     assert verify_llima(restored) == verify_llima(source)
+    assert json.loads((restored / "devkit/vlm_config.json").read_text())["vm_cfg"]["image_size"] == [448, 448]
 
 
 @pytest.mark.parametrize("native_file_count", [2047])
@@ -920,16 +922,21 @@ def test_registry_download_streams_and_replaces_only_verified_files(tmp_path, mo
             reads.append(size)
             return super().read(size)
 
-    monkeypatch.setattr("model_registry.registry.urlopen", lambda *args, **kwargs: Response(payload))
-    artifact = {"sha256": hashlib.sha256(payload).hexdigest(), "size_bytes": len(payload)}
-    _download_registry_file("https://example.invalid/weights", destination, artifact)
+    def registry(item):
+        """A registry read that records the item as staged, with the link the response above serves."""
+        artifact = {"sha256": item.sha256, "size_bytes": item.size_bytes, "download_url": "https://example.invalid/w"}
+        return lambda url: {"artifact": artifact}
+
+    monkeypatch.setattr("model_registry.fetch.urlopen", lambda *args, **kwargs: Response(payload))
+    item = BuildFile("weights.npy", "run", "weights", hashlib.sha256(payload).hexdigest(), len(payload))
+    download_build_file(registry(item), "https://registry.invalid", tmp_path, item)
     assert destination.read_bytes() == payload
     assert len(reads) > 3
     assert sorted(tmp_path.iterdir()) == [destination]
 
     destination.write_bytes(previous)
+    other = BuildFile(item.path, item.run_id, item.artifact, "0" * 64, item.size_bytes)
     with pytest.raises(ValidationError, match="SHA-256"):
-        _download_registry_file("https://example.invalid/weights", destination,
-                                {**artifact, "sha256": "0" * 64})
+        download_build_file(registry(other), "https://registry.invalid", tmp_path, other)
     assert destination.read_bytes() == previous
     assert sorted(tmp_path.iterdir()) == [destination]

@@ -186,9 +186,11 @@ profile to a selection with the candidate's `deployment_id`, `requirements`, and
 `artifacts`. Promotion writes `approved_deployments` on develop and main.
 `publish-branch-deployment` asks Vulcan to write `branch_deployments` on a feature branch.
 
-- The producer never writes either field. `publish_catalog` strips them from any model
-  entry it carries over from another ref, because the registry rejects a snapshot that
-  holds another ref's selections.
+- The producer never writes either field. `publish_catalog` strips them from each deferred
+  model entry it carries over (`_without_selections`), because the registry rejects a
+  snapshot that holds another ref's selections. It also drops the `benchmark_fingerprints`
+  of those profiles, because the registry rejects fingerprints of a profile without a build.
+  On `develop` and `main`, `_refresh_approved_benchmarks` recomputes them.
 - Readers resolve a selection through `_catalog_outputs` in `registry.py`. A branch
   selection wins over an approved one for the same profile, and both replace the
   profile's raw `builds` and `packages`. A completed run that is not selected cannot

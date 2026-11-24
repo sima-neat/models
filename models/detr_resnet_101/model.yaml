@@ -59,7 +59,7 @@ build_profiles:
     calibration_dataset: coco-2017-cal
     components:
       model:
-        parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 50, bf16_regions: [attention, residual, ffn, heads]}
+        parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 20, bf16_regions: [attention, residual, ffn, heads]}
 
 accuracy:
   # The reference resizes the shortest side to 800, caps the longest at 1333 and masks the padding. accuracy.py

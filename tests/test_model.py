@@ -403,6 +403,10 @@ def test_numerical_fidelity_resolves_its_dataset() -> None:
         ({"dataset": "missing"}, "numerical_fidelity.dataset"),
         ({"engine": "model_recipe"}, "'engine' was unexpected"),
         ({"outputs": []}, "numerical_fidelity.outputs"),
+        (
+            {"selection": {"method": "seeded_random_without_replacement", "seed": 1, "offset": 0, "samples": 6}},
+            "numerical_fidelity.selection.samples: 6 is greater than the maximum of 5",
+        ),
     ],
 )
 def test_numerical_fidelity_is_validated(settings: dict, expected: str) -> None:
@@ -679,7 +683,7 @@ def test_catalog_model_is_valid() -> None:
     assert set(profiles) == {"w16a16", "w8a8", "w8a16"}
     assert profiles["w16a16"]["components"][0]["parameters"]["precision"] == "w16a16"
     assert profiles["w8a8"]["components"][0]["parameters"]["precision"] == "w8a8"
-    assert profiles["w8a8"]["components"][0]["parameters"]["calibration_samples"] == 50
+    assert profiles["w8a8"]["components"][0]["parameters"]["calibration_samples"] == 20
     assert profiles["w8a16"]["components"][0]["parameters"]["precision"] == "w8a16"
     assert model["calibrations"][0]["dataset"] == {
         "id": "imagenet-2012",

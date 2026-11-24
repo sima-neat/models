@@ -13,8 +13,10 @@ from types import ModuleType, SimpleNamespace
 
 import numpy as np
 import pytest
+from model_registry.dependencies import onnx_opset_version
 from model_registry.model import load_model as load_metadata
 
+OPSET = onnx_opset_version()
 ROOT = Path(__file__).resolve().parents[4]
 MODEL_DIR = ROOT / "models" / "edgetam"
 
@@ -31,7 +33,7 @@ def calibration(load_script: Callable[[str], ModuleType]) -> ModuleType:
 
 def test_every_build_profile_is_named_after_its_component_precisions(compiler: ModuleType) -> None:
     for profile in load_metadata(MODEL_DIR)["build_profiles"]:
-        compiler.check_profile_id(profile["id"], compiler.component_parameters(profile["id"]))
+        compiler.check_profile_id(profile["id"], compiler._component_parameters(profile["id"]))
 
 
 def test_profile_id_writes_a_repeated_precision_once(compiler: ModuleType) -> None:
@@ -80,7 +82,7 @@ def test_gelu_marks_are_int8_on_each_gelu_and_bf16_on_the_operation_after_it(
         [weight, *constants],
     )
     source, annotated = tmp_path / "source.onnx", tmp_path / "annotated.onnx"
-    onnx.save(helper.make_model(graph, opset_imports=[helper.make_opsetid("", surgery.OPSET)]), source)
+    onnx.save(helper.make_model(graph, opset_imports=[helper.make_opsetid("", OPSET)]), source)
 
     assert surgery.gelu_marks(onnx.load(source), "image_encoder") == {
         f"{scope}/Mul_1": "int8",

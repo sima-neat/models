@@ -3,6 +3,9 @@ from pathlib import Path
 import numpy as np
 import onnx
 import pytest
+from model_registry.dependencies import onnx_opset_version
+
+OPSET = onnx_opset_version()
 
 
 def test_finite_clip_preserves_ordinary_normalization(load_script):
@@ -13,7 +16,7 @@ def test_finite_clip_preserves_ordinary_normalization(load_script):
     ], "normalization", [h.make_tensor_value_info("norm", onnx.TensorProto.FLOAT, [1])],
        [h.make_tensor_value_info("bounded", onnx.TensorProto.FLOAT, [1])],
        [onnx.numpy_helper.from_array(np.array(1e-12, np.float32), "eps")]),
-       opset_imports=[h.make_opsetid("", 13)], ir_version=10)
+       opset_imports=[h.make_opsetid("", OPSET)], ir_version=10)
     surgery.finite_clip_bounds(graph)
     bound = onnx.numpy_helper.to_array(graph.graph.initializer[-1])
     assert np.isfinite(bound) and bound > 1e30
@@ -84,7 +87,7 @@ def test_calibration_is_pinned_in_model_registry(model_dir):
     (profile,) = model["build_profiles"]
     assert profile["components"][0]["calibration"] == "coco-2017-cal"
     detector = next(item for item in profile["components"] if item["id"] == "detector")
-    assert detector["parameters"]["calibration_samples"] == 64
+    assert detector["parameters"]["calibration_samples"] == 20
 
 
 def test_bf16_text_configuration_skips_calibration(load_script, monkeypatch):

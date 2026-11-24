@@ -54,11 +54,15 @@ folders, that folder is the dataset directory to pass.
 | `--output <directory>` | where the report goes |
 
 Existing scripts also accept `--limit <images>` to evaluate a subset for a
-quick check. CI never passes it, so compare only a run without it. Optional
-`scripts/requirements-accuracy.txt` pins extra wheels, which install into a
-separate folder beside PyNeat's environment and never into it. A script that
-imports another file under `scripts/`, such as ResNet-50's `calibration.py`,
-needs that file beside it.
+quick check. CI passes it only when `model.yaml` sets `accuracy.samples`, so
+compare a run with the same limit, or none when the field is unset. Keep the
+limit at or below the dataset's sample count, because most scripts draw that
+many samples with a fixed seed and stop with an error when the dataset holds
+fewer. Optional `scripts/requirements-accuracy.txt` pins extra wheels, which
+install into a separate folder beside PyNeat's environment and never into it.
+A script that imports another file under `scripts/`, such as ResNet-50's
+`calibration.py`, needs that file beside it. `calibration.py` imports
+`model_inputs`, so such a run also needs `tools/model_inputs` on `PYTHONPATH`.
 
 The script scores the whole model on each dataset and hands the scores to
 `model_report.from_accuracy()`, keyed by the dataset source IDs:
@@ -81,7 +85,19 @@ report.save(args.output)
 How the script evaluates each dataset is up to the model. ResNet-50's
 [`accuracy.py`](https://github.com/sima-neat/models/blob/main/models/resnet_50/scripts/accuracy.py)
 builds a runner from the first input tensor and runs every validation image
-through it. `from_accuracy()` checks each dataset's result:
+through it:
+
+```python
+model = pyneat.Model(str(parse_mpks(args.mpk)))
+runner = None
+for image in images:
+    tensor = pyneat.Tensor.from_numpy(image, copy=False)
+    if runner is None:
+        runner = model.build([tensor])
+    logits = runner.run([tensor], timeout_ms=120000)[0].to_numpy(copy=False).reshape(-1)
+```
+
+`from_accuracy()` checks each dataset's result:
 
 - It needs `metrics`, `split`, `evaluated_samples`, and `available_samples`, and
   allows only `details` besides them.

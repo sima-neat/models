@@ -8,16 +8,13 @@ bf16_regions, if it declares any, in BF16.
 from __future__ import annotations
 
 import argparse
-import json
-import logging
 import math
 import os
 import shutil
-import tarfile
 import tempfile
 from collections import Counter
 from dataclasses import dataclass
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -36,7 +33,7 @@ from afe.core.configs import QuantizationPrecision
 from afe.core.utils import convert_data_generator_to_iterable
 from afe.load.importers.general_importer import onnx_source
 from calibration import calibration_inputs
-from model_registry.model import load_model as load_metadata
+from model_registry.compile_script import compiler_log_level, component_parameters, read_mpk_manifest
 from sima_utils.data.data_generator import DataGenerator
 from surgery import BF16_REGIONS, annotate_bf16_regions, export_matcher
 
@@ -66,14 +63,6 @@ OUTPUT_KERNELS = {"pass_through", "cast_transform", "dequantization_transform"}
 MIN_MATCH_AGREEMENT = {"w16a16": 0.95, "w8a16": 0.95, "w8a8": 0.85}
 # Softmaxes in the matcher: one per attention, in 18 layers on two images.
 SOFTMAXES = 36
-
-
-def _parameters(profile_id: str) -> dict[str, Any]:
-    model = load_metadata(MODEL_DIR)
-    profiles = [profile for profile in model["build_profiles"] if profile["id"] == profile_id]
-    if len(profiles) != 1:
-        raise ValueError(f"model.yaml declares no build profile {profile_id!r}")
-    return next(item["parameters"] for item in profiles[0]["components"] if item["id"] == COMPONENT_ID)
 
 
 def _bf16_regions(profile_id: str, parameters: dict[str, Any]) -> list[str]:
@@ -191,26 +180,9 @@ def check_quantized_matches(source: Path, quantized: Any, minimum: float = MIN_M
     return agreement
 
 
-def _read_mpk_manifest(archive: Path) -> tuple[list[str], dict[str, Any]]:
-    with tarfile.open(archive, "r:gz") as stream:
-        members = stream.getmembers()
-        for member in members:
-            path = PurePosixPath(member.name)
-            if path.is_absolute() or ".." in path.parts or member.issym() or member.islnk():
-                raise RuntimeError(f"unsafe MPK member: {member.name}")
-        names = [member.name for member in members]
-        manifests = [name for name in names if name.endswith("_mpk.json")]
-        if len(manifests) != 1:
-            raise RuntimeError(f"expected one MPK manifest, found {manifests}")
-        source = stream.extractfile(manifests[0])
-        if source is None:
-            raise RuntimeError(f"cannot read MPK manifest: {manifests[0]}")
-        return names, json.load(source)
-
-
 def audit_mpk(archive: Path) -> None:
     """Require the whole matcher on one MLA segment, with no host code, and the declared interface."""
-    names, manifest = _read_mpk_manifest(archive)
+    names, manifest = read_mpk_manifest(archive)
     elfs = [name for name in names if name.endswith(".elf")]
     shared_objects = [name for name in names if name.endswith(".so") or ".so." in name]
     plugins = sorted(manifest.get("plugins", []), key=lambda item: item.get("sequence", 0))
@@ -241,7 +213,7 @@ def _calibration_data(parameters: dict[str, Any], dataset: Path | None) -> Any:
 
 
 def compile_model(source: Path, output_dir: Path, profile_id: str, dataset: Path | None) -> Path:
-    parameters = _parameters(profile_id)
+    parameters = component_parameters(MODEL_DIR, profile_id, COMPONENT_ID)
     regions = _bf16_regions(profile_id, parameters)
     component_dir = output_dir / COMPONENT_ID
     component_dir.mkdir(parents=True, exist_ok=False)
@@ -264,7 +236,7 @@ def compile_model(source: Path, output_dir: Path, profile_id: str, dataset: Path
             calibration_data=_calibration_data(parameters, dataset),
             quantization_config=_quantization(parameters),
             model_name=f"{MODEL_ID}_{profile_id}",
-            log_level=logging.INFO,
+            log_level=compiler_log_level(),
         )
         if regions:
             _require_bf16_regions(quantized, regions)
@@ -275,10 +247,9 @@ def compile_model(source: Path, output_dir: Path, profile_id: str, dataset: Path
             output_path=str(build_dir / "mpk"),
             batch_size=1,
             compress=True,
-            log_level=logging.INFO,
+            log_level=compiler_log_level(),
             tessellate_parameters=None,
             l2_caching_mode=L2CachingMode.NONE,
-            deployable=True,
         )
         archives = sorted((build_dir / "mpk").glob("*_mpk.tar.gz"))
         if len(archives) != 1:
@@ -299,7 +270,8 @@ def main() -> int:
     args = parser.parse_args()
     if args.compile_invocation != args.build_profile:
         parser.error("a build profile compiles in one invocation named after it")
-    if _parameters(args.build_profile)["precision"] == "w8a8" and args.dataset is None:
+    parameters = component_parameters(MODEL_DIR, args.build_profile, COMPONENT_ID)
+    if parameters["precision"] == "w8a8" and args.dataset is None:
         parser.error(f"{args.build_profile} calibrates; pass --dataset")
     dataset = args.dataset.expanduser().resolve() if args.dataset else None
     weights = args.model.expanduser().resolve()

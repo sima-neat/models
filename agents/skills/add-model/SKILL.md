@@ -35,8 +35,11 @@ this work has nothing to do with ([`rules.md` "Before a push"](../../rules.md#be
    conversion](../../../docs/conversion-artifacts.md#publish-a-conversion)). The step is done
    when the conversion tests pass and a published conversion matches the current conversion
    inputs.
-4. Write `surgery.py`, `calibration.py`, and `compile.py` as `coding-style.md` describes. Judge
-   each rewrite and each quantization choice with
+4. Write `surgery.py`, `calibration.py`, and `compile.py` as `coding-style.md` describes.
+   `compile.py` imports the shared helpers from `model_registry.compile_script` and
+   `model_registry.fidelity`, `calibration.py` lists and reads images with
+   `model_inputs.images`, and both keep the recipe, and each component calibrates on at most 20 samples, as [`rules.md`
+   "Compile"](../../rules.md#compile) says. Judge each rewrite and each quantization choice with
    [`neat-compile-model`](../../../skills/neat-compile-model/SKILL.md). The step is done when
    each rewrite has a purpose the description can state under `Surgery`, and each choice away
    from the compiler default has its comment. An LLM or VLM writes `compile.sh` as [LLiMa
@@ -51,7 +54,14 @@ this work has nothing to do with ([`rules.md` "Before a push"](../../rules.md#be
 6. Write the tests and `tests/tests.yaml` as [the tests
    step](../../../docs/adding-a-model.md#10-write-the-models-tests) and `coding-style.md`
    "Tests" describe. A measurement stage with no published report to take values from sets
-   `run_tests: false` and a `skip_reason`. The step is done when
+   `run_tests: false` and a `skip_reason`. When `model-registry validate` fails a profile whose
+   expected accuracy is more than 8% below its reference score, comment the profile out as
+   [comment out a variant far below its reference
+   score](../../../docs/adding-a-model.md#comment-out-a-variant-far-below-its-reference-score)
+   describes. While `accuracy` sets `run_tests: false`, neither `model-registry validate` nor
+   the DevKit test applies that rule, so compare each profile's measured accuracy with its
+   reference score by hand and comment the profile out when it is more than 8% below. The
+   step is done when
    `python -m pytest models/<model_id>/tests` passes and each behavior the change adds or
    changes has a test.
 7. Write or update the README and hero as [model README](../../../docs/model-readme.md) and
@@ -69,9 +79,14 @@ this work has nothing to do with ([`rules.md` "Before a push"](../../rules.md#be
    locally](../../../docs/local-development.md)). The step is done when every changed build
    compiled and verified, and `scripts/run_model_tests.sh compile` passed on its output.
 10. On a DevKit prepared as [set up a DevKit](../../../docs/benchmarking.md#set-up-a-devkit)
-    describes, run the model's `scripts/performance.py` with `PYTHONPATH=tools` and
-    `--mpk <archive>`. A multi-component model takes one `--mpk <component>=<archive>` per
-    component instead. Run `scripts/run_model_accuracy.sh` for each build that declares accuracy. The step is done when each declared stage wrote
+    describes, run `scripts/run_model_performance.sh <model_dir> <profile>
+    <compile-output-root> <result-dir>` for each changed build, and
+    `scripts/run_model_accuracy.sh` with the same arguments for each build that declares
+    accuracy ([benchmark
+    locally](../../../docs/local-development.md#benchmark-locally-on-a-modalix-devkit)). A
+    direct `performance.py` run sets no clocks and runs no `check-report`, and it needs
+    `--output`, and `--dataset` for a model with an accuracy dataset, beside `--mpk`. The
+    step is done when each declared stage wrote
     `model-report.json` and passed its stage test, or its failure is recorded for the
     description.
 11. Before a push, list the stages the change reruns, per model and build profile, with
