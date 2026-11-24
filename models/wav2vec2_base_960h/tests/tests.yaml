@@ -1,0 +1,19 @@
+conversion:
+  run_tests: true
+compile:
+  run_tests: true
+accuracy:
+  run_tests: true
+  expected:
+    w8a16:
+      fleurs-en-us-test:
+        # Full 647-recording pinned dataset payload on platform 3.0.1 and Core develop e9b5d66a29b6.
+        wer: 0.22222984562607204
+        cer: 0.1004373677891487
+performance:
+  run_tests: true
+  expected:
+    w8a16:
+      # 30 s FLEURS speech, 8 threads, platform 3.0.1, Core develop e9b5d66a29b6.
+      throughput_fps: 0.20043214607947338
+      real_time_factor: 0.16630732138205181

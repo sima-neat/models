@@ -1,0 +1,58 @@
+build-on-demand: true
+display_name: Wav2Vec2 Base 960h
+description: Transcribes English speech using a Wav2Vec2 CTC encoder.
+model_type: audio
+tasks: [automatic_speech_recognition]
+modalities:
+  inputs: [audio]
+  outputs: [text]
+architecture: wav2vec2
+license:
+  spdx: Apache-2.0
+  redistribution: allowed
+  attribution: Wav2Vec2 Base 960h weights are distributed under Apache-2.0 by Meta.
+upstream:
+  repository: https://huggingface.co/facebook/wav2vec2-base-960h
+  revision: 22aad52d435eb6dbaf354bdad9b0da84ce7d6156
+resources:
+  license:
+    source:
+      uri: https://raw.githubusercontent.com/spdx/license-list-data/31846481de7ea17d92f2f46fad76abe58b2e9bb0/text/Apache-2.0.txt
+      sha256: 074e6e32c86a4c0ef8b3ed25b721ca23aca83df277cd88106ef7177c354615ff
+      size_bytes: 10280
+    install_path: licenses/LICENSE
+conversion:
+  source:
+    repository: facebook/wav2vec2-base-960h
+    revision: 22aad52d435eb6dbaf354bdad9b0da84ce7d6156
+    main_file: model.safetensors
+    files:
+      model.safetensors:
+        sha256: 8aa76ab2243c81747a1f832954586bc566090c83a0ac167df6f31f0fa917d74a
+        size_bytes: 377607901
+      config.json:
+        sha256: d3ec255c063d9f95057b553b19c20135b259875834a4fe9deb218a6be25b4cf3
+        size_bytes: 1596
+      preprocessor_config.json:
+        sha256: b225d617c025463b9e157e06afea8b90dc7078fc70b013c533328423e0486b4a
+        size_bytes: 159
+      vocab.json:
+        sha256: 19727f8944fe6459fc3f240ae2c198395b740f6a029bd23e06656266b83bcf64
+        size_bytes: 291
+compilation:
+  format: onnx
+  source: conversion
+build_profiles:
+  w8a16:
+    components:
+      model:
+        parameters: {precision: w8a16}
+pipeline:
+- cpu: Normalize 16 kHz PCM and calculate convolutional frontend
+- component: model
+- cpu: CTC greedy decoding to text
+accuracy:
+  datasets:
+  - {id: fleurs, variant: en-us-test, sha256: c2b7984079a73f169b147f531699af5ffe0eb60bb071277ac9f4a455e786acb2, size_bytes: 289947446}
+performance:
+  dataset: {id: fleurs, variant: en-us-test, sha256: c2b7984079a73f169b147f531699af5ffe0eb60bb071277ac9f4a455e786acb2, size_bytes: 289947446}
