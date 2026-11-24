@@ -90,7 +90,7 @@ def main():
     parser.add_argument("--dataset", required=True, help=f"{accuracy.DATASET}=extracted-dataset")
     parser.add_argument("--output", type=Path, required=True, help="JSON file for metrics and transcripts")
     parser.add_argument("--threads", type=int, default=8, help="encoder ONNX Runtime threads")
-    parser.add_argument("--limit", type=int, help="score only the first recordings, for a quick local check")
+    parser.add_argument("--limit", type=int, help="score a seeded sample of recordings, for a quick local check")
     args = parser.parse_args()
     name, separator, path = args.dataset.partition("=")
     if name != accuracy.DATASET or not separator:
@@ -104,7 +104,7 @@ def main():
         export_checkpoint(args.checkpoint.resolve(strict=True), graphs)
     directory = Path(path)
     rows = accuracy.recordings(directory)
-    selected = rows[: args.limit] if args.limit else rows
+    selected = accuracy.sample(rows, args.limit)
     references, transcripts = [], []
     started = time.monotonic()
     with FP32Transcriber(graphs, args.threads) as transcriber:

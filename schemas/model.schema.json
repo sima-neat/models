@@ -143,7 +143,6 @@
       "description": "Measures the whole model by default, or independent components when scope is components. Each measured result holds the required performance metrics.",
       "type": "object", "additionalProperties": false,
       "properties": {
-        "dataset": {"description": "Optional benchmark input; otherwise reuse the profile's first accuracy dataset.", "$ref": "#/$defs/dataset"},
         "build_profiles": {"$ref": "#/$defs/profileIds"},
         "scope": {"enum": ["model", "components"], "default": "model"}
       }

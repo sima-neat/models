@@ -136,13 +136,8 @@ The script runs once per benchmarked build profile, with every component's MPK.
 
 ### Benchmark input
 
-CI passes `--dataset` with the model's `performance.dataset` when `model.yaml`
-declares one, for every build profile performance measures. Otherwise it passes
-the model's first accuracy dataset, and only for a build profile that accuracy
-measures. The workflow's "Cache the accuracy dataset on NVMe" step caches both
-kinds before the stages run. To fetch the same input for a standalone run, use
-`model-registry resolve-devkit-datasets models/<id> --stage performance
---build-profile <profile> --cache-dir <directory>`, which prints the archive path as JSON.
+CI passes `--dataset` with the model's first accuracy dataset, and only for a build
+profile that accuracy measures.
 
 For an image model, the benchmark repeats one real camera-sized frame, so its
 throughput is what an application gets from a 720p frame to decoded results,
@@ -199,7 +194,7 @@ image input, so its own `tests/benchmark/test_performance.py` checks the sample,
 the tensors and the CPU steps.
 
 An audio model measures one fixed stream. Parakeet TDT 0.6B v3 and Nemotron 3.5
-ASR Streaming 0.6B pin FLEURS en-US test as `performance.dataset`; the script
+ASR Streaming 0.6B read FLEURS en-US test, their accuracy dataset; the script
 concatenates its recordings in filename order and keeps the first 30 s (480,000
 samples at 16 kHz) without adding silence. An unpaced pass transcribes the whole
 stream repeatedly and gives latency, throughput in recordings per second, and
@@ -212,8 +207,8 @@ the workload names the stream's SHA-256 and the windowing: 14 s windows of 10 s
 past, 2 s new, and 2 s lookahead audio for Parakeet, 560 ms cached chunks for
 Nemotron.
 
-A model with neither a performance dataset nor an accuracy dataset builds a
-fixed, realistic input in its own script and takes no `--dataset`. An image model passes one 1280x720 RGB
+A model without an accuracy dataset builds a fixed, realistic input in its
+own script and takes no `--dataset`. An image model passes one 1280x720 RGB
 frame on the image route, as above, and the shared fixed-frame test in
 `tests/test_model_report.py` checks that every run benchmarks the same
 non-blank frame.

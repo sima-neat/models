@@ -11,6 +11,7 @@ word and character error rates with the shared English normalization, and the wo
 from __future__ import annotations
 
 import argparse
+import random
 import time
 from pathlib import Path
 
@@ -30,6 +31,11 @@ def recordings(directory):
     if any(Path(row[1]).name != row[1] or not row[1].endswith(".wav") for row in rows):
         raise ValueError("Expected safe FLEURS WAV filenames")
     return sorted(rows, key=lambda row: row[1])
+
+
+def sample(rows, limit):
+    """Every row, or a seeded sample of limit rows, in filename order."""
+    return sorted(random.Random(0).sample(rows, limit), key=lambda row: row[1]) if limit else rows
 
 
 def transcribe(transcriber, audio):
@@ -53,7 +59,7 @@ def main():
     parser.add_argument("--resources", type=Path, help="package resources; defaults to the encoder's directory")
     parser.add_argument("--dataset", required=True, help=f"{DATASET}=extracted-dataset")
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--limit", type=int, help="score only the first recordings, for a quick local check")
+    parser.add_argument("--limit", type=int, help="score a seeded sample of recordings, for a quick local check")
     args = parser.parse_args()
     name, separator, path = args.dataset.partition("=")
     if name != DATASET or not separator:
@@ -62,7 +68,7 @@ def main():
     package = runtime_directory(mpk, args.resources.resolve(strict=True) if args.resources else None)
     directory = Path(path)
     rows = recordings(directory)
-    selected = rows[: args.limit] if args.limit else rows
+    selected = sample(rows, args.limit)
     references, transcripts = [], []
     started = time.monotonic()
     with Transcriber(mpk, package) as transcriber:

@@ -251,9 +251,8 @@ non-production Core index needs `--artifacts-base-url` or `NEAT_ARTIFACTS_BASE_U
 `run_model_performance.sh` does this for the `core` backend:
 
 1. lists the MPKs with `model-component-artifacts`
-2. resolves `performance.dataset`, or else the first accuracy dataset, from the NVMe cache
-   with `resolve-devkit-datasets --stage performance` and unpacks it, and passes no
-   `--dataset` for a profile with neither
+2. resolves the first accuracy dataset from the NVMe cache with `resolve-devkit-accuracy`
+   and unpacks it, and passes no `--dataset` for a profile that accuracy does not measure
 3. fetches the model's pinned `resources` with `fetch-resources` and passes `--resources`
 4. installs `scripts/requirements-performance.txt`, when present, beside PyNeat's
    environment

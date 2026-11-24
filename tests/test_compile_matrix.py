@@ -674,7 +674,7 @@ def test_compile_fingerprint_ignores_performance_and_accuracy_declarations(
     first = _fingerprint(model_repository, "alpha", "2.1.3")
 
     model = yaml.safe_load(manifest.read_text(encoding="utf-8"))
-    model["performance"] = {"scope": scope, "dataset": dict(DATASET)} if scope else {"dataset": dict(DATASET)}
+    model["performance"] = {"scope": scope} if scope else {}
     model["accuracy"] = {"datasets": [dict(DATASET)]}
     manifest.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
     (manifest.parent / "scripts" / "performance.py").write_text("report = model.benchmark()\n", encoding="utf-8")
@@ -854,19 +854,6 @@ def test_performance_scope_changes_performance_fingerprint_without_changing_accu
     model["performance"]["scope"] = "components"
 
     assert benchmark_fingerprint(ROOT, model, "w8a8_w16a16", builds, "performance") != before
-    assert benchmark_fingerprint(ROOT, model, "w8a8_w16a16", builds, "accuracy") == accuracy
-
-
-def test_performance_dataset_pin_changes_only_performance_fingerprint():
-    model = load_and_validate_model(ROOT / "models/rf_detr_small")
-    builds = {name: {"run_id": name, "artifact_sha256": "a" * 64} for name in ("backbone", "decoder")}
-    before = benchmark_fingerprint(ROOT, model, "w8a8_w16a16", builds, "performance")
-    accuracy = benchmark_fingerprint(ROOT, model, "w8a8_w16a16", builds, "accuracy")
-    model["performance"]["dataset"] = dict(DATASET)
-    changed = benchmark_fingerprint(ROOT, model, "w8a8_w16a16", builds, "performance")
-    assert changed != before
-    model["performance"]["dataset"]["sha256"] = "a" * 64
-    assert benchmark_fingerprint(ROOT, model, "w8a8_w16a16", builds, "performance") != changed
     assert benchmark_fingerprint(ROOT, model, "w8a8_w16a16", builds, "accuracy") == accuracy
 
 

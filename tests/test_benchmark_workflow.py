@@ -350,9 +350,9 @@ def test_performance_runs_the_model_owned_script() -> None:
     assert '--target "$site" -r "$REQUIREMENTS"' in script
     assert 'PYTHONPATH="$REPOSITORY/tools:$site"' in script
     # The script picks its benchmark input from the model's first accuracy dataset, unpacked.
-    assert "model_registry resolve-devkit-datasets" in script
+    assert "model_registry resolve-devkit-accuracy" in script
     assert 'dataset=(--dataset "$name=$directory")' in script
-    assert script.index("resolve-devkit-datasets") < script.index('scripts/performance.py"')
+    assert script.index("resolve-devkit-accuracy") < script.index('scripts/performance.py"')
     assert "model_registry model-component-artifacts" in script
     assert script.index('scripts/performance.py"') < script.index("model_registry check-report")
 
@@ -620,7 +620,7 @@ def test_credentialed_devkit_steps_never_run_model_code() -> None:
             assert "AWS_" not in yaml.safe_dump(item.get("env", {})), item["name"]
 
     cache_script = (ROOT / "scripts" / "cache_accuracy_dataset.sh").read_text(encoding="utf-8")
-    assert "resolve-devkit-datasets" in cache_script
+    assert "resolve-devkit-accuracy" in cache_script
     for model_code in ("accuracy.py", "performance.py", "compile.py", "pip install"):
         assert model_code not in cache_script
 

@@ -499,6 +499,19 @@ def test_accuracy_scores_each_fleurs_recording_with_the_shared_scorer(load_scrip
     assert (result["split"], result["evaluated_samples"], result["available_samples"]) == ("test", 2, 2)
 
 
+def test_limit_scores_the_same_seeded_sample_every_time(load_script):
+    accuracy = load_script("accuracy")
+    rows = [["id", f"{index:03}.wav"] for index in range(100)]
+    sampled = accuracy.sample(rows, 10)
+    assert sampled == accuracy.sample(rows, 10) == sorted(sampled)
+    assert len({row[1] for row in sampled}) == 10
+    # A sample of the whole set, not its first recordings.
+    assert sampled != rows[:10] and sampled[-1][1] > "050.wav"
+    assert accuracy.sample(rows, None) == rows
+    with pytest.raises(ValueError):
+        accuracy.sample(rows, 101)
+
+
 def test_runtime_files_are_found_beside_the_encoder_or_under_resources(load_script, tmp_path):
     runtime = load_script("benchmark_runtime")
     compiled = tmp_path / "compiled/model"
