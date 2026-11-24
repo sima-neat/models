@@ -163,9 +163,9 @@ A rate is a corpus total, the edits of every recording over the reference words
 of every recording, and can exceed 1 when a model inserts many words.
 `char_error_rate` scores characters with whitespace removed, for languages
 written without spaces. Strip the model's own special tokens, such as a language
-tag, before scoring. A model whose accuracy datasets require `wer` or `cer`
-hashes the scorer (`SPEECH_ACCURACY_TOOLING`) into its accuracy fingerprint, so a
-scoring change reruns only those models.
+tag, before scoring. A model whose accuracy datasets require `wer`,
+`wer_as_written` or `cer` hashes the scorer (`SPEECH_ACCURACY_TOOLING`) into its
+accuracy fingerprint, so a scoring change reruns only those models.
 
 ### Run it on a DevKit
 

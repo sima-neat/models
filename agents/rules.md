@@ -50,13 +50,14 @@ model: `scripts/run_model_compilation.sh`, the compile helpers in
 `tools/model_registry/compile_script.py`, the image listing in `tools/model_inputs/images.py`,
 `scripts/unpack_benchmark_datasets.sh`, and the other entries of `COMPILE_TOOLING`,
 `BOARD_STAGE_TOOLING`, `PERFORMANCE_TOOLING`, and `ACCURACY_TOOLING` in `fingerprints.py`, the
-compiler pin, the Core runtime target, and `FINGERPRINT_VERSION` in `conversion.py`. Three
+compiler pin, the Core runtime target, and `FINGERPRINT_VERSION` in `conversion.py`. Four
 more lists there each cover part of the models: `FIDELITY_TOOLING` recompiles each model that
 declares `numerical_fidelity`, `FRAME_TOOLING`, the benchmark frame in
-`tools/model_inputs/frame.py`, remeasures the performance of each model PyNeat measures, and
-`LLIMA_PERFORMANCE_TOOLING` that of each model MoLE measures. An edit to one of them, even a
-comment made while working on one model, recompiles or remeasures models the pull request has
-nothing to do with.
+`tools/model_inputs/frame.py`, remeasures the performance of each model PyNeat measures,
+`LLIMA_PERFORMANCE_TOOLING` that of each model MoLE measures, and `SPEECH_ACCURACY_TOOLING`, the
+transcript scorer, remeasures the accuracy of each model whose accuracy datasets require `wer`,
+`wer_as_written` or `cer`. An edit to one of them, even a comment made while working on one
+model, recompiles or remeasures models the pull request has nothing to do with.
 
 - Before each push, list the changed files and check each against those inputs.
 - When one matches, say so before pushing, in these terms: the file, the stages it reruns, and
