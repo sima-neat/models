@@ -13,9 +13,11 @@ from unittest.mock import MagicMock
 import numpy as np
 import onnx
 import pytest
+from model_registry.dependencies import onnx_opset_version
 from model_registry.model import load_model
 from PIL import Image
 
+OPSET = onnx_opset_version()
 DECODER = {"precision": "w16a16"}
 
 
@@ -340,7 +342,7 @@ def regional_graph(tmp_path):
             value_info=[value(name) for name in ("hidden", "projection", "feature", "view")]
             + [value("dimensions", (4,), onnx.TensorProto.INT64)],
         ),
-        opset_imports=[h.make_opsetid("", 17)],
+        opset_imports=[h.make_opsetid("", OPSET)],
         ir_version=8,
     )
     onnx.checker.check_model(model)
@@ -403,7 +405,7 @@ def precision_graph(tmp_path):
             [value("input")],
             [value("output")],
         ),
-        opset_imports=[h.make_opsetid("", 17)],
+        opset_imports=[h.make_opsetid("", OPSET)],
         ir_version=8,
     )
     model.graph.value_info.append(value("hidden"))
@@ -482,7 +484,7 @@ def reference_graph():
         return h.make_tensor_value_info(name, onnx.TensorProto.FLOAT, [1, 300, 4])
 
     graph = h.make_graph(nodes, "reference_chain", [value("reference_logits")], [value("result")], constants)
-    return h.make_model(graph, opset_imports=[h.make_opsetid("", 17)], ir_version=8)
+    return h.make_model(graph, opset_imports=[h.make_opsetid("", OPSET)], ir_version=8)
 
 
 def test_reference_rewrite_is_narrow_and_retains_the_tensor_contract(surgery):
@@ -614,7 +616,7 @@ def attention_graph(surgery, layers=None):
         ]
     model = h.make_model(
         h.make_graph(nodes, "attention", inputs, outputs, initializers),
-        opset_imports=[h.make_opsetid("", 17)],
+        opset_imports=[h.make_opsetid("", OPSET)],
         ir_version=8,
     )
     model = onnx.shape_inference.infer_shapes(model, strict_mode=True)
@@ -705,7 +707,7 @@ def integral_graph(surgery, layers=None, bins=None):
         ]
     model = h.make_model(
         h.make_graph(nodes, "integral", inputs, outputs, initializers),
-        opset_imports=[h.make_opsetid("", 17)],
+        opset_imports=[h.make_opsetid("", OPSET)],
         ir_version=8,
     )
     model = onnx.shape_inference.infer_shapes(model, strict_mode=True)

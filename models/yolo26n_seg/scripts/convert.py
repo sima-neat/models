@@ -8,6 +8,7 @@ from pathlib import Path, PurePosixPath
 
 import numpy as np
 import onnx
+from model_registry.dependencies import onnx_opset_version, require_onnx_opset_version
 from model_registry.fetch import Fetcher
 from model_registry.model import load_and_validate_model
 
@@ -42,8 +43,7 @@ def validate_source(source):
 def validate_export(path):
     model = onnx.load(path, load_external_data=False)
     onnx.checker.check_model(model)
-    if [item.version for item in model.opset_import if not item.domain] != [12]:
-        raise ValueError("YOLO26 export requires opset 12")
+    require_onnx_opset_version(model)
     values = [*model.graph.input, *model.graph.output]
     if [value.name for value in values] != list(INTERFACE):
         raise ValueError("Expected input images and outputs output0 and output1")
@@ -119,7 +119,7 @@ def convert(source, output_dir):
             imgsz=IMAGE_SIZE,
             batch=1,
             device="cpu",
-            opset=12,
+            opset=onnx_opset_version(),
             half=False,
             dynamic=False,
             simplify=False,

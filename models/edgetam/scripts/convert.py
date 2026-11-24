@@ -18,6 +18,7 @@ from pathlib import Path, PurePosixPath
 
 import numpy as np
 from model_registry.conversion import conversion_outputs
+from model_registry.dependencies import onnx_opset_version
 from model_registry.fetch import Fetcher
 from model_registry.model import load_model as load_metadata
 
@@ -25,7 +26,6 @@ MODEL_DIR = Path(__file__).resolve().parents[1]
 
 CHECKPOINT = "edgetam.pt"
 IMAGE_SIZE = 1024
-OPSET = 17
 SEEDS = range(123, 126)
 # The largest difference the export check accepts between the ONNX and transformers, relative to the output's range;
 # it allows only for float32 accumulation order.
@@ -231,7 +231,7 @@ def export_image_encoder(encoder, output):
             output,
             input_names=["image"],
             output_names=list(OUTPUTS),
-            opset_version=OPSET,
+            opset_version=onnx_opset_version(),
             dynamo=False,
         )
     # Fold only: onnxsim's graph optimizations turn MatMul+Add into Reshape+Gemm+Reshape, which the compiler

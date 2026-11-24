@@ -11,6 +11,7 @@ from pathlib import Path
 import numpy as np
 import onnx
 from model_registry.conversion import conversion_outputs
+from model_registry.dependencies import onnx_opset_version, require_onnx_opset_version
 from model_registry.fetch import Fetcher
 from model_registry.model import load_model as load_metadata
 from preprocess import HEIGHT, WIDTH
@@ -85,8 +86,7 @@ def cartesian_product(graph, values):
 def validate_export(path):
     model = onnx.load(path)
     onnx.checker.check_model(model, full_check=True)
-    if [version.version for version in model.opset_import if not version.domain] != [17]:
-        raise ValueError("expected ONNX opset 17")
+    require_onnx_opset_version(model)
     values = [*model.graph.input, *model.graph.output]
     if [value.name for value in values] != list(INTERFACE):
         raise ValueError("expected image, depth and depth_conf")
@@ -121,19 +121,19 @@ def convert(source: Path, output_dir: Path) -> Path:
     samples = sample_inputs()
     with torch.inference_mode():
         references = [[value.numpy() for value in upstream(torch.from_numpy(sample))] for sample in samples]
-        torch.onnx.register_custom_op_symbolic("aten::cartesian_prod", cartesian_product, 17)
+        torch.onnx.register_custom_op_symbolic("aten::cartesian_prod", cartesian_product, onnx_opset_version())
         try:
             torch.onnx.export(
                 upstream,
                 (torch.from_numpy(samples[0]),),
                 str(output),
-                opset_version=17,
+                opset_version=onnx_opset_version(),
                 input_names=["image"],
                 output_names=["depth", "depth_conf"],
                 dynamo=False,
             )
         finally:
-            torch.onnx.unregister_custom_op_symbolic("aten::cartesian_prod", 17)
+            torch.onnx.unregister_custom_op_symbolic("aten::cartesian_prod", onnx_opset_version())
     model, valid = simplify(onnx.load(output), perform_optimization=False)
     if not valid:
         raise RuntimeError("ONNX constant folding failed")

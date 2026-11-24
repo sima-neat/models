@@ -28,6 +28,9 @@ depends on.
 
 - A tooling change reruns a stage only when the changed file is in that stage's
   tooling list in `fingerprints.py`. No shared file is a conversion input.
+- The ONNX opset, `onnx.opset` in `deps/manifest.json`, is a conversion input and
+  an ONNX compile input. Changing it means Vulcan Model Convert for every
+  conversion-backed model, and every ONNX build then recompiles.
 - Raise `FINGERPRINT_VERSION` in `conversion.py` in the change that makes shared
   tooling convert the same inputs to a different model. Planning then fails
   until Vulcan Model Convert reruns for every conversion-backed model.
@@ -111,6 +114,10 @@ later or never. Apply them while you write.
   show how the model reaches its MPK. A script whose step differs from a helper keeps its
   own code, because a per-model branch or flag in a helper recompiles every ONNX build
   when one model changes.
+- **Every model exports at the opset `deps/manifest.json` sets.** An export passes
+  `onnx_opset_version()` as its opset, and `validate_export` calls
+  `require_onnx_opset_version(model)`, both from `model_registry.dependencies`. A model
+  script or test writes no opset number, so one edit to the manifest moves every model.
 - **A recipe takes its compiler log level from `compiler_log_level()`.** It passes the
   result to every `quantize` and `compile` call as `log_level`, so CI keeps the full log
   of a failed compile and a local compile stays readable. A hard-coded level loses one of

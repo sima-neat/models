@@ -152,6 +152,12 @@ folding, when that keeps the same inputs, outputs, and computation.
   `model.onnx` there, or the files `conversion.outputs` names.
 - YOLO26n's `convert.py` downloads its checkpoint, checks it against the SHA-256
   in `model.yaml`, and then exports it.
+- It exports at the ONNX opset `deps/manifest.json` sets as `onnx.opset`, which it
+  reads with `onnx_opset_version()` from `model_registry.dependencies`, and checks
+  the written file with `require_onnx_opset_version(model)`. The repository exports at
+  opset 17, because the [operator database](operator_database.md) supports `ReduceL1`,
+  `ReduceLogSum`, `ReduceLogSumExp`, and `ReduceSumSquare` only up to opset 17, where
+  their axes are an attribute.
 - `requirements-convert.txt` pins its packages.
   `requirements-convert-nodeps.txt` optionally pins packages to install without
   their dependencies.

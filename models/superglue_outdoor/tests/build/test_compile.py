@@ -10,9 +10,11 @@ from types import ModuleType, SimpleNamespace
 import numpy as np
 import onnx
 import pytest
+from model_registry.dependencies import onnx_opset_version
 from model_registry.errors import ValidationError
 from model_registry.model import load_model as load_metadata
 
+OPSET = onnx_opset_version()
 ROOT = Path(__file__).resolve().parents[4]
 MODEL_DIR = ROOT / "models" / "superglue_outdoor"
 
@@ -351,7 +353,7 @@ def test_fixed_onnx_interface(tmp_path: Path, case: str, surgery: ModuleType) ->
         value=helper.make_tensor("value", onnx.TensorProto.FLOAT, output_shape, np.zeros(int(np.prod(output_shape)))),
     )
     graph = helper.make_graph([node], "fixture", inputs, outputs)
-    model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 13 if case == "opset" else 17)])
+    model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", OPSET + 1 if case == "opset" else OPSET)])
     path = tmp_path / "model.onnx"
     onnx.save(model, path)
     if case == "valid":
@@ -382,7 +384,7 @@ def _attention_graph() -> onnx.ModelProto:
     ]
     values = [helper.make_tensor_value_info(name, onnx.TensorProto.FLOAT, [1, 4, 4, 4]) for name in ("x", "y")]
     graph = helper.make_graph(nodes, "fixture", values[:1], values[1:], [weight, sizes])
-    return helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)])
+    return helper.make_model(graph, opset_imports=[helper.make_opsetid("", OPSET)])
 
 
 def test_a_bf16_region_ends_at_the_first_operations_that_read_it(

@@ -5,9 +5,12 @@ from pathlib import Path
 import numpy as np
 import onnx
 import pytest
+from model_registry.dependencies import onnx_opset_version
 from model_registry.model import load_model
 from onnx import helper, numpy_helper
 from onnx.reference import ReferenceEvaluator
+
+OPSET = onnx_opset_version()
 
 
 def test_source_has_exact_weights_and_config(model_dir, load_script):
@@ -28,19 +31,19 @@ def test_cartesian_product_export_preserves_pair_order(load_script, tmp_path):
 
     rows, columns = torch.tensor([2, 5, 9]), torch.tensor([4, 8])
     path = tmp_path / "cartesian.onnx"
-    torch.onnx.register_custom_op_symbolic("aten::cartesian_prod", converter.cartesian_product, 17)
+    torch.onnx.register_custom_op_symbolic("aten::cartesian_prod", converter.cartesian_product, OPSET)
     try:
         torch.onnx.export(
             Cartesian(),
             (rows, columns),
             str(path),
-            opset_version=17,
+            opset_version=OPSET,
             input_names=["rows", "columns"],
             output_names=["pairs"],
             dynamo=False,
         )
     finally:
-        torch.onnx.unregister_custom_op_symbolic("aten::cartesian_prod", 17)
+        torch.onnx.unregister_custom_op_symbolic("aten::cartesian_prod", OPSET)
     (actual,) = ReferenceEvaluator(onnx.load(path)).run(None, {"rows": rows.numpy(), "columns": columns.numpy()})
     np.testing.assert_array_equal(actual, [[2, 4], [2, 8], [5, 4], [5, 8], [9, 4], [9, 8]])
 

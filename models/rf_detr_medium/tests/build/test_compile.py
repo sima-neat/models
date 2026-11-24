@@ -12,9 +12,11 @@ from unittest.mock import MagicMock
 import numpy as np
 import onnx
 import pytest
+from model_registry.dependencies import onnx_opset_version
 from model_registry.model import load_model as load_metadata
 from PIL import Image
 
+OPSET = onnx_opset_version()
 ROOT = Path(__file__).resolve().parents[4]
 MODEL_DIR = ROOT / "models" / "rf_detr_medium"
 SCRIPTS_DIR = MODEL_DIR / "scripts"
@@ -111,7 +113,7 @@ def _value(name: str, shape: list[int], dtype: int = onnx.TensorProto.FLOAT) -> 
 
 def _model(nodes, inputs, outputs, initializers=()) -> onnx.ModelProto:
     graph = onnx.helper.make_graph(nodes, "fixture", inputs, outputs, list(initializers))
-    return onnx.helper.make_model(graph, opset_imports=[onnx.helper.make_opsetid("", 17)])
+    return onnx.helper.make_model(graph, opset_imports=[onnx.helper.make_opsetid("", OPSET)])
 
 
 def test_surgery_requires_a_folded_source(load_script: Callable[[str], ModuleType]) -> None:

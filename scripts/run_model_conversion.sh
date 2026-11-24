@@ -16,6 +16,8 @@ MODEL_DIR="$(cd "$1" && pwd)"
 CONVERSION="$2"
 OUTPUT_DIR="$3"
 REPOSITORY="$(cd "$MODEL_DIR/../.." && pwd)"
+# Model scripts read shared pins, such as the ONNX opset, from this clone's deps/manifest.json.
+export MODEL_REGISTRY_ROOT="${MODEL_REGISTRY_ROOT:-$REPOSITORY}"
 CONVERSION_PYTHON="${CONVERSION_PYTHON:-python3.12}"
 CONVERSION_VENV="${CONVERSION_VENV:-${OUTPUT_DIR%/}-venv}"
 

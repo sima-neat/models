@@ -7,8 +7,11 @@ import tarfile
 import numpy as np
 import onnx
 import pytest
+from model_registry.dependencies import onnx_opset_version
 from model_registry.errors import ValidationError
 from model_registry.model import load_model
+
+OPSET = onnx_opset_version()
 
 
 def source_graph(surgery):
@@ -41,7 +44,7 @@ def source_graph(surgery):
         ],
         weights,
     )
-    return helper.make_model(graph, opset_imports=[helper.make_opsetid("", 13)], ir_version=10)
+    return helper.make_model(graph, opset_imports=[helper.make_opsetid("", OPSET)], ir_version=10)
 
 
 def test_surgery_preserves_raw_values_and_interleaves_heads(tmp_path, load_script):

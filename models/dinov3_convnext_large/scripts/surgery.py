@@ -35,6 +35,7 @@ from typing import Any
 
 import numpy as np
 import onnx
+from model_registry.dependencies import onnx_opset_version, require_onnx_opset_version
 
 DEPTHS = (3, 3, 27, 3)
 WIDTHS = (192, 384, 768, 1536)
@@ -43,7 +44,6 @@ PATCHES = 49
 INPUT = "pixel_values"
 OUTPUTS = ("class_embedding", "patch_embeddings")
 INTERFACE = {INPUT: [1, 3, 224, 224], OUTPUTS[0]: [1, HIDDEN_SIZE], OUTPUTS[1]: [1, PATCHES, HIDDEN_SIZE]}
-OPSET = 17
 # timm's LayerNorm and LayerNorm2d default.
 EPSILON = 1e-6
 # GELU's tanh approximation 0.5 * x * (1 + tanh(sqrt(2 / pi) * (x + 0.044715 * x^3))), written as
@@ -164,8 +164,7 @@ def load_network(weights: Path) -> Any:
 def validate_export(path: Path) -> None:
     model = onnx.load(path, load_external_data=False)
     onnx.checker.check_model(model)
-    if [item.version for item in model.opset_import if not item.domain] != [OPSET]:
-        raise ValueError(f"The export requires opset {OPSET}")
+    require_onnx_opset_version(model)
     values = [*model.graph.input, *model.graph.output]
     if [value.name for value in values] != list(INTERFACE):
         raise ValueError(f"Expected the input {INPUT} and the outputs {OUTPUTS}")
@@ -227,7 +226,7 @@ def export_network(weights: Path, reference: Path, output: Path) -> Path:
             str(output),
             input_names=[INPUT],
             output_names=list(OUTPUTS),
-            opset_version=OPSET,
+            opset_version=onnx_opset_version(),
             dynamo=False,
         )
     fold_constants(output)

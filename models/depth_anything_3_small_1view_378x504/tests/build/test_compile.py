@@ -7,8 +7,11 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
+from model_registry.dependencies import onnx_opset_version
 from model_registry.errors import ValidationError
 from model_registry.model import load_model
+
+OPSET = onnx_opset_version()
 
 
 def test_model_uses_a_single_uncalibrated_w8a16_profile(model_dir):
@@ -152,7 +155,7 @@ def test_qkv_split_preserves_head_and_token_order(load_script, monkeypatch):
         [helper.make_tensor_value_info(name, TensorProto.FLOAT, [1, 2, 5, 4]) for name in ("q", "k", "v")],
         constants,
     )
-    model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)])
+    model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", OPSET)])
     inputs = {"packed": np.arange(120, dtype=np.float32).reshape(1, 5, 24)}
     expected = ReferenceEvaluator(model).run(None, inputs)
     monkeypatch.setattr(surgery, "BLOCKS", 1)
@@ -179,7 +182,7 @@ def test_camera_token_replacement_preserves_all_patch_tokens(load_script):
             numpy_helper.from_array(np.full((1, 1, 1, 4), -7, np.float32), "camera"),
         ],
     )
-    model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)])
+    model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", OPSET)])
     inputs = {"tokens": np.arange(20, dtype=np.float32).reshape(shape)}
     expected = ReferenceEvaluator(model).run(None, inputs)
     prepared = surgery.replace_camera_token(model)
@@ -232,7 +235,7 @@ def test_projection_split_preserves_depth_and_confidence(load_script, monkeypatc
         [helper.make_tensor_value_info(name, TensorProto.FLOAT, [1, 1, 3, 5]) for name in ("depth", "depth_conf")],
         constants,
     )
-    model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)])
+    model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", OPSET)])
     model = onnx.shape_inference.infer_shapes(model)
     inputs = {"image": random.normal(size=(1, 32, 3, 5)).astype(np.float32)}
     expected = ReferenceEvaluator(model).run(None, inputs)

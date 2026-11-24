@@ -11,8 +11,10 @@ from types import ModuleType, SimpleNamespace
 import numpy as np
 import onnx
 import pytest
+from model_registry.dependencies import onnx_opset_version
 from model_registry.errors import ValidationError
 
+OPSET = onnx_opset_version()
 # Ground truth for a pairs line: two identity intrinsics and an identity pose.
 IDENTITY = " ".join(["1 0 0 0 1 0 0 0 1"] * 2 + ["1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1"])
 
@@ -231,7 +233,7 @@ def _attention_graph() -> onnx.ModelProto:
     ]
     values = [helper.make_tensor_value_info(name, onnx.TensorProto.FLOAT, [1, 4, 4, 4]) for name in ("x", "y")]
     graph = helper.make_graph(nodes, "fixture", values[:1], values[1:], [weight, sizes])
-    return helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)])
+    return helper.make_model(graph, opset_imports=[helper.make_opsetid("", OPSET)])
 
 
 def test_a_bf16_region_ends_at_the_first_operations_that_read_it(

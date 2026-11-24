@@ -8,8 +8,10 @@ from types import ModuleType
 import numpy as np
 import onnx
 import pytest
+from model_registry.dependencies import onnx_opset_version
 from model_registry.model import load_model as load_metadata
 
+OPSET = onnx_opset_version()
 ROOT = Path(__file__).resolve().parents[4]
 
 
@@ -65,7 +67,7 @@ def test_fixed_onnx_interface(tmp_path, case, converter: ModuleType):
         for value in values[1:]
     ]
     graph = helper.make_graph(nodes, "fixture", values[:1], values[1:])
-    model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 18 if case == "opset" else 17)])
+    model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", OPSET + 1 if case == "opset" else OPSET)])
     path = tmp_path / "model.onnx"
     onnx.save(model, path)
     if case == "valid":

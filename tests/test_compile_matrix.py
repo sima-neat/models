@@ -195,6 +195,10 @@ def test_compile_fingerprint_invalidates_model_dependency_and_compiler_changes(m
     assert dependency_changed == model_changed
     assert _fingerprint(model_repository, "alpha", "2.1.4") != dependency_changed
 
+    dependency["onnx"]["opset"] += 1
+    manifest.write_text(json.dumps(dependency), encoding="utf-8")
+    assert _fingerprint(model_repository, "alpha", "2.1.3") != dependency_changed
+
 
 def test_calibrated_build_tracks_its_calibration_dataset_pin(model_repository: Path) -> None:
     manifest = model_repository / "models" / "alpha" / "model.yaml"

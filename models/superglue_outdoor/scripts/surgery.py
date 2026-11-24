@@ -17,6 +17,7 @@ from pathlib import Path
 
 import numpy as np
 import onnx
+from model_registry.dependencies import onnx_opset_version, require_onnx_opset_version
 
 # transformers' SuperGlueConfig default, which the exported couplings are checked under.
 SINKHORN_ITERATIONS = 100
@@ -65,8 +66,7 @@ MIN_ASSIGNMENT_AGREEMENT = 0.995
 def validate_export(path):
     model = onnx.load(path, load_external_data=False)
     onnx.checker.check_model(model)
-    if [item.version for item in model.opset_import if not item.domain] != [17]:
-        raise ValueError("SuperGlue export requires opset 17")
+    require_onnx_opset_version(model)
     values = [*model.graph.input, *model.graph.output]
     if [value.name for value in values] != list(INTERFACE):
         raise ValueError(f"Expected inputs and outputs {list(INTERFACE)}")
@@ -381,7 +381,7 @@ def export_matcher(weights, output):
     arguments = tuple(torch.from_numpy(sample[name]) for name in INPUTS)
     torch.onnx.export(
         matcher, arguments, str(output), input_names=list(INPUTS), output_names=list(OUTPUT),
-        opset_version=17, do_constant_folding=True, dynamo=False,
+        opset_version=onnx_opset_version(), do_constant_folding=True, dynamo=False,
     )
     fold_constants(output)
     validate_export(output)

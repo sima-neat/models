@@ -12,9 +12,11 @@ from types import ModuleType
 import numpy as np
 import onnx
 import pytest
+from model_registry.dependencies import onnx_opset_version
 from model_registry.errors import ValidationError
 from PIL import Image
 
+OPSET = onnx_opset_version()
 MODEL_DIR = Path(__file__).resolve().parents[2]
 # The least cosine with reference.onnx a build keeps on the 5 fidelity images, per output. Model Compiler
 # 3.0.0.dev0+develop.2291 measured the least output on the 50 cal images at positions 51 to 100 of the seed-42 shuffled
@@ -191,7 +193,7 @@ def _export_like_model(surgery: ModuleType, case: str) -> onnx.ModelProto:
     if case == "dynamic":
         nodes.append(helper.make_node("Shape", ["pixel_values"], ["shape"]))
     graph = helper.make_graph(nodes, "export", values[:1], values[1:])
-    return helper.make_model(graph, opset_imports=[helper.make_opsetid("", 18 if case == "opset" else surgery.OPSET)])
+    return helper.make_model(graph, opset_imports=[helper.make_opsetid("", OPSET + 1 if case == "opset" else OPSET)])
 
 
 @pytest.mark.parametrize("case", ["valid", "opset", "order", "shape", "dynamic"])

@@ -13,9 +13,11 @@ from unittest.mock import MagicMock
 import numpy as np
 import onnx
 import pytest
+from model_registry.dependencies import onnx_opset_version
 from model_registry.errors import ValidationError
 from PIL import Image
 
+OPSET = onnx_opset_version()
 # The least cosine with reference.onnx a build keeps on the 5 fidelity images, per output. Model Compiler
 # 3.0.0.dev0+master.402 measured the least output on 16 of the 50 cal images at positions 51 to 100 of the seed-42
 # shuffled order, whose first 5 are the fidelity images: w16a16 0.999665; CI compiles with Model Compiler 3.0.0.2. A
@@ -319,7 +321,7 @@ def test_export_must_keep_the_embedding_interface(tmp_path: Path, load_script: C
     onnx.save(
         helper.make_model(
             helper.make_graph(nodes, "fixture", values[:1], values[1:]),
-            opset_imports=[helper.make_opsetid("", surgery.OPSET)],
+            opset_imports=[helper.make_opsetid("", OPSET)],
         ),
         path,
     )
@@ -328,7 +330,7 @@ def test_export_must_keep_the_embedding_interface(tmp_path: Path, load_script: C
     onnx.save(
         helper.make_model(
             helper.make_graph(nodes, "fixture", values[:1], values[1:]),
-            opset_imports=[helper.make_opsetid("", surgery.OPSET)],
+            opset_imports=[helper.make_opsetid("", OPSET)],
         ),
         path,
     )

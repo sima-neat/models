@@ -104,7 +104,7 @@ marked CI only from the author package.
 | `fidelity.py` | The numerical fidelity measurement: running samples through the ONNX source and the quantized graph (`compare_with_onnx`), and the report's metrics and `fidelity.json` (`write_fidelity_report`, `fidelity_report`). It runs in the Model Compiler environment, and the compile fingerprint hashes it only for a model that declares `numerical_fidelity`. |
 | `mla_stage_simulation.py` | The simulator's operation counts and latency for each MLA stage (`simulate-mla-stages`). |
 | `package.py` | Assembling a profile's `default` package from MPKs, pinned `resources`, and `runtime_files`, or from a complete LLiMa deployment folder. |
-| `dependencies.py` | Resolving the Model Compiler and DevKit runtime pins in `deps/manifest.json`. |
+| `dependencies.py` | Resolving the Model Compiler and DevKit runtime pins in `deps/manifest.json`, and the ONNX opset every model exports at (`onnx_opset_version`, `require_onnx_opset_version`). |
 | `fetch.py` | Verified downloads, the cache, dataset resolution through the Dataset Registry, the verified unpack of a dataset read in place from the DevKit pool's shared dataset archive share (`unpack_shared_dataset`), unsigned registry reads, and the DevKit's download of a staged build by compile run (`download-build`). |
 | `source.py` | The approved source hosts (`HTTPS_HOST_CHECKS`), source identity, and URL redaction. |
 | `taxonomy.py` | Loading the taxonomy and validating a model's categories. |
@@ -180,7 +180,8 @@ Rules for changing what a stage depends on:
   benchmarks run again.
 - No fingerprint includes a model's `tests/`, `tools/model_report/metrics.json`, the
   license, `reference_metrics`, `build-on-demand`, or the runner class and market.
-- Keep the conversion fingerprint free of shared files. A fingerprint with no published
+- Keep the conversion fingerprint free of shared files. The ONNX opset in
+  `deps/manifest.json` is its one shared value. A fingerprint with no published
   conversion fails `plan-stages`, and with it the whole run, until someone runs Vulcan
   Model Convert for that model. When shared tooling changes converted output, raise
   `FINGERPRINT_VERSION` in the same change.

@@ -10,10 +10,12 @@ from types import ModuleType, SimpleNamespace
 import numpy as np
 import onnx
 import pytest
+from model_registry.dependencies import onnx_opset_version
 from model_registry.errors import ValidationError
 from model_registry.model import load_model as load_metadata
 from PIL import Image
 
+OPSET = onnx_opset_version()
 ROOT = Path(__file__).resolve().parents[4]
 MODEL_DIR = ROOT / "models" / "lightstereo_s"
 
@@ -159,7 +161,7 @@ def _export(surgery: ModuleType, case: str) -> onnx.ModelProto:
     if case == "shape_arithmetic":
         nodes.append(helper.make_node("Shape", ["sum"], ["unused"]))
     graph = helper.make_graph(nodes, "fixture", inputs, [output], initializers)
-    opset = 13 if case == "opset" else surgery.OPSET
+    opset = OPSET + 1 if case == "opset" else OPSET
     return helper.make_model(graph, opset_imports=[helper.make_opsetid("", opset)])
 
 

@@ -15,9 +15,12 @@ from unittest.mock import MagicMock
 import numpy as np
 import onnx
 import pytest
+from model_registry.dependencies import onnx_opset_version
 from model_registry.errors import ValidationError
 from onnx import TensorProto, helper, numpy_helper
 from PIL import Image
+
+OPSET = onnx_opset_version()
 
 
 def _jpeg(width: int, height: int, colour: tuple[int, int, int] = (255, 0, 0)) -> bytes:
@@ -388,7 +391,7 @@ def _segformer_block_graph() -> onnx.ModelProto:
         [helper.make_tensor_value_info("logits", TensorProto.FLOAT, [1, 5, 4, 4])],
         inits,
     )
-    model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)])
+    model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", OPSET)])
     onnx.checker.check_model(model)
     return model
 

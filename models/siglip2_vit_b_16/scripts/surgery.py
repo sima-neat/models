@@ -20,6 +20,7 @@ from pathlib import Path
 import numpy as np
 import onnx
 from calibration import CLASS_NAMES, preprocess_image
+from model_registry.dependencies import onnx_opset_version, require_onnx_opset_version
 
 IMAGE_SIZE = 224
 TEXT_LENGTH = 64
@@ -97,8 +98,7 @@ def write_runtime_files(siglip, assets, directory):
 def validate_export(path):
     model = onnx.load(path, load_external_data=False)
     onnx.checker.check_model(model)
-    if [item.version for item in model.opset_import if not item.domain] != [17]:
-        raise ValueError("The SigLIP 2 export requires opset 17")
+    require_onnx_opset_version(model)
     if [value.name for value in model.graph.input] != list(INPUTS) or [
         value.name for value in model.graph.output
     ] != list(OUTPUTS):
@@ -282,7 +282,7 @@ def export_model(source, output_dir):
             str(output),
             input_names=list(INPUTS),
             output_names=list(OUTPUTS),
-            opset_version=17,
+            opset_version=onnx_opset_version(),
             dynamo=False,
         )
     fold_constants(output)

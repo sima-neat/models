@@ -10,10 +10,12 @@ from types import ModuleType
 import numpy as np
 import onnx
 import pytest
+from model_registry.dependencies import onnx_opset_version
 from model_registry.errors import ValidationError
 from model_registry.model import load_model as load_metadata
 from model_registry.model_tests import load_model_tests
 
+OPSET = onnx_opset_version()
 ROOT = Path(__file__).resolve().parents[4]
 MODEL_DIR = ROOT / "models" / "yolo26x_pose"
 
@@ -118,7 +120,7 @@ def _source_graph(load_script: Callable[[str], ModuleType], constant_weight: boo
         [helper.make_tensor_value_info("output0", onnx.TensorProto.FLOAT, [1, 300, 57])],
         initializers,
     )
-    return helper.make_model(graph, opset_imports=[helper.make_opsetid("", 12)])
+    return helper.make_model(graph, opset_imports=[helper.make_opsetid("", OPSET)])
 
 
 def test_surgery_cuts_at_the_nine_raw_heads_in_order(tmp_path: Path, load_script: Callable[[str], ModuleType]) -> None:

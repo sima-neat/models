@@ -8,6 +8,7 @@ from pathlib import Path
 
 import numpy as np
 import onnx
+from model_registry.dependencies import onnx_opset_version, require_onnx_opset_version
 from model_registry.fetch import Fetcher
 from model_registry.model import load_and_validate_model
 
@@ -83,8 +84,7 @@ def validate_export(path):
     metadata = {item.key: item.value for item in model.metadata_props}
     if any(metadata.get(key) != value for key, value in METADATA.items()):
         raise ValueError(f"Unexpected D-FINE semantic identity: {metadata}")
-    if [item.version for item in model.opset_import if not item.domain] != [17]:
-        raise ValueError("D-FINE export requires opset 17")
+    require_onnx_opset_version(model)
     if [v.name for v in model.graph.input] != ["input"] or [v.name for v in model.graph.output] != list(OUTPUTS):
         raise ValueError("Expected input, pred_boxes and pred_logits in that order")
     for value in [*model.graph.input, *model.graph.output]:
@@ -227,7 +227,7 @@ def convert(source, output_dir):
             str(output),
             input_names=["input"],
             output_names=list(OUTPUTS),
-            opset_version=17,
+            opset_version=onnx_opset_version(),
             dynamo=False,
         )
     model = onnx.load(output)

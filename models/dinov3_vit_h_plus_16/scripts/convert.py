@@ -18,6 +18,7 @@ from pathlib import Path
 import numpy as np
 import onnx
 from model_registry.conversion import conversion_outputs
+from model_registry.dependencies import onnx_opset_version, require_onnx_opset_version
 from model_registry.fetch import Fetcher
 from model_registry.model import load_and_validate_model
 from onnx import numpy_helper
@@ -38,7 +39,6 @@ INTERFACE = {
     "patch_embeddings": [1, PATCHES, HIDDEN_SIZE],
 }
 OUTPUTS = ("class_embedding", "patch_embeddings")
-OPSET = 17
 # The weight-index.pth entry with timm's rotary embedding of the 14x14 grid: [196, 2 * head size], sines then cosines.
 ROTARY_EMBEDDING = "rope.embedding"
 # The weight-index.pth entry mapping each state dict name to its reference.onnx initializer and whether it is stored
@@ -67,8 +67,7 @@ def validate_export(path):
     model = onnx.load(path, load_external_data=False)
     # From the path, the checker finds the external data beside the file.
     onnx.checker.check_model(path)
-    if [item.version for item in model.opset_import if not item.domain] != [OPSET]:
-        raise ValueError(f"The export requires opset {OPSET}")
+    require_onnx_opset_version(model)
     values = [*model.graph.input, *model.graph.output]
     if [value.name for value in values] != list(INTERFACE):
         raise ValueError(f"Expected the input and outputs {list(INTERFACE)}")
@@ -184,7 +183,7 @@ def export_reference(dinov3, path):
         exported = Path(temporary) / path.name
         torch.onnx.export(
             model, (torch.from_numpy(synthetic_pixels(SEEDS.start)),), str(exported), input_names=["pixel_values"],
-            output_names=list(OUTPUTS), opset_version=OPSET, dynamo=False,
+            output_names=list(OUTPUTS), opset_version=onnx_opset_version(), dynamo=False,
         )
         fold_constants(exported, path)
     validate_export(path)

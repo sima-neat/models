@@ -42,9 +42,9 @@ from typing import Any
 
 import numpy as np
 import onnx
+from model_registry.dependencies import onnx_opset_version, require_onnx_opset_version
 from scene_flow import HEIGHT, INPUT, MEAN, STD, WIDTH
 
-OPSET = 17
 ITERATIONS = 7
 # Each view, and the rows padded above and below it to a multiple of 32.
 PAD = 2
@@ -388,8 +388,7 @@ def fold_constants(path: Path) -> None:
 def validate_export(path: Path, max_constants: int) -> None:
     model = onnx.load(path, load_external_data=False)
     onnx.checker.check_model(model)
-    if [item.version for item in model.opset_import if not item.domain] != [OPSET]:
-        raise ValueError(f"RAFT-Stereo export requires opset {OPSET}")
+    require_onnx_opset_version(model)
     values = [*model.graph.input, *model.graph.output]
     if [value.name for value in values] != list(INTERFACE):
         raise ValueError(f"Expected inputs and outputs {list(INTERFACE)}")
@@ -477,7 +476,7 @@ def export_network(weights: Path, output: Path) -> Path:
             output,
             input_names=[INPUT],
             output_names=[OUTPUT],
-            opset_version=OPSET,
+            opset_version=onnx_opset_version(),
             dynamo=False,
         )
     fold_constants(output)

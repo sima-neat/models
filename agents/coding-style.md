@@ -179,8 +179,10 @@ changes only `model.yaml`. A test alone does not reach it.
 - `validate_source` rejects a declared source other than the checkpoint the exporter expects.
   `requirements-convert.txt` pins the exporter
   ([pin every input](../docs/adding-a-model.md#3-pin-every-input)).
-- `validate_export` checks the written ONNX: the opset, the input and output names in order,
-  their float dtypes and static shapes, and that the file holds every tensor itself.
+- The export passes `onnx_opset_version()` from `model_registry.dependencies` as its opset.
+- `validate_export` checks the written ONNX: the opset with
+  `require_onnx_opset_version(model)`, the input and output names in order, their float
+  dtypes and static shapes, and that the file holds every tensor itself.
 - The script runs the upstream framework and ONNX Runtime on seeded random inputs (`SEEDS`),
   compares the tensors the package keeps with `np.testing.assert_allclose`, and prints one line
   that names the passed check and the output path.

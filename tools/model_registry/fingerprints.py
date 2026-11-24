@@ -18,7 +18,7 @@ from .benchmark_declarations import (
     SCRIPTS,
     benchmark_runner,
 )
-from .dependencies import resolve_benchmark_runtime, resolve_model_compiler
+from .dependencies import onnx_opset_version, resolve_benchmark_runtime, resolve_model_compiler
 from .errors import ValidationError
 from .model import CONVERSION_FILES, SCRIPTS_DIR, build_profile_for, compile_invocations_for, load_and_validate_model
 from .package import package_resources
@@ -235,6 +235,8 @@ def compile_fingerprint(
             for item in package_resources(model)
         ]} if model.get("resources") else {}),
         "compiler_version": compiler,
+        # surgery.py exports at this opset.
+        "onnx_opset": onnx_opset_version(root),
     }
     digest = hashlib.sha256(json.dumps(identity, sort_keys=True, separators=(",", ":")).encode())
     _hash_files(digest, root, _compile_input_files(root, model))

@@ -12,9 +12,11 @@ from unittest.mock import MagicMock, call
 import numpy as np
 import onnx
 import pytest
+from model_registry.dependencies import onnx_opset_version
 from onnx import numpy_helper
 from PIL import Image
 
+OPSET = onnx_opset_version()
 MODEL_DIR = Path(__file__).resolve().parents[2]
 # W8A16 CI on 50 ImageNet images and 64 prompts measured 0.99303 image,
 # 0.99899 text cosine. Keep margin for compiler rounding.
@@ -343,7 +345,7 @@ def _interface_model(exporter: ModuleType, case: str) -> onnx.ModelProto:
         array = np.zeros(shape, dtype=np.int64 if dtype == onnx.TensorProto.INT64 else np.float32)
         nodes.append(helper.make_node("Constant", [], [output.name], value=numpy_helper.from_array(array)))
     graph = helper.make_graph(nodes, "fixture", inputs, outputs)
-    return helper.make_model(graph, opset_imports=[helper.make_opsetid("", 18 if case == "opset" else 17)])
+    return helper.make_model(graph, opset_imports=[helper.make_opsetid("", OPSET + 1 if case == "opset" else OPSET)])
 
 
 @pytest.mark.parametrize("case", ["valid", "opset", "order", "dtype", "shape"])

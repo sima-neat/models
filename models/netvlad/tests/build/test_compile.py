@@ -13,10 +13,12 @@ from unittest.mock import MagicMock
 import numpy as np
 import onnx
 import pytest
+from model_registry.dependencies import onnx_opset_version
 from model_registry.errors import ValidationError
 from model_registry.model import load_model as load_metadata
 from PIL import Image
 
+OPSET = onnx_opset_version()
 PROFILES = ("w16a16", "w8a16", "w8a8_mixed")
 
 
@@ -394,7 +396,7 @@ def test_fixed_onnx_interface(tmp_path: Path, case: str, builder: ModuleType) ->
     else:
         node = helper.make_node("Identity", ["zeros"], [values[1].name])
     graph = helper.make_graph([node], "fixture", values[:1], values[1:], [zeros])
-    model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 12 if case == "opset" else 17)])
+    model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", OPSET + 1 if case == "opset" else OPSET)])
     path = tmp_path / "model.onnx"
     onnx.save(model, path)
     if case == "valid":
@@ -442,7 +444,7 @@ def test_int8_marks_cover_the_encoder_up_to_conv5_3_and_leave_its_normalization_
     eps = onnx.numpy_helper.from_array(np.asarray(1e-12, np.float32), "eps")
     graph = helper.make_graph(nodes, "fixture", values[:1], values[1:], [eps])
     path = tmp_path / "model.onnx"
-    onnx.save(helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)]), path)
+    onnx.save(helper.make_model(graph, opset_imports=[helper.make_opsetid("", OPSET)]), path)
 
     assert builder.annotate_int8_encoder(path) == {"int8": 1, "bfloat16": 1}
 
