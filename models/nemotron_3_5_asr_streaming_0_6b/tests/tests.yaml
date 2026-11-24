@@ -1,0 +1,17 @@
+conversion:
+  run_tests: true
+compile:
+  run_tests: true
+accuracy:
+  run_tests: true
+  expected:
+    w8a16:
+      fleurs-en-us-test:
+        wer: 0.0848
+        wer_as_written: 0.1098
+        cer: 0.0378
+performance:
+  run_tests: true
+  expected:
+    w8a16:
+      throughput_fps: 0.301

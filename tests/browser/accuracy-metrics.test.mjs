@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 
-const {accuracyDisplay, formatAccuracy, orderedMetricNames, referenceNotes, referenceScores} = await import(new URL('../../artifact-browser/accuracy-metrics.js', import.meta.url));
+const {accuracyDisplay, accuracyMetricLabel, formatAccuracy, orderedMetricNames, referenceNotes, referenceScores} = await import(new URL('../../artifact-browser/accuracy-metrics.js', import.meta.url));
 
 test('detection metrics follow the label order whatever order the registry returns', () => {
   // The registry returned RF-DETR Small's metrics in this order.
@@ -82,4 +82,14 @@ test('depth error is dimensionless and unbounded, while delta1 is a percentage',
   assert.equal(formatAccuracy('delta1', 0.893), '89.30%');
   assert.deepEqual(accuracyDisplay('abs_rel', 0.0924), {number: 0.0924, unit: '', direction: 'lower'});
   assert.deepEqual(orderedMetricNames(['delta1', 'abs_rel']), ['abs_rel', 'delta1']);
+});
+
+test('speech error rates are lower-is-better percentages that may exceed 100%', () => {
+  assert.equal(accuracyMetricLabel('wer'), 'WER');
+  assert.equal(formatAccuracy('wer', 0.0842), '8.42%');
+  assert.equal(formatAccuracy('wer', 1.25), '125.00%');
+  assert.deepEqual(accuracyDisplay('cer', 0.031), {number: 3.1, unit: '%', direction: 'lower'});
+  assert.equal(accuracyMetricLabel('wer_as_written'), 'WER as written');
+  assert.equal(formatAccuracy('wer_as_written', 0.0651), '6.51%');
+  assert.deepEqual(orderedMetricNames(['cer', 'wer_as_written', 'wer']), ['wer', 'wer_as_written', 'cer']);
 });

@@ -23,6 +23,7 @@ from model_registry.registry import (
     S3ArtifactStore,
     S3Object,
     SigV4RegistryClient,
+    _catalog_outputs,
     _compile_timing,
     _component_source_media_type,
     _package_media_type,
@@ -1198,6 +1199,26 @@ def test_approved_profile_without_a_benchmark_declaration_drops_legacy_fingerpri
     assert "benchmark_fingerprints" not in document["models"][0]
 
 
+def test_approved_selection_without_requirements_takes_the_source_models_build_requirements(monkeypatch):
+    from model_registry.registry import _refresh_approved_benchmarks
+
+    model_id, profile = "resnet_50", "w8a8"
+    model = load_models(ROOT)[model_id]
+    components = [component["id"] for component in model["components"]]
+    selection = {"deployment_id": "d", "manifest_digest": "e" * 64, "artifacts": [
+        {"role": f"compile-{component}", "component_id": component, "run_id": f"run-{component}",
+         "artifact_name": "mpk"} for component in components]}
+    requirements = {"packages": [], "invocations": [
+        {"id": profile, "component_ids": components, "compile_fingerprint": "f" * 64}]}
+    source = {"models": [{"id": model_id, "approved_deployments": {profile: selection},
+                          "build_requirements": {profile: requirements}}]}
+    document = {"git_ref": "refs/heads/develop", "models": [{"id": model_id, "builds": []}]}
+    monkeypatch.setattr("model_registry.registry.load_and_validate_model", lambda *args: model)
+    _refresh_approved_benchmarks(
+        ROOT, document, source, "https://reader.example.invalid", lambda url: {"artifact": {"sha256": "a" * 64}})
+    assert set(document["models"][0]["benchmark_fingerprints"][profile]) == {"performance", "accuracy"}
+
+
 def test_publish_catalog_keys_bind_dispatch_specific_documentation_receipts(monkeypatch) -> None:
     calls: list[tuple[str, str, dict | None, str]] = []
     target_catalog = {"canonical_sha256": "c" * 64, "catalog_revision": "b" * 40, "document": {"models": []}}
@@ -1579,6 +1600,35 @@ def test_progress_publication_does_not_reimport_base_packages(
     assert captured["selected_matrix"] == (None if continuing_revision else selected)
 
 
+def test_deferred_catalog_entry_does_not_publish_server_owned_approvals(monkeypatch):
+    prior = {
+        "id": "deferred", "build_on_demand": True,
+        "builds": [{"run_id": "existing-build", "build_profile_id": "w8a8"}],
+        "packages": [{"run_id": "existing-package"}],
+        "build_requirements": {"w8a16": {"compiler_version": "original"}},
+        "approved_deployments": {"w8a16": {"candidate_id": "base-branch-selection"}},
+        # The base branch measured both its own build and its approved selection.
+        "benchmark_fingerprints": {"w8a8": {"performance": "b" * 64}, "w8a16": {"performance": "a" * 64}},
+    }
+    original = json.loads(json.dumps(prior))
+    monkeypatch.setattr("model_registry.registry.load_models", lambda _: {"deferred": object()})
+    monkeypatch.setattr("model_registry.registry._catalog_models", lambda _: {})
+    monkeypatch.setattr("model_registry.registry._head_matrix", lambda *_: [])
+    monkeypatch.setattr("model_registry.registry.validate_model_categorization", lambda *_: {})
+    document = build_catalog_snapshot(
+        repository=ROOT, branch="feature", git_sha="a" * 40,
+        previous={"models": [prior]}, incremental=True,
+    )
+    entry = document["models"][0]
+    assert "approved_deployments" not in entry
+    assert entry["builds"] == prior["builds"]
+    assert entry["packages"] == prior["packages"]
+    assert entry["build_requirements"] == prior["build_requirements"]
+    # The registry rejects fingerprints naming a profile without a build in the snapshot.
+    assert entry["benchmark_fingerprints"] == {"w8a8": {"performance": "b" * 64}}
+    assert prior == original
+
+
 @pytest.mark.parametrize("continuing_revision", [False, True])
 @pytest.mark.parametrize("has_previous", [False, True])
 def test_deferred_conversion_inheritance_respects_catalog_revision(monkeypatch, continuing_revision, has_previous):
@@ -1658,6 +1708,29 @@ def test_deferred_conversion_inheritance_leaves_base_branch_selections_to_the_re
         )},
     )["catalog"]
     assert result["models"] == [{"id": "deferred", "builds": [], "packages": [{"run_id": "base-package"}]}]
+
+
+def test_branch_selection_takes_its_requirements_from_the_catalog_build_requirements():
+    """Vulcan publishes a branch selection without requirements, so a benchmark restore reads the profile's."""
+    requirements = {
+        "version": 1, "compiler_version": "3.0.0.2",
+        "invocations": [{"id": "w8a16", "component_ids": ["model"], "compile_fingerprint": "f" * 64}],
+        "packages": [{"id": "default", "component_ids": ["model"], "layout": "archive", "format": "zip"}],
+    }
+    model = {"id": "asr", "builds": [], "packages": [], "build_requirements": {"w8a16": requirements},
+             "branch_deployments": {"w8a16": {"deployment_id": "d", "manifest_digest": "e" * 64, "artifacts": [
+                 {"role": "compile-model", "component_id": "model", "run_id": "compile", "artifact_name": "mpk"},
+                 {"role": "package-default", "package_id": "default", "run_id": "package",
+                  "artifact_name": "package"},
+             ]}}}
+    builds, packages = _catalog_outputs(model)
+    assert [(item["component_id"], item["run_id"], item["compile_fingerprint"]) for item in builds] == [
+        ("model", "compile", "f" * 64)]
+    assert [(item["package_id"], item["component_run_ids"]) for item in packages] == [
+        ("default", {"model": "compile"})]
+    del model["build_requirements"]
+    with pytest.raises(ValidationError, match="w8a16 has no build requirements"):
+        _catalog_outputs(model)
 
 
 @pytest.mark.parametrize("continuing_revision", [False, True])

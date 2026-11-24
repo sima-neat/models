@@ -31,6 +31,7 @@ dev = [
   "pytest>=8,<9",
   "pytest-xdist>=3.6,<4",
   "ruff==0.17.4",
+  "scipy>=1.14,<2",
 ]
 
 [project.scripts]
@@ -44,7 +45,7 @@ where = ["tools"]
 
 [tool.setuptools.package-data]
 model_registry = ["py.typed"]
-model_report = ["metrics.json"]
+model_report = ["metrics.json", "english_spelling.json"]
 
 [tool.pytest.ini_options]
 addopts = "-ra --import-mode=importlib"

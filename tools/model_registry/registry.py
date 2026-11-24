@@ -398,7 +398,11 @@ def _catalog_outputs(model: JsonObject) -> tuple[list[JsonObject], list[JsonObje
     builds = [item for item in model.get("builds", []) if item.get("build_profile_id") not in selections]
     packages = [item for item in model.get("packages", []) if item.get("build_profile_id") not in selections]
     for profile_id, selection in selections.items():
-        requirements = selection["requirements"]
+        # Vulcan publishes a branch selection without its requirements; it derived them from this catalog's
+        # build_requirements for the profile when the candidate was selected.
+        requirements = selection.get("requirements") or model.get("build_requirements", {}).get(profile_id)
+        if not requirements:
+            raise ValidationError(f"selected deployment for build profile {profile_id} has no build requirements")
         components = [item for item in selection["artifacts"] if item.get("component_id")]
         for component in components:
             invocation = next(item for item in requirements["invocations"]
@@ -448,6 +452,7 @@ def _refresh_approved_benchmarks(
                 continue
             builds = {build["component_id"]: build for build in _catalog_outputs({
                 "approved_deployments": {selected_profile: selection},
+                "build_requirements": previous[entry["id"]].get("build_requirements", {}),
             })[0]}
             if set(builds) != {component["id"] for component in model["components"]}:
                 continue
@@ -750,6 +755,20 @@ def build_catalog_snapshot(
         if model["id"] not in deferred:
             continue
         entry = dict(model)
+        # Selections belong to the target branch and are restored by the server;
+        # a base catalog's approval metadata must not be submitted as our own.
+        entry.pop("approved_deployments", None)
+        # Benchmark fingerprints of approved-only profiles leave with those approvals; the registry rejects
+        # fingerprints for a profile without a build, and _refresh_approved_benchmarks restores them from the
+        # target branch's own selections.
+        built = {build.get("build_profile_id") for build in entry.get("builds", [])}
+        fingerprints = {
+            profile: value for profile, value in (entry.get("benchmark_fingerprints") or {}).items() if profile in built
+        }
+        if fingerprints:
+            entry["benchmark_fingerprints"] = fingerprints
+        else:
+            entry.pop("benchmark_fingerprints", None)
         # Categories follow this checkout's taxonomy, which may have renamed IDs
         # since the carried entry was published.
         entry["categories"] = validate_model_categorization(all_models[model["id"]], taxonomy)

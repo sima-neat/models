@@ -50,8 +50,9 @@ models/<model-id>/
 Put every model-specific setting in `model.yaml`, not in separate configuration
 files. Keep board-only code inside `performance.py` or `accuracy.py`. For ONNX,
 every `.py` or `.sh` file under `scripts/` except `convert.py`, `performance.py`,
-`accuracy.py`, and `fp32_baseline_accuracy.py` is a compile input. A change to a
-helper therefore recompiles the model, even when only `accuracy.py` imports it.
+`accuracy.py`, `benchmark_runtime.py`, and `fp32_baseline_accuracy.py` is a compile
+input. A change to any other helper therefore recompiles the model, even when only
+`accuracy.py` imports it.
 
 ## `model.yaml`
 

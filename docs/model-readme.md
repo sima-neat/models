@@ -198,7 +198,7 @@ A reviewer checks the rest:
 
 Put an explanation for maintainers in a `model.yaml` comment, or in the docstring of
 `convert.py`, `performance.py`, or `accuracy.py`. For an ONNX model, every other `.py`
-and `.sh` file under `scripts/`, except `fp32_baseline_accuracy.py`, is a compile input,
+and `.sh` file under `scripts/`, except `fp32_baseline_accuracy.py` and `benchmark_runtime.py`, is a compile input,
 so a comment there recompiles the model. An edit to `convert.py` reruns the conversion,
 and an edit to `performance.py` or `accuracy.py` reruns that benchmark. A procedure that
 applies to every model belongs in `docs/`.

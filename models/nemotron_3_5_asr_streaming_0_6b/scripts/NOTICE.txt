@@ -1,0 +1,7 @@
+Nemotron 3.5 ASR Streaming 0.6B
+Original model: NVIDIA Corporation
+https://huggingface.co/nvidia/nemotron-3.5-asr-streaming-0.6b
+Revision: ea30d66debe3740a08b573244286791d423d6b3e
+License: LicenseRef-OpenMDW-1.1 (https://openmdw.ai/license/1-1/)
+
+This package optimizes the encoder graph and quantizes encoder, predictor, and joiner weights.

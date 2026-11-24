@@ -73,6 +73,29 @@ def test_energy_per_inference_matches_cores_energy_for_its_sample_count(tmp_path
     assert metrics["energy_per_inference_joules"] == pytest.approx(CORE_REPORT["energy_joules"] / 1000)
 
 
+@pytest.mark.parametrize("plan", [
+    {"schema": "sima.neat.execution_plan", "model": "inference-only"},
+    {"status": "unavailable", "reason": "stage plan is not exported", "evidence": "encoder-run.json"},
+])
+def test_custom_route_plan_does_not_build_an_unused_default_route(tmp_path, plan):
+    class InferenceModel:
+        def execution_plan(self):
+            raise AssertionError("the default route was not measured")
+
+    report = model_report.from_performance(
+        Saved(CORE_REPORT), {"model": InferenceModel()}, workload="inference-only",
+        execution_plans={"model": plan},
+    )
+    report.save(tmp_path)
+    assert saved_report(tmp_path)["components"]["model"]["execution_plan"] == plan
+
+
+@pytest.mark.parametrize("plans", [{}, {"other": {}}])
+def test_custom_route_plans_must_cover_exactly_the_measured_components(plans):
+    with pytest.raises(ValueError, match="exactly the measured components"):
+        model_report.from_performance(Saved(CORE_REPORT), {"model": Model("m")}, workload="w", execution_plans=plans)
+
+
 def test_energy_per_inference_does_not_depend_on_the_compiled_batch(tmp_path):
     # Core's throughput already counts each inference of a batch, so equal power and rate mean equal energy.
     single = model_report.from_performance(Saved(CORE_REPORT), {"model": Model("m")}, workload="w")
@@ -173,6 +196,13 @@ def test_accuracy_report_keeps_disparity_errors_in_their_units(tmp_path):
 SAMPLES = {"split": "val", "evaluated_samples": 1, "available_samples": 1}
 
 
+def test_speech_error_rates_are_unbounded_because_insertions_can_exceed_the_reference(tmp_path):
+    result = {**SAMPLES, "metrics": {"wer": 1.2, "wer_as_written": 1.3, "cer": 0.0731}}
+    model_report.from_accuracy({"fleurs-en-us-test": result}).save(tmp_path)
+    assert saved_report(tmp_path)["datasets"]["fleurs-en-us-test"]["metrics"] == result["metrics"]
+    assert {model_report.METRICS[name]["direction"] for name in result["metrics"]} == {"lower"}
+
+
 def test_depth_error_is_unbounded_but_threshold_accuracy_is_a_fraction(tmp_path):
     result = {**SAMPLES, "metrics": {"abs_rel": 1.25, "delta1": 0.89}}
     model_report.from_accuracy({"nyu-depth-v2-default": result}).save(tmp_path)
@@ -193,6 +223,8 @@ def test_depth_error_is_unbounded_but_threshold_accuracy_is_a_fraction(tmp_path)
         ({"validation": {**SAMPLES, "metrics": {"abs_rel": float("inf")}}}, "abs_rel must be at least 0 ratio"),
         ({"validation": {**SAMPLES, "metrics": {"abs_rel": float("nan")}}}, "abs_rel must be at least 0 ratio"),
         ({"validation": {**SAMPLES, "metrics": {"delta1": 1.01}}}, "delta1 must be a ratio from 0 to 1"),
+        ({"validation": {**SAMPLES, "metrics": {"wer": -0.01}}}, "wer must be at least 0 ratio"),
+        ({"validation": {**SAMPLES, "metrics": {"cer": float("nan")}}}, "cer must be at least 0 ratio"),
         ({"validation": {**SAMPLES, "evaluated_samples": 2, "metrics": {"coco_map": 0.5}}}, "evaluated_samples"),
         ({"validation": {"metrics": {"coco_map": 0.5}}}, "validation must give metrics, split"),
         ({"validation": {**SAMPLES, "metrics": {"coco_map": 0.5}, "notes": "x"}}, "validation must give"),
@@ -216,7 +248,8 @@ def test_every_metric_names_its_stage_unit_direction_and_measurement():
 
 def test_the_package_needs_only_the_standard_library():
     probe = (
-        "import sys, model_report, model_report.generation_benchmark, model_report.board_telemetry; "
+        "import sys, model_report, model_report.generation_benchmark, model_report.board_telemetry, "
+        "model_report.speech; "
         "third_party = {name.partition('.')[0] for name in sys.modules} - set(sys.stdlib_module_names); "
         "print(sorted(third_party - {'model_report', '__main__'}))"
     )

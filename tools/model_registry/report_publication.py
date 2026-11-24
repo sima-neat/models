@@ -423,6 +423,11 @@ def publish_report(
         files["llima-benchmark-report" if native else "core-benchmark-report"] = (
             CORE_REPORT_FILE, "benchmark-report", "application/json"
         )
+    if stage == "performance":
+        for name in ("encoder-run", "asr-timings"):
+            filename = f"{name}.json"
+            if (output / filename).is_file():
+                files[name] = (filename, "benchmark-report", "application/json")
     if report.get("scope") == "components":
         for component in report["components"]:
             filename = f"{component}-{CORE_REPORT_FILE}"

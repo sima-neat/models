@@ -20,6 +20,7 @@ from .model import (
     build_profile_for,
     component_for,
     component_pipelines,
+    dataset_name,
     load_and_validate_model,
     load_models,
     profile_component_for,
@@ -39,6 +40,7 @@ AUTHOR_COMMANDS = frozenset(
         "authorize-runner-matrix",
         "assemble-package",
         "resolve-compiler",
+        "resolve-devkit-datasets",
         "simulate-mla-stages",
         "validate",
         "validate-models",
@@ -223,13 +225,13 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     core.add_argument("--environment", default="production")
     core.add_argument("--artifacts-base-url", help="Core artifact index for the selected environment")
 
-    devkit_accuracy = subcommands.add_parser(
-        "resolve-devkit-accuracy", help="resolve each DevKit accuracy dataset of a build profile into the cache"
-    )
-    devkit_accuracy.add_argument("model_dir", type=Path)
-    devkit_accuracy.add_argument("--schema", type=Path)
-    devkit_accuracy.add_argument("--cache-dir", type=Path)
-    devkit_accuracy.add_argument("--build-profile", required=True)
+    for command in ("resolve-devkit-accuracy", "resolve-devkit-datasets"):
+        datasets = subcommands.add_parser(command, help="resolve a profile's benchmark datasets into the cache")
+        datasets.add_argument("model_dir", type=Path)
+        datasets.add_argument("--schema", type=Path)
+        datasets.add_argument("--cache-dir", type=Path)
+        datasets.add_argument("--build-profile", required=True)
+        datasets.add_argument("--stage", choices=("accuracy", "performance", "all"))
 
     inputs = subcommands.add_parser(
         "model-component-mpks", aliases=["model-component-artifacts"],
@@ -932,12 +934,23 @@ def _publish_candidate(args: argparse.Namespace) -> int:
     return 0
 
 
-def _resolve_devkit_accuracy(args: argparse.Namespace) -> int:
-    """Print one JSON line per dataset the profile's accuracy evaluates, in model.yaml order; none without one."""
+def _resolve_devkit_datasets(args: argparse.Namespace) -> int:
+    """Resolve selected benchmark inputs; retain the legacy command's accuracy-only default."""
     model = load_and_validate_model(args.model_dir, args.schema)
-    if args.build_profile not in benchmarked_profiles(model, "accuracy"):
-        return 0
-    for name, dataset in model["accuracy"]["datasets"].items():
+    stage = args.stage or ("accuracy" if args.command == "resolve-devkit-accuracy" else "all")
+    accuracy = model.get("accuracy", {}).get("datasets", {}) if args.build_profile in benchmarked_profiles(
+        model, "accuracy"
+    ) else {}
+    datasets = dict(accuracy) if stage in ("accuracy", "all") else {}
+    if stage in ("performance", "all") and args.build_profile in benchmarked_profiles(model, "performance"):
+        pin = model["performance"].get("dataset") or next(iter(accuracy.values()), None)
+        if pin is not None:
+            name = dataset_name(pin)
+            previous = datasets.get(name)
+            if previous is not None and any(previous[key] != pin[key] for key in ("sha256", "size_bytes")):
+                raise ModelRegistryError(f"conflicting benchmark dataset pins for {name}")
+            datasets[name] = pin
+    for name, dataset in datasets.items():
         print(json.dumps({
             "name": name,
             "path": str(resolve_dataset(dataset, args.cache_dir)),
@@ -1139,8 +1152,8 @@ def _main(argv: Sequence[str] | None, *, author_safe: bool) -> int:
                 args.repository, environment=args.environment, artifacts_base_url=args.artifacts_base_url,
             )
             return 0
-        if args.command == "resolve-devkit-accuracy":
-            return _resolve_devkit_accuracy(args)
+        if args.command in ("resolve-devkit-accuracy", "resolve-devkit-datasets"):
+            return _resolve_devkit_datasets(args)
         if args.command in ("model-component-mpks", "model-component-artifacts"):
             from .report_publication import model_component_artifacts, model_component_mpks
 

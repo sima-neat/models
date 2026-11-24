@@ -32,8 +32,8 @@ depends on.
   tooling convert the same inputs to a different model. Planning then fails
   until Vulcan Model Convert reruns for every conversion-backed model.
 - For an ONNX model, every `.py` and `.sh` file under `models/<id>/scripts/` is a
-  compile input, except `convert.py`, `performance.py`, `accuracy.py`, and
-  `fp32_baseline_accuracy.py` (`NON_COMPILE_SCRIPTS`). Editing a comment in a
+  compile input, except `convert.py`, `performance.py`, `accuracy.py`,
+  `benchmark_runtime.py`, and `fp32_baseline_accuracy.py` (`NON_COMPILE_SCRIPTS`). Editing a comment in a
   compile input recompiles and then remeasures the model.
 - No fingerprint reads a model's `README.md`, `hero.png`, `tests/`, `license`,
   the taxonomy, `docs/`, `agents/`, `skills/`, or `AGENTS.md`. Editing them reruns

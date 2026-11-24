@@ -4,7 +4,7 @@
 # Usage: run_model_performance.sh <model_dir> <build_profile> <compiled_dir> <output_dir>
 #
 # <compiled_dir> holds <model_id>/<build_profile>/compile-outputs.json and the MPKs it lists. The model's first
-# accuracy dataset, already in DATASET_CACHE, supplies the benchmark input. A model whose CPU work reads its package
+# performance dataset (or first accuracy dataset), already in DATASET_CACHE, supplies the input. A model whose CPU work reads its package
 # resources gets them as --resources, and scripts/requirements-performance.txt adds the wheels that work needs. The
 # script writes model-report.json into <output_dir> with tools/model_report; check-report then holds it to model.yaml
 # and records the board in environment.json.
@@ -55,13 +55,13 @@ from model_registry.model import load_model
 print("llima" if load_model(sys.argv[1])["components"][0]["interface"]["format"] == "huggingface" else "core")
 ' "$MODEL_DIR")"
 
-# The script takes the first accuracy dataset as <name>=<path>, unpacked and looking through a single top-level
-# directory, and picks its input from it. A model without an accuracy dataset gets none.
+# The script takes its performance dataset, falling back to the first accuracy dataset, as <name>=<path>.
+# Unpack it and look through a single top-level directory. A model without either input gets none.
 dataset=()
 if [[ "$backend" == core ]]; then
 mkdir -p "$DATASET_CACHE" "$(dirname "$DATASET_LOCK")"
 resolutions="$(flock --wait "$DATASET_LOCK_SECONDS" --close "$DATASET_LOCK" \
-  timeout --signal=TERM --kill-after=30s "$RESOLVE_TIMEOUT_SECONDS" "$REGISTRY_PYTHON" -m model_registry resolve-devkit-accuracy "$MODEL_DIR" \
+  timeout --signal=TERM --kill-after=30s "$RESOLVE_TIMEOUT_SECONDS" "$REGISTRY_PYTHON" -m model_registry resolve-devkit-datasets "$MODEL_DIR" --stage performance \
   --build-profile "$BUILD_PROFILE_ID" --cache-dir "$DATASET_CACHE")"
 dataset=()
 if [[ -n "$resolutions" ]]; then

@@ -14,6 +14,11 @@
     "summary": "Permissive license. Redistribution must include the license text and existing notices.",
     "downloadable": true
   },
+  "CC-BY-4.0": {
+    "name": "Creative Commons Attribution 4.0 International",
+    "summary": "Redistribution must give attribution, include the license or a link to it, and indicate modifications.",
+    "downloadable": true
+  },
   "BSD-3-Clause": {
     "name": "BSD 3-Clause License",
     "summary": "Permissive license. Redistribution must keep the copyright notice and disclaimer.",
@@ -52,6 +57,11 @@
   "LicenseRef-NVIDIA-Source-Code-License-SegFormer": {
     "name": "NVIDIA Source Code License for SegFormer",
     "summary": "Noncommercial research and evaluation use only, including for derivative works. Redistribution must include the license and retain existing copyright, patent, trademark and attribution notices.",
+    "downloadable": true
+  },
+  "LicenseRef-OpenMDW-1.1": {
+    "name": "OpenMDW License Agreement v1.1",
+    "summary": "Redistribution must retain the license agreement and applicable copyright and origin notices.",
     "downloadable": true
   },
   "LicenseRef-OpenStereo-Academic": {
