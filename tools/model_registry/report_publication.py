@@ -24,7 +24,7 @@ from jsonschema import Draft202012Validator
 from model_report import CORE_REPORT_FILE, METRICS, REPORT_FILE, REQUIRED_PERFORMANCE_METRICS, accuracy_value_error
 
 from .benchmark_declarations import benchmark_runner, benchmarked_profiles
-from .dependencies import resolve_benchmark_runtime
+from .dependencies import catalog_inputs, resolve_benchmark_runtime
 from .errors import ValidationError
 from .fetch import sha256_file
 from .fingerprints import BENCHMARK_RUN_TYPES, benchmark_fingerprint
@@ -364,6 +364,7 @@ def publish_report(
     tool = "llima" if native else "pyneat"
     board = {**_read_json(output / ENVIRONMENT_FILE, "runner environment"), tool: report["runtime"][tool]}
     runtime = resolve_benchmark_runtime(root)
+    inputs = catalog_inputs(root)
     report_digest = canonical_sha256(report)
     stable_digest = hashlib.sha256(f"{package_run_id}:{fingerprint}:{report_digest}".encode()).hexdigest()
     stable_key = f"models-{stage}-{stable_digest}"
@@ -391,6 +392,7 @@ def publish_report(
                     key: board[key]
                     for key in ("machine", "cpu_count", "cpu_governor", "mla_frequency_hz", "cpu_frequency_khz")
                 },
+                **({"catalog_inputs": inputs} if inputs else {}),
             },
         },
         "metadata": {**subject, "stage": stage, "package_run_id": package_run_id},

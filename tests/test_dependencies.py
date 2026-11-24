@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 from model_registry.dependencies import (
+    catalog_inputs,
     onnx_opset_version,
     require_onnx_opset_version,
     resolve_benchmark_runtime,
@@ -32,9 +33,41 @@ def test_repository_benchmark_runtime_uses_source_revision_package() -> None:
 
     runtime = resolve_benchmark_runtime(ROOT)
     assert runtime["devkit"] == {**manifest["devkit"], "platform_version": manifest["platform-version"]}
-    assert runtime["neat_core"] == manifest["neat-core"]
+    # The Core commit is not a benchmark fingerprint input, so pinning it reruns no benchmark.
+    assert runtime["neat_core"] == {"install_target": manifest["neat-core"]["install_target"]}
     assert runtime["llima"] == manifest["llima"]
     assert "benchmarker" not in runtime
+
+
+def repository_with_core(directory: Path, **neat_core: object) -> Path:
+    manifest = json.loads((ROOT / "deps" / "manifest.json").read_text(encoding="utf-8"))
+    manifest["neat-core"] = neat_core
+    path = directory / "deps" / "manifest.json"
+    path.parent.mkdir()
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+    return directory
+
+
+def test_catalog_inputs_name_the_pinned_platform_and_core_release() -> None:
+    manifest = json.loads((ROOT / "deps" / "manifest.json").read_text(encoding="utf-8"))
+
+    assert catalog_inputs(ROOT) == {
+        "platform_version": manifest["platform-version"],
+        "neat_core_version": manifest["neat-core"]["install_target"].removeprefix("core@v"),
+        "neat_core_revision": manifest["neat-core"]["revision"],
+    }
+
+
+def test_catalog_inputs_are_left_out_for_a_core_branch_package(tmp_path: Path) -> None:
+    assert catalog_inputs(repository_with_core(tmp_path, install_target="core@develop:abcdef123456")) is None
+
+
+@pytest.mark.parametrize("revision", [None, "b1f9556caec1", "B" * 40])
+def test_catalog_inputs_require_the_full_core_commit(tmp_path: Path, revision: object) -> None:
+    repository = repository_with_core(tmp_path, install_target="core@v0.6.2", revision=revision)
+
+    with pytest.raises(ValidationError, match="neat-core.revision"):
+        catalog_inputs(repository)
 
 
 def test_benchmark_runtime_requires_a_package_name(tmp_path: Path) -> None:

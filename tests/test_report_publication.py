@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from model_registry.dependencies import catalog_inputs
 from model_registry.errors import ValidationError
 from model_registry.fingerprints import benchmark_fingerprint
 from model_registry.model import load_and_validate_model
@@ -277,6 +278,7 @@ def test_publish_report_publishes_one_whole_model_run_under_the_package_run(tmp_
     assert create["run_type"] == "model_performance"
     assert create["parent_run_id"] == PACKAGE_RUN
     assert create["run_fingerprint"] == fingerprint
+    assert create["environment"]["properties"]["catalog_inputs"] == catalog_inputs(ROOT)
     assert result["benchmark_fingerprint"] == fingerprint and result["package_run_id"] == PACKAGE_RUN
     # Each component's compile run is an input of the one whole-model run.
     inputs = {path.rsplit("/", 1)[1]: body for _, path, body in calls if "/inputs/" in path}

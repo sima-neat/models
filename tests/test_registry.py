@@ -16,7 +16,7 @@ import boto3
 import pytest
 from botocore.exceptions import ClientError
 from model_registry.compile_matrix import build_matrix
-from model_registry.dependencies import resolve_model_compiler
+from model_registry.dependencies import catalog_inputs, resolve_model_compiler
 from model_registry.errors import FetchError, ValidationError
 from model_registry.fetch import REGISTRY_DOWNLOAD_ATTEMPTS, BuildFile, download_build, download_build_file
 from model_registry.fingerprints import benchmark_fingerprint, compile_fingerprint
@@ -894,6 +894,7 @@ def test_catalog_snapshot_reuses_unchanged_compile_runs() -> None:
 
     assert first["catalog_revision"] == "a" * 40
     assert len(first["taxonomy_sha256"]) == 64
+    assert first["catalog_inputs"] == catalog_inputs(ROOT)
     assert "version" not in first["taxonomy"]
     assert first["taxonomy"]["architectures"]["resnet"]["description"]
     assert json.loads(json.dumps(first))["taxonomy"] == first["taxonomy"]

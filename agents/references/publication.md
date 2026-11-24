@@ -136,7 +136,8 @@ not report fields. Publication records them on the run.
   measurement has a `dataset` dimension. A component measurement has a `component_id`
   dimension. A generation measurement has workload, role, and decoding dimensions.
 - The run environment records the DevKit's clocks, CPU governor, and kernel from
-  `environment.json`, which `check-report` wrote on the board.
+  `environment.json`, which `check-report` wrote on the board, and the catalog's
+  `catalog_inputs` under `properties`.
 
 A run completes even when its model tests failed, so that stage is not measured again. The
 `check` job fails the workflow afterward.
@@ -162,6 +163,7 @@ A catalog is one document per branch and revision. `build_catalog_snapshot` in
 | --- | --- |
 | `git_ref`, `catalog_revision` | the branch and the commit |
 | `taxonomy`, `taxonomy_sha256` | the taxonomy of this checkout |
+| `catalog_inputs` | `platform_version`, `neat_core_version`, and `neat_core_revision` from `deps/manifest.json`, through `catalog_inputs()`. It is left out when Core is pinned to a branch package |
 | `models[]` | `id`, `display_name`, `description`, `license`, `maturity`, `categories`, `documentation`, `builds`, `packages`, and `benchmark_fingerprints` |
 | `models[].builds[]` | `build_profile_id`, `compile_invocation_id`, `component_id`, `compile_fingerprint`, `artifact_sha256`, `run_id` |
 | `models[].packages[]` | `package_id`, `build_profile_id`, `run_id`, `artifact_sha256`, `size_bytes`, `package_fingerprint`, `component_run_ids` |
