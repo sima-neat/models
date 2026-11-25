@@ -241,9 +241,9 @@ Every pull request feeds what its work taught back into the file that owns the t
   | How tooling, CI, or publication works | `agents/references/` |
   | The contributor contract for people | `docs/` |
 
-- **Generalize.** Write a lesson in one or two sentences, as a rule with its condition: when X,
-  do Y, because Z. It names the condition, not the model where it was found, and holds for any model that meets
-  the condition. A fact true of only one model stays in that model's folder. A fact about
+- **Generalize.** Write a lesson brief and to the point, as general as it holds, as a rule with
+  its condition: when X, do Y, because Z. It names the condition, not the model where it was
+  found, and holds for any model that meets the condition. A fact true of only one model stays in that model's folder. A fact about
   one operator or option is stated exactly, because it holds wherever that operator or
   option appears.
 - **Evidence.** Each lesson cites a compile output or a measurement from the pull request.
