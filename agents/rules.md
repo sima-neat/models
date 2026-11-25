@@ -235,14 +235,14 @@ Every pull request feeds what its work taught back into the file that owns the t
   | A graph surgery pattern, an operator fact, or a quantization or compile option | `skills/sima-compile-model/references/` |
   | A way to measure performance or accuracy | `skills/sima-benchmark-model/` |
   | How model scripts or model tests are written | [coding-style.md](coding-style.md) |
+  | A step an agent's workflow in this repository lacked or got wrong | the skill under `agents/skills/` that runs it |
   | A rule every change in this repository follows | this file |
   | A change that is incomplete without another file | [change-map.md](change-map.md) |
   | How tooling, CI, or publication works | `agents/references/` |
   | The contributor contract for people | `docs/` |
 
 - **Generalize.** Write a lesson in one or two sentences, as a rule with its condition: when X,
-  do Y, because Z. It
-  names the condition, not the model where it was found, and holds for any model that meets
+  do Y, because Z. It names the condition, not the model where it was found, and holds for any model that meets
   the condition. A fact true of only one model stays in that model's folder. A fact about
   one operator or option is stated exactly, because it holds wherever that operator or
   option appears.
