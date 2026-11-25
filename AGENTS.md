@@ -22,8 +22,8 @@ file, and `skills/` links only its own files and public URLs. Tests check both.
 
 Claude Code and Codex discover every skill through `.claude/skills/` and `.agents/skills/`,
 which hold one link per skill folder and no copies. A new skill goes in its tree and gets a
-link in both folders. A repository skill's name starts with `models-`, because Claude Code
-lets a personal skill of the same name hide a project skill.
+link in both folders. A repository skill's name starts with `models-` and a customer skill's
+with `sima-`, because Claude Code lets a personal skill of the same name hide a project skill.
 
 - Repository skills: [`models-add-model`](agents/skills/models-add-model/SKILL.md) for a
   model change through to its pull request,

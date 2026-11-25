@@ -22,7 +22,7 @@ the MLA.
 
 ## When your own timing disagrees
 
-Core's benchmark runs 100 warm-up inferences before each pass. Its latency pass
+In Core v0.6.2, the benchmark runs 100 warm-up inferences before each pass. Its latency pass
 pushes one input and waits for that result before it pushes the next. Its
 throughput pass pushes inputs on one thread while another thread pulls results,
 so several inferences are in flight at once. A loop that runs one input at a
