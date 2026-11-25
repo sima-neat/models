@@ -28,7 +28,8 @@ def _write_model(path: Path, op_type: str, batch: str | int = 1, output_shape: l
         [helper.make_tensor_value_info("x", TensorProto.FLOAT, shape)],
         [helper.make_tensor_value_info("y", TensorProto.FLOAT, output_shape or shape)],
     )
-    onnx.save(helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)]), path)
+    # IR 8 is opset 17's version. onnx 1.23 writes IR 14 by default, which the checker in onnxsim 0.7.3 rejects.
+    onnx.save(helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)], ir_version=8), path)
     return path
 
 
