@@ -21,7 +21,7 @@ Choose one label from this table and set `category` to the closest schema value.
 
 Classify by the requested outcome. A model request uses `feature`. A slower or less accurate build than its published result uses `bug`. A request to make an existing build faster uses `enhancement`. A failure inside the Model Compiler or a Neat package that Models only calls is still labeled by its effect on the model; say in the comment which component the evidence points to.
 
-Add `needs-repro` only when a missing model ID, build profile, command, version, or error output blocks investigation. Leave it off once the discussion supplies enough information.
+Add `needs-repro` only when a missing model ID, build profile, command, version, or error output blocks investigation. Triage only adds labels and never removes one, so when an issue already carries `needs-repro` and the discussion now supplies enough information, say in the comment that a maintainer can remove it.
 
 ## Actionability
 
