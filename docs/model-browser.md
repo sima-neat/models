@@ -14,6 +14,11 @@ breadcrumb on a model page returns to the family the reader came from.
 The section navigation matches Software documentation: full-width, left-aligned
 links with a blue active label. The catalog and contributor documentation share
 the portal's theme preference.
+A page that embeds the browser, such as the Palette Code VS Code extension, can
+ask for a theme with `?theme=dark` or `?theme=light`. It wins over the shared
+preference for that page and is never stored, so the theme the reader picked
+stays as it was. Other values are ignored. The theme toggle still stores the
+reader's choice.
 Standalone previews retain local navigation when the shared header is unavailable.
 
 The browser has two views. The customer view shows the Main catalog and hides the
