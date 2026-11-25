@@ -20,6 +20,18 @@ detections at any score. Do not compare those results with current ones. Older
 reports also counted MLA memory differently, including buffers EV74 hands to
 the MLA.
 
+## When your own timing disagrees
+
+Core's benchmark runs 100 warm-up inferences before each pass. Its latency pass
+pushes one input and waits for that result before it pushes the next. Its
+throughput pass pushes inputs on one thread while another thread pulls results,
+so several inferences are in flight at once. A loop that runs one input at a
+time therefore measures about `1000 / latency_avg_ms`, not `throughput_fps`. A
+loop that builds a new input for every inference, or feeds a model-sized tensor
+in place of the 720p frame, also measures different CPU work. Compare the
+model's performance script with the page, and report your own loop's number
+apart from it, named for what it measured.
+
 ## Compare with a published model page
 
 Open the model's page in the [Model Browser](https://developer.sima.ai/models/)
