@@ -218,7 +218,7 @@ The code holds each limit, and this table names where. A change to a limit updat
 | Pixel size of a model's `hero.png` | `HERO_WIDTH` and `HERO_HEIGHT` in `documentation.py` | 1200 by 480 |
 | Clock cycles and seconds the MLA stage simulation runs before it stops | `CYCLE_LIMIT` and `TIMEOUT_S` in `tools/model_registry/mla_stage_simulation.py` | 2,000,000,000 cycles, 600 s |
 | Roles and required names in one Vulcan candidate | the check in `tools/model_registry/candidates.py` | 32 roles, 4096 names |
-| Lines in `AGENTS.md`, which every agent session loads | `AGENTS_LINE_BUDGET` in `tests/test_docs.py` | 155 |
+| Lines in `AGENTS.md`, which every agent session loads | `AGENTS_LINE_BUDGET` in `tests/test_docs.py` | 150 |
 
 ## Where a lesson goes
 

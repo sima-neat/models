@@ -1,5 +1,5 @@
 ---
-name: write-pr-description
+name: models-write-pr-description
 description: Write or update the description of a sima-neat/models pull request. Use when opening a pull request, after a push that changes what the description says, and after CI publishes the results its table reports.
 ---
 

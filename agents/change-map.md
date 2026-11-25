@@ -39,5 +39,5 @@ in the same commit.
 | a published result's shape | its schema under `schemas/` and `artifact-browser/` |
 | a CI job, trigger, or concurrency rule | [CI flow](references/ci-flow.md), and the [after-merge section](../docs/contributing.md#after-merge-trusted-staging-automation) when the author sees a different outcome |
 | a module under `artifact-browser/` | `fingerprintedAssets` in `website/scripts/assemble-portal.mjs`, the module table in `artifact-browser/README.md`, and [the model browser page](../docs/model-browser.md) for a visible change |
-| a file under `docs/`, or the topics one covers | its row in the [index](../AGENTS.md#index), and `website/sidebars.ts` |
-| a file under `agents/` or `skills/`, or the topics one covers | for a file under `agents/` and for each `skills/*/SKILL.md`, its row in the [index](../AGENTS.md#index). For a file under a skill's `references/`, its link from that skill's `SKILL.md` |
+| a file under `docs/`, or the topics one covers | its link in [docs/README.md](../docs/README.md), and `website/sidebars.ts` |
+| a file under `agents/` or `skills/`, or the topics one covers | for `agents/change-map.md`, `agents/coding-style.md`, and a file under `agents/references/`, its row in [References](../AGENTS.md#references). For a skill folder, its line in [Skills](../AGENTS.md#skills) and its links in `.agents/skills/` and `.claude/skills/`. For a file under a skill's `references/`, its link from that skill's `SKILL.md` |
