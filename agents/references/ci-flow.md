@@ -108,6 +108,7 @@ compiles and benchmarks nothing and still publishes the catalog.
 | `publish-catalog` | `publishable`, after every `compile` call ends | Publishes the final snapshot for the revision. |
 | `benchmark` | `publishable`, after `initialize-catalog`, for each reused build that lacks a benchmark | Calls `vulcan-model-benchmarking.yml`. Runs while the changed builds compile. |
 | `benchmark-without-compiles` | nothing compiles, after `publish-catalog` | The same call, for a run with no pending catalog. |
+| `publish-selection` | on `main`, after `publish-catalog` and the benchmarks | Publishes the catalog as the selection for its platform and Core release and makes it the platform's default. It fails when the catalog has pending builds or the registry finds a benchmark without a completed run. |
 | `report-partial-publication` | the plan compiles something | Lists each `Compile` or `Publish` job that did not succeed and fails the run. |
 
 Three orderings matter:

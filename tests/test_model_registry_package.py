@@ -93,7 +93,8 @@ def test_builds_author_wheel_and_vulcan_payload(tmp_path: Path) -> None:
         assert "model_registry/registry_http.py" in names
         assert "model_report/metrics.json" in names
         assert {"model_inputs/images.py", "model_inputs/frame.py", "model_registry/fidelity.py"} <= names
-        for ci_module in ("report_publication", "registry", "candidates", "promotions", "neat_core"):
+        ci_modules = ("report_publication", "registry", "candidates", "promotions", "neat_core", "catalog_selection")
+        for ci_module in ci_modules:
             assert f"model_registry/{ci_module}.py" not in names
         assert "author_main" in wheel.read("model_registry/__main__.py").decode()
         entry_points = next(name for name in names if name.endswith(".dist-info/entry_points.txt"))

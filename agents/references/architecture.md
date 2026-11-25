@@ -94,6 +94,7 @@ marked CI only from the author package.
 | `registry_http.py` | The signed HTTP transport, and registry reads that sign only the configured IAM API. |
 | `registry.py` (CI only) | Publishing compile runs, packages with their fidelity report and MLA stage simulation, model documentation, and the branch catalog. Staging a published build's receipts and file list for a benchmark (`stage-registry-build`). |
 | `candidates.py` (CI only) | On-demand candidates: publication, run binding, finalization, and selection in a feature catalog. |
+| `catalog_selection.py` (CI only) | Publishing `main`'s complete catalog as the selection for its platform and Core release, with its `catalog_qualification` run, and making it the platform's default (`publish-selection`). |
 | `promotions.py` (CI only) | Promotion requests, decisions, receipts, and the benchmark reference refresh after a promotion. |
 | `report_publication.py` (CI only) | Checking a `model-report.json` against `model.yaml` (`check_report`) and publishing one benchmark run (`publish_report`). |
 | `neat_core.py` (CI only) | Resolving the selected Core artifact and installing it only when the installed one differs. |

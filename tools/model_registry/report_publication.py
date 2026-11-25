@@ -266,7 +266,7 @@ def _check_metrics(label: str, stage: str, metrics: dict[str, float], required: 
             raise ValidationError(f"{label}: {'; '.join(errors)}")
 
 
-def _put_file(
+def put_run_file(
     client: SigV4RegistryClient,
     store: S3ArtifactStore,
     path: Path,
@@ -280,6 +280,7 @@ def _put_file(
     metadata: JsonObject,
     stable_key: str,
 ) -> JsonObject:
+    """Store the file under its SHA-256 and register it as the run's artifact `name`."""
     stored = store.ensure_native_sha256(path, s3_key, sha256_file(path)[0], media_type=media_type)
     return client.request(
         "PUT",
@@ -453,7 +454,7 @@ def publish_report(
     if (output / f"{stage}.log").is_file():
         files[f"{stage}-log"] = (f"{stage}.log", "log", "text/plain")
     artifacts = {
-        name: _put_file(
+        name: put_run_file(
             client,
             store,
             output / filename,

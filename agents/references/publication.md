@@ -205,6 +205,27 @@ fingerprints of each approved deployment from its producing runs.
 The model browser reads the current snapshot, its runs, and download URLs through the
 registry's read API.
 
+## Catalog selections
+
+The customer view reads selections, not a branch catalog. A selection points one platform
+and exact Core commit, the catalog's `catalog_inputs`, at one catalog, and each platform
+has one default selection. A merge into `main` is a release, so `publish-selection`
+(`catalog_selection.py`) publishes `main`'s catalog when its run ends:
+
+1. It checks that the catalog is at this commit, records the pinned `catalog_inputs`, and
+   has no pending builds.
+2. It publishes a `catalog_qualification` run that names the catalog and its inputs, with
+   one passed test result and a report artifact. The registry accepts a selection only
+   with such a run.
+3. It replaces the selection of the same platform and Core, or creates the first one.
+   Replacing the default moves the default with it. A new selection otherwise becomes the
+   platform's default.
+
+Each write names the selection or default it read (`expected_selection_id`,
+`expected_default_id`), so the registry rejects it with `409` when another publisher
+changed them first. A model test that fails does not block the selection, because the
+qualification attests only that the catalog is complete and names the pinned release.
+
 ## Conversions
 
 ### Publication

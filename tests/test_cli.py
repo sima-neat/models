@@ -55,6 +55,7 @@ def test_benchmark_job_scopes_baseline_and_timeout(model, profile, stages, backe
         "publish-branch-deployment",
         "publish-report",
         "publish-catalog",
+        "publish-selection",
         "resolve-base",
         "resolve-benchmark-runtime",
         "benchmark-job",
