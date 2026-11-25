@@ -1,9 +1,9 @@
 ---
-name: neat-compile-model
+name: sima-compile-model
 description: Compile an ONNX or PyTorch model into an MPK for a SiMa Modalix DevKit with the Model Compiler. Use to audit an ONNX graph's operators against MLA support, rewrite unsupported operators or detection outputs for BoxDecode, optimize a compatible graph when performance work is requested, quantize and compile with calibration, or lay out a reproducible model recipe the way the Models repository does.
 ---
 
-# Neat Compile Model
+# SiMa Compile Model
 
 Choose the path before step 2:
 
@@ -151,7 +151,7 @@ Choose the path before step 2:
      authoritative for tensor order, layout, dtype, quantization, and resize
      metadata. Then run the compiled model through BoxDecode as
      [BoxDecode contracts](references/boxdecode.md) check 6 describes.
-   - Measure accuracy and speed on a DevKit with the `neat-benchmark-model`
+   - Measure accuracy and speed on a DevKit with the `sima-benchmark-model`
      skill.
 
    Done when the report gives each check that ran with its result, and labels as

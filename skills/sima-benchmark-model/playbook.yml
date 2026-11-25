@@ -1,5 +1,5 @@
-id: neat-benchmark-model
-name: Neat Benchmark Model
+id: sima-benchmark-model
+name: SiMa Benchmark Model
 version: 0.1.0
 agents: [codex, claude]
 description: Measure a compiled model's performance and accuracy on a Modalix DevKit the way the Models repository does.

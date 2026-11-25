@@ -52,8 +52,8 @@ These names are exceptions, because a file format or another system owns them:
 | review a pull request | [agents/skills/review-pr/SKILL.md](agents/skills/review-pr/SKILL.md) | the review checks and the two verdicts every review reports |
 | write or update a pull request description | [agents/skills/write-pr-description/SKILL.md](agents/skills/write-pr-description/SKILL.md) | the description's sections, including `Rule, skill, and knowledge updates` |
 | draw or review a model's flowgraph | [agents/references/flowgraph.md](agents/references/flowgraph.md) | the drawing rules for a model's flowgraph |
-| audit operators, rewrite or optimize a graph, quantize, or compile a model | [skills/neat-compile-model/SKILL.md](skills/neat-compile-model/SKILL.md) | the customer skill for operator audit, graph surgery, graph optimization, quantization, and compilation |
-| measure a model's performance or accuracy on a DevKit | [skills/neat-benchmark-model/SKILL.md](skills/neat-benchmark-model/SKILL.md) | the customer skill for benchmarks on a DevKit |
+| audit operators, rewrite or optimize a graph, quantize, or compile a model | [skills/sima-compile-model/SKILL.md](skills/sima-compile-model/SKILL.md) | the customer skill for operator audit, graph surgery, graph optimization, quantization, and compilation |
+| measure a model's performance or accuracy on a DevKit | [skills/sima-benchmark-model/SKILL.md](skills/sima-benchmark-model/SKILL.md) | the customer skill for benchmarks on a DevKit |
 | need the repository's purpose, or the whole path from official model to measured results | [docs/getting-started.md](docs/getting-started.md) | each step in order with its command: datasets, convert, compile, performance, accuracy |
 | download a published model, or describe the `sima-cli models` commands | [docs/downloading-models.md](docs/downloading-models.md) | finding a model, the model card, downloading a variant, choosing a branch, the printed errors |
 | meet a term such as build profile, model package, or fingerprint | [docs/concepts.md](docs/concepts.md) | plain definitions with one example each, and the stage table |
@@ -100,7 +100,7 @@ it ends in a pull request.
 - **Edit before adding:** extend or correct an existing statement first. Add a new one only
   when none covers the case.
 
-`skills/neat-compile-model` and `skills/neat-benchmark-model` matter most, because customers'
+`skills/sima-compile-model` and `skills/sima-benchmark-model` matter most, because customers'
 agents act on them without anyone to ask. Every change that compiles, rewrites a graph, or
 measures a model ends by asking what it learned about operators, graph surgery, quantization,
 compilation, or measurement, and writes each answer into that skill's `references/`. A change

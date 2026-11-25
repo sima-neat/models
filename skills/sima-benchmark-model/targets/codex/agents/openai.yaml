@@ -1,0 +1,4 @@
+interface:
+  display_name: "SiMa Benchmark Model"
+  short_description: "Measure compiled models' speed and accuracy on a DevKit"
+  default_prompt: "Use $sima-benchmark-model to measure this compiled model's throughput, latency, and accuracy on a Modalix DevKit."

@@ -1,9 +1,9 @@
 ---
-name: neat-benchmark-model
+name: sima-benchmark-model
 description: Measure a compiled model's performance and accuracy on a SiMa Modalix DevKit the way the Models repository does. Use to benchmark an MPK's throughput, latency, power, or energy with PyNeat, write a standalone performance script, read a model-report.json, score accuracy on a dataset, or compare a result with a published model page or an earlier run.
 ---
 
-# Neat Benchmark Model
+# SiMa Benchmark Model
 
 The measurement runs on the DevKit in PyNeat, the Python package that runs a
 compiled model, at `~/pyneat/bin/python`. A model's performance script calls
@@ -12,7 +12,7 @@ Neat Core's benchmark and hands the result to `model_report`, which writes
 [`tools/model_report`](https://github.com/sima-neat/models/tree/main/tools/model_report).
 It needs only the Python standard library, so it runs in PyNeat's environment.
 
-This skill measures MPKs. Compiling a model belongs to the `neat-compile-model`
+This skill measures MPKs. Compiling a model belongs to the `sima-compile-model`
 skill. Language and vision-language models run MoLE workloads instead, which
 [DevKit performance](https://github.com/sima-neat/models/blob/main/docs/benchmarking.md#llima-text-and-image-performance)
 describes.

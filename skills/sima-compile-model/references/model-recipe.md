@@ -403,7 +403,7 @@ calibration images.
    ```
 
    It prints `Valid artifact: yolo26n_w8a8_mpk.tar.gz`.
-6. Measure the MPK on a DevKit with the `neat-benchmark-model` skill.
+6. Measure the MPK on a DevKit with the `sima-benchmark-model` skill.
 
 `scripts/run_model_compilation.sh` is the runner CI uses. For a model whose
 `compilation.source` is `conversion`, it fetches the ONNX that CI published,
