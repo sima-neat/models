@@ -34,17 +34,9 @@ jobs:
         run: python -m ruff check .
 
       - name: Check the pinned Core commit
-        # Catalogs name neat-core.revision as the commit of the pinned Core release, so it must be that tag's commit.
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          target="$(jq -r '."neat-core".install_target' deps/manifest.json)"
-          if [[ "$target" == core@v* ]]; then
-            tag="${target#core@}"
-            expected="$(gh api "repos/sima-neat/core/commits/$tag" --jq .sha)"
-            pinned="$(jq -r '."neat-core".revision' deps/manifest.json)"
-            [[ "$pinned" == "$expected" ]] || { echo "neat-core.revision is $pinned; Core $tag is $expected" >&2; exit 1; }
-          fi
+        run: scripts/check_neat_core_revision.sh
 
       - name: Install sima-cli
         run: scripts/install_sima_cli.sh
