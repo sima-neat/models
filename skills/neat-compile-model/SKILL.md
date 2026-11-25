@@ -5,15 +5,21 @@ description: Compile an ONNX or PyTorch model into an MPK for a SiMa Modalix Dev
 
 # Neat Compile Model
 
-Run every command from this skill's folder, so the `scripts/` paths resolve,
-and give model and build paths as absolute paths outside it. Take the steps in
-order and stop where the request ends. An audit ends at step 2 and changes
-nothing. A graph rewrite ends at step 3 or 4 with its step 6 evidence. A compile
-runs to step 6.
+Choose the path before step 2:
 
-To reproduce a model published in the Models repository, or to lay out your own
-recipe its way, read [model recipe](references/model-recipe.md). It maps these
-steps to `convert.py`, `surgery.py`, `calibration.py`, and `compile.py`.
+- To rebuild a model published in the Models repository, follow
+  [model recipe](references/model-recipe.md) in place of steps 2 to 5. The
+  model's own scripts already hold its audited graph surgery and quantization,
+  and the recipe's commands run from the root of a clone of the Models
+  repository.
+- For any other model, take the steps in order and stop where the request
+  ends. An audit ends at step 2 and changes nothing. A graph rewrite ends at
+  step 3 or 4 with its step 6 evidence. A compile runs to step 6. Run these
+  commands from this skill's folder, so the `scripts/` paths resolve, and give
+  model and build paths as absolute paths outside it. To lay the result out as
+  a reproducible recipe, read [model recipe](references/model-recipe.md), which
+  maps these steps to `convert.py`, `surgery.py`, `calibration.py`, and
+  `compile.py`.
 
 ## Steps
 
@@ -59,6 +65,10 @@ steps to `convert.py`, `surgery.py`, `calibration.py`, and `compile.py`.
      that attributes, shapes, opsets, composite fusion, fallback, or placement
      satisfy every MLA constraint. Treat it as preliminary screening, and claim
      no MLA placement from it.
+   - The audit prints the database's `Release`. When that release is older
+     than the installed Model Compiler, read an `unsupported` or `unknown`
+     result as a question for AFE import and placement to answer, not as proof
+     that the operator cannot run on MLA.
    - For a PyTorch model without an exported ONNX graph, the audit does not
      apply. Claim no compatibility before AFE import and compiler placement have
      been inspected.
@@ -119,7 +129,10 @@ steps to `convert.py`, `surgery.py`, `calibration.py`, and `compile.py`.
    For an INT8 build, add
    `--real_data --dataset_images <folder> --num_calib_samples 20`, because
    without `--real_data` the script calibrates on random values, which only
-   shows that the model compiles.
+   shows that the model compiles. Add `--resize letterbox` when the deployed
+   model letterboxes its input, as YOLO detectors do. The default, `stretch`,
+   ignores the aspect ratio, and calibrating on images the DevKit never sends
+   shifts the INT8 ranges.
 
    [Quantize and compile](references/quantize_compile.md) covers PyTorch, dynamic
    shapes, calibration images, precision, QAT QDQ exports, memory errors, and the

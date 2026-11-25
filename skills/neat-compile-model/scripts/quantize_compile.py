@@ -54,6 +54,8 @@ logger = PrintLogger()
 
 # Constants
 _ONNX_IR_VERSION = 8
+# Neat's default letterbox fill, which YOLO training also pads with.
+LETTERBOX_FILL = 114
 DIVIDER = "-" * 60
 
 
@@ -159,16 +161,29 @@ class ModelProcessor:
         else:
             h, w = target_shape[1], target_shape[2]
 
-        # Match the deployed CVU image preprocessor. Calibration with Pillow's
-        # default bicubic resize shifts activation ranges from the runtime's
-        # bilinear input distribution.
-        image = Image.open(image_path).convert("RGB").resize(
-            (w, h), resample=Image.Resampling.BILINEAR
-        )
+        # Resample bilinearly, as the deployed CVU image preprocessor does. Pillow's
+        # default bicubic resize shifts activation ranges from the runtime's input.
+        image = Image.open(image_path).convert("RGB")
+        if self.args.resize == "letterbox":
+            image = self.letterbox(image, w, h)
+        else:
+            image = image.resize((w, h), resample=Image.Resampling.BILINEAR)
         image_np = np.array(image)
         # Permute to NCHW for normalization logic, then we'll flip back to NHWC if needed
         image_t = torch.tensor(image_np).permute(2, 0, 1).unsqueeze(0)
         return self.normalize_tensor(image_t, self.args.mean, self.args.std, 'NCHW')
+
+    @staticmethod
+    def letterbox(image, width, height):
+        """Scale an RGB image to fit width x height, center it, and pad the rest."""
+        gain = min(width / image.width, height / image.height)
+        resized = (round(image.width * gain), round(image.height * gain))
+        # The 0.1 offset puts an odd padding pixel on the right or bottom, as Ultralytics does.
+        left = round((width - resized[0]) / 2 - 0.1)
+        top = round((height - resized[1]) / 2 - 0.1)
+        canvas = Image.new("RGB", (width, height), (LETTERBOX_FILL,) * 3)
+        canvas.paste(image.resize(resized, resample=Image.Resampling.BILINEAR), (left, top))
+        return canvas
 
     def prepare_onnx(self):
         """Simplifies ONNX model and enforces required versions/shapes."""
@@ -309,7 +324,7 @@ class ModelProcessor:
             calibration_data=calib_data,
             quantization_config=quant_config,
             model_name=model_basename,
-            log_level=logging.INFO
+            log_level=getattr(logging, self.args.log_level)
         )
 
         if self.args.analyse_error:
@@ -325,7 +340,7 @@ class ModelProcessor:
             quant_model.compile(
                 output_path=self.output_path,
                 batch_size=self.args.batch_size,
-                log_level=logging.INFO
+                log_level=getattr(logging, self.args.log_level)
             )
             manifest_path = os.path.join(self.output_path, "quantization_manifest.json")
             with open(manifest_path, "w", encoding="utf-8") as manifest_file:
@@ -414,6 +429,12 @@ def main():
     parser.add_argument("--real_data", action="store_true", help="Use images for calibration")
     parser.add_argument("--dataset_images", default="./calib_images", help="Path to calibration images")
     parser.add_argument("--num_calib_samples", type=int, default=50, help="Max images for calibration")
+    parser.add_argument(
+        "--resize",
+        default="stretch",
+        choices=["stretch", "letterbox"],
+        help="Resize calibration images as the deployed preprocessing does",
+    )
     
     # Normalization
     parser.add_argument("--mean", type=float, nargs=3, default=[0, 0, 0], help="Image mean (RGB)")
@@ -421,6 +442,12 @@ def main():
 
     # Advanced SDK Tweaks
     parser.add_argument("--batch_size", type=int, default=1, help="Compilation batch size")
+    parser.add_argument(
+        "--log_level",
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARNING"],
+        help="Log level of the quantize and compile calls (DEBUG explains a failed compile)",
+    )
 
     args = parser.parse_args()
     processor = ModelProcessor(args)
