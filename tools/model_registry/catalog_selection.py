@@ -57,7 +57,8 @@ def publish_selection(
 
     client = SigV4RegistryClient(api_url, aws_region, request=request)
     store = artifact_store or S3ArtifactStore(bucket, kms_key_id=kms_key_id)
-    key = f"models-selection-{record['id']}"
+    # One key per catalog and workflow run: a retried attempt replays its writes, and a new run sends its own.
+    key = f"models-selection-{record['id']}-{canonical_sha256(github_run_url or '')[:16]}"
     evidence_run_id = _publish_qualification(
         client, store, record=record, inputs=inputs, environment=environment, branch=branch,
         github_run_url=github_run_url, bucket=bucket, key=key,

@@ -31,7 +31,10 @@ def selection(selection_id: str, *, catalog_id: str = "66666666-6666-4666-8666-6
             "is_default": default}
 
 
-def publish(selections: list[dict], *, document: dict | None = None) -> list[tuple[str, str, dict]]:
+def publish(
+    selections: list[dict], *, document: dict | None = None, run_url: str = "https://ci.example.invalid/runs/1",
+    keys: list[str] | None = None,
+) -> list[tuple[str, str, dict]]:
     """Publish main's catalog against a registry whose platform already has these selections."""
     calls: list[tuple[str, str, dict]] = []
     record = {"id": CATALOG, "catalog_revision": SHA, "canonical_sha256": "c" * 64,
@@ -43,6 +46,8 @@ def publish(selections: list[dict], *, document: dict | None = None) -> list[tup
 
     def request(method: str, path: str, body: dict, key: str) -> dict:
         calls.append((method, path, body))
+        if keys is not None:
+            keys.append(key)
         if path == "/v1/runs":
             return {"run_id": QUALIFICATION}
         if path.endswith("/artifacts/report"):
@@ -54,7 +59,7 @@ def publish(selections: list[dict], *, document: dict | None = None) -> list[tup
     publish_selection(
         repository=ROOT, api_url="https://registry.example.invalid", read_api_url="https://read.example.invalid",
         aws_region="us-west-2", bucket="bucket", kms_key_id=None, environment="production", branch="main",
-        git_sha=SHA, request=request, read_request=read, artifact_store=Store(),
+        git_sha=SHA, github_run_url=run_url, request=request, read_request=read, artifact_store=Store(),
     )
     return calls
 
@@ -105,6 +110,16 @@ def test_a_new_core_release_adds_a_selection_and_takes_the_default() -> None:
 
 def test_a_rerun_keeps_the_selection_it_already_published() -> None:
     assert writes(publish([selection(NEW_SELECTION, catalog_id=CATALOG, default=True)])) == {}
+
+
+def test_a_new_workflow_run_sends_its_own_writes_and_a_retry_replays_them() -> None:
+    first, retry, later = [], [], []
+    publish([], keys=first)
+    publish([], keys=retry)
+    publish([], run_url="https://ci.example.invalid/runs/2", keys=later)
+
+    assert first == retry
+    assert not set(first) & set(later)
 
 
 @pytest.mark.parametrize("document,error", [
