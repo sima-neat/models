@@ -28,8 +28,8 @@ with `sima-`, because Claude Code lets a personal skill of the same name hide a 
 - Repository skills: [`models-add-model`](agents/skills/models-add-model/SKILL.md) for a
   model change through to its pull request,
   [`models-review-pr`](agents/skills/models-review-pr/SKILL.md) for every review, and
-  [`models-write-pr-description`](agents/skills/models-write-pr-description/SKILL.md) for
-  every pull request's lessons and description.
+  [`models-write-pr-description`](agents/skills/models-write-pr-description/SKILL.md) for a
+  pull request description.
 - Customer skills, used here too: [`sima-compile-model`](skills/sima-compile-model/SKILL.md)
   for operator audit, graph surgery, quantization, and compilation, and
   [`sima-benchmark-model`](skills/sima-benchmark-model/SKILL.md) for performance and accuracy
