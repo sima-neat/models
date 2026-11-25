@@ -1113,7 +1113,8 @@ def test_browser_loads_taxonomy_from_the_current_catalog_and_exposes_category_fa
     for removed in ("model-type-filter", "paradigm-filter", "input-modality-filter"):
         assert f'id="{removed}"' not in html
         assert removed not in script
-    assert "/catalogs/current?git_ref=" in script
+    assert "/catalogs/current?${query}" in script
+    assert "{ git_ref: `refs/heads/${branch}` }" in script
     assert "applyTaxonomy(document?.taxonomy || null, snapshotBranch)" in script
     assert '"task-filter": "task"' in script
     assert '"architecture-filter": "architecture_id"' in script

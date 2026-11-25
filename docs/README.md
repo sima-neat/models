@@ -72,7 +72,10 @@ Use these references when the model needs them:
 - [Concepts](concepts.md): build, build profile, stage, benchmark,
   fingerprint, model component, model package, and MPK.
 - [Model README](model-readme.md): the README and hero rules, with the README
-  template.
+  template. [Geometric comic illustrations](illustration-guide.md) gives the
+  hero's styles, palette, and prompts.
+- [Converted ONNX artifacts](conversion-artifacts.md): what `convert.py`
+  exports, what belongs in `surgery.py`, and what reruns a conversion.
 - [Datasets for local model development](datasets.md): Artifactory access,
   registered dataset resolution, and adding a dataset or variant.
 - [Accuracy and fidelity](local-accuracy-development.md): compile-time
@@ -84,6 +87,10 @@ Use these references when the model needs them:
   decide whether a model qualifies for an exception, prepare approval evidence,
   configure the request, and verify a build.
 - [Model taxonomy](model-taxonomy.md): sanctioned category IDs.
+
+To use a published model, see [Model browser](model-browser.md) for what each
+model page shows and [Download a model with sima-cli](downloading-models.md)
+for the `sima-cli models` commands.
 
 The JSON Schemas under
 [`schemas/`](https://github.com/sima-neat/models/tree/develop/schemas) and the

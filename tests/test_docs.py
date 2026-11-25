@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 
@@ -196,13 +197,17 @@ def test_docs_keep_author_tools_separate_from_ci_publication() -> None:
 
 
 # The structure of the documentation, one reader per tree: docs/ is the public site for people, agents/ serves
-# agents working in this repository, and skills/ serves customers' agents and ships alone. AGENTS.md indexes all
-# three. agents/rules.md states the rules for skills/, and agents/references/writing-docs.md the rules for docs/.
+# agents working in this repository, and skills/ serves customers' agents and ships alone. docs/README.md indexes
+# docs/, and AGENTS.md indexes agents/ and every skill. agents/rules.md states the rules for skills/, and
+# agents/references/writing-docs.md the rules for docs/. Harnesses discover skills through one link per skill
+# folder in each of SKILL_DISCOVERY_FOLDERS, so each skill has one copy.
 
 MODELS_REPOSITORY_LINK = re.compile(r"https://github\.com/sima-neat/models/(?:blob|tree|edit)/[^/]+/([^)\s]+)")
 INTERNAL_TREES = ("AGENTS.md", "agents/", "design-doc/")
 # AGENTS.md is loaded into every agent session, so its length is a cost on every task.
-AGENTS_LINE_BUDGET = 155
+AGENTS_LINE_BUDGET = 150
+# Claude Code reads skills from .claude/skills/, and Codex from .agents/skills/.
+SKILL_DISCOVERY_FOLDERS = (".claude/skills", ".agents/skills")
 FRONTMATTER = re.compile(r"\A---\n(.*?)\n---\n", re.DOTALL)
 # A reference to the files written for agents in this repository: agents/ or AGENTS.md at the start of the path of
 # a GitHub or raw GitHub URL of this repository, with or without its scheme, or as a relative path such as
@@ -323,18 +328,46 @@ def test_site_pages_do_not_link_to_agent_or_maintainer_files() -> None:
     assert not failures, "docs/ is the public site and stands on its own:\n" + "\n".join(failures)
 
 
-def test_agents_index_lists_every_docs_agents_and_skill_file() -> None:
-    agents = ROOT / "AGENTS.md"
-    indexed = {path for _, path, _ in _link_targets(agents)}
-    pages = [page for page in sorted((ROOT / "docs").glob("*.md")) if page.name != "README.md"]
+def test_docs_index_links_every_page() -> None:
+    overview = ROOT / "docs" / "README.md"
+    linked = {path for _, path, _ in _link_targets(overview)}
     missing = [
-        page.relative_to(ROOT).as_posix()
-        for page in [*pages, *sorted((ROOT / "agents").rglob("*.md")), *sorted(ROOT.glob("skills/*/SKILL.md"))]
-        if page.resolve() not in indexed
+        page.name for page in sorted((ROOT / "docs").glob("*.md")) if page != overview and page.resolve() not in linked
     ]
 
-    assert not missing, "add an index row to AGENTS.md for: " + ", ".join(missing)
+    assert not missing, "link from docs/README.md: " + ", ".join(missing)
+
+
+def test_agents_index_lists_every_agents_file_and_skill() -> None:
+    agents = ROOT / "AGENTS.md"
+    indexed = {path for _, path, _ in _link_targets(agents)}
+    files = [*sorted((ROOT / "agents").glob("*.md")), *sorted((ROOT / "agents" / "references").glob("*.md"))]
+    skills = [folder / "SKILL.md" for folder in _skills()]
+    missing = [page.relative_to(ROOT).as_posix() for page in [*files, *skills] if page.resolve() not in indexed]
+
+    assert not missing, "add a line to AGENTS.md for: " + ", ".join(missing)
     assert len(agents.read_text(encoding="utf-8").splitlines()) <= AGENTS_LINE_BUDGET
+
+
+def _is_relative_link_to(entry: Path, folder: Path) -> bool:
+    return entry.is_symlink() and not Path(os.readlink(entry)).is_absolute() and entry.resolve() == folder.resolve()
+
+
+def test_skill_discovery_folders_link_each_skill_once() -> None:
+    skills = {folder.name: folder for folder in _skills()}
+    failures = []
+    for discovery in SKILL_DISCOVERY_FOLDERS:
+        folder = ROOT / discovery
+        entries = {entry.name: entry for entry in folder.iterdir()} if folder.is_dir() else {}
+        failures += [f"{discovery}/{name}: missing" for name in sorted(skills.keys() - entries.keys())]
+        failures += [f"{discovery}/{name}: names no skill" for name in sorted(entries.keys() - skills.keys())]
+        failures += [
+            f"{discovery}/{name}: must be a relative link to {skills[name].relative_to(ROOT)}"
+            for name, entry in sorted(entries.items())
+            if name in skills and not _is_relative_link_to(entry, skills[name])
+        ]
+
+    assert not failures, "each skill folder needs one relative link in each discovery folder:\n" + "\n".join(failures)
 
 
 def test_skills_have_the_required_shape() -> None:

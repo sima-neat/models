@@ -31,6 +31,12 @@ export const state = {
   cursor: null,
   hasMore: false,
   availableBranches: [],
+  // The selections main published, one per platform and Core commit, from models/filters, and the one
+  // the catalog shows. Both stay empty when the page reads a branch catalog.
+  selections: [],
+  selection: null,
+  // The platform and Core the shown catalog was built with, or null when the catalog does not record them.
+  catalogInputs: null,
   runsRequestId: 0,
   navigationId: 0,
   selectedId: new URLSearchParams(location.search).get("run"),
@@ -63,6 +69,7 @@ export const elements = Object.fromEntries(
   [
     "theme-toggle", "environment-name", "search", "filter-toggle",
     "filter-count", "filter-drawer", "branch-filter", "compiler-filter", "history-filter", "task-filter",
+    "platform-field", "platform-filter", "core-field", "core-filter",
     "architecture-filter", "clear-filters", "clear-family", "result-title",
     "result-count", "result-list", "catalog-layout-toggle", "load-more", "detail-pane", "compare-pane", "toast-region", "workspace",
     "nav-models", "nav-compare",

@@ -1,5 +1,5 @@
 ---
-name: add-model
+name: models-add-model
 description: Add a model to sima-neat/models, or change an existing model, from model.yaml to a qualified pull request. Use for a new model or family member, a new build profile or component, and a change to a model's sources, conversion, surgery, compile recipe, benchmark scripts, or tests.
 ---
 
@@ -101,7 +101,7 @@ this work has nothing to do with ([`rules.md` "Before a push"](../../rules.md#be
     goes"](../../rules.md#where-a-lesson-goes) says. The step is done when each lesson is
     written into its file, or the description records `Rule, skill, and knowledge updates: none`
     with the reason.
-13. Write the description with [`write-pr-description`](../write-pr-description/SKILL.md). It
+13. Write the description with [`models-write-pr-description`](../models-write-pr-description/SKILL.md). It
     reports which stages ran and where. CI publishes the results. The step is done when every
     local run appears in the description labelled local, and every stage not run is under
     `Not verified`.
