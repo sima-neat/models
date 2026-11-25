@@ -2,7 +2,7 @@ import { startAnalytics } from "./analytics.js";
 import { installHeroImageRecovery } from "./hero-images.js";
 import { mountDeveloperPortal } from "./portal-shell.js";
 import {
-  allPages, branchModels, catalogBuildRuns, runProfile, variantBuildKey, variantBuilds,
+  allPages, branchModels, catalogBuildRuns, runProfile, variantBuilds,
 } from "./branch-builds.js";
 import {
   config, shows, branchSelectionEnabled, DEFAULT_BRANCH, CATEGORY_QUERY_FIELDS, state, elements, categoryFilters,
@@ -13,7 +13,7 @@ import {
   api, snapshotModels, readBranchPreference, writeBranchPreference, readCachedBranches, readCachedCatalog,
   writeCachedBranches,
   runFromCatalogBuild, loadRunDetail, variantPackage, loadVariant, loadPackageRun, loadHistoricalCatalogModel,
-  selectedCatalogBuild,
+  selectedCatalogBuild, variantCacheKey,
 } from "./api.js";
 import {
   populateCategoryFilters, fetchCatalogDocument, fetchSelections, chooseSelection, applyTaxonomy, activeFilterCount, setFilterDrawer,
@@ -115,7 +115,7 @@ async function selectRun(runId, { updateUrl = true, expand = false } = {}) {
   if (updateUrl && catalogRun) writeVariantUrl(catalogRun);
   try {
     const anchor = (await loadRunDetail(runId)).summary.run;
-    const cached = state.variantCache.has(variantBuildKey(anchor));
+    const cached = state.variantCache.has(variantCacheKey(anchor));
     const variant = await loadVariant(anchor);
     const currentPackage = variantPackage(variant.runs);
     // A cached variant may gain package context later; avoid retrying a fetch from this selection.
@@ -199,7 +199,8 @@ async function loadRuns({ append = false, branch = elements["branch-filter"].val
       return;
     }
 
-    const runLists = shows.catalogRunMetadata ? Promise.allSettled(["model_compile", "model_package"].map((run_type) => {
+    // A selection pins its builds, so newer branch runs must not replace them.
+    const runLists = shows.catalogRunMetadata && !state.selection ? Promise.allSettled(["model_compile", "model_package"].map((run_type) => {
       const query = new URLSearchParams({ limit: "200", status: "completed", run_type, git_ref: gitRef });
       return allPages(api, `${base}/runs`, query, "runs");
     })) : null;
@@ -311,10 +312,7 @@ async function initialize() {
   if (!branchSelectionEnabled) {
     state.selections = await fetchSelections();
     if (navigationId !== state.navigationId) return;
-    const selection = chooseSelection(state.selections, link.get("platform"), link.get("core"));
-    // Variant builds hold the fingerprints and packages of the catalog they were read from.
-    if (selection?.selection_id !== state.selection?.selection_id) state.variantCache.clear();
-    state.selection = selection;
+    state.selection = chooseSelection(state.selections, link.get("platform"), link.get("core"));
   }
 
   const cached = readCachedCatalog();
@@ -466,8 +464,6 @@ elements["branch-filter"].addEventListener("change", async () => {
 async function selectPlatformAndCore(platform, core) {
   if (!state.selections.length) return;
   state.selection = chooseSelection(state.selections, platform, core);
-  // Variant builds hold the fingerprints and packages of the catalog they were read from.
-  state.variantCache.clear();
   const url = new URL(location.href);
   url.searchParams.set("platform", state.selection.platform_version);
   url.searchParams.set("core", state.selection.neat_core_version);
@@ -532,7 +528,6 @@ elements["clear-filters"].addEventListener("click", async () => {
   state.urlBranch = true;
   writeBranchPreference(state.preferredBranch);
   if (state.selections.length) state.selection = chooseSelection(state.selections, null, null);
-  state.variantCache.clear();
   const resetUrl = new URL(location.href);
   resetUrl.searchParams.set("branch", resetBranch);
   resetUrl.searchParams.delete("platform");
