@@ -1,7 +1,7 @@
 # Drawing a model's flowgraph
 
 A pull request description draws the flowgraph of each model it changes, as
-[`write-pr-description`](../skills/write-pr-description/SKILL.md) says, and a review compares
+[`models-write-pr-description`](../skills/models-write-pr-description/SKILL.md) says, and a review compares
 it with the model's files. Every model gets one. The graph answers one question, written as its
 first line: "How does an input become a result in `<model_id>`?". It shows the path one input
 takes through the package, at the altitude of `pipeline` in `model.yaml`, never the operators

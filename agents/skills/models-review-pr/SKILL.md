@@ -1,5 +1,5 @@
 ---
-name: review-pr
+name: models-review-pr
 description: Review a sima-neat/models pull request for merge readiness. Use for the automatic review, for a full review, for a review of one changed model, and for judging whether a change should update agents/, skills/, or docs/.
 ---
 
@@ -18,7 +18,7 @@ each finding cites the owning file and section.
 1. Read the linked issue and the description. List every claim: each changed model and build
    profile, each rewrite and quantization choice, the reruns, each measured value, and each
    local run. Check the description against
-   [`write-pr-description`](../write-pr-description/SKILL.md), and report each block, graph,
+   [`models-write-pr-description`](../models-write-pr-description/SKILL.md), and report each block, graph,
    table row, or closing line it lacks.
 2. Read `rules.md`, `coding-style.md`, and the `change-map.md` rows of every changed file. The
    step is done when each changed file maps to its rows and you have listed the files each row

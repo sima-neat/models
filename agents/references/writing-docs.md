@@ -71,5 +71,5 @@ Headings stop at H3.
 1. Check every command, flag, file name, and value against current source.
 2. Give the page alone to a reader with no other context and have them follow it for
    one real model. Fix each place where they had to guess.
-3. Add the page to `website/sidebars.ts` and to the index in `AGENTS.md` (tested).
+3. Add the page to `website/sidebars.ts` and link it from `docs/README.md` (tested).
 4. Run `python -m pytest tests/test_docs.py` and `npm run build:portal --prefix website`.
