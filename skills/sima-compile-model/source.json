@@ -1,7 +1,7 @@
 {
   "repository": "sima-neat/model-compiler",
   "commit": "661044476aafd629f3aa7cacb53ba2d4031e29b1",
-  "note": "Each sha256 is the SHA-256 of its source file at this commit. SKILL.md, playbook.yml, the files under references/, and scripts/onnx_static_simplify.py were edited after the copy. The other files under scripts/ and the file under data/ are byte-identical to their sources.",
+  "note": "Each sha256 is the SHA-256 of its source file at this commit. SKILL.md, playbook.yml, the files under references/, scripts/onnx_static_simplify.py, and scripts/quantize_compile.py were edited after the copy. The other files under scripts/ and the file under data/ are byte-identical to their sources.",
   "files": {
     "SKILL.md": [
       {

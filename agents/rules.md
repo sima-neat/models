@@ -225,15 +225,15 @@ The code holds each limit, and this table names where. A change to a limit updat
 Every pull request feeds what its work taught back into the file that owns the topic:
 
 - **Check.** Before a change rewrites a graph, sets a quantization or compile option, or
-  changes how a build is measured, read what `skills/neat-compile-model/` or
-  `skills/neat-benchmark-model/` says about it. Compare that with the change's compile
+  changes how a build is measured, read what `skills/sima-compile-model/` or
+  `skills/sima-benchmark-model/` says about it. Compare that with the change's compile
   output or measurement.
 - **Lesson.** A finding the work established goes where its topic belongs:
 
   | The lesson is about | It goes in |
   |---|---|
-  | A graph surgery pattern, an operator fact, or a quantization or compile option | `skills/neat-compile-model/references/` |
-  | A way to measure performance or accuracy | `skills/neat-benchmark-model/` |
+  | A graph surgery pattern, an operator fact, or a quantization or compile option | `skills/sima-compile-model/references/` |
+  | A way to measure performance or accuracy | `skills/sima-benchmark-model/` |
   | How model scripts or model tests are written | [coding-style.md](coding-style.md) |
   | A rule every change in this repository follows | this file |
   | A change that is incomplete without another file | [change-map.md](change-map.md) |
@@ -251,7 +251,7 @@ Every pull request feeds what its work taught back into the file that owns the t
 - **Merge.** Extend or generalize an existing statement before adding a new one, so each
   fact lives in one place.
 
-The files `skills/neat-compile-model/source.json` lists started as copies from
+The files `skills/sima-compile-model/source.json` lists started as copies from
 `sima-neat/model-compiler`, at the commit it names. This repository owns them from then on, so
 a lesson edits them here. A later sync from the compiler repository is a manual merge that
 updates `source.json`.

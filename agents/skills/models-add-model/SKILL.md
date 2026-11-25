@@ -40,7 +40,7 @@ this work has nothing to do with ([`rules.md` "Before a push"](../../rules.md#be
    `model_registry.fidelity`, `calibration.py` lists and reads images with
    `model_inputs.images`, and both keep the recipe, and each component calibrates on at most 20 samples, as [`rules.md`
    "Compile"](../../rules.md#compile) says. Judge each rewrite and each quantization choice with
-   [`neat-compile-model`](../../../skills/neat-compile-model/SKILL.md). The step is done when
+   [`sima-compile-model`](../../../skills/sima-compile-model/SKILL.md). The step is done when
    each rewrite has a purpose the description can state under `Surgery`, and each choice away
    from the compiler default has its comment. An LLM or VLM writes `compile.sh` as [LLiMa
    models](../../../docs/adding-a-model.md#llima-language-and-vision-language-models)
@@ -49,7 +49,7 @@ this work has nothing to do with ([`rules.md` "Before a push"](../../rules.md#be
    [DevKit performance](../../../docs/benchmarking.md) and [accuracy and
    fidelity](../../../docs/local-accuracy-development.md). Judge the workload and the
    measurement settings with
-   [`neat-benchmark-model`](../../../skills/neat-benchmark-model/SKILL.md). The step is done
+   [`sima-benchmark-model`](../../../skills/sima-benchmark-model/SKILL.md). The step is done
    when each script runs with only the arguments those pages name.
 6. Write the tests and `tests/tests.yaml` as [the tests
    step](../../../docs/adding-a-model.md#10-write-the-models-tests) and `coding-style.md`

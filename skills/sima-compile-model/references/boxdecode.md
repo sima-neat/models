@@ -32,7 +32,8 @@ mean arbitrary tensors or decode math are accepted.
 | `YoloV5` | The parser derives `H` from one packed prediction tensor per head, but the current backend does not initialize its anchor count. Require a release-specific, known-working model and runtime test before claiming support. |
 | `YoloV7` | One packed prediction tensor per head (`H`); the decoder has four hard-coded anchor tables, so require `H <= 4`. |
 | `YoloV5Seg`, `YoloV7Seg` | Do not treat as verified in the current backend. The parser derives `2H + 1`, but mask processing reads tensor slot 2 from exactly three heads while these families configure only two tensors per head. |
-| `YoloV8`, `YoloV9`, `YoloV10` | Variable `H`; detection uses bbox/class pairs (`2H`). Grouped or interleaved layouts and the score domain must match the model-pack contract. |
+| `YoloV8` | Variable `H`; every bbox head, then every class head (`2H`). Each bbox head is the raw 64-channel DFL distribution (4 edges × 16 bins), and each class head holds the class logits. BoxDecode applies the DFL and the sigmoid. YOLOv8n's [`surgery.py`](https://github.com/sima-neat/models/blob/main/models/yolov8n/scripts/surgery.py) cuts at these heads, the last Conv of each Detect branch. |
+| `YoloV9`, `YoloV10` | Variable `H`; detection uses bbox/class pairs (`2H`). Grouped or interleaved layouts and the score domain must match the model-pack contract. |
 | `YoloV8Pose` | Exactly three bbox, score/class, and keypoint groups (`9` tensors). |
 | `YoloV8Seg`, `YoloV9Seg`, `YoloV10Seg` | Exactly three bbox, class-score, and mask-coefficient groups plus one trailing prototype (`10` tensors). |
 | `YoloV26` | Variable `H`; grouped raw 4-channel `l/t/r/b` heads followed by class-logit heads (`2H`). BoxDecode applies sigmoid. |

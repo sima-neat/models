@@ -25,8 +25,8 @@ each finding cites the owning file and section.
    requires.
 3. For each changed model, trace source pin, conversion, surgery, compile recipe, benchmark
    scripts, tests, and README, in that order. Judge the graph and recipe choices with
-   [`neat-compile-model`](../../../skills/neat-compile-model/SKILL.md), and the measurement
-   with [`neat-benchmark-model`](../../../skills/neat-benchmark-model/SKILL.md). The step is
+   [`sima-compile-model`](../../../skills/sima-compile-model/SKILL.md), and the measurement
+   with [`sima-benchmark-model`](../../../skills/sima-benchmark-model/SKILL.md). The step is
    done when every claim maps to code you read, or is reported missing.
 4. Work out which stages the change reruns with [`rules.md` "Stages and
    fingerprints"](../../rules.md#stages-and-fingerprints) and [what a change

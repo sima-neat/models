@@ -128,10 +128,8 @@ when some of its operations run above that precision, as in RF-DETR Nano's
 settings, and the target is `modalix`. A profile commented out in `model.yaml`
 is not supported, and the comment above it gives the reason.
 `model-registry validate` rejects a declared profile whose expected accuracy
-falls below the model's reference score by more than the limit that the
-`neat-benchmark-model` skill's
-[comparable measurements](https://github.com/sima-neat/models/blob/main/skills/neat-benchmark-model/references/comparability.md#compare-with-the-expected-values)
-gives, so `model.yaml` comments such a profile out with its measured gap.
+falls more than 8% below the model's reference score, so `model.yaml` comments
+such a profile out with its measured gap.
 `model.yaml` names no compiler version.
 
 ### Datasets
@@ -260,8 +258,7 @@ its components in one invocation named after it. The recipe does this:
   reads that argument and the value differs from its default. In Model
   Compiler 3.0.0.2, `Model.compile` takes extra keyword arguments through
   `**kwargs` and raises no error for one it never reads, so a leftover argument
-  looks like a setting and changes nothing. For example, 77 Models recipes
-  passed `deployable=True`, which that compiler reads nowhere.
+  looks like a setting and changes nothing.
 - It rewrites the graph with `surgery.py` and quantizes it. It then writes
   exactly one `<model-id>_<profile-id>_mpk.tar.gz` under
   `<output-dir>/<component-id>/` for each component, by passing
@@ -335,6 +332,14 @@ The clone must hold the shared modules these commands use, which
 `ls tools/model_inputs tools/model_registry/compile_script.py` confirms. When
 it prints an error, check out the branch or release this skill came from.
 
+A rebuild matches the published build only when calibration reads the same
+samples. A profile with a `calibration_dataset`, such as YOLO26n's `w8a8`,
+calibrates on the registered archive, which needs Dataset Registry access.
+Calibrated on other images, it is a different INT8 model, so compare its
+accuracy and speed with the published results, not its bytes. A profile
+without a `calibration_dataset`, such as YOLO26n's `w16a16`, reads no
+calibration images.
+
 | You need | Check it |
 | --- | --- |
 | Python 3.12 and internet access, for the conversion | `python3.12 --version` |
@@ -398,7 +403,7 @@ it prints an error, check out the branch or release this skill came from.
    ```
 
    It prints `Valid artifact: yolo26n_w8a8_mpk.tar.gz`.
-6. Measure the MPK on a DevKit with the `neat-benchmark-model` skill.
+6. Measure the MPK on a DevKit with the `sima-benchmark-model` skill.
 
 `scripts/run_model_compilation.sh` is the runner CI uses. For a model whose
 `compilation.source` is `conversion`, it fetches the ONNX that CI published,

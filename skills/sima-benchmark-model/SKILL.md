@@ -1,9 +1,9 @@
 ---
-name: neat-benchmark-model
+name: sima-benchmark-model
 description: Measure a compiled model's performance and accuracy on a SiMa Modalix DevKit the way the Models repository does. Use to benchmark an MPK's throughput, latency, power, or energy with PyNeat, write a standalone performance script, read a model-report.json, score accuracy on a dataset, or compare a result with a published model page or an earlier run.
 ---
 
-# Neat Benchmark Model
+# SiMa Benchmark Model
 
 The measurement runs on the DevKit in PyNeat, the Python package that runs a
 compiled model, at `~/pyneat/bin/python`. A model's performance script calls
@@ -12,7 +12,7 @@ Neat Core's benchmark and hands the result to `model_report`, which writes
 [`tools/model_report`](https://github.com/sima-neat/models/tree/main/tools/model_report).
 It needs only the Python standard library, so it runs in PyNeat's environment.
 
-This skill measures MPKs. Compiling a model belongs to the `neat-compile-model`
+This skill measures MPKs. Compiling a model belongs to the `sima-compile-model`
 skill. Language and vision-language models run MoLE workloads instead, which
 [DevKit performance](https://github.com/sima-neat/models/blob/main/docs/benchmarking.md#llima-text-and-image-performance)
 describes.
@@ -24,9 +24,10 @@ describes.
      package that the Models repository's
      [`deps/manifest.json`](https://github.com/sima-neat/models/blob/main/deps/manifest.json)
      pins as `platform-version` and `neat-core.install_target`. CI installs Core
-     with `sima-cli neat install --env production --type minimal core@<branch>:<tag>`.
-     For a target that names no tag, such as `core@v0.6.2`, CI installs the
-     newest published tag of that ref. Core's board installer also installs
+     with `sima-cli neat install --env production --type minimal core@<ref>:<tag>`,
+     where `<ref>` is the target after `core@`. A target that names no tag, such
+     as `core@v0.6.2`, gives `<ref>` `v0.6.2`, and CI installs the newest
+     published tag of that ref. Core's board installer also installs
      Sentinel, the telemetry daemon that supplies power, temperature, CPU, and
      memory readings.
    - Read the two clocks that throughput depends on. Published results use the
@@ -66,7 +67,10 @@ describes.
 
    - When the model has an accuracy dataset, extract it under
      `/media/nvme/datasets/<source id>` as
-     [accuracy](references/accuracy.md#get-the-dataset) describes.
+     [accuracy](references/accuracy.md#get-the-dataset) describes. A
+     performance run needs that split too, because a published
+     `performance.py` picks its one benchmark image from it with a fixed seed.
+     The `workload` line of a published report names that image.
 
    Done when `~/pyneat/bin/python -c 'import pyneat; print(pyneat.__version__)'`
    prints a version, both clocks read their target, the run folder holds the
@@ -124,7 +128,9 @@ describes.
    ```
 
    The `pip` command needs internet access on the DevKit, and a model without
-   `requirements-accuracy.txt` needs no `pip` command. `--limit <images>` gives a
+   `requirements-accuracy.txt` needs no `pip` command. `accuracy.py` takes
+   `--mpk model=<path>` even for one component, while a single-component
+   `performance.py` takes the bare path. `--limit <images>` gives a
    quick trial on a subset. Done when `results/accuracy/model-report.json` holds
    a result for each dataset, with every metric that dataset requires, from a
    run without `--limit`, or with `--limit` set to `accuracy.samples` when the
@@ -133,7 +139,9 @@ describes.
 6. **Compare with a baseline.** The baseline is the published model page, the
    expected values in the model's `tests/tests.yaml`, or an earlier run of your
    own. [Comparable measurements](references/comparability.md) lists what must
-   match and the fields to compare. Done when each compared pair matches on MPK,
+   match and the fields to compare, and
+   [why your own timing disagrees](references/comparability.md#when-your-own-timing-disagrees)
+   explains a hand-written loop's lower number. Done when each compared pair matches on MPK,
    runtime, clocks, workload, and dataset samples, or the mismatch is named
    beside the numbers, and each result states what it measured, in the form
    `<model-id> <profile>: throughput_fps <value>, MLA 1 GHz, CPU 1.4 GHz, PyNeat <version>`.
