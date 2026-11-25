@@ -25,6 +25,7 @@ is in [branch catalogs](branch-catalogs.md).
 | Vulcan Model Registry State | `vulcan-model-state.yml` | push to `main` that changes `state.json`, the workflow, or its script, manual dispatch | Publishes `state.json`. |
 | Promote model | `model-promotion.yml` | manual dispatch | [Promotion operations](promotion-operations.md) |
 | Publish Main model metadata | `model-main-catalog.yml` | manual dispatch | [Promotion operations](promotion-operations.md) |
+| Issue Triage | `issue-triage.yml` | issue opened, edited, or reopened, manual dispatch | Calls the `reusable-issue-triage.yml` workflow of `sima-neat/.github`, which labels and comments on the issue. [Issue triage](#issue-triage) |
 
 ## Pull request checks
 
@@ -428,6 +429,12 @@ merge to `develop` publishes nothing. The script validates both fields, uploads 
 includes this file. Readers outside this repository consume the published file, so keep
 its two fields and its no-store policy when you change the script.
 
+### Issue triage
+
+`issue-triage.yml` passes `.github/issue-triage` to the shared workflow, which reads `config.json` and every other text file in that folder as triage instructions. Keep only triage instructions there. `config.json` lists the labels triage may apply. The issue templates in `.github/ISSUE_TEMPLATE` apply their own label, and `tests/test_issue_triage.py` checks that each one is in that list.
+
+The shared workflow and GitHub's issue events both read the default branch, `main`. A change to the workflow, the config, or the skill takes effect only after it reaches `main`. The job skips an issue labeled `no-ai-triage`, `customer-confidential`, `security`, or `manual-triage`. A manual dispatch triages an older issue and defaults to a dry run that changes nothing.
+
 ## Which environment a run targets
 
 | Run | Registry and storage environment | Notes |
@@ -501,6 +508,7 @@ from a push to this repository or a manual dispatch.
 | `convert` | self-hosted | `convert.py` and the conversion tests | the publisher role, assumed after conversion and its tests |
 | Publish jobs of the release state, branch lifecycle, and Main metadata workflows | GitHub-hosted | none | the publisher role of their target |
 | Package and browser publish jobs | set by the shared workflows in `sima-neat/.github` | none in this repository | the role this repository passes as `role_to_assume` |
+| Issue triage | set by the shared workflow in `sima-neat/.github` | none | the workflow token with `issues: write` |
 
 The three self-hosted jobs that run model code (Compile, Benchmark on DevKit, and `convert`)
 each request `id-token: write` and name a GitHub environment. What model code could obtain
