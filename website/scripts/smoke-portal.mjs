@@ -61,7 +61,9 @@ async function checkPage(browser, url, readySelector) {
     .catch(() => problems.push(`${readySelector} did not render`));
   if (catalogLanding) {
     const snapshots = registryRequests.filter(path => path.endsWith('/catalogs/current'));
-    if (snapshots.length !== 1 || (customer && registryRequests.length !== 1)) {
+    // A customer landing asks for the published releases, then reads one catalog.
+    const customerReads = registryRequests.filter(path => !path.endsWith('/models/filters'));
+    if (snapshots.length !== 1 || (customer && customerReads.length !== 1)) {
       problems.push(`Unexpected catalog requests: ${registryRequests.join(', ')}`);
     }
     if (registryRequests.some(path => path.startsWith('/v1/runs/') || path.endsWith('/models'))) {

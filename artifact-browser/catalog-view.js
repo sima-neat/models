@@ -8,7 +8,7 @@ import { formatDate, metricDefinition, metricDisplay } from "./metrics.js";
 import { readPerformance } from "./model-report.js";
 import { accuracyHeadline } from "./accuracy-section.js";
 import {
-  api, writeBranchPreference, writeCachedBranches, writeCachedCatalog,
+  api, selectionQuery, writeBranchPreference, writeCachedBranches, writeCachedCatalog,
   runFromCatalogBuild, profileGroups, activeModelBuild, documentationHeroUrl, documentationHeroFallbackUrl, loadBenchmarkResults, mapWithConcurrency,
 } from "./api.js";
 
@@ -56,10 +56,37 @@ export function setCategoryFiltersDisabled(disabled) {
   });
 }
 
+// The selections main published, one per platform and Core commit. A registry without published
+// selections, or one that fails to answer, leaves the page on Main's branch catalog.
+export async function fetchSelections() {
+  const repo = state.repository;
+  try {
+    const payload = await api(`/v1/repositories/${encodeURIComponent(repo.organization)}/${encodeURIComponent(repo.name)}/models/filters`);
+    return (payload.selections || []).filter((selection) => !selection.retired);
+  } catch {
+    return [];
+  }
+}
+
+const newestFirst = (left, right) => right.localeCompare(left, undefined, { numeric: true });
+
+// The selection on the asked platform with the asked Core version. Without one, the platform's default
+// selection, on the newest platform that has a default.
+export function chooseSelection(selections, platform, core) {
+  const platforms = [...new Set(selections.map((selection) => selection.platform_version))].sort(newestFirst);
+  const chosenPlatform = platforms.includes(platform) ? platform
+    : platforms.find((value) => selections.some((selection) => selection.platform_version === value && selection.is_default)) ?? platforms[0];
+  const onPlatform = selections.filter((selection) => selection.platform_version === chosenPlatform);
+  return onPlatform.find((selection) => selection.neat_core_version === core)
+    ?? onPlatform.find((selection) => selection.is_default) ?? onPlatform[0] ?? null;
+}
+
+// Reads the chosen selection's catalog, or else the branch's current catalog.
 export async function fetchCatalogDocument(branch) {
   const repo = state.repository;
+  const query = new URLSearchParams(state.selection ? selectionQuery() : { git_ref: `refs/heads/${branch}` });
   const payload = await api(
-    `/v1/repositories/${encodeURIComponent(repo.organization)}/${encodeURIComponent(repo.name)}/catalogs/current?git_ref=${encodeURIComponent(`refs/heads/${branch}`)}`,
+    `/v1/repositories/${encodeURIComponent(repo.organization)}/${encodeURIComponent(repo.name)}/catalogs/current?${query}`,
   );
   const document = payload.catalog?.document;
   if (!Array.isArray(document?.models)) throw new Error("The registry did not return a model catalog.");
@@ -78,8 +105,25 @@ export function activeFilterCount() {
     elements["branch-filter"].value && elements["branch-filter"].value !== DEFAULT_BRANCH,
     elements["history-filter"].checked,
     elements["compiler-filter"].value,
+    state.selection && state.selection !== chooseSelection(state.selections, null, null),
     ...Object.values(categoryFilters()),
   ].filter(Boolean).length;
+}
+
+// Customers choose among the published selections. A branch catalog shows the one platform and Core it was
+// built with, and a catalog that records neither hides both filters.
+function populateSelectionFilters() {
+  const shown = state.selection ?? state.catalogInputs;
+  const choices = state.selections.length ? state.selections : [shown].filter(Boolean);
+  const versionOptions = (values) => [...new Set(values)].sort(newestFirst)
+    .map((value) => `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`).join("");
+  elements["platform-filter"].innerHTML = versionOptions(choices.map((choice) => choice.platform_version));
+  elements["core-filter"].innerHTML = versionOptions(choices
+    .filter((choice) => choice.platform_version === shown?.platform_version).map((choice) => choice.neat_core_version));
+  elements["platform-filter"].value = shown?.platform_version ?? "";
+  elements["core-filter"].value = shown?.neat_core_version ?? "";
+  elements["platform-field"].hidden = !shown;
+  elements["core-field"].hidden = !shown;
 }
 
 // The filter rail is always shown on wide screens; on narrow screens the toggle opens it.
@@ -236,6 +280,7 @@ function populateFilters({ persistBranchFallback = false } = {}) {
     writeBranchPreference(selectedBranch);
   }
   elements["compiler-filter"].value = compilers.includes(selectedCompiler) ? selectedCompiler : "";
+  populateSelectionFilters();
   populateCategoryFilters();
   updateFilterIndicators();
 }
