@@ -1,9 +1,11 @@
 ---
 name: neat-compile-model
-description: Compile an ONNX or PyTorch model into an MPK for a SiMa Modalix DevKit with the Model Compiler. Use to audit an ONNX graph's operators against MLA support, rewrite unsupported operators or detection outputs for BoxDecode, optimize a compatible graph when performance work is requested, quantize and compile with calibration, or lay out a reproducible model recipe the way the Models repository does.
+description: Compile an ONNX or PyTorch model into an MPK for a SiMa Modalix DevKit with the Model Compiler. Use to audit an ONNX graph's operators against MLA support, rewrite unsupported operators or detection outputs for BoxDecode, optimize a compatible graph when performance work is requested, quantize and compile with calibration, or lay out a reproducible model recipe the way the Models repository does. Not for compiling an LLM or VLM, which LLiMa compiles into a deployment folder rather than an MPK (use `sima-llima-compile-run`).
 ---
 
 # Neat Compile Model
+
+To compile an LLM or VLM, use the `sima-llima-compile-run` skill instead.
 
 Run every command from this skill's folder, so the `scripts/` paths resolve,
 and give model and build paths as absolute paths outside it. Take the steps in

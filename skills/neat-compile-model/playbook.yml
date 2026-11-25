@@ -1,8 +1,8 @@
 id: neat-compile-model
 name: Neat Compile Model
-version: 0.1.0
+version: 0.1.1
 agents: [codex, claude]
-description: Audit, repair, optimize, quantize, and compile ONNX or PyTorch models into MPKs for SiMa Modalix.
+description: Audit, repair, optimize, quantize, and compile ONNX or PyTorch models into MPKs for SiMa Modalix. Not for LLMs or VLMs (use sima-llima-compile-run).
 compatibility:
   env_types: [host, sdk]
   env_subtypes: [linux, palette]
