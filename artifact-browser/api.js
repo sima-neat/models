@@ -26,12 +26,19 @@ export async function api(path) {
   return payload;
 }
 
-// Keep resolved reports by stage and fingerprint so Table, Compare, and model pages share their requests.
+// A selection pins its catalog and the benchmark run of each fingerprint. Without one, the catalog is the
+// branch's and the registry resolves each fingerprint to its newest run.
+export function selectionQuery() {
+  const selection = state.selection;
+  return selection ? { platform_version: selection.platform_version, neat_core_revision: selection.neat_core_revision } : {};
+}
+
+// Keep resolved reports by selection, stage, and fingerprint so Table, Compare, and model pages share their requests.
 const benchmarkRuns = new Map();
 
 function loadBenchmarkRun(stage, fingerprint) {
   if (!fingerprint) return null;
-  const key = `${stage}:${fingerprint}`;
+  const key = `${state.selection?.selection_id ?? "branch"}:${stage}:${fingerprint}`;
   if (!benchmarkRuns.has(key)) {
     const pending = fetchBenchmarkRun(stage, fingerprint).then((result) => {
       if (!result) benchmarkRuns.delete(key);
@@ -47,7 +54,7 @@ function loadBenchmarkRun(stage, fingerprint) {
 
 async function fetchBenchmarkRun(stage, benchmarkFingerprint) {
   const repo = state.repository;
-  const query = new URLSearchParams({ run_type: BENCHMARK_RUN_TYPES[stage], fingerprint: benchmarkFingerprint });
+  const query = new URLSearchParams({ run_type: BENCHMARK_RUN_TYPES[stage], fingerprint: benchmarkFingerprint, ...selectionQuery() });
   let resolved;
   try {
     ({ run: resolved } = await api(`/v1/repositories/${encodeURIComponent(repo.organization)}/${encodeURIComponent(repo.name)}/resolve?${query}`));
@@ -107,7 +114,8 @@ export function documentationHeroFallbackUrl(documentation) {
 function catalogCacheKey() {
   const repo = state.repository;
   const history = elements["history-filter"].checked ? "history" : "latest";
-  const branch = (state.preferredBranch ?? elements["branch-filter"].value) || "all";
+  const selection = state.selection && `selection:${state.selection.platform_version}:${state.selection.neat_core_revision}`;
+  const branch = selection || (state.preferredBranch ?? elements["branch-filter"].value) || "all";
   // Search, categories, and compiler filter a branch snapshot locally.
   const branchSnapshot = history === "latest" && branch !== "all";
   const categories = branchSnapshot ? [] : Object.entries(categoryFilters()).filter(([, value]) => value).sort();
