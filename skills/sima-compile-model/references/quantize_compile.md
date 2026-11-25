@@ -46,7 +46,8 @@ skill's folder when you run the command from there.
 | `--model_layout` | `NCHW` | Input tensor layout, `NCHW` or `NHWC`. |
 | `--no-simplify` | simplification on | Skips ONNX preparation. Preparation runs `onnxsim` with the fixed input shapes, runs shape inference, sets IR version 8, and saves `<model>_prepared.onnx` beside the source. If preparation fails, the script logs the error and continues with the original model. |
 | `--real_data` | off | Calibrates on images. Without it, the script calibrates on random placeholders. |
-| `--dataset_images` | `./calib_images` | Folder of `.jpg`, `.jpeg`, `.png`, and `.bmp` calibration images. Every input receives the same images, resized to its own shape with bilinear resampling, which matches the deployed image preprocessor. |
+| `--dataset_images` | `./calib_images` | Folder of `.jpg`, `.jpeg`, `.png`, and `.bmp` calibration images. Every input receives the same images, resized to its own shape as `--resize` sets, with bilinear resampling. |
+| `--resize` | `stretch` | How a calibration image reaches the input shape. `stretch` resizes it to the shape and ignores the aspect ratio. `letterbox` scales it to fit, centers it, and pads the rest with 114, Neat's default letterbox fill. Use the mode the deployed model's preprocessing uses: a YOLO detector letterboxes. |
 | `--num_calib_samples` | `50` | The most images calibration reads, taken in sorted file-name order. |
 | `--calib_method` | `mse` | Calibration method, such as `mse` or `entropy`. |
 | `--mean`, `--std` | `0 0 0`, `1 1 1` | RGB normalization applied after pixels are scaled to [0, 1]. |
@@ -57,6 +58,7 @@ skill's folder when you run the command from there.
 | `--verify` | off | Runs the quantized and the floating-point model on one random input and logs each output's maximum and mean absolute difference. |
 | `--no-compile` | compilation on | Quantizes and saves the model without compiling it. |
 | `--batch_size` | `1` | Compilation batch size. |
+| `--log_level` | `INFO` | Log level of the quantize and compile calls: `DEBUG`, `INFO`, or `WARNING`. When a compile fails without a clear error, run it again at `DEBUG`, which logs the quantization configuration and the MLA scheduling and memory decisions. |
 
 INT8 quantization defaults to `--requant_mode sima` for faster quantization.
 If the resulting accuracy is insufficient, retry with `--requant_mode tflite`.

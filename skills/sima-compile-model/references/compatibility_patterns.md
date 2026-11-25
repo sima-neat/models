@@ -48,5 +48,4 @@ fan-out or layout-sensitive operation interrupts the region.
 
 Validate the isolated rewrite with impulse inputs that expose phase and tap
 ordering, compare full-model outputs after the crop, and inspect the AFE graph to
-confirm the transpose pair was absorbed. OmniVoice uses this rewrite only for
-Higgs decoder strides 3 and 5; strides 8, 4, and 2 remain native ConvTranspose2D.
+confirm the transpose pair was absorbed.

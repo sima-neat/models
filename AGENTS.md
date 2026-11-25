@@ -22,17 +22,17 @@ file, and `skills/` links only its own files and public URLs. Tests check both.
 
 Claude Code and Codex discover every skill through `.claude/skills/` and `.agents/skills/`,
 which hold one link per skill folder and no copies. A new skill goes in its tree and gets a
-link in both folders. A repository skill's name starts with `models-`, because Claude Code
-lets a personal skill of the same name hide a project skill.
+link in both folders. A repository skill's name starts with `models-` and a customer skill's
+with `sima-`, because Claude Code lets a personal skill of the same name hide a project skill.
 
 - Repository skills: [`models-add-model`](agents/skills/models-add-model/SKILL.md) for a
   model change through to its pull request,
   [`models-review-pr`](agents/skills/models-review-pr/SKILL.md) for every review, and
   [`models-write-pr-description`](agents/skills/models-write-pr-description/SKILL.md) for
   every pull request's lessons and description.
-- Customer skills, used here too: [`neat-compile-model`](skills/neat-compile-model/SKILL.md)
+- Customer skills, used here too: [`sima-compile-model`](skills/sima-compile-model/SKILL.md)
   for operator audit, graph surgery, quantization, and compilation, and
-  [`neat-benchmark-model`](skills/neat-benchmark-model/SKILL.md) for performance and accuracy
+  [`sima-benchmark-model`](skills/sima-benchmark-model/SKILL.md) for performance and accuracy
   on a DevKit.
 
 ## References
@@ -92,7 +92,7 @@ measurement proves wrong, and writes each lesson where
 [where a lesson goes](agents/rules.md#where-a-lesson-goes) places it. When a statement looks
 wrong and nothing proves it, report it to the user and leave the text.
 
-`skills/neat-compile-model` and `skills/neat-benchmark-model` matter most, because customers'
+`skills/sima-compile-model` and `skills/sima-benchmark-model` matter most, because customers'
 agents act on them without anyone to ask. Every change that compiles, rewrites a graph, or
 measures a model ends by asking what it learned about operators, graph surgery, quantization,
 compilation, or measurement, and writes each answer into that skill's `references/`. A change

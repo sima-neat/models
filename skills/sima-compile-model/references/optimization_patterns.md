@@ -135,7 +135,7 @@
 - **Rewrite:** Replace it with `DepthToSpace(blocksize=r, mode=...)`. If the next
   Conv previously consumed flattened `[C,H*r]` channels, keep the expanded
   height and reshape constant weights `[O,C*H*r,Kw] -> [O,C,H*r,Kw]`, using a
-  2D kernel spanning that height. Supertonic uses:
+  2D kernel spanning that height. With `r=6` and four output channels:
 
   ```text
   [N,144,1,T] -> DepthToSpace(r=6, CRD) -> [N,4,6,6T]

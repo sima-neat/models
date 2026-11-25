@@ -236,10 +236,10 @@ changes only `model.yaml`. A test alone does not reach it.
   component processes, in place of the pairs, writes the same schema itself.
 - It passes `Model.compile` no extra keyword argument at its default and none the compiler
   does not read, as [`compile.py` in the model
-  recipe](../skills/neat-compile-model/references/model-recipe.md#compilepy) says.
+  recipe](../skills/sima-compile-model/references/model-recipe.md#compilepy) says.
 - One function turns a component's parameters into `QuantizationParams`, with one branch per
   precision, as [quantization in
-  `compile.py`](../skills/neat-compile-model/references/model-recipe.md#quantization-in-compilepy)
+  `compile.py`](../skills/sima-compile-model/references/model-recipe.md#quantization-in-compilepy)
   shows. Only a component whose parameters set `calibration_samples` receives calibration
   data. The others use `SkipCalibration()`.
 - The compiler works in `tempfile.TemporaryDirectory(prefix=f"{MODEL_ID}-",

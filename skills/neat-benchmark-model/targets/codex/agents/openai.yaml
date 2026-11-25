@@ -1,4 +1,0 @@
-interface:
-  display_name: "Neat Benchmark Model"
-  short_description: "Measure compiled models' speed and accuracy on a DevKit"
-  default_prompt: "Use $neat-benchmark-model to measure this compiled model's throughput, latency, and accuracy on a Modalix DevKit."
