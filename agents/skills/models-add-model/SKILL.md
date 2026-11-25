@@ -97,11 +97,8 @@ this work has nothing to do with ([`rules.md` "Before a push"](../../rules.md#be
     model the change is not about, stop and say so as [`rules.md` "Before a
     push"](../../rules.md#before-a-push) says. The step is done when every changed file maps to
     a row of that table, and the user has approved any rerun beyond the changed models.
-12. List what the work taught, and place each lesson as [`rules.md` "Where a lesson
-    goes"](../../rules.md#where-a-lesson-goes) says. The step is done when each lesson is
-    written into its file, or the description records `Rule, skill, and knowledge updates: none`
-    with the reason.
-13. Write the description with [`models-write-pr-description`](../models-write-pr-description/SKILL.md). It
-    reports which stages ran and where. CI publishes the results. The step is done when every
-    local run appears in the description labelled local, and every stage not run is under
-    `Not verified`.
+12. Write the description with [`models-write-pr-description`](../models-write-pr-description/SKILL.md).
+    Its lesson step writes what the work taught into the owning files first. The description
+    reports which stages ran and where, and CI publishes the results. The step is done when
+    each lesson is in its file, every local run appears in the description labelled local, and
+    every stage not run is under `Not verified`.

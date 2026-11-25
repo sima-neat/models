@@ -1,6 +1,6 @@
 ---
 name: models-write-pr-description
-description: Write or update the description of a sima-neat/models pull request. Use when opening a pull request, after a push that changes what the description says, and after CI publishes the results its table reports.
+description: Write or update the description of a sima-neat/models pull request, after writing what the work taught into agents/, skills/, or docs/. Use for every pull request, model or not, when opening it, after a push that changes what the description says, and after CI publishes the results its table reports.
 ---
 
 # Write a Models pull request description
@@ -21,19 +21,26 @@ reran, and what nobody checked. Write for that reader:
 
 1. Read the linked issue, every commit, and the full diff. List each changed model and each
    changed file outside `models/`. A family that shares one recipe is one block.
-2. Write the Summary, then each model's block from the sources under [Fields](#fields), and
+2. List each lesson the work taught: a statement in `AGENTS.md`, `agents/`, `skills/`, or
+   `docs/` that the change proves wrong, and a fact, rule, or co-change it established that no
+   file holds, including what a review comment or a failed check showed. Write each one into
+   its file as [`rules.md` "Where a lesson goes"](../../rules.md#where-a-lesson-goes) says, and
+   commit it with the change. The step is done when each lesson is in its file and named on
+   the `Rule, skill, and knowledge updates` line, or the line says `none` with the reason the
+   work taught nothing new.
+3. Write the Summary, then each model's block from the sources under [Fields](#fields), and
    draw its graph with [`flowgraph.md`](../../references/flowgraph.md), with change markers.
-3. First pass, when the pull request opens: write each stage cell as `running`, `not run`, or
+4. First pass, when the pull request opens: write each stage cell as `running`, `not run`, or
    `reused`, and leave out measured values.
-4. Second pass, after CI publishes: fill each cell from the published results and name the
+5. Second pass, after CI publishes: fill each cell from the published results and name the
    commit they came from. Repeat after each push that changes a result.
-5. Check every claim against a file or a run. Remove what you cannot check, or move it under
+6. Check every claim against a file or a run. Remove what you cannot check, or move it under
    `Not verified`.
-6. Read the draft as the reviewer: cut each line that tells them nothing they would act on.
-7. Publish with `gh pr edit <number> --body-file <file>`, then read the published body back.
+7. Read the draft as the reviewer: cut each line that tells them nothing they would act on.
+8. Publish with `gh pr edit <number> --body-file <file>`, then read the published body back.
 
-The description is done when each changed model has its block, each published stage has its
-cell, and each stage nobody ran is under `Not verified`.
+The description is done when each lesson is in its file, each changed model has its block,
+each published stage has its cell, and each stage nobody ran is under `Not verified`.
 
 ## Model changes
 

@@ -28,8 +28,8 @@ lets a personal skill of the same name hide a project skill.
 - Repository skills: [`models-add-model`](agents/skills/models-add-model/SKILL.md) for a
   model change through to its pull request,
   [`models-review-pr`](agents/skills/models-review-pr/SKILL.md) for every review, and
-  [`models-write-pr-description`](agents/skills/models-write-pr-description/SKILL.md) for a
-  pull request description.
+  [`models-write-pr-description`](agents/skills/models-write-pr-description/SKILL.md) for
+  every pull request's lessons and description.
 - Customer skills, used here too: [`neat-compile-model`](skills/neat-compile-model/SKILL.md)
   for operator audit, graph surgery, quantization, and compilation, and
   [`neat-benchmark-model`](skills/neat-benchmark-model/SKILL.md) for performance and accuracy
