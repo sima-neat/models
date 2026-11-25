@@ -178,6 +178,7 @@ def test_compile_workflow_has_independent_build_stages() -> None:
         "publish-candidates",
         "benchmark",
         "benchmark-without-compiles",
+        "publish-selection",
         "report-partial-publication",
     }
 
@@ -372,7 +373,8 @@ def test_portal_checks_gate_browser_publication_independently_of_model_processin
     assert "portal" in ancestors("publish-model-browser")
     for job_id in (
         "plan", "authorize-runner-classes", "initialize-catalog", "compile", "publish-candidates",
-        "publish-catalog", "benchmark", "benchmark-without-compiles", "report-partial-publication",
+        "publish-catalog", "benchmark", "benchmark-without-compiles", "publish-selection",
+        "report-partial-publication",
     ):
         assert "portal" not in ancestors(job_id), job_id
     # Model validation and registry configuration must still succeed before planning.
@@ -560,6 +562,21 @@ def test_catalog_snapshot_publishes_even_when_builds_fail(
     assert "compile" in job["needs"]
     assert "needs.compile.result" not in job["if"]
     assert evaluate(job["if"], values) is expected
+
+
+@pytest.mark.parametrize("branch,catalog_result,expected", [
+    ("main", "success", True), ("develop", "success", False), ("main", "failure", False),
+])
+def test_main_publishes_its_selection_after_the_catalog_and_benchmarks(branch, catalog_result, expected) -> None:
+    job = load(WORKFLOW)["jobs"]["publish-selection"]
+    publish = step(job, "Publish the selection and the platform default")
+    values = {"!cancelled()": True, "github.ref_name": branch, "needs.publish-catalog.result": catalog_result}
+
+    assert {"publish-catalog", "benchmark", "benchmark-without-compiles"} <= set(job["needs"])
+    assert evaluate(job["if"], values) is expected
+    assert job["permissions"]["id-token"] == "write"
+    assert "model-registry publish-selection" in publish["run"]
+    assert '--git-sha "$GITHUB_SHA"' in publish["run"]
 
 
 def test_catalog_snapshot_carries_this_revision_without_build_outputs() -> None:

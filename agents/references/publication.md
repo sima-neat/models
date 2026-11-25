@@ -136,7 +136,8 @@ not report fields. Publication records them on the run.
   measurement has a `dataset` dimension. A component measurement has a `component_id`
   dimension. A generation measurement has workload, role, and decoding dimensions.
 - The run environment records the DevKit's clocks, CPU governor, and kernel from
-  `environment.json`, which `check-report` wrote on the board.
+  `environment.json`, which `check-report` wrote on the board, and the catalog's
+  `catalog_inputs` under `properties`.
 
 A run completes even when its model tests failed, so that stage is not measured again. The
 `check` job fails the workflow afterward.
@@ -162,6 +163,7 @@ A catalog is one document per branch and revision. `build_catalog_snapshot` in
 | --- | --- |
 | `git_ref`, `catalog_revision` | the branch and the commit |
 | `taxonomy`, `taxonomy_sha256` | the taxonomy of this checkout |
+| `catalog_inputs` | `platform_version`, `neat_core_version`, and `neat_core_revision` from `deps/manifest.json`, through `catalog_inputs()`. It is left out when Core is pinned to a branch package |
 | `models[]` | `id`, `display_name`, `description`, `license`, `maturity`, `categories`, `documentation`, `builds`, `packages`, and `benchmark_fingerprints` |
 | `models[].builds[]` | `build_profile_id`, `compile_invocation_id`, `component_id`, `compile_fingerprint`, `artifact_sha256`, `run_id` |
 | `models[].packages[]` | `package_id`, `build_profile_id`, `run_id`, `artifact_sha256`, `size_bytes`, `package_fingerprint`, `component_run_ids` |
@@ -202,6 +204,27 @@ fingerprints of each approved deployment from its producing runs.
 
 The model browser reads the current snapshot, its runs, and download URLs through the
 registry's read API.
+
+## Catalog selections
+
+The customer view reads selections, not a branch catalog. A selection points one platform
+and exact Core commit, the catalog's `catalog_inputs`, at one catalog, and each platform
+has one default selection. A merge into `main` is a release, so `publish-selection`
+(`catalog_selection.py`) publishes `main`'s catalog when its run ends:
+
+1. It checks that the catalog is at this commit, records the pinned `catalog_inputs`, and
+   has no pending builds.
+2. It publishes a `catalog_qualification` run that names the catalog and its inputs, with
+   one passed test result and a report artifact. The registry accepts a selection only
+   with such a run.
+3. It replaces the selection of the same platform and Core, or creates the first one.
+   Replacing the default moves the default with it. A new selection otherwise becomes the
+   platform's default.
+
+Each write names the selection or default it read (`expected_selection_id`,
+`expected_default_id`), so the registry rejects it with `409` when another publisher
+changed them first. A model test that fails does not block the selection, because the
+qualification attests only that the catalog is complete and names the pinned release.
 
 ## Conversions
 

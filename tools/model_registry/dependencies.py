@@ -12,6 +12,8 @@ SEMANTIC_VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
 MODEL_COMPILER_VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:\.[0-9]+)?$")
 MODEL_COMPILER_CHANNEL = re.compile(r"^[a-z][a-z0-9-]*$")
 MODEL_COMPILER_REVISION = re.compile(r"^[0-9a-f]{12}$")
+CORE_RELEASE = re.compile(r"^core@v([0-9]+\.[0-9]+\.[0-9]+)$")
+GIT_COMMIT = re.compile(r"^[0-9a-f]{40}$")
 
 
 def _load_manifest(repository: str | Path) -> dict[str, Any]:
@@ -124,3 +126,24 @@ def resolve_benchmark_runtime(repository: str | Path) -> dict[str, Any]:
             raise ValidationError("llima.install_target must pin a runtime build revision")
         runtime["llima"] = llima
     return runtime
+
+
+def catalog_inputs(repository: str | Path) -> dict[str, str] | None:
+    """The platform and Neat Core release this checkout benchmarks on, as the registry records a catalog's inputs.
+
+    None when Core is pinned to a branch package, which has no release version to name.
+    """
+    runtime = resolve_benchmark_runtime(repository)
+    release = CORE_RELEASE.fullmatch(runtime["neat_core"]["install_target"])
+    if release is None:
+        return None
+    revision = _load_manifest(repository)["neat-core"].get("revision")
+    if not isinstance(revision, str) or GIT_COMMIT.fullmatch(revision) is None:
+        raise ValidationError(
+            f"neat-core.revision must be the full lowercase commit of Core {release.group(0)}, found {revision!r}"
+        )
+    return {
+        "platform_version": runtime["devkit"]["platform_version"],
+        "neat_core_version": release.group(1),
+        "neat_core_revision": revision,
+    }

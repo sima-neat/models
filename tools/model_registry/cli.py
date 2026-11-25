@@ -455,6 +455,21 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     publish_catalog_parser.add_argument("--github-run-url")
     publish_catalog_parser.add_argument("--json", action="store_true", dest="json_output")
 
+    publish_selection_parser = subcommands.add_parser(
+        "publish-selection",
+        help="publish the branch's complete catalog as its platform and Core selection and the platform's default",
+    )
+    publish_selection_parser.add_argument("--repository", type=Path, default=Path.cwd())
+    publish_selection_parser.add_argument("--api-url", required=True)
+    publish_selection_parser.add_argument("--read-api-url", required=True)
+    publish_selection_parser.add_argument("--aws-region", default="us-west-2")
+    publish_selection_parser.add_argument("--bucket", required=True)
+    publish_selection_parser.add_argument("--kms-key-id")
+    publish_selection_parser.add_argument("--environment", required=True)
+    publish_selection_parser.add_argument("--branch", required=True)
+    publish_selection_parser.add_argument("--git-sha", required=True)
+    publish_selection_parser.add_argument("--github-run-url")
+
     stage_registry = subcommands.add_parser(
         "stage-registry-build",
         help="stage a current catalog build's receipts and file list for a benchmark, without its files",
@@ -1030,6 +1045,28 @@ def _publish_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def _publish_selection(args: argparse.Namespace) -> int:
+    from .catalog_selection import publish_selection
+
+    result = publish_selection(
+        repository=args.repository,
+        api_url=args.api_url,
+        read_api_url=args.read_api_url,
+        aws_region=args.aws_region,
+        bucket=args.bucket,
+        kms_key_id=args.kms_key_id,
+        environment=args.environment,
+        branch=args.branch,
+        git_sha=args.git_sha,
+        github_run_url=args.github_run_url,
+    )
+    print(
+        f"Published selection {result['selection_id']} of catalog {result['catalog_id']} for platform "
+        f"{result['platform_version']}, Core {result['neat_core_version']}, as the platform's default"
+    )
+    return 0
+
+
 def _publish_catalog(args: argparse.Namespace) -> int:
     from .registry import publish_catalog
 
@@ -1221,6 +1258,8 @@ def _main(argv: Sequence[str] | None, *, author_safe: bool) -> int:
             return _publish_report(args)
         if args.command == "publish-catalog":
             return _publish_catalog(args)
+        if args.command == "publish-selection":
+            return _publish_selection(args)
         if args.command == "stage-registry-build":
             return _stage_registry_build(args)
         if args.command == "download-build":

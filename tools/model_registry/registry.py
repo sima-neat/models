@@ -28,7 +28,7 @@ from .artifact import (
 )
 from .benchmark_declarations import benchmarked_profiles
 from .compile_matrix import build_matrix
-from .dependencies import resolve_model_compiler
+from .dependencies import catalog_inputs, resolve_model_compiler
 from .documentation import load_model_documentation
 from .errors import ModelRegistryError, ValidationError
 from .fetch import (
@@ -772,6 +772,9 @@ def build_catalog_snapshot(
         "taxonomy": taxonomy,
         "models": model_entries,
     }
+    inputs = catalog_inputs(root)
+    if inputs is not None:
+        document["catalog_inputs"] = inputs
     if incremental:
         document["pending_builds"] = pending_builds
     return document

@@ -24,7 +24,7 @@ from jsonschema import Draft202012Validator
 from model_report import CORE_REPORT_FILE, METRICS, REPORT_FILE, REQUIRED_PERFORMANCE_METRICS, accuracy_value_error
 
 from .benchmark_declarations import benchmark_runner, benchmarked_profiles
-from .dependencies import resolve_benchmark_runtime
+from .dependencies import catalog_inputs, resolve_benchmark_runtime
 from .errors import ValidationError
 from .fetch import sha256_file
 from .fingerprints import BENCHMARK_RUN_TYPES, benchmark_fingerprint
@@ -266,7 +266,7 @@ def _check_metrics(label: str, stage: str, metrics: dict[str, float], required: 
             raise ValidationError(f"{label}: {'; '.join(errors)}")
 
 
-def _put_file(
+def put_run_file(
     client: SigV4RegistryClient,
     store: S3ArtifactStore,
     path: Path,
@@ -280,6 +280,7 @@ def _put_file(
     metadata: JsonObject,
     stable_key: str,
 ) -> JsonObject:
+    """Store the file under its SHA-256 and register it as the run's artifact `name`."""
     stored = store.ensure_native_sha256(path, s3_key, sha256_file(path)[0], media_type=media_type)
     return client.request(
         "PUT",
@@ -364,6 +365,7 @@ def publish_report(
     tool = "llima" if native else "pyneat"
     board = {**_read_json(output / ENVIRONMENT_FILE, "runner environment"), tool: report["runtime"][tool]}
     runtime = resolve_benchmark_runtime(root)
+    inputs = catalog_inputs(root)
     report_digest = canonical_sha256(report)
     stable_digest = hashlib.sha256(f"{package_run_id}:{fingerprint}:{report_digest}".encode()).hexdigest()
     stable_key = f"models-{stage}-{stable_digest}"
@@ -391,6 +393,7 @@ def publish_report(
                     key: board[key]
                     for key in ("machine", "cpu_count", "cpu_governor", "mla_frequency_hz", "cpu_frequency_khz")
                 },
+                **({"catalog_inputs": inputs} if inputs else {}),
             },
         },
         "metadata": {**subject, "stage": stage, "package_run_id": package_run_id},
@@ -451,7 +454,7 @@ def publish_report(
     if (output / f"{stage}.log").is_file():
         files[f"{stage}-log"] = (f"{stage}.log", "log", "text/plain")
     artifacts = {
-        name: _put_file(
+        name: put_run_file(
             client,
             store,
             output / filename,
