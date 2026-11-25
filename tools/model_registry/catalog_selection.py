@@ -40,6 +40,8 @@ def publish_selection(
     artifact_store: S3ArtifactStore | None = None,
 ) -> JsonObject:
     """Publish the branch's catalog at git_sha as its platform and Core selection, and the platform's default."""
+    if not api_url.strip() or not read_api_url.strip():
+        raise ValidationError("publishing a selection needs the registry's write and read API URLs")
     inputs = catalog_inputs(Path(repository).expanduser().resolve())
     if inputs is None:
         raise ValidationError("a selection needs a Core release, and deps/manifest.json pins a Core branch package")

@@ -695,21 +695,18 @@ jobs:
           ARTIFACT_BUCKET: ${{ needs.resolve-vulcan-config.outputs.artifact_bucket }}
           KMS_KEY_ID: ${{ needs.resolve-vulcan-config.outputs.artifact_kms_key_id }}
           VULCAN_ENVIRONMENT: ${{ needs.select.outputs.vulcan_environment }}
-        run: |
-          set -euo pipefail
-          : "${REGISTRY_API_URL:?VULCAN_ARTIFACT_REGISTRY_API_URL is required}"
-          : "${REGISTRY_READ_API_URL:?VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL is required}"
-          model-registry publish-selection \
-            --repository . \
-            --api-url "$REGISTRY_API_URL" \
-            --read-api-url "$REGISTRY_READ_API_URL" \
-            --aws-region "$AWS_REGION" \
-            --bucket "$ARTIFACT_BUCKET" \
-            --kms-key-id "$KMS_KEY_ID" \
-            --environment "$VULCAN_ENVIRONMENT" \
-            --github-run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
-            --branch "$GITHUB_REF_NAME" \
-            --git-sha "$GITHUB_SHA" | tee -a "$GITHUB_STEP_SUMMARY"
+        run: >-
+          model-registry publish-selection
+          --repository .
+          --api-url "$REGISTRY_API_URL"
+          --read-api-url "$REGISTRY_READ_API_URL"
+          --aws-region "$AWS_REGION"
+          --bucket "$ARTIFACT_BUCKET"
+          --kms-key-id "$KMS_KEY_ID"
+          --environment "$VULCAN_ENVIRONMENT"
+          --github-run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          --branch "$GITHUB_REF_NAME"
+          --git-sha "$GITHUB_SHA"
 
   report-partial-publication:
     name: Report failed model builds
