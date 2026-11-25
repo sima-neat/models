@@ -309,7 +309,10 @@ async function initialize() {
   if (!branchSelectionEnabled) {
     state.selections = await fetchSelections();
     if (navigationId !== state.navigationId) return;
-    state.selection = chooseSelection(state.selections, link.get("platform"), link.get("core"));
+    const selection = chooseSelection(state.selections, link.get("platform"), link.get("core"));
+    // Variant builds hold the fingerprints and packages of the catalog they were read from.
+    if (selection?.selection_id !== state.selection?.selection_id) state.variantCache.clear();
+    state.selection = selection;
   }
 
   const cached = readCachedCatalog();
