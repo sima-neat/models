@@ -155,6 +155,8 @@ async function loadRuns({ append = false, branch = elements["branch-filter"].val
       try {
         return await fetchCatalogDocument(snapshotBranch);
       } catch (error) {
+        // A newer load owns the selection now, so this one changes nothing.
+        if (requestId !== state.runsRequestId) return null;
         // A selection retired after the page listed it: show Main's branch catalog, as before selections existed.
         state.selections = [];
         state.selection = null;
