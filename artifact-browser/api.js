@@ -371,8 +371,13 @@ export async function loadBenchmarkResults(model, profile) {
   return { performance, accuracy, reference };
 }
 
+// One build shows different benchmark results under different selections, so the cache keeps them apart.
+export function variantCacheKey(anchor) {
+  return `${state.selection?.selection_id ?? "branch"}:${variantBuildKey(anchor)}`;
+}
+
 export async function loadVariant(anchor) {
-  const key = variantBuildKey(anchor);
+  const key = variantCacheKey(anchor);
   if (state.variantCache.has(key)) return state.variantCache.get(key);
   const componentRuns = await variantRuns(anchor);
   const details = await mapWithConcurrency(componentRuns, 6, (run) => loadRunDetail(run.id));
@@ -395,7 +400,8 @@ export async function loadVariant(anchor) {
     accuracy: accuracy && { ...accuracy, datasetNames: names },
     packageSummary, packageTests, requestedPackageId: packageRun?.run_id || null, pipeline, reference, licenses, exampleApp,
   };
-  state.variantCache.set(key, variant);
+  // A load that outlived its selection keeps its result out of the cache.
+  if (variantCacheKey(anchor) === key) state.variantCache.set(key, variant);
   return variant;
 }
 
