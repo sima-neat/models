@@ -125,7 +125,7 @@ runners. Every push to a branch of this repository runs `Vulcan Model Orchestrat
 compiles and benchmarks the builds whose fingerprints changed
 ([CI flow](agents/references/ci-flow.md)).
 
-## Review guidelines
+## Code Review Rules
 
 Every review, the automatic one included, follows
 [`models-review-pr`](agents/skills/models-review-pr/SKILL.md) and opens with two verdicts:
