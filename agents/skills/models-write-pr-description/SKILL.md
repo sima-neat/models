@@ -233,9 +233,7 @@ Refs #<issue>
   already pins them.
 - **State each fact once.** A fact in the Summary does not come back in a model block, `Reruns`,
   or `Not verified`.
-- **Use precise, plain words.** Use the model README's name for each thing and keep it the same
-  in every section. Explain a term the first time when a reviewer outside the work may not know
-  it. Give a number with its unit, and a link with a short label where a bare URL or hash would
-  run long.
-- **Write short sentences with one fact each,** in active voice. Do not shorten a sentence so
-  far that the reader has to guess what it means.
+- **Use the model README's name for each thing** and keep it the same in every section. Give a
+  number with its unit, and a link with a short label where a bare URL or hash would run long.
+- **Follow the [language rules](../../references/writing-docs.md#language):** full sentences,
+  the condition first, active voice, and the plain word.
