@@ -410,14 +410,18 @@ reuse an approval. The manual publish keeps files that the new site no longer ha
 
 ### Branch lifecycle
 
-`model-branch-lifecycle.yml` has two jobs. `cancel-branch-runs` runs
+`model-branch-lifecycle.yml` has four jobs. `cancel-branch-runs` runs
 `scripts/cancel_branch_runs.sh` for a deleted branch and cancels its unfinished runs.
-`update-registry` calls the registry's `purge` endpoint for a deleted branch and `restore`
-for a created one, then waits up to 15 minutes for a purge to complete. It refuses
-`main`, `develop`, and `release-*`. It does not refuse `integration/*`, although
-`is_long_lived` treats those branches as long-lived. The job runs once for the staging
-registry and once for the production registry, each in its own GitHub environment. A
-failure in one registry does not stop the other.
+`resolve-staging` and `resolve-production` call `vulcan-resolve-config.yml` of
+`sima-neat/.github` for their environment. `update-registry` needs both, and each of its two
+runs signs with its own environment's `aws_region`. It calls the registry's `purge` endpoint
+for a deleted branch and `restore` for a created one, then waits up to 15 minutes for a purge
+to complete. It refuses `main`, `develop`, and `release-*`. It does not refuse
+`integration/*`, although `is_long_lived` treats those branches as long-lived. It runs once
+for the staging registry and once for the production registry, each in its own GitHub
+environment. A failure in one registry does not stop the other. `update-registry` runs unless
+the workflow is cancelled, so a config that fails to resolve fails only its own environment's
+run, at the credentials step.
 
 A polling timeout means the wait ended, not that the asynchronous purge failed. Read the
 durable job's status, attempts, error, and retained/deleted counters before retrying. A
