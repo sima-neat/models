@@ -71,7 +71,11 @@ each finding cites the owning file and section.
   `workload`. Each accuracy report holds the metrics its `datasets/<id>.yaml` requires.
 - **Code.** Each changed script follows `coding-style.md`. Model-specific code sits under
   `models/<model_id>/scripts/` and shared code under `tools/` ([review and merge
-  expectations](../../../docs/contributing.md#review-and-merge-expectations)).
+  expectations](../../../docs/contributing.md#review-and-merge-expectations)). Report each
+  comment that restates the code, runs past two lines, tells how the code got this way, or names
+  compiler or runtime source that is not public, and each chosen value that lacks its reason
+  ([`coding-style.md` "A comment leads with its
+  point"](../../coding-style.md#a-comment-leads-with-its-point)).
 - **Tests.** They follow `coding-style.md` "Tests" and the DevKit import rule in `rules.md`.
   `tests/tests.yaml` has one entry per stage, and its `expected` values follow published
   results under the shared limits in [`rules.md` "Limits"](../../rules.md#limits).

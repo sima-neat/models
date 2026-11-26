@@ -6,16 +6,8 @@ description: Write or update the description of a sima-neat/models pull request.
 # Write a Models pull request description
 
 A person reads it top to bottom in a minute and knows what changed, what it measured, what
-reran, and what nobody checked. Write for that reader:
-
-- Open with the change in one or two plain sentences, before any block or table.
-- Report what changed. For a change to an existing model, a field line that did not change is
-  left out. A new model gets every line.
-- Use the words of the model's README. Give a number with its unit, and a link with a short
-  label where a bare URL or hash would run long.
-- Keep each line to one fact a reviewer acts on. Commands, file hashes, and tool versions
-  stay out, because the repository already pins them.
-- Leave out how the work went, what was tried, and anything the diff already shows.
+reran, and what nobody checked. Write it as [Writing](#writing) says, so that reader finds each
+point without reading the rest.
 
 ## Steps
 
@@ -228,3 +220,22 @@ Refs #<issue>
 - Each list item, field line, and table row stays on one source line.
 - Leave out AI attribution, internal host names, private links, board addresses, and customer
   information. The repository is public.
+
+## Writing
+
+- **Open with the change** in one or two plain sentences, before any block or table.
+- **Keep only what the reviewer needs to judge the change:** what changed, what it measured,
+  what reran, and what can break. For a change to an existing model, a field line that did not
+  change is left out. A new model gets every line.
+- **Leave out the rest.** How the work went, what was tried, failures on earlier commits,
+  investigations of other issues, and anything the diff already shows stay in commit messages
+  or issue comments. Commands, file hashes, and tool versions stay out, because the repository
+  already pins them.
+- **State each fact once.** A fact in the Summary does not come back in a model block, `Reruns`,
+  or `Not verified`.
+- **Use precise, plain words.** Use the model README's name for each thing and keep it the same
+  in every section. Explain a term the first time when a reviewer outside the work may not know
+  it. Give a number with its unit, and a link with a short label where a bare URL or hash would
+  run long.
+- **Write short sentences with one fact each,** in active voice. Do not shorten a sentence so
+  far that the reader has to guess what it means.

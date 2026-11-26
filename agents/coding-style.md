@@ -132,6 +132,15 @@ a step is there. Say first what the value or step does, then the reason. Put the
 number or a source, beside the value it explains. Use plain words. One line when it fits, two
 when the reason needs them. Leave code that reads on its own without one.
 
+- Never restate what the code does or what a name says.
+- Describe the code as it is. How it got this way, a failed attempt, and a measurement from an
+  investigation that chose nothing go in the pull request description or the issue. A comment
+  may name the issue instead.
+- Keep only the measurement that justifies a chosen value, because the comment is the one place
+  that reason stays with the code a customer copies.
+- Name no compiler or runtime source that is not public, such as its file paths or function
+  names. Cite the installed Model Compiler's output or a public page instead.
+
 ```python
 # Bad: no comment where one is needed. The reader cannot tell what -7.0 does.
 LOGIT_FLOOR = -7.0
