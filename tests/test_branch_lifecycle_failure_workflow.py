@@ -132,7 +132,7 @@ def test_listener_is_independent_and_passes_the_exact_failed_attempt() -> None:
     assert listener["permissions"] == {"actions": "read", "contents": "read"}
     job = listener["jobs"]["notify-failure"]
     assert "steps" not in job  # Never check out or execute the failed revision with the Slack secret.
-    assert re.fullmatch(r"sima-neat/\.github/\.github/workflows/vulcan-notify-slack.yml@[0-9a-f]{40}", job["uses"])
+    assert job["uses"] == "sima-neat/.github/.github/workflows/vulcan-notify-slack.yml@main"
     assert job["with"]["run_id"] == "${{ github.event.workflow_run.id }}"
     assert job["with"]["run_attempt"] == "${{ github.event.workflow_run.run_attempt }}"
     assert job["with"]["run_url"] == "${{ github.event.workflow_run.html_url }}"

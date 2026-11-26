@@ -24,7 +24,7 @@ jobs:
         contains(fromJSON('["failure", "timed_out", "action_required", "startup_failure", "stale"]'),
                  github.event.workflow_run.conclusion)
       }}
-    uses: sima-neat/.github/.github/workflows/vulcan-notify-slack.yml@f9d6425fa649e4d116bf4c6790340300dde73718
+    uses: sima-neat/.github/.github/workflows/vulcan-notify-slack.yml@main
     with:
       channel_id: C0BPFND35TN
       run_id: ${{ github.event.workflow_run.id }}
