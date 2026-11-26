@@ -59,16 +59,21 @@ function writeHistoryUrl() {
   history.replaceState({}, "", url);
 }
 
-function setTheme(theme) {
+// persist: false shows the theme without storing it: a theme from ?theme (index.html marks it
+// with data-theme-source="url"), so the theme the user picked on the site stays as it was.
+function setTheme(theme, { persist = true } = {}) {
   document.documentElement.dataset.theme = theme;
-  try {
-    localStorage.setItem("sima-neat-artifact-theme", theme);
-    localStorage.setItem("theme", theme);
-    localStorage.setItem("portal-theme", theme);
-  } catch {
-    // Storage may be disabled; theme selection still works for this page load.
+  if (persist) {
+    delete document.documentElement.dataset.themeSource;
+    try {
+      localStorage.setItem("sima-neat-artifact-theme", theme);
+      localStorage.setItem("theme", theme);
+      localStorage.setItem("portal-theme", theme);
+    } catch {
+      // Storage may be disabled; theme selection still works for this page load.
+    }
+    document.cookie = `sima-neat-theme=${theme}; Path=/; Max-Age=31536000; SameSite=Lax${location.protocol === "https:" ? "; Secure" : ""}`;
   }
-  document.cookie = `sima-neat-theme=${theme}; Path=/; Max-Age=31536000; SameSite=Lax${location.protocol === "https:" ? "; Secure" : ""}`;
   const dark = theme === "dark";
   elements["theme-toggle"].innerHTML = dark ? icons.sun : icons.moon;
   elements["theme-toggle"].setAttribute("aria-label", `Switch to ${dark ? "light" : "dark"} mode`);
@@ -243,7 +248,7 @@ async function initialize() {
   const navigationId = ++state.navigationId;
   state.runsRequestId += 1;
   state.catalogLoaded = false;
-  setTheme(document.documentElement.dataset.theme || "light");
+  setTheme(document.documentElement.dataset.theme || "light", { persist: document.documentElement.dataset.themeSource !== "url" });
   const link = new URLSearchParams(location.search);
   elements.search.value = link.get("q") || "";
   elements["history-filter"].checked = shows.buildHistory && link.get("history") === "1";
@@ -389,9 +394,10 @@ function latestVariantRun({ modelId, profile }) {
 }
 
 elements["theme-toggle"].addEventListener("click", () => setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark"));
+// The shared header says persist: false for a theme from ?theme (sima-neat/docs#199); an older header doesn't say.
 window.addEventListener("developer-center-theme-change", (event) => {
   const theme = event.detail?.theme;
-  if (theme === "light" || theme === "dark") setTheme(theme);
+  if (theme === "light" || theme === "dark") setTheme(theme, { persist: event.detail.persist !== false });
 });
 const portalMenu = document.querySelector(".portal-menu-toggle");
 portalMenu.addEventListener("click", () => {

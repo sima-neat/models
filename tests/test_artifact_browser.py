@@ -1041,6 +1041,22 @@ def test_browser_has_persistent_dual_theme_and_accessibility_controls() -> None:
     assert "prefers-reduced-motion: reduce" in styles
 
 
+def test_browser_never_stores_a_theme_from_the_url() -> None:
+    # sima-neat/models#1246: ?theme=dark|light (tests/browser/theme.test.mjs covers index.html)
+    # is shown without being stored; the toggle and a stored header theme still store it.
+    script = _browser_source("app.js", "download-dialog.js")
+    initialize = script.split("async function initialize()", 1)[1].split("const link", 1)[0]
+
+    assert "function setTheme(theme, { persist = true } = {})" in script
+    set_theme = script.split("function setTheme(", 1)[1].split("\n}\n", 1)[0]
+    assert set_theme.index("if (persist) {") < set_theme.index('localStorage.setItem("theme", theme)')
+    assert set_theme.index("if (persist) {") < set_theme.index("document.cookie = `sima-neat-theme=")
+    assert "delete document.documentElement.dataset.themeSource;" in set_theme
+    assert 'persist: document.documentElement.dataset.themeSource !== "url"' in initialize
+    assert "setTheme(theme, { persist: event.detail.persist !== false })" in script
+    assert 'setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark"))' in script
+
+
 def test_browser_uses_refined_search_first_layout() -> None:
     html = (BROWSER / "index.html").read_text(encoding="utf-8")
     styles = (BROWSER / "styles.css").read_text(encoding="utf-8")
