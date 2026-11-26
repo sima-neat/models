@@ -68,8 +68,9 @@ Headings stop at H3.
 - Short means deleting sentences that change nothing the reader does. Keep every value,
   condition, exception, and failure.
 - State each fact on one page. Other pages link to it.
-- Describe what the source does today. Leave out dated status, issue numbers, account
-  identifiers, and internal host names a reader outside the team cannot reach.
+- Describe what the source does today. On a docs page, leave out dated status, issue numbers,
+  account identifiers, and internal host names a reader outside the team cannot reach. A pull
+  request description keeps the issue line its skill requires.
 
 ## Before a page merges
 
