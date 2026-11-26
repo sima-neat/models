@@ -1,7 +1,8 @@
 # Writing docs pages
 
 The page standard for `docs/`, the published site. Read it before you write or change a
-page there. `tests/test_docs.py` checks the parts marked (tested).
+page there. `tests/test_docs.py` checks the parts marked (tested). Its [Language](#language) rules
+also hold for text in `agents/`, `skills/`, and pull request descriptions.
 
 ## Who reads docs
 
@@ -56,9 +57,13 @@ Headings stop at H3.
 
 - Define a term in `docs/concepts.md` and at its first use on the page. Then keep that
   name. The names are the ones in the `## Vocabulary` section of `AGENTS.md`.
-- Keep instructions within about 20 words and descriptions within about 25.
+- Keep instructions within about 20 words and descriptions within about 25. These are
+  ceilings, not targets, and tables, commands, and identifiers are exempt.
+- Write full sentences with their articles and verbs, never fragments.
+- Give one action per sentence, with its condition first: "If the portal build fails,
+  fix its first error."
 - Use the active voice and name who acts: "CI publishes the report".
-- Use the plain word: "use", "start", "because".
+- Use the plain, literal word: "use", "start", "because". Write "fails" for "falls over".
 - Write no em dashes and no semicolons. Use sentence-case headings.
 - Short means deleting sentences that change nothing the reader does. Keep every value,
   condition, exception, and failure.

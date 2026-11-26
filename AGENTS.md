@@ -43,7 +43,7 @@ with `sima-`, because Claude Code lets a personal skill of the same name hide a 
 | write or review a model script or model test | [agents/coding-style.md](agents/coding-style.md) |
 | draw or review a model's flowgraph | [agents/references/flowgraph.md](agents/references/flowgraph.md) |
 | write or review the text of a model README | [agents/references/writing-model-readmes.md](agents/references/writing-model-readmes.md) |
-| write or change a page under `docs/` | [agents/references/writing-docs.md](agents/references/writing-docs.md) |
+| write or change a page under `docs/`, or check the wording of any text a person or agent reads | [agents/references/writing-docs.md](agents/references/writing-docs.md) |
 | change shared tooling under `tools/` | [agents/references/architecture.md](agents/references/architecture.md) |
 | change a workflow, job, trigger, or runner | [agents/references/ci-flow.md](agents/references/ci-flow.md) |
 | change what a run publishes or how results are stored | [agents/references/publication.md](agents/references/publication.md) |
