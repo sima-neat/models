@@ -31,7 +31,7 @@ from model_registry.fetch import BuildFile, download_build, download_build_file
 from model_registry.fingerprints import COMPILE_TOOLING, benchmark_fingerprint, compile_fingerprint
 from model_registry.model import load_and_validate_model, load_models, mpk_filename
 from model_registry.registry import (
-    RegistryPublicationError,
+    RegistryRequestError,
     S3ArtifactStore,
     S3Object,
     _preflight_compilations,
@@ -130,7 +130,7 @@ class Registry:
                     assert path.split("/")[3] in self.bindings.values()
                 if self.fail_once and path.endswith(self.fail_once):
                     self.fail_once = None
-                    raise RegistryPublicationError("temporary publication failure")
+                    raise RegistryRequestError("temporary publication failure")
                 self.artifacts[path] = {"name": path.rsplit("/", 1)[1], **body}
             if path.endswith("/finalize"):
                 self.completed.add(path.split("/")[3])
@@ -386,7 +386,7 @@ def test_candidate_retries_resume_bound_runs_and_finalized_candidates(compiled, 
     registry.fail_once = "/artifacts/package"
     args = dict(repository=ROOT, dist_dir=compiled, output_dir=tmp_path / "candidate",
                 model_id=MODEL, build_profile_id=PROFILE, **registry.args())
-    with pytest.raises(RegistryPublicationError, match="temporary publication failure"):
+    with pytest.raises(RegistryRequestError, match="temporary publication failure"):
         publish_candidate(**args)
     assert json.loads((tmp_path / "candidate/candidate.json").read_text())["state"] == "assembling"
     assert len(registry.runs) == 2

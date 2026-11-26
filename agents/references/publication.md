@@ -27,7 +27,8 @@ Vulcan promotion reads it under that name. A package's `package_fingerprint` is
 
 Rules every publisher follows:
 
-- Each request carries an idempotency key derived from what it publishes. Compile and
+- Each request carries an idempotency key derived from what it publishes. `create_run` and
+  `OpenRun` in `registry_api/runs.py` send it as `<stable_key>-<step>`. Compile and
   package keys include the workflow run ID and not the attempt, so a new attempt of the
   same workflow run resumes the same registry run.
 - `S3ArtifactStore.ensure_native_sha256` uploads with a native SHA-256 checksum, verifies

@@ -24,7 +24,7 @@ from model_registry.fingerprints import (
     compile_fingerprint,
 )
 from model_registry.model import load_models
-from model_registry.registry import RegistryPublicationError, build_catalog_snapshot
+from model_registry.registry import RegistryRequestError, build_catalog_snapshot
 from model_registry.stage_plan import (
     find_main_merge_blockers,
     is_long_lived,
@@ -68,7 +68,7 @@ def test_promoted_batch_queues_only_missing_stages_and_excludes_generative_tasks
             return {"catalog": {"document": document}}
         queried.append(url)
         if "fingerprint=" + "b" * 64 in url:
-            raise RegistryPublicationError("HTTP 404 fingerprint_not_found")
+            raise RegistryRequestError("HTTP 404 fingerprint_not_found")
         return {"run": {"id": "completed"}}
 
     result = plan_promoted_benchmarks(branch=branch, stages=["performance", "accuracy"], read=read,
@@ -155,7 +155,7 @@ def test_only_main_takes_builds_from_develop(branch: str) -> None:
 
 def test_main_without_a_develop_catalog_takes_nothing() -> None:
     def read(url: str) -> dict:
-        raise RegistryPublicationError("public artifact registry HTTP 404 catalog_not_found")
+        raise RegistryRequestError("public artifact registry HTTP 404 catalog_not_found")
 
     assert read_default_branch_builds(read, "https://registry.example.invalid", "main", MERGE_MATRIX) == []
 
@@ -435,12 +435,12 @@ class FakeRegistry:
         if parsed.path.endswith("/catalogs/current"):
             branch = query["git_ref"][0].removeprefix("refs/heads/")
             if branch not in self.catalogs:
-                raise RegistryPublicationError("public artifact registry HTTP 404 catalog_not_found")
+                raise RegistryRequestError("public artifact registry HTTP 404 catalog_not_found")
             return {"catalog": {"canonical_sha256": "c" * 64, "document": self.catalogs[branch]}}
         if parsed.path.endswith("/resolve"):
             run = (query["run_type"][0], query["fingerprint"][0])
             if run not in self.runs:
-                raise RegistryPublicationError("public artifact registry HTTP 404 fingerprint_not_found")
+                raise RegistryRequestError("public artifact registry HTTP 404 fingerprint_not_found")
             return {"run": {"run_id": "00000000-0000-4000-8000-000000000099"}}
         raise AssertionError(url)
 
@@ -1355,9 +1355,9 @@ def test_registry_failures_other_than_not_found_propagate(stage_repository: Path
 
     def read(url: str) -> dict:
         if failing in url:
-            raise RegistryPublicationError("public artifact registry HTTP 403 forbidden")
+            raise RegistryRequestError("public artifact registry HTTP 403 forbidden")
         return original(url)
 
     registry.read = read
-    with pytest.raises(RegistryPublicationError, match="403 forbidden"):
+    with pytest.raises(RegistryRequestError, match="403 forbidden"):
         _plan(stage_repository, registry, base_branches=["develop"])

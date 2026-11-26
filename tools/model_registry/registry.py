@@ -1,17 +1,14 @@
 from __future__ import annotations
 
-import base64
 import hashlib
 import json
 import logging
 import math
 import random
 import re
-import subprocess
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -35,7 +32,6 @@ from .fetch import (
     BENCHMARK_BASELINE,
     BuildFile,
     DownloadRequest,
-    ReadRequest,
     StagedBuildFiles,
     download_build_file,
     sha256_file,
@@ -44,8 +40,19 @@ from .fingerprints import benchmark_fingerprint, compile_fingerprint
 from .mla_stage_simulation import SIMULATION_FILE
 from .model import build_profile_for, compile_invocations_for, load_and_validate_model, load_models, mpk_filename
 from .package import FIDELITY_FILE
-from .registry_http import RegistryPublicationError, SigV4RegistryClient, iam_read_api_url
-from .registry_http import read_registry_json_authenticated as _public_registry_json
+from .registry_api.runs import REPOSITORY_PATH, OpenRun, artifact_location, create_run
+from .registry_api.storage import S3ArtifactStore, S3Object
+from .registry_api.transport import (
+    JsonObject,
+    ReadRequest,
+    RegistryRequestError,
+    Request,
+    SigV4RegistryClient,
+    canonical_sha256,
+    iam_read_api_url,
+    is_catalog_conflict,
+    read_registry_json,
+)
 from .runner_approval import runner_provenance
 from .source import source_identity
 from .stage_plan import (
@@ -62,217 +69,16 @@ from .taxonomy import (
     validate_model_categorization,
 )
 
-JsonObject = dict[str, Any]
-Request = Callable[[str, str, JsonObject | None, str], JsonObject]
 # Catalog fields the registry owns for each ref: a snapshot may omit them but not carry another ref's.
 SERVER_OWNED_SELECTIONS = ("approved_deployments", "branch_deployments")
 
 
-def canonical_sha256(value: Any) -> str:
-    payload = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
-    return hashlib.sha256(payload).hexdigest()
-
-
-
-
-@dataclass(frozen=True)
-class S3Object:
-    key: str
-    version_id: str
-    sha256: str
-    size_bytes: int
-
-
-class S3ArtifactStore:
-    def __init__(
-        self, bucket: str, *, kms_key_id: str | None = None, receipt_dir: Path | None = None, s3_client=None
-    ) -> None:
-        self.bucket = bucket
-        self.kms_key_id = (kms_key_id or "").strip()
-        self.receipt_dir = receipt_dir
-        self._s3 = s3_client
-
-    def _record(self, stored: S3Object) -> S3Object:
-        if self.receipt_dir is not None:
-            self.receipt_dir.mkdir(parents=True, exist_ok=True)
-            path = self.receipt_dir / f"{canonical_sha256([self.bucket, stored.key])}.json"
-            temporary = path.with_suffix(".tmp")
-            temporary.write_text(json.dumps({
-                "s3_bucket": self.bucket, "s3_key": stored.key, "s3_version_id": stored.version_id,
-                "sha256": stored.sha256, "size_bytes": stored.size_bytes,
-            }, sort_keys=True) + "\n", encoding="utf-8")
-            temporary.replace(path)
-        return stored
-
-    def ensure_native_sha256(
-        self,
-        path: Path,
-        key: str,
-        sha256: str,
-        *,
-        media_type: str = "application/gzip",
-        previous_object: tuple[str, str | None] | None = None,
-    ) -> S3Object:
-        expected_checksum = base64.b64encode(bytes.fromhex(sha256)).decode("ascii")
-        saved = None
-        if self.receipt_dir is not None:
-            receipt = self.receipt_dir / f"{canonical_sha256([self.bucket, key])}.json"
-            if receipt.is_file():
-                saved = json.loads(receipt.read_text(encoding="utf-8"))
-                if (saved.get("sha256"), saved.get("size_bytes")) != (sha256, path.stat().st_size):
-                    raise RegistryPublicationError(f"saved upload differs from {key}; start a new candidate")
-        head = self._head(key, saved["s3_version_id"]) if saved else self._head(key)
-        size = path.stat().st_size
-        if _matches_s3_object(head, expected_checksum, size):
-            return self._record(S3Object(key, head["VersionId"], sha256, size))
-        if saved:
-            raise RegistryPublicationError(
-                f"saved S3 version is unavailable or changed for {key}; start a new candidate"
-            )
-        if previous_object:
-            previous_key, previous_version = previous_object
-            prior = self._head(previous_key, previous_version)
-            if _matches_s3_object(prior, expected_checksum, size):
-                return self._record(S3Object(previous_key, prior["VersionId"], sha256, size))
-
-        if size > 5 * 1024**3:
-            raise RegistryPublicationError(f"registry artifact exceeds the 5 GiB single-upload limit: {path}")
-        if self._s3 is None:
-            version_id = self._put_cli(path, key, expected_checksum, media_type)
-        else:
-            version_id = self._put_sdk(path, key, expected_checksum, media_type)
-        if not isinstance(version_id, str) or not version_id:
-            raise RegistryPublicationError(f"S3 versioning did not return a version for {key}")
-        verified = self._head(key, version_id)
-        if verified.get("ChecksumSHA256") != expected_checksum:
-            raise RegistryPublicationError(f"S3 native SHA-256 verification failed for {key}")
-        if verified.get("ContentLength") != size:
-            raise RegistryPublicationError(f"S3 object size does not match the packaged artifact for {key}")
-        return self._record(S3Object(key, version_id, sha256, size))
-
-    def _put_cli(self, path: Path, key: str, expected_checksum: str, media_type: str) -> str | None:
-        command = [
-            "aws",
-            "s3api",
-            "put-object",
-            "--bucket",
-            self.bucket,
-            "--key",
-            key,
-            "--body",
-            str(path),
-            "--checksum-algorithm",
-            "SHA256",
-            "--checksum-sha256",
-            expected_checksum,
-            "--server-side-encryption",
-            "aws:kms",
-            "--content-type",
-            media_type,
-            "--output",
-            "json",
-            "--no-cli-pager",
-        ]
-        if self.kms_key_id:
-            command.extend(["--ssekms-key-id", self.kms_key_id])
-        completed = subprocess.run(command, text=True, capture_output=True, check=False)
-        if completed.returncode != 0:
-            raise RegistryPublicationError(f"Could not upload s3://{self.bucket}/{key}: {completed.stderr.strip()}")
-        try:
-            uploaded = json.loads(completed.stdout)
-        except json.JSONDecodeError as exc:
-            raise RegistryPublicationError(f"Could not parse S3 upload response for {key}") from exc
-        return uploaded.get("VersionId") if isinstance(uploaded, dict) else None
-
-    def _put_sdk(self, path: Path, key: str, checksum: str, media_type: str) -> str | None:
-        from botocore.exceptions import BotoCoreError, ClientError
-
-        arguments = {
-            "Bucket": self.bucket,
-            "Key": key,
-            "ChecksumAlgorithm": "SHA256",
-            "ChecksumSHA256": checksum,
-            "ContentType": media_type,
-            "ServerSideEncryption": "aws:kms",
-            "IfNoneMatch": "*",
-        }
-        if self.kms_key_id:
-            arguments["SSEKMSKeyId"] = self.kms_key_id
-        for attempt in range(3):
-            try:
-                with path.open("rb") as body:
-                    return self._s3.put_object(Body=body, **arguments).get("VersionId")
-            except ClientError as exc:
-                code = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
-                if code in {409, 412}:
-                    current = self._head(key)
-                    if _matches_s3_object(current, checksum, path.stat().st_size):
-                        return current["VersionId"]
-                    if code == 409 and attempt < 2:
-                        continue
-                raise RegistryPublicationError(f"Could not publish immutable s3://{self.bucket}/{key}: {exc}") from exc
-            except BotoCoreError as exc:
-                raise RegistryPublicationError(f"Could not upload s3://{self.bucket}/{key}: {exc}") from exc
-        raise AssertionError("unreachable")
-
-    def _head(self, key: str, version_id: str | None = None) -> JsonObject:
-        if self._s3 is not None:
-            from botocore.exceptions import BotoCoreError, ClientError
-
-            arguments = {"Bucket": self.bucket, "Key": key, "ChecksumMode": "ENABLED"}
-            if version_id:
-                arguments["VersionId"] = version_id
-            try:
-                return self._s3.head_object(**arguments)
-            except ClientError as exc:
-                code = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
-                # Without ListBucket, the publisher sees 403 on a missing key. A conditional
-                # PUT can create the object, but cannot replace an existing inaccessible object.
-                if not version_id and code in {403, 404}:
-                    return {}
-                raise RegistryPublicationError(f"Could not verify s3://{self.bucket}/{key}: {exc}") from exc
-            except BotoCoreError as exc:
-                raise RegistryPublicationError(f"Could not verify s3://{self.bucket}/{key}: {exc}") from exc
-        command = [
-            "aws",
-            "s3api",
-            "head-object",
-            "--bucket",
-            self.bucket,
-            "--key",
-            key,
-            "--checksum-mode",
-            "ENABLED",
-            "--output",
-            "json",
-        ]
-        if version_id:
-            command.extend(["--version-id", version_id])
-        completed = subprocess.run(command, text=True, capture_output=True, check=False)
-        if completed.returncode != 0:
-            return {}
-        try:
-            value = json.loads(completed.stdout)
-        except json.JSONDecodeError as exc:
-            raise RegistryPublicationError(f"S3 returned invalid metadata for {key}") from exc
-        return value if isinstance(value, dict) else {}
-
-
-def _matches_s3_object(head: JsonObject, checksum: str, size: int) -> bool:
-    return (
-        head.get("ChecksumSHA256") == checksum
-        and head.get("ContentLength") == size
-        and isinstance(head.get("VersionId"), str)
-        and bool(head["VersionId"])
-    )
 
 
 def _publish_deployment_files(
-    client: SigV4RegistryClient,
+    run: OpenRun,
     store: S3ArtifactStore,
     *,
-    run_id: str,
-    stable_key: str,
     bucket: str,
     deployment: Path,
     files: list[JsonObject],
@@ -291,13 +97,13 @@ def _publish_deployment_files(
             item["sha256"],
             media_type="application/octet-stream",
         )
+        # A run holds many files, so each file's key hashes the run's key with the file's artifact name.
         for item in items:
-            client.request("PUT", f"/v1/runs/{run_id}/artifacts/{item['artifact']}", {
-                "artifact_type": "model-file", "s3_bucket": bucket, "s3_key": stored.key,
-                "s3_version_id": stored.version_id, "sha256": stored.sha256, "size_bytes": stored.size_bytes,
+            run.client.request("PUT", f"/v1/runs/{run.run_id}/artifacts/{item['artifact']}", {
+                "artifact_type": "model-file", **artifact_location(bucket, stored),
                 "media_type": "application/octet-stream", "retention_class": retention_class,
                 "metadata": {**metadata, "path": item["path"], "storage_backend": "s3"},
-            }, "file-" + canonical_sha256([stable_key, item["artifact"]]))
+            }, "file-" + canonical_sha256([run.stable_key, item["artifact"]]))
 
     payloads: dict[tuple[str, str], list[JsonObject]] = {}
     for item in files:
@@ -846,7 +652,7 @@ def publish_model_documentation(
         raise ValidationError("branch and environment must not be empty")
     models = load_models(root)
     client = SigV4RegistryClient(api_url, aws_region, request=request)
-    read = read_request or _public_registry_json
+    read = read_request or read_registry_json
     store = artifact_store
     previous_receipts = previous_receipts or {}
     git_sha = git_sha.lower()
@@ -964,19 +770,13 @@ def publish_model_documentation(
             f"model-documentation-{branch_identity}-{git_sha}-{model_id}-"
             f"{run_fingerprint[:16]}-{invocation_identity}"
         )
-        create = client.request("POST", "/v1/runs", create_body, f"{stable_key}-create")
-        run_id = _require_text(create.get("run_id"), "run_id")
-        client.request("PUT", f"/v1/runs/{run_id}/parameters", {
+        run = create_run(client, create_body, stable_key)
+        run.put("parameters", {
             "parameters": parameters,
             "canonical_sha256": canonical_sha256(parameters),
-        }, f"{stable_key}-parameters")
-        client.request("PUT", f"/v1/runs/{run_id}/artifacts/readme", {
+        }, "parameters")
+        run.put_artifact("readme", bucket, stored, {
             "artifact_type": "model-readme",
-            "s3_bucket": bucket,
-            "s3_key": stored.key,
-            "s3_version_id": stored.version_id,
-            "sha256": stored.sha256,
-            "size_bytes": stored.size_bytes,
             "media_type": "text/markdown; charset=utf-8",
             "retention_class": "branch",
             "metadata": {
@@ -984,14 +784,9 @@ def publish_model_documentation(
                 "source_path": documentation["source_path"],
                 "source_commit": git_sha,
             },
-        }, f"{stable_key}-artifact")
-        client.request("PUT", f"/v1/runs/{run_id}/artifacts/{hero['artifact_name']}", {
+        }, "artifact")
+        run.put_artifact(hero["artifact_name"], bucket, stored_hero, {
             "artifact_type": "model-readme-hero",
-            "s3_bucket": bucket,
-            "s3_key": stored_hero.key,
-            "s3_version_id": stored_hero.version_id,
-            "sha256": stored_hero.sha256,
-            "size_bytes": stored_hero.size_bytes,
             "media_type": hero["media_type"],
             "retention_class": "branch",
             "metadata": {
@@ -999,9 +794,9 @@ def publish_model_documentation(
                 "source_path": hero["source_path"],
                 "source_commit": git_sha,
             },
-        }, f"{stable_key}-hero-artifact")
-        client.request("POST", f"/v1/runs/{run_id}/finalize", {"status": "completed"}, f"{stable_key}-finalize")
-        receipts[model_id] = {**content, "run_id": run_id, "source_commit": git_sha}
+        }, "hero-artifact")
+        run.finalize()
+        receipts[model_id] = {**content, "run_id": run.run_id, "source_commit": git_sha}
     return receipts
 
 
@@ -1079,7 +874,7 @@ def publish_catalog(
     artifact_store: S3ArtifactStore | None = None,
 ) -> JsonObject:
     client = SigV4RegistryClient(api_url, aws_region, request=request)
-    read = read_request or _public_registry_json
+    read = read_request or read_registry_json
     documentation_receipts = None
     if bucket is not None:
         if not environment:
@@ -1202,7 +997,7 @@ def publish_catalog(
         try:
             result = client.request(
                 "POST",
-                f"/v1/repositories/sima-neat/models/catalogs/{git_sha.lower()}/snapshots",
+                f"{REPOSITORY_PATH}/catalogs/{git_sha.lower()}/snapshots",
                 snapshot,
                 # Bind the key to the complete compare-and-swap request. Documentation
                 # receipt run IDs and incrementally published packages can differ across
@@ -1210,8 +1005,8 @@ def publish_catalog(
                 f"models-catalog-{branch}-{git_sha.lower()}-"
                 f"{(previous_snapshot or 'initial')[:16]}-{snapshot_identity}",
             )
-        except RegistryPublicationError as exc:
-            if "catalog_snapshot_conflict" not in str(exc) or time.monotonic() >= deadline:
+        except RegistryRequestError as exc:
+            if not is_catalog_conflict(exc) or time.monotonic() >= deadline:
                 raise
             logging.warning("another publisher replaced the %s catalog; reading it again", branch)
             # A short random wait keeps the publishers that lost together from colliding again.
@@ -1239,7 +1034,7 @@ def stage_catalog_build(
     build-files.json the DevKit downloads each file by. Only a LLiMa deployment manifest is downloaded."""
     root = Path(repository).expanduser().resolve()
     output = Path(output_dir).expanduser().resolve()
-    read = read_request or _public_registry_json
+    read = read_request or read_registry_json
     base_url = api_url.rstrip("/")
     # Reject the signed-read API here, before a board is claimed: build-files.json gives the DevKit this URL, and the
     # DevKit reads it without credentials.
@@ -1251,7 +1046,7 @@ def stage_catalog_build(
         )
     catalog_branch = deployment_branch or branch
     catalog_payload = read(
-        f"{base_url}/v1/repositories/sima-neat/models/catalogs/current?"
+        f"{base_url}{REPOSITORY_PATH}/catalogs/current?"
         f"git_ref={quote(f'refs/heads/{catalog_branch}', safe='')}"
     )
     catalog_record = catalog_payload.get("catalog")
@@ -1534,13 +1329,11 @@ def _fidelity_measurements(report: JsonObject, fingerprint: str) -> list[JsonObj
 
 
 def _publish_fidelity(
-    client: SigV4RegistryClient,
+    run: OpenRun,
     store: S3ArtifactStore,
     path: Path,
     fidelity: JsonObject,
     *,
-    run_id: str,
-    stable_key: str,
     bucket: str,
     retention_class: str,
     s3_key: str,
@@ -1548,37 +1341,17 @@ def _publish_fidelity(
     """Attach a profile's checked numerical fidelity to its package run, the whole-model build it compares."""
     fingerprint = canonical_sha256(fidelity)
     stored = store.ensure_native_sha256(path, s3_key, sha256_file(path)[0], media_type="application/json")
-    artifact = client.request(
-        "PUT",
-        f"/v1/runs/{run_id}/artifacts/numerical-fidelity",
-        {
-            "artifact_type": "numerical-fidelity",
-            "s3_bucket": bucket,
-            "s3_key": stored.key,
-            "s3_version_id": stored.version_id,
-            "sha256": stored.sha256,
-            "size_bytes": stored.size_bytes,
-            "media_type": "application/json",
-            "retention_class": retention_class,
-            "metadata": {key: fidelity[key] for key in ("model_id", "build_profile_id", "samples")},
-        },
-        f"{stable_key}-fidelity-artifact",
-    )
+    artifact = run.put_artifact("numerical-fidelity", bucket, stored, {
+        "artifact_type": "numerical-fidelity",
+        "media_type": "application/json",
+        "retention_class": retention_class,
+        "metadata": {key: fidelity[key] for key in ("model_id", "build_profile_id", "samples")},
+    }, "fidelity-artifact")
     test: JsonObject = {"status": "passed", "summary": fidelity}
     if artifact.get("artifact_id"):
         test["report_artifact_id"] = artifact["artifact_id"]
-    client.request(
-        "PUT",
-        f"/v1/runs/{run_id}/test-results/correctness/numerical-fidelity",
-        test,
-        f"{stable_key}-fidelity-test-result",
-    )
-    client.request(
-        "POST",
-        f"/v1/runs/{run_id}/measurements/batch",
-        {"measurements": _fidelity_measurements(fidelity, fingerprint)},
-        f"{stable_key}-fidelity-measurements",
-    )
+    run.put("test-results/correctness/numerical-fidelity", test, "fidelity-test-result")
+    run.add_measurements(_fidelity_measurements(fidelity, fingerprint), "fidelity-measurements")
 
 
 def _mla_stage_simulation_result(path: Path, schema_path: Path, *, model_id: str, build_profile_id: str) -> JsonObject:
@@ -1602,46 +1375,29 @@ def _mla_stage_simulation_result(path: Path, schema_path: Path, *, model_id: str
 
 
 def _publish_mla_stage_simulation(
-    client: SigV4RegistryClient,
+    run: OpenRun,
     store: S3ArtifactStore,
     path: Path,
     simulation: JsonObject,
     *,
-    run_id: str,
-    stable_key: str,
     bucket: str,
     retention_class: str,
     s3_key: str,
 ) -> None:
     """Attach a profile's MLA stage simulation to its package run, where the model browser reads it."""
     stored = store.ensure_native_sha256(path, s3_key, sha256_file(path)[0], media_type="application/json")
-    artifact = client.request(
-        "PUT",
-        f"/v1/runs/{run_id}/artifacts/mla-stage-simulation",
-        {
-            "artifact_type": "mla-stage-simulation",
-            "s3_bucket": bucket,
-            "s3_key": stored.key,
-            "s3_version_id": stored.version_id,
-            "sha256": stored.sha256,
-            "size_bytes": stored.size_bytes,
-            "media_type": "application/json",
-            "retention_class": retention_class,
-            "metadata": {key: simulation[key] for key in ("model_id", "build_profile_id")},
-        },
-        f"{stable_key}-mla-stage-simulation-artifact",
-    )
+    artifact = run.put_artifact("mla-stage-simulation", bucket, stored, {
+        "artifact_type": "mla-stage-simulation",
+        "media_type": "application/json",
+        "retention_class": retention_class,
+        "metadata": {key: simulation[key] for key in ("model_id", "build_profile_id")},
+    }, "mla-stage-simulation-artifact")
     # A component mla-msim could not simulate leaves nothing to compare, which is not a failure of the model.
     simulated = all(component["status"] == "ok" for component in simulation["components"].values())
     test: JsonObject = {"status": "passed" if simulated else "skipped", "summary": simulation}
     if artifact.get("artifact_id"):
         test["report_artifact_id"] = artifact["artifact_id"]
-    client.request(
-        "PUT",
-        f"/v1/runs/{run_id}/test-results/performance/mla-stage-simulation",
-        test,
-        f"{stable_key}-mla-stage-simulation-test-result",
-    )
+    run.put("test-results/performance/mla-stage-simulation", test, "mla-stage-simulation-test-result")
 
 
 def _compile_timing(path: Path) -> JsonObject:
@@ -1927,9 +1683,8 @@ def publish_compilations(
              + (f":{candidate['deployment_id']}" if candidate else "")).encode()
         ).hexdigest()
         stable_key = f"models-{key_digest}"
-        create = client.request(
-            "POST",
-            "/v1/runs",
+        run = create_run(
+            client,
             {
                 "run_type": "model_compile",
                 "commit_sha": git_sha,
@@ -1955,11 +1710,11 @@ def publish_compilations(
                     "license": model["license"],
                 },
             },
-            f"{stable_key}-create",
+            stable_key,
         )
-        run_id = _require_text(create.get("run_id"), "run_id")
+        run_id = run.run_id
         if candidate is not None:
-            deployment_path = f"/v1/repositories/sima-neat/models/deployments/{candidate['deployment_id']}"
+            deployment_path = f"{REPOSITORY_PATH}/deployments/{candidate['deployment_id']}"
             client.request("PUT", f"{deployment_path}/runs/{run_id}",
                            {"role": f"compile-{component_id}"}, f"{stable_key}-bind")
         source = component["source"]
@@ -1977,9 +1732,8 @@ def publish_compilations(
             source_reference = f"run:{source['run_id']}/artifacts/onnx"
         if not isinstance(source_reference, str):
             source_reference = f"{model['upstream']['repository']}#{source['entrypoint']}"
-        client.request(
-            "PUT",
-            f"/v1/runs/{run_id}/inputs/source-component",
+        run.put(
+            "inputs/source-component",
             {
                 "input_type": "onnx" if source["type"] == "file" else "model-source-file-set",
                 "source_reference": source_reference,
@@ -1991,13 +1745,12 @@ def publish_compilations(
                 "metadata": source_metadata,
                 **(_conversion_input(source, source_metadata) if source["type"] == "conversion" else {}),
             },
-            f"{stable_key}-input",
+            "input",
         )
-        client.request(
-            "PUT",
-            f"/v1/runs/{run_id}/parameters",
+        run.put(
+            "parameters",
             {"parameters": parameters, "canonical_sha256": canonical_sha256(parameters)},
-            f"{stable_key}-parameters",
+            "parameters",
         )
 
         artifact_metadata = {
@@ -2007,7 +1760,7 @@ def publish_compilations(
         }
         if native:
             _publish_deployment_files(
-                client, store, run_id=run_id, stable_key=stable_key, bucket=bucket,
+                run, store, bucket=bucket,
                 deployment=archive.parent / "deployment", files=files,
                 metadata=artifact_metadata, retention_class=retention_class,
                 upload_prefix=candidate["upload_prefix"].rstrip("/") if candidate else None,
@@ -2024,41 +1777,31 @@ def publish_compilations(
             archive, object_key, artifact_sha,
             media_type="application/json" if native else "application/gzip",
         )
-        client.request(
-            "PUT",
-            f"/v1/runs/{run_id}/artifacts/{'llima' if native else 'mpk'}",
+        run.put_artifact(
+            "llima" if native else "mpk",
+            bucket,
+            stored,
             {
                 "artifact_type": "model-pack",
-                "s3_bucket": bucket,
-                "s3_key": stored.key,
                 "artifact_sha256": artifact_sha,
-                "s3_version_id": stored.version_id,
-                "sha256": stored.sha256,
-                "size_bytes": stored.size_bytes,
                 "media_type": "application/json" if native else "application/gzip",
                 "retention_class": retention_class,
                 "metadata": artifact_metadata,
             },
-            f"{stable_key}-artifact",
+            "artifact",
         )
         # This is compiler-output validation, not a DevKit correctness or performance test.
         validation = "deployment-validation" if native else "mpk-validation"
-        client.request(
-            "PUT",
-            f"/v1/runs/{run_id}/test-results/compile/{validation}",
+        run.put(
+            f"test-results/compile/{validation}",
             {
                 "status": "passed",
                 "summary": {"deployment_validated" if native else "archive_validated": True,
                             "checksum_verified": True},
             },
-            f"{stable_key}-validation",
+            "validation",
         )
-        client.request(
-            "POST",
-            f"/v1/runs/{run_id}/finalize",
-            {"status": "completed"},
-            f"{stable_key}-finalize",
-        )
+        run.finalize()
         published.append(
             {
                 "model_id": model_id,
@@ -2224,7 +1967,7 @@ def publish_packages(
             (f"{github_run_id}:{environment}:{branch}:{git_sha}:{model_id}:{profile_id}:{package_id}:{run_fingerprint}"
              + (f":{candidate['deployment_id']}" if candidate else "")).encode()
         ).hexdigest()
-        create = client.request("POST", "/v1/runs", {
+        run = create_run(client, {
             "run_type": "model_package", "commit_sha": git_sha,
             "git_ref": f"refs/heads/{branch}", "ci_provider": "github-actions", "ci_run_url": github_run_url,
             "run_fingerprint": run_fingerprint,
@@ -2240,23 +1983,23 @@ def publish_packages(
                 "license": manifest["license"], "component_run_ids": component_runs,
                 **({"build_on_demand": True} if on_demand else {}),
             },
-        }, f"{stable_key}-create")
-        run_id = _require_text(create.get("run_id"), "run_id")
+        }, stable_key)
+        run_id = run.run_id
         if candidate is not None:
-            deployment_path = f"/v1/repositories/sima-neat/models/deployments/{candidate['deployment_id']}"
+            deployment_path = f"{REPOSITORY_PATH}/deployments/{candidate['deployment_id']}"
             client.request("PUT", f"{deployment_path}/runs/{run_id}",
                            {"role": f"package-{package_id}"}, f"{stable_key}-bind")
         for component_id, component_run_id in sorted(component_runs.items()):
-            client.request("PUT", f"/v1/runs/{run_id}/inputs/component-{component_id}", {
+            run.put(f"inputs/component-{component_id}", {
                 "input_type": "model-pack", "source_reference": f"registry-run:{component_run_id}",
                 "sha256": next(item["sha256"] for item in components if item["id"] == component_id),
                 "size_bytes": next(item["size_bytes"] for item in components if item["id"] == component_id),
                 "media_type": "application/json" if native else "application/gzip",
                 "metadata": {"component_id": component_id, "compile_run_id": component_run_id},
-            }, f"{stable_key}-component-{component_id}")
-        client.request("PUT", f"/v1/runs/{run_id}/parameters", {
+            }, f"component-{component_id}")
+        run.put("parameters", {
             "parameters": parameters, "canonical_sha256": canonical_sha256(parameters),
-        }, f"{stable_key}-parameters")
+        }, "parameters")
         artifact_metadata = {
             "model_id": model_id, "build_profile_id": profile_id, "package_id": package_id,
             "manifest_sha256": manifest_sha, "component_run_ids": component_runs,
@@ -2274,7 +2017,7 @@ def publish_packages(
                 artifact_metadata["runtime_files"] = runtime_files
         if native:
             _publish_deployment_files(
-                client, store, run_id=run_id, stable_key=stable_key, bucket=bucket,
+                run, store, bucket=bucket,
                 deployment=archive.parent, files=files, metadata=artifact_metadata,
                 retention_class=retention_class,
                 upload_prefix=candidate["upload_prefix"].rstrip("/") if candidate else None,
@@ -2290,27 +2033,25 @@ def publish_packages(
             artifact_sha,
             media_type=media_type,
         )
-        client.request("PUT", f"/v1/runs/{run_id}/artifacts/package", {
-            "artifact_type": "model-package", "s3_bucket": bucket, "s3_key": stored.key,
-            "s3_version_id": stored.version_id, "sha256": stored.sha256, "size_bytes": stored.size_bytes,
-            "media_type": media_type, "retention_class": retention_class,
+        run.put_artifact("package", bucket, stored, {
+            "artifact_type": "model-package", "media_type": media_type, "retention_class": retention_class,
             "metadata": artifact_metadata,
-        }, f"{stable_key}-artifact")
+        }, "artifact")
         if fidelity is not None:
             _publish_fidelity(
-                client, store, fidelity_path, fidelity, run_id=run_id, stable_key=stable_key, bucket=bucket,
+                run, store, fidelity_path, fidelity, bucket=bucket,
                 retention_class=retention_class,
                 s3_key=(f"{candidate['upload_prefix'].rstrip('/')}/{run_id}/numerical-fidelity.json" if candidate else
                         f"models/{branch_key}/{commit_tag}/{model_id}/{profile_id}/numerical-fidelity.json"),
             )
         if simulation is not None:
             _publish_mla_stage_simulation(
-                client, store, simulation_path, simulation, run_id=run_id, stable_key=stable_key, bucket=bucket,
+                run, store, simulation_path, simulation, bucket=bucket,
                 retention_class=retention_class,
                 s3_key=(f"{candidate['upload_prefix'].rstrip('/')}/{run_id}/{SIMULATION_FILE}" if candidate else
                         f"models/{branch_key}/{commit_tag}/{model_id}/{profile_id}/{SIMULATION_FILE}"),
             )
-        client.request("POST", f"/v1/runs/{run_id}/finalize", {"status": "completed"}, f"{stable_key}-finalize")
+        run.finalize()
         published.append({
             "model_id": model_id, "build_profile_id": profile_id, "package_id": package_id, "run_id": run_id,
             "artifact_sha256": artifact_sha, "size_bytes": package_size, "manifest_sha256": manifest_sha,

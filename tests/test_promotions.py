@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 from model_registry import promotions as p
 from model_registry.errors import ValidationError
-from model_registry.registry import RegistryPublicationError
+from model_registry.registry import RegistryRequestError
 
 CANDIDATE = '11111111-1111-4111-8111-111111111111'
 PROMOTION = '22222222-2222-4222-8222-222222222222'
@@ -43,20 +43,20 @@ class Backend:
                                    previous_selection=None)
             if self.lost_create:
                 self.lost_create = False
-                raise RegistryPublicationError('lost response after commit')
+                raise RegistryRequestError('lost response after commit')
             return dict(self.record, state='pending')  # historical idempotency receipt
         if method == 'GET':
             return copy.deepcopy(self.record)
         operation = path.rsplit('/', 1)[1]
         if operation == 'approve' and self.snapshot != self.record['expected_target_snapshot']:
-            raise RegistryPublicationError('409 catalog_snapshot_conflict')
+            raise RegistryRequestError('409 catalog_snapshot_conflict')
         self.record['state'] = {'approve': 'promoted', 'reject': 'rejected', 'cancel': 'cancelled'}[operation]
         self.record['pending_protection'] = False
         if operation == 'approve':
             self.record['result_snapshot'] = 'd' * 64
         if self.lost_approve:
             self.lost_approve = False
-            raise RegistryPublicationError('lost response after decision')
+            raise RegistryRequestError('lost response after decision')
         return copy.deepcopy(self.record)
 
 
@@ -116,7 +116,7 @@ def test_post_promotion_refresh_uses_target_settings_and_retries_without_reappro
                                     {'model': {'run_id': CANDIDATE, 'artifact_sha256': 'd' * 64}}, 'performance')
     assert body['catalog']['models'][0]['benchmark_fingerprints']['w8a8']['performance'] == expected
     assert 'benchmark_fingerprints' not in document['models'][0]
-    conflicts = [RegistryPublicationError('artifact registry HTTP 409 catalog_snapshot_conflict: retry')]
+    conflicts = [RegistryRequestError('artifact registry HTTP 409 catalog_snapshot_conflict: retry')]
     retried = SimpleNamespace(request=lambda *call: (_ for _ in ()).throw(conflicts.pop()) if conflicts
                               else writes.append(call) or {'stored': True})
     assert p.refresh_benchmarks(retried, record, **args)['updated'] and len(writes) == 2
@@ -137,7 +137,7 @@ def test_lost_request_response_replays_same_body_key_even_after_target_changes()
     backend = Backend()
     saved = plan(backend)
     backend.lost_create = True
-    with pytest.raises(RegistryPublicationError):
+    with pytest.raises(RegistryRequestError):
         p.request(backend, saved)
     backend.snapshot = 'e' * 64
     result = p.request(backend, saved)
@@ -152,7 +152,7 @@ def test_stale_approval_never_rebases_or_creates_request():
     record = p.request(backend, plan(backend))
     backend.snapshot = 'e' * 64
     backend.calls.clear()
-    with pytest.raises(RegistryPublicationError, match='catalog_snapshot_conflict'):
+    with pytest.raises(RegistryRequestError, match='catalog_snapshot_conflict'):
         p.decide(backend, record, operation='approve', reason='Reviewed', identity='123')
     assert backend.record['state'] == 'pending'
     assert all('/catalogs/' not in c[1] and not c[1].endswith('/promotions') for c in backend.calls)
@@ -162,7 +162,7 @@ def test_lost_approval_response_recovers_authoritative_success_without_second_wr
     backend = Backend()
     record = p.request(backend, plan(backend))
     backend.lost_approve = True
-    with pytest.raises(RegistryPublicationError):
+    with pytest.raises(RegistryRequestError):
         p.decide(backend, record, operation='approve', reason='Reviewed', identity='123')
     result = p.decide(backend, record, operation='approve', reason='Reviewed', identity='123')
     assert result['state'] == 'promoted' and result['result_snapshot']
@@ -217,7 +217,7 @@ def test_withdrawal_posts_the_reason_once_per_identity_and_needs_a_snapshot():
 
     receipt = p.withdraw(Client(), {'promotion_id': PROMOTION}, reason='Broken', identity='200')
     assert receipt['result_snapshot'] == 'e' * 64
-    assert calls[0][:3] == ('POST', f'{p.ROOT}/promotions/{PROMOTION}/withdraw', {'reason': 'Broken'})
+    assert calls[0][:3] == ('POST', f'{p.REPOSITORY_PATH}/promotions/{PROMOTION}/withdraw', {'reason': 'Broken'})
     p.withdraw(Client(), {'promotion_id': PROMOTION}, reason='Broken', identity='200')
     assert calls[0][3] == calls[1][3]
     with pytest.raises(ValidationError, match='did not confirm'):
@@ -323,9 +323,10 @@ def test_prepare_reads_catalog_publicly_and_candidate_privately():
 
     saved = p.prepare(backend, deployment_id=CANDIDATE, reason="Validated", workflow={}, identity="123",
                       read_api_url="https://reader.example.com", read_request=public_read)
-    assert urls == ["https://reader.example.com" + p.ROOT + "/catalogs/current?git_ref=refs%2Fheads%2Fdevelop"]
+    catalog = p.REPOSITORY_PATH + "/catalogs/current?git_ref=refs%2Fheads%2Fdevelop"
+    assert urls == ["https://reader.example.com" + catalog]
     assert len(backend.calls) == 1
-    assert backend.calls[0][1] == p.ROOT + "/deployments/" + CANDIDATE
+    assert backend.calls[0][1] == p.REPOSITORY_PATH + "/deployments/" + CANDIDATE
     assert saved["body"]["expected_target_snapshot"] == "e" * 64
 
 

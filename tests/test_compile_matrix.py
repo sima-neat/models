@@ -19,7 +19,7 @@ from model_registry.fingerprints import (
     compile_fingerprint,
 )
 from model_registry.model import load_and_validate_model, load_models
-from model_registry.registry import RegistryPublicationError, publish_catalog
+from model_registry.registry import RegistryRequestError, publish_catalog
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = ROOT / "tests" / "fixtures" / "fixture_model"
@@ -597,9 +597,9 @@ def test_publish_fresh_branch_reuses_only_compatible_catalog_runs(model_reposito
     def read(url):
         reads.append(url)
         if source == "forbidden":
-            raise RegistryPublicationError("public artifact registry HTTP 403 forbidden")
+            raise RegistryRequestError("public artifact registry HTTP 403 forbidden")
         if source != "target" and (len(reads) == 1 or source == "missing"):
-            raise RegistryPublicationError("public artifact registry HTTP 404 catalog_not_found")
+            raise RegistryRequestError("public artifact registry HTTP 404 catalog_not_found")
         return {"catalog": {"document": prior}}
 
     def write(method, path, body, key):
@@ -615,7 +615,7 @@ def test_publish_fresh_branch_reuses_only_compatible_catalog_runs(model_reposito
         )
 
     if source == "forbidden":
-        with pytest.raises(RegistryPublicationError, match="403 forbidden"):
+        with pytest.raises(RegistryRequestError, match="403 forbidden"):
             publish()
         assert writes == []
     else:

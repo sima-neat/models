@@ -17,7 +17,8 @@ from model_registry import conversion
 from model_registry.errors import ValidationError
 from model_registry.fingerprints import compile_fingerprint
 from model_registry.model import load_and_validate_model
-from model_registry.registry import RegistryPublicationError
+from model_registry.registry import RegistryRequestError
+from model_registry.registry_api.storage import S3Object
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -99,7 +100,7 @@ class Registry:
             return {"run": {"status": self.status}, "inputs": self.inputs}
         if "/resolve?" in url:
             if self.latest is None:
-                raise RegistryPublicationError("artifact registry HTTP 404 fingerprint_not_found")
+                raise RegistryRequestError("artifact registry HTTP 404 fingerprint_not_found")
             return {"run": {"id": self.latest}}
         return {"artifact": self.artifacts[url.split("/")[-3]]}
 
@@ -232,10 +233,10 @@ def test_bundle_is_deterministic_and_fetch_checks_exact_version(tmp_path, monkey
         monkeypatch.setattr("model_registry.registry.SigV4RegistryClient.request", signed)
         def unsigned(url):
             pytest.fail("private conversion metadata must use SigV4")
-        monkeypatch.setattr("model_registry.fetch.read_registry_json", unsigned)
+        monkeypatch.setattr("model_registry.registry_api.transport._read_unsigned", unsigned)
     else:
         monkeypatch.delenv("MODEL_REGISTRY_IAM_READ_API_URL", raising=False)
-        monkeypatch.setattr("model_registry.fetch.read_registry_json", lambda _: {"artifact": artifact})
+        monkeypatch.setattr("model_registry.registry_api.transport._read_unsigned", lambda _: {"artifact": artifact})
     fetched, hit, _, _ = conversion.fetch_conversion(source, tmp_path / "cache")
     assert not hit
     onnx.checker.check_model(str(fetched))
@@ -268,7 +269,7 @@ def fetch_bundle(bundle, cache, monkeypatch):
         "metadata": {"validation": "passed"}, "download_url": bundle.as_uri(),
     }
     monkeypatch.delenv("MODEL_REGISTRY_IAM_READ_API_URL", raising=False)
-    monkeypatch.setattr("model_registry.fetch.read_registry_json", lambda _: {"artifact": artifact})
+    monkeypatch.setattr("model_registry.registry_api.transport._read_unsigned", lambda _: {"artifact": artifact})
     return conversion.fetch_conversion(source, cache)[0]
 
 
@@ -347,7 +348,7 @@ def test_publication_records_declared_outputs(repository, tmp_path):
     (directory / "weights.pth").write_bytes(b"checkpoint")
     declare_outputs(repository, ["encoder.onnx", "weights.pth"])
     registry = Registry()
-    store = SimpleNamespace(ensure_native_sha256=lambda path, key, sha: SimpleNamespace(key=key, version_id="v1"))
+    store = SimpleNamespace(ensure_native_sha256=lambda path, key, sha: S3Object(key, "v1", sha, path.stat().st_size))
     conversion.publish_conversion(
         repository, "yolo26x", directory, client=registry, store=store, bucket="bucket", environment="staging",
         branch="feature", git_sha="a" * 40, workflow="42", validation="passed",
@@ -370,7 +371,7 @@ def test_changing_outputs_invalidates_saved_selection(repository):
 def test_publication_completes_only_after_validated_output(repository, tmp_path):
     directory = output(tmp_path / "output")
     registry = Registry()
-    store = SimpleNamespace(ensure_native_sha256=lambda path, key, sha: SimpleNamespace(key=key, version_id="v1"))
+    store = SimpleNamespace(ensure_native_sha256=lambda path, key, sha: S3Object(key, "v1", sha, path.stat().st_size))
     kwargs = dict(
         client=registry,
         store=store,

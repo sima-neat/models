@@ -84,13 +84,12 @@ def test_repository_cli_retains_ci_only_commands() -> None:
 
 
 def test_promoted_benchmark_planning_command_reads_the_selected_catalog(monkeypatch, capsys):
-    from model_registry import registry
 
     def read(url):
         assert url.endswith("git_ref=refs%2Fheads%2Fmain")
         return {"catalog": {"document": {"catalog_revision": "a" * 40, "models": []}}}
 
-    monkeypatch.setattr(registry, "_public_registry_json", read)
+    monkeypatch.setattr("model_registry.registry_api.transport.read_registry_json", read)
     assert main(["plan-promoted-benchmarks", "--api-url", "https://registry.example.invalid", "--branch", "main"]) == 0
     assert json.loads(capsys.readouterr().out) == {
         "source_branch": "main", "source_sha": "a" * 40, "include": [], "skipped": [],
@@ -538,7 +537,7 @@ def _stage_build_files(compiled: Path, files: dict[str, bytes]) -> tuple[dict[st
 
 
 def _serve_registry(monkeypatch, reads: dict[str, dict], objects: dict[str, bytes]) -> None:
-    monkeypatch.setattr("model_registry.fetch.read_registry_json_authenticated", reads.__getitem__)
+    monkeypatch.setattr("model_registry.fetch.read_registry_json", reads.__getitem__)
     monkeypatch.setattr("model_registry.fetch.urlopen", lambda request, timeout: io.BytesIO(objects[request.full_url]))
 
 
@@ -816,10 +815,11 @@ def test_publish_conversion_cli_forwards_arguments_and_workflow(monkeypatch, tmp
     calls = []
     client, store = object(), object()
     monkeypatch.setattr(
-        "model_registry.registry.SigV4RegistryClient", lambda api, region: calls.append((api, region)) or client,
+        "model_registry.registry_api.transport.SigV4RegistryClient",
+        lambda api, region: calls.append((api, region)) or client,
     )
     monkeypatch.setattr(
-        "model_registry.registry.S3ArtifactStore", lambda bucket, **kw: calls.append((bucket, kw)) or store,
+        "model_registry.registry_api.storage.S3ArtifactStore", lambda bucket, **kw: calls.append((bucket, kw)) or store,
     )
     monkeypatch.setattr(
         "model_registry.conversion.publish_conversion",

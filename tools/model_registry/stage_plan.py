@@ -6,7 +6,6 @@ A stage runs when no completed registry run carries its current fingerprint; see
 from __future__ import annotations
 
 import subprocess
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -15,15 +14,15 @@ from .compile_matrix import build_matrix
 from .errors import ModelRegistryError, ValidationError
 from .fingerprints import BENCHMARK_RUN_TYPES, benchmark_fingerprint
 from .model import load_models
+from .registry_api.runs import REPOSITORY_PATH
+from .registry_api.transport import ReadRequest
 
-REPOSITORY_API_PATH = "/v1/repositories/sima-neat/models"
 DEFAULT_BRANCH = "develop"
 # Customers read this branch's catalog, so it ships what the default branch built and measured.
 PRODUCTION_BRANCH = "main"
 # Besides the default branch, branches are cut only from release and integration branches.
 BASE_BRANCH_PREFIXES = ("release-", "integration/")
 
-ReadRequest = Callable[[str], dict[str, Any]]
 
 
 def _git(repository: Path, *arguments: str) -> str:
@@ -101,7 +100,7 @@ def _is_not_found(error: ModelRegistryError, code: str) -> bool:
 def _read_catalog(read: ReadRequest, read_api_url: str, branch: str) -> dict[str, Any] | None:
     try:
         payload = read(
-            f"{read_api_url.rstrip('/')}{REPOSITORY_API_PATH}/catalogs/current?"
+            f"{read_api_url.rstrip('/')}{REPOSITORY_PATH}/catalogs/current?"
             f"git_ref={quote(f'refs/heads/{branch}', safe='')}"
         )
     except ModelRegistryError as exc:
@@ -270,7 +269,7 @@ def stage_run_exists(read: ReadRequest, read_api_url: str, run_type: str, finger
     """Whether a completed, unsuperseded registry run of this type carries the fingerprint."""
     try:
         read(
-            f"{read_api_url.rstrip('/')}{REPOSITORY_API_PATH}/resolve?"
+            f"{read_api_url.rstrip('/')}{REPOSITORY_PATH}/resolve?"
             f"run_type={run_type}&fingerprint={fingerprint}"
         )
     except ModelRegistryError as exc:

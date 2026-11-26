@@ -432,7 +432,8 @@ production infrastructure.
 
 The staging default is the WAF-protected public staging registry at
 `https://models-registry.stg.neat.sima.ai`, and the production default is
-`https://models-registry.neat.sima.ai`. The API must allow cross-origin
+`https://models-registry.neat.sima.ai`. `portal-config.mjs` reads both from
+`config/registry.json`, which the Python tooling reads too. The API must allow cross-origin
 `GET` requests from the static app's origin. The separate
 `artifacts-registry.stg.neat.sima.ai` endpoint is reserved for IAM-signed
 publisher traffic and rejects direct public reads.

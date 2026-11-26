@@ -1,0 +1,6 @@
+{
+  "environments": {
+    "staging": {"public_url": "https://models-registry.stg.neat.sima.ai"},
+    "production": {"public_url": "https://models-registry.neat.sima.ai"}
+  }
+}

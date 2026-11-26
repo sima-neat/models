@@ -12,18 +12,17 @@ from urllib.parse import urlsplit
 from uuid import UUID
 
 from .errors import ValidationError
-from .registry import (
-    CATALOG_CONFLICT_RETRY_SECONDS,
+from .registry import CATALOG_CONFLICT_RETRY_SECONDS, _refresh_approved_benchmarks, read_current_catalog
+from .registry_api.runs import REPOSITORY_PATH
+from .registry_api.transport import (
     ReadRequest,
-    RegistryPublicationError,
+    RegistryRequestError,
     SigV4RegistryClient,
-    _public_registry_json,
-    _refresh_approved_benchmarks,
     canonical_sha256,
-    read_current_catalog,
+    is_catalog_conflict,
+    read_registry_json,
 )
 
-ROOT = "/v1/repositories/sima-neat/models"
 TARGET = "refs/heads/develop"
 
 
@@ -85,7 +84,7 @@ def identifier(value: str) -> str:
 
 def inspect(client, promotion_id: str, *, target_branch: str | None = None) -> dict:
     target = "refs/heads/" + configuration(target_branch)["target_branch"]
-    result = client.request("GET", f"{ROOT}/promotions/{identifier(promotion_id)}", None, "inspect")
+    result = client.request("GET", f"{REPOSITORY_PATH}/promotions/{identifier(promotion_id)}", None, "inspect")
     if result.get("target_git_ref") != target:
         raise ValidationError("Promotion target differs from the selected target")
     return result
@@ -98,7 +97,7 @@ def prepare(client, *, deployment_id: str, reason: str, workflow: dict, identity
     target_ref = "refs/heads/" + configuration(target_branch)["target_branch"]
     if not reason.strip() or len(reason) > 2000:
         raise ValidationError("Promotion reason must contain 1–2000 characters")
-    candidate = client.request("GET", f"{ROOT}/deployments/{identifier(deployment_id)}", None, "inspect")
+    candidate = client.request("GET", f"{REPOSITORY_PATH}/deployments/{identifier(deployment_id)}", None, "inspect")
     if candidate.get("state") != "finalized" or not candidate.get("manifest_digest"):
         raise ValidationError("Promotion requires a finalized candidate with an immutable digest")
     if expected_model_id is not None and (
@@ -106,8 +105,9 @@ def prepare(client, *, deployment_id: str, reason: str, workflow: dict, identity
     ) != (expected_model_id, expected_profile_id):
         raise ValidationError("Vulcan candidate does not match the requested model/profile")
     # Catalogs are public-reader routes, not publisher IAM routes. Never send AWS credentials here.
-    target = (read_request or _public_registry_json)(
-        f"{read_api_url.rstrip('/')}{ROOT}/catalogs/current?git_ref=refs%2Fheads%2F{target_ref.rsplit('/', 1)[-1]}"
+    target_name = target_ref.removeprefix("refs/heads/")
+    target = (read_request or read_registry_json)(
+        f"{read_api_url.rstrip('/')}{REPOSITORY_PATH}/catalogs/current?git_ref=refs%2Fheads%2F{target_name}"
     )
     body = {
         "deployment_id": identifier(deployment_id), "manifest_digest": candidate["manifest_digest"],
@@ -129,7 +129,7 @@ def request(client, plan: dict, *, target_branch: str | None = None) -> dict:
     target = "refs/heads/" + configuration(target_branch)["target_branch"]
     if body.get("target_git_ref") != target:
         raise ValidationError("Saved promotion target differs from the selected target")
-    receipt = client.request("POST", f"{ROOT}/promotions", body, plan["key"])
+    receipt = client.request("POST", f"{REPOSITORY_PATH}/promotions", body, plan["key"])
     # Idempotent POST receipts are historical; inspect authoritative current state.
     record = inspect(client, receipt["promotion_id"], target_branch=target_branch)
     check_request(record, body)
@@ -164,7 +164,7 @@ def decide(client, record: dict, *, operation: str, reason: str, identity: str,
         if operation == "approve" and not current.get("result_snapshot"):
             raise ValidationError("Promoted request has no result snapshot; inspect backend state")
         return current
-    receipt = client.request("POST", f"{ROOT}/promotions/{promotion_id}/{operation}", body, key)
+    receipt = client.request("POST", f"{REPOSITORY_PATH}/promotions/{promotion_id}/{operation}", body, key)
     if receipt.get("state") != expected or (operation == "approve" and not receipt.get("result_snapshot")):
         raise ValidationError("Vulcan did not confirm the requested decision")
     return receipt
@@ -176,7 +176,7 @@ def withdraw(client, record: dict, *, reason: str, identity: str) -> dict:
     body = {"reason": reason}
     # A retry sends the same key and body, so Vulcan replays the first receipt.
     key = "promotion-withdrawal-" + canonical_sha256([identity, promotion_id, body])
-    receipt = client.request("POST", f"{ROOT}/promotions/{promotion_id}/withdraw", body, key)
+    receipt = client.request("POST", f"{REPOSITORY_PATH}/promotions/{promotion_id}/withdraw", body, key)
     if not receipt.get("result_snapshot"):
         raise ValidationError("Vulcan did not confirm the withdrawal")
     return receipt
@@ -187,7 +187,7 @@ def benchmark_catalog(record: dict, *, read_api_url: str, read_request: ReadRequ
     if record.get("state") != "promoted" or not record.get("result_snapshot"):
         return None
     branch = record["target_git_ref"].removeprefix("refs/heads/")
-    catalog, document = read_current_catalog(read_request or _public_registry_json, read_api_url, branch)
+    catalog, document = read_current_catalog(read_request or read_registry_json, read_api_url, branch)
     if not catalog or not document:
         raise ValidationError("Promotion target catalog is missing")
     model = next((item for item in document["models"] if item["id"] == record["source"]["model_id"]), {})
@@ -202,7 +202,7 @@ def refresh_benchmarks(
     read_request: ReadRequest | None = None,
 ) -> dict:
     """Publish current benchmark identities after approval, using the target revision's source files."""
-    read = read_request or _public_registry_json
+    read = read_request or read_registry_json
     deadline = time.monotonic() + CATALOG_CONFLICT_RETRY_SECONDS
     while True:
         catalog = benchmark_catalog(record, read_api_url=read_api_url, read_request=read)
@@ -224,12 +224,12 @@ def refresh_benchmarks(
         body = {"initialize": False, "previous_snapshot": catalog["canonical_sha256"], "catalog": document}
         try:
             result = client.request(
-                "POST", f"{ROOT}/catalogs/{revision}/snapshots", body,
+                "POST", f"{REPOSITORY_PATH}/catalogs/{revision}/snapshots", body,
                 "promotion-benchmarks-" + canonical_sha256([record["promotion_id"], body]),
             )
-        except RegistryPublicationError as exc:
+        except RegistryRequestError as exc:
             # Another promotion replaced the catalog between the read and this write.
-            if "catalog_snapshot_conflict" not in str(exc) or time.monotonic() >= deadline:
+            if not is_catalog_conflict(exc) or time.monotonic() >= deadline:
                 raise
             time.sleep(random.uniform(0.2, 2))
             continue

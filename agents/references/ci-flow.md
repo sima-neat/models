@@ -450,8 +450,8 @@ Dataset Registry repository.
 
 Registry reads use `VULCAN_ARTIFACT_REGISTRY_PUBLIC_READ_URL` and fall back to
 `VULCAN_ARTIFACT_REGISTRY_API_URL`. In production the jobs also set
-`MODEL_REGISTRY_IAM_READ_API_URL` to the API URL. `read_registry_json_authenticated` in
-`registry_http.py` then signs only requests under that URL's `/v1/` path. Other hosts and
+`MODEL_REGISTRY_IAM_READ_API_URL` to the API URL. `read_registry_json` in
+`registry_api/transport.py` then signs only requests under that URL's `/v1/` path. Other hosts and
 artifact downloads stay unsigned. Production can therefore plan against a private registry
 with no public read URL. A benchmark cannot: the DevKit downloads the build from the URL
 the stage read, without credentials, so that URL must serve unsigned reads, and

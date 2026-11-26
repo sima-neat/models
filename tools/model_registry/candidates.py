@@ -10,24 +10,23 @@ from pathlib import Path
 from .errors import ValidationError
 from .model import load_models
 from .package import PROFILE_RESULT_FILES, _link_or_copy, assemble_package
-from .registry import (
+from .registry import _head_matrix, _preflight_compilations, publish_compilations, publish_packages
+from .registry_api.runs import REPOSITORY_PATH
+from .registry_api.storage import S3ArtifactStore
+from .registry_api.transport import (
     JsonObject,
     ReadRequest,
-    RegistryPublicationError,
+    RegistryRequestError,
     Request,
-    S3ArtifactStore,
     SigV4RegistryClient,
-    _head_matrix,
-    _preflight_compilations,
-    _public_registry_json,
     canonical_sha256,
-    publish_compilations,
-    publish_packages,
+    is_catalog_conflict,
+    read_registry_json,
 )
 from .runtime_files import read_runtime_files
 from .stage_plan import read_current_catalog
 
-DEPLOYMENTS = "/v1/repositories/sima-neat/models/deployments"
+DEPLOYMENTS = f"{REPOSITORY_PATH}/deployments"
 
 
 def _save(path: Path, value: JsonObject) -> None:
@@ -59,7 +58,7 @@ def publish_branch_deployment(
     client = SigV4RegistryClient(api_url, aws_region, request=request)
     for attempt in range(8):
         record, _ = read_current_catalog(
-            read_request or _public_registry_json, read_api_url, ref.removeprefix("refs/heads/"),
+            read_request or read_registry_json, read_api_url, ref.removeprefix("refs/heads/"),
         )
         if record is None:
             raise ValidationError("publish the feature-branch model requirements before selecting its deployment")
@@ -70,8 +69,8 @@ def publish_branch_deployment(
         try:
             result = client.request("POST", DEPLOYMENTS.rsplit("/", 1)[0] + "/branch-deployments", body,
                                     "branch-deployment-" + canonical_sha256(body))
-        except RegistryPublicationError as exc:
-            if "catalog_snapshot_conflict" not in str(exc) or attempt == 7:
+        except RegistryRequestError as exc:
+            if not is_catalog_conflict(exc) or attempt == 7:
                 raise
             continue
         _save(path.parent / "branch-publication.json", result)

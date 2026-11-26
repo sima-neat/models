@@ -95,6 +95,16 @@ def test_browser_calls_registry_directly_without_backend_proxy() -> None:
     assert not (BROWSER / "serve.py").exists()
 
 
+def test_the_static_config_uses_the_registry_endpoints_in_config_registry_json() -> None:
+    environments = json.loads((ROOT / "config" / "registry.json").read_text(encoding="utf-8"))["environments"]
+    config = (BROWSER / "config.js").read_text(encoding="utf-8")
+
+    staging, production = environments["staging"]["public_url"], environments["production"]["public_url"]
+    assert f'apiBase: "{staging}"' in config
+    assert f'heroCdnBaseUrl: "{staging}/images/sha256"' in config
+    assert f'productionApiBase: "{production}"' in config
+
+
 def test_browser_links_home_relative_to_the_deployed_subpath() -> None:
     html = (BROWSER / "index.html").read_text(encoding="utf-8")
 
@@ -406,7 +416,7 @@ def assemble_portal(root: Path) -> subprocess.CompletedProcess[str]:
     (root / "website" / "build").mkdir()
     shutil.copy(PORTAL_ASSEMBLER, root / "website" / "scripts" / PORTAL_ASSEMBLER.name)
     shutil.copy(PORTAL_ASSEMBLER.with_name("portal-config.mjs"), root / "website" / "scripts" / "portal-config.mjs")
-    for source in ("models", "datasets", "schemas", "tools"):
+    for source in ("models", "datasets", "schemas", "tools", "config"):
         (root / source).symlink_to(ROOT / source)
     return subprocess.run(
         ["node", str(root / "website" / "scripts" / PORTAL_ASSEMBLER.name)],

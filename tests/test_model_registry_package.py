@@ -90,7 +90,7 @@ def test_builds_author_wheel_and_vulcan_payload(tmp_path: Path) -> None:
         assert "Requires-Dist: jsonschema<5,>=4.18.4" in metadata
         assert "model_registry/cli.py" in names
         assert "model_registry/conversion.py" in names
-        assert "model_registry/registry_http.py" in names
+        assert "model_registry/registry_api/transport.py" in names
         assert "model_report/metrics.json" in names
         assert {"model_inputs/images.py", "model_inputs/frame.py", "model_registry/fidelity.py"} <= names
         ci_modules = ("report_publication", "registry", "candidates", "promotions", "neat_core", "catalog_selection")
@@ -107,6 +107,7 @@ import hashlib, io, json, sys, tarfile, tempfile
 from pathlib import Path
 sys.path.insert(0, sys.argv[1])
 from model_registry import conversion, fetch
+from model_registry.registry_api import transport
 assert 'model_registry.registry' not in sys.modules
 with tempfile.TemporaryDirectory() as tmp:
     root = Path(tmp)
@@ -124,7 +125,7 @@ with tempfile.TemporaryDirectory() as tmp:
               'size_bytes': size, 'media_type': 'application/gzip'}
     artifact = {**source, 'id': 'artifact', 'artifact_type': 'model-onnx', 'object_status': 'available',
                 'metadata': {'validation': 'passed'}, 'download_url': bundle.as_uri()}
-    fetch.read_registry_json = lambda url: {'artifact': artifact}
+    transport._read_unsigned = lambda url: {'artifact': artifact}
     path, hit, _, _ = conversion.fetch_conversion(source, root / 'cache')
     assert not hit and path.read_bytes() == content
     assert conversion.fetch_conversion(source, root / 'cache')[1]

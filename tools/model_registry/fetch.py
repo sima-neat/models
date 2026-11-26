@@ -23,12 +23,11 @@ from urllib.request import Request, urlopen
 import certifi
 
 from .errors import FetchError, ValidationError
-from .registry_http import read_registry_json_authenticated
+from .registry_api.transport import ReadRequest, read_registry_json
 from .source import SourceSpec, redact_url, source_identity
 
 OpenUrl = Callable[..., BinaryIO]
 Sleeper = Callable[[float], None]
-ReadRequest = Callable[[str], dict[str, Any]]
 DownloadRequest = Callable[[str], bytes]
 
 # The stage job's list of a staged build profile's files, which the DevKit downloads by compile run.
@@ -382,31 +381,6 @@ def _unpack_verified(archive: Path, destination: Path, dataset: dict[str, Any]) 
         raise FetchError(f"tar exited with {tar.returncode}: {complaint[-1] if complaint else 'no message'}")
 
 
-def read_registry_json(url: str) -> dict[str, Any]:
-    try:
-        with urlopen(Request(url, headers={"User-Agent": "sima-neat-model-registry/0.1"}), timeout=30) as response:
-            value = json.load(response)
-    except HTTPError as exc:
-        code = "unknown_error"
-        message = str(exc)
-        try:
-            payload = json.loads(exc.read())
-            error = payload.get("error", {}) if isinstance(payload, dict) else {}
-            if isinstance(error, dict):
-                code = str(error.get("code", code))
-                message = str(error.get("message", message))
-        except (OSError, json.JSONDecodeError):
-            pass
-        raise FetchError(
-            f"public artifact registry HTTP {exc.code} {code}: {message}"
-        ) from exc
-    except (OSError, json.JSONDecodeError) as exc:
-        raise FetchError(f"could not read public artifact registry endpoint {url}: {exc}") from exc
-    if not isinstance(value, dict):
-        raise FetchError(f"artifact registry endpoint did not return an object: {url}")
-    return value
-
-
 @dataclass(frozen=True)
 class BuildFile:
     """One registry file of a staged build: its path under the profile folder and the compile or package run
@@ -538,7 +512,7 @@ def download_build(compiled_dir: str | Path, model_id: str, build_profile_id: st
         identity = json.loads(baseline.read_text(encoding="utf-8"))
         profiles.append((identity["model_id"], identity["build_profile_id"]))
     return {
-        f"{model}/{profile}": _download_staged_profile(root / model / profile, read or read_registry_json_authenticated,
+        f"{model}/{profile}": _download_staged_profile(root / model / profile, read or read_registry_json,
                                                        download)
         for model, profile in profiles
     }

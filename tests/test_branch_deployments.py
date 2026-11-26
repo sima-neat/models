@@ -7,7 +7,7 @@ import pytest
 from model_registry.candidates import publish_branch_deployment
 from model_registry.cli import author_main, main
 from model_registry.errors import ValidationError
-from model_registry.registry import RegistryPublicationError, canonical_sha256
+from model_registry.registry import RegistryRequestError, canonical_sha256
 
 
 @pytest.fixture
@@ -33,7 +33,7 @@ def test_branch_publication_uses_frozen_identity_and_retries_only_snapshot_confl
         assert key == "branch-deployment-" + canonical_sha256(body)
         writes.append(body)
         if len(writes) == 1:
-            raise RegistryPublicationError("HTTP 409 catalog_snapshot_conflict")
+            raise RegistryRequestError("HTTP 409 catalog_snapshot_conflict")
         return {"git_ref": body["git_ref"], "result_snapshot": "c" * 64,
                 "selection": {"deployment_id": body["deployment_id"], "manifest_digest": body["manifest_digest"]}}
 
@@ -54,9 +54,9 @@ def test_branch_publication_does_not_retry_rejected_candidates(candidate, error)
 
     def write(*args):
         writes.append(args)
-        raise RegistryPublicationError(error)
+        raise RegistryRequestError(error)
 
-    with pytest.raises(RegistryPublicationError, match=error):
+    with pytest.raises(RegistryRequestError, match=error):
         publish_branch_deployment(candidate, api_url="https://writer.invalid", read_api_url="https://reader.invalid",
                                   aws_region="us-west-2", request=write,
                                   read_request=lambda _: {"catalog": {"canonical_sha256": "b" * 64}})

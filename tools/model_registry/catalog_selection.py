@@ -10,17 +10,22 @@ from __future__ import annotations
 import json
 import tempfile
 from pathlib import Path
-from typing import Any
 from urllib.parse import quote
 
 from .dependencies import catalog_inputs
 from .errors import ValidationError
-from .registry import S3ArtifactStore, SigV4RegistryClient, canonical_sha256
-from .registry_http import read_registry_json_authenticated
-from .report_publication import Request, put_run_file
-from .stage_plan import REPOSITORY_API_PATH, ReadRequest, read_current_catalog
-
-JsonObject = dict[str, Any]
+from .fetch import sha256_file
+from .registry_api.runs import REPOSITORY_PATH, create_run
+from .registry_api.storage import S3ArtifactStore
+from .registry_api.transport import (
+    JsonObject,
+    ReadRequest,
+    Request,
+    SigV4RegistryClient,
+    canonical_sha256,
+    read_registry_json,
+)
+from .stage_plan import read_current_catalog
 
 
 def publish_selection(
@@ -45,7 +50,7 @@ def publish_selection(
     inputs = catalog_inputs(Path(repository).expanduser().resolve())
     if inputs is None:
         raise ValidationError("a selection needs a Core release, and deps/manifest.json pins a Core branch package")
-    read = read_request or read_registry_json_authenticated
+    read = read_request or read_registry_json
     record, document = read_current_catalog(read, read_api_url, branch)
     revision = record.get("catalog_revision") if record else None
     if revision != git_sha.lower():
@@ -65,7 +70,7 @@ def publish_selection(
     )
 
     filters = read(
-        f"{read_api_url.rstrip('/')}{REPOSITORY_API_PATH}/models/filters?"
+        f"{read_api_url.rstrip('/')}{REPOSITORY_PATH}/models/filters?"
         f"platform_version={quote(inputs['platform_version'], safe='')}"
     )
     selections = filters.get("selections", [])
@@ -75,7 +80,7 @@ def publish_selection(
     if current is not None and current["catalog_id"] == record["id"]:
         selection_id = current["selection_id"]
     else:
-        published = client.request("POST", f"{REPOSITORY_API_PATH}/catalog-selections", {
+        published = client.request("POST", f"{REPOSITORY_PATH}/catalog-selections", {
             "catalog_id": record["id"],
             "evidence_run_id": evidence_run_id,
             "expected_selection_id": current["selection_id"] if current else None,
@@ -83,7 +88,7 @@ def publish_selection(
         selection_id = published["selection"]["id"]
     # Replacing the default selection moves the default with it.
     if not (current is not None and current["is_default"]):
-        client.request("POST", f"{REPOSITORY_API_PATH}/catalog-selections/default", {
+        client.request("POST", f"{REPOSITORY_PATH}/catalog-selections/default", {
             "selection_id": selection_id,
             "expected_default_id": default["selection_id"] if default else None,
         }, f"{key}-default")
@@ -124,29 +129,28 @@ def _publish_qualification(
     }
     if github_run_url:
         body.update({"ci_provider": "github-actions", "ci_run_url": github_run_url})
-    run_id = client.request("POST", "/v1/runs", body, f"{key}-qualification")["run_id"]
+    run = create_run(client, body, key, step="qualification")
 
-    client.request("PUT", f"/v1/runs/{run_id}/inputs/catalog", {
+    run.put("inputs/catalog", {
         "input_type": "model-catalog",
         "source_reference": f"vulcan://catalogs/{record['id']}",
         "sha256": record["canonical_sha256"],
         "media_type": "application/json",
         "metadata": {"catalog_id": record["id"]},
-    }, f"{key}-input")
-    client.request("PUT", f"/v1/runs/{run_id}/parameters",
-                   {"parameters": report, "canonical_sha256": fingerprint}, f"{key}-parameters")
+    }, "input")
+    run.put("parameters", {"parameters": report, "canonical_sha256": fingerprint}, "parameters")
     with tempfile.TemporaryDirectory() as directory:
         path = Path(directory) / "qualification.json"
         path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        artifact = put_run_file(
-            client, store, path, run_id=run_id, name="report", artifact_type="test-report",
-            media_type="application/json", bucket=bucket,
-            s3_key=f"models/{quote(branch, safe='')}/{record['catalog_revision'][:12]}/catalog-qualification/"
-                   f"{fingerprint}/qualification.json",
-            metadata={"catalog_id": record["id"]}, stable_key=key,
-        )
-    client.request("PUT", f"/v1/runs/{run_id}/test-results/catalog/complete", {
+        s3_key = (f"models/{quote(branch, safe='')}/{record['catalog_revision'][:12]}/catalog-qualification/"
+                  f"{fingerprint}/qualification.json")
+        stored = store.ensure_native_sha256(path, s3_key, sha256_file(path)[0], media_type="application/json")
+    artifact = run.put_artifact("report", bucket, stored, {
+        "artifact_type": "test-report", "media_type": "application/json", "retention_class": "branch",
+        "metadata": {"catalog_id": record["id"]},
+    }, "report")
+    run.put("test-results/catalog/complete", {
         "status": "passed", "summary": report, "report_artifact_id": artifact["artifact_id"],
-    }, f"{key}-test-result")
-    client.request("POST", f"/v1/runs/{run_id}/finalize", {"status": "completed"}, f"{key}-finalize")
-    return run_id
+    }, "test-result")
+    run.finalize()
+    return run.run_id

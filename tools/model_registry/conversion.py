@@ -19,9 +19,9 @@ from .dependencies import onnx_opset_version
 from .errors import ValidationError
 from .fetch import sha256_file
 from .model import _read_model, load_and_validate_model
+from .registry_api.runs import REPOSITORY_PATH, create_run
 from .source import source_identity
 
-REPOSITORY_PATH = "/v1/repositories/sima-neat/models"
 ARTIFACT = "onnx"
 FIELDS = ("s3_bucket", "s3_key", "s3_version_id", "sha256", "size_bytes", "media_type")
 
@@ -173,9 +173,8 @@ def plan_conversions(root, models, *, read, read_api_url, client=None, branch=""
             raise ValidationError("conversion planning requires GITHUB_RUN_ID and GITHUB_SHA for retry identity")
         plan_fingerprint = digest([workflow, commit, model_id, fingerprint])
         key = f"conversion-plan-{plan_fingerprint}"
-        plan = client.request(
-            "POST",
-            "/v1/runs",
+        run = create_run(
+            client,
             {
                 "run_type": "model_compile_plan",
                 "commit_sha": commit,
@@ -184,10 +183,9 @@ def plan_conversions(root, models, *, read, read_api_url, client=None, branch=""
                 "environment": {"fingerprint": digest(["conversion-plan", read_api_url])},
                 "metadata": {"model_id": model_id, "github_run_id": workflow},
             },
-            key + "-create",
+            key,
         )
-        path = f"/v1/runs/{plan['run_id']}"
-        provenance = read(f"{read_api_url.rstrip('/')}{path}/provenance")
+        provenance = read(f"{read_api_url.rstrip('/')}/v1/runs/{run.run_id}/provenance")
         prior = next((i for i in provenance["inputs"] if i["name"] == "conversion"), None)
         if prior:
             producer = prior["metadata"]["conversion_run_id"]
@@ -209,19 +207,10 @@ def plan_conversions(root, models, *, read, read_api_url, client=None, branch=""
         if provenance["run"]["status"] not in {"running", "completed"}:
             raise ValidationError("Compile plan expired; start a new workflow or use its saved selection")
         if provenance["run"]["status"] != "completed":
-            client.request(
-                "PUT",
-                path + "/parameters",
-                {
-                    "parameters": {
-                        "model_id": model_id,
-                        "conversion_fingerprint": fingerprint,
-                    }
-                },
-                key + "-parameters",
-            )
-            client.request("PUT", path + "/inputs/conversion", input_record(selection), key + "-input")
-            client.request("POST", path + "/finalize", {"status": "completed"}, key + "-finalize")
+            run.put("parameters", {"parameters": {"model_id": model_id, "conversion_fingerprint": fingerprint}},
+                    "parameters")
+            run.put("inputs/conversion", input_record(selection), "input")
+            run.finalize()
         result[model_id] = selection
     return result
 
@@ -321,9 +310,9 @@ def _entrypoint(directory: Path) -> Path:
 
 def fetch_conversion(source: dict, cache_dir: Path | None = None):
     from .fetch import default_cache_dir
-    from .registry_http import read_registry_json_authenticated
+    from .registry_api.transport import read_registry_json
 
-    artifact = _artifact(read_registry_json_authenticated, source["read_api_url"], source["run_id"])
+    artifact = _artifact(read_registry_json, source["read_api_url"], source["run_id"])
     if any(artifact[key] != source[key] for key in FIELDS) or artifact["id"] != source["artifact_id"]:
         raise ValidationError("Conversion reference no longer matches the saved plan")
     cache = Path(cache_dir) if cache_dir else default_cache_dir()
@@ -383,9 +372,8 @@ def publish_conversion(
     bundle = bundle_conversion(directory, directory / "onnx.tar.gz", outputs)
     sha, size = sha256_file(bundle)
     key = "conversion-" + digest([workflow, environment, model_id, fingerprint, sha])
-    run = client.request(
-        "POST",
-        "/v1/runs",
+    run = create_run(
+        client,
         {
             "run_type": "model_conversion",
             "commit_sha": git_sha,
@@ -394,24 +382,21 @@ def publish_conversion(
             "environment": {"fingerprint": digest(["conversion", environment])},
             "metadata": {"model_id": model_id, "github_run_id": workflow},
         },
-        key + "-create",
+        key,
     )
-    path = f"/v1/runs/{run['run_id']}"
     upstream = model["conversion"]["default"]["source"]
-    client.request(
-        "PUT",
-        path + "/inputs/upstream",
+    run.put(
+        "inputs/upstream",
         {
             "input_type": "model-source",
             "source_reference": model["upstream"]["repository"],
             "sha256": source_identity(upstream),
             "metadata": {"source": upstream},
         },
-        key + "-input",
+        "input",
     )
-    client.request(
-        "PUT",
-        path + "/parameters",
+    run.put(
+        "parameters",
         {
             "parameters": {
                 "model_id": model_id,
@@ -420,28 +405,23 @@ def publish_conversion(
                 "outputs": outputs,
             },
         },
-        key + "-parameters",
+        "parameters",
     )
     stored = store.ensure_native_sha256(bundle, f"models/conversions/{model_id}/{sha}/onnx.tar.gz", sha)
-    client.request(
-        "PUT",
-        path + "/artifacts/onnx",
+    run.put_artifact(
+        "onnx",
+        bucket,
+        stored,
         {
             "artifact_type": "model-onnx",
-            "s3_bucket": bucket,
-            "s3_key": stored.key,
-            "s3_version_id": stored.version_id,
-            "sha256": sha,
-            "size_bytes": size,
             "media_type": "application/gzip",
             "retention_class": "branch",
             "metadata": {"validation": "passed", "entrypoint": outputs[0], "bundle_version": 1},
         },
-        key + "-artifact",
+        "artifact",
     )
-    client.request(
-        "PUT",
-        path + "/test-results/correctness/conversion",
+    run.put(
+        "test-results/correctness/conversion",
         {
             "status": "passed",
             "summary": {
@@ -449,7 +429,7 @@ def publish_conversion(
                 "model_tests": validation,
             },
         },
-        key + "-test",
+        "test",
     )
-    client.request("POST", path + "/finalize", {"status": "completed"}, key + "-finalize")
-    return {"run_id": run["run_id"], "conversion_fingerprint": fingerprint, "sha256": sha, "size_bytes": size}
+    run.finalize()
+    return {"run_id": run.run_id, "conversion_fingerprint": fingerprint, "sha256": sha, "size_bytes": size}

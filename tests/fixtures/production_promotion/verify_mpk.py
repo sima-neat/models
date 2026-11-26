@@ -22,7 +22,7 @@ from pathlib import Path
 
 import boto3
 from botocore.httpsession import get_cert_path
-from model_registry.registry_http import SigV4RegistryClient
+from model_registry.registry_api.transport import SigV4RegistryClient
 
 
 def main() -> None:

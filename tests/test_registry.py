@@ -23,7 +23,7 @@ from model_registry.fingerprints import benchmark_fingerprint, compile_fingerpri
 from model_registry.model import load_model, load_models
 from model_registry.package import assemble_package
 from model_registry.registry import (
-    RegistryPublicationError,
+    RegistryRequestError,
     S3ArtifactStore,
     S3Object,
     SigV4RegistryClient,
@@ -270,7 +270,7 @@ def test_documentation_s3_concurrent_upload_reuses_only_verified_winner(tmp_path
     assert client.head_object.call_args.kwargs["VersionId"] == "winning-version"
 
     client.head_object.side_effect = [{}, head | {"ChecksumSHA256": "unexpected"}]
-    with pytest.raises(RegistryPublicationError, match="Could not publish immutable"):
+    with pytest.raises(RegistryRequestError, match="Could not publish immutable"):
         store.ensure_native_sha256(path, "documentation/key", digest)
 
 
@@ -607,10 +607,10 @@ def test_component_source_media_type_matches_source_shape(source: dict, expected
 
 def test_registry_errors_identify_the_failed_endpoint() -> None:
     def reject(method: str, path: str, body: dict | None, key: str) -> dict:
-        raise RegistryPublicationError("artifact registry HTTP 403 unknown_error: request rejected")
+        raise RegistryRequestError("artifact registry HTTP 403 unknown_error: request rejected")
 
     client = SigV4RegistryClient("https://registry.example.invalid", "us-west-2", request=reject)
-    with pytest.raises(RegistryPublicationError, match=r"POST /v1/runs: artifact registry HTTP 403"):
+    with pytest.raises(RegistryRequestError, match=r"POST /v1/runs: artifact registry HTTP 403"):
         client.request("POST", "/v1/runs", {}, "create")
 
 
@@ -1779,7 +1779,7 @@ def _conflicting_publishers(monkeypatch, conflicts: int, error: str = "HTTP 409 
                 item for item in catalog["document"]["pending_builds"] if item["model_id"] != other
             ]
             catalog["canonical_sha256"] = str(len(calls["posts"])) * 64
-            raise RegistryPublicationError(f"{method} {path}: artifact registry {error}: catalog changed")
+            raise RegistryRequestError(f"{method} {path}: artifact registry {error}: catalog changed")
         return {"stored": True}
 
     def snapshot(**kwargs):
@@ -1846,7 +1846,7 @@ def test_catalog_conflict_reads_each_approved_checksum_once(monkeypatch) -> None
 def test_other_publication_errors_are_not_retried(monkeypatch) -> None:
     publish, calls, _ = _conflicting_publishers(monkeypatch, conflicts=1, error="HTTP 409 catalog_revision_conflict")
 
-    with pytest.raises(RegistryPublicationError, match="catalog_revision_conflict"):
+    with pytest.raises(RegistryRequestError, match="catalog_revision_conflict"):
         publish()
 
     assert (calls["reads"], len(calls["posts"]), calls["sleeps"]) == (1, 1, [])
@@ -1859,7 +1859,7 @@ def test_catalog_conflict_retries_stop_at_the_time_limit(monkeypatch) -> None:
     clock = iter([0, 60, CATALOG_CONFLICT_RETRY_SECONDS - 1, CATALOG_CONFLICT_RETRY_SECONDS])
     monkeypatch.setattr("model_registry.registry.time.monotonic", lambda: next(clock))  # the helper's stand-in
 
-    with pytest.raises(RegistryPublicationError, match="catalog_snapshot_conflict"):
+    with pytest.raises(RegistryRequestError, match="catalog_snapshot_conflict"):
         publish()
 
     # The clock is read once to set the limit and once after each conflict; the third conflict is past it.
@@ -1932,13 +1932,15 @@ def test_iam_registry_reads_sign_only_the_configured_api(monkeypatch):
         return {"authenticated": True}
 
     monkeypatch.setattr(registry.SigV4RegistryClient, "request", signed)
-    monkeypatch.setattr("model_registry.fetch.urlopen", lambda request, timeout: io.BytesIO(b'{"public": true}'))
-    assert registry._public_registry_json(base + "/v1/repositories") == {"authenticated": True}
+    monkeypatch.setattr(
+        "model_registry.registry_api.transport.urlopen", lambda request, timeout: io.BytesIO(b'{"public": true}')
+    )
+    assert registry.read_registry_json(base + "/v1/repositories") == {"authenticated": True}
     assert calls == [(base, "us-west-2", "GET", "/v1/repositories")]
     for url in [
         "https://private.example.test.attacker.test/v1/repositories", "https://s3.example.test/object", base + "/other",
     ]:
-        assert registry._public_registry_json(url) == {"public": True}
+        assert registry.read_registry_json(url) == {"public": True}
     assert len(calls) == 1
 
 
@@ -1948,8 +1950,8 @@ def test_iam_registry_reads_require_a_region(monkeypatch):
     monkeypatch.setenv("MODEL_REGISTRY_IAM_READ_API_URL", "https://private.example.test")
     monkeypatch.delenv("AWS_REGION", raising=False)
     monkeypatch.delenv("AWS_DEFAULT_REGION", raising=False)
-    with pytest.raises(RegistryPublicationError, match="AWS_REGION is required"):
-        registry._public_registry_json("https://private.example.test/v1/repositories")
+    with pytest.raises(RegistryRequestError, match="AWS_REGION is required"):
+        registry.read_registry_json("https://private.example.test/v1/repositories")
 
 
 def test_private_conversion_reader_keeps_dataset_credentials_separate(monkeypatch):
@@ -1963,15 +1965,18 @@ def test_private_conversion_reader_keeps_dataset_credentials_separate(monkeypatc
     for name in ("ACCESS_KEY_ID", "SECRET_ACCESS_KEY", "SESSION_TOKEN"):
         monkeypatch.setenv("AWS_" + name, "dataset-" + name)
         monkeypatch.setenv("MODEL_REGISTRY_READ_AWS_" + name, "registry-" + name)
-    commands = []
+    commands, inputs = [], []
     def request(command, **kwargs):
         commands.append(command)
+        inputs.append(kwargs.get("input") or "")
         return subprocess.CompletedProcess(command, 0, '{"artifact": {}}\n200', '')
-    monkeypatch.setattr(registry.subprocess, "run", request)
-    assert registry._public_registry_json(base + "/v1/runs/run/artifacts/onnx") == {"artifact": {}}
-    assert "registry-ACCESS_KEY_ID:registry-SECRET_ACCESS_KEY" in commands[0]
-    assert "x-amz-security-token: registry-SESSION_TOKEN" in commands[0]
-    assert not any("dataset-" in argument for argument in commands[0])
+    monkeypatch.setattr("model_registry.registry_api.transport.subprocess.run", request)
+    assert registry.read_registry_json(base + "/v1/runs/run/artifacts/onnx") == {"artifact": {}}
+    # curl reads the credentials from its config on stdin, so no process on the runner sees them in its arguments.
+    assert 'user = "registry-ACCESS_KEY_ID:registry-SECRET_ACCESS_KEY"' in inputs[0]
+    assert 'header = "x-amz-security-token: registry-SESSION_TOKEN"' in inputs[0]
+    assert not any("registry-" in argument for argument in commands[0])
+    assert not any("dataset-" in text for text in [*commands[0], inputs[0]])
     import os
     assert os.environ["AWS_ACCESS_KEY_ID"] == "dataset-ACCESS_KEY_ID"
 

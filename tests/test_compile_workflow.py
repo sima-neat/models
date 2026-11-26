@@ -1261,7 +1261,7 @@ def test_on_demand_planner_does_not_restrict_the_selected_environment() -> None:
 def test_mpk_candidate_selects_its_branch_with_private_or_public_registry_reads(
     tmp_path, monkeypatch, environment, public_url,
 ):
-    from model_registry import fetch, registry
+    from model_registry import registry
     from model_registry.candidates import publish_branch_deployment
 
     private_url = "https://private.example.test"
@@ -1288,7 +1288,7 @@ def test_mpk_candidate_selects_its_branch_with_private_or_public_registry_reads(
         return io.BytesIO(json.dumps(catalog).encode())
 
     monkeypatch.setattr(registry.SigV4RegistryClient, "_curl_request", signed)
-    monkeypatch.setattr(fetch, "urlopen", unsigned)
+    monkeypatch.setattr("model_registry.registry_api.transport.urlopen", unsigned)
     candidate = tmp_path / "candidate.json"
     candidate.write_text(json.dumps({
         "deployment_id": "11111111-1111-4111-8111-111111111111", "manifest_digest": "a" * 64,

@@ -188,7 +188,7 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     )
     merge.add_argument("--repository", type=Path, default=Path.cwd(), help="a checkout of the merge result")
     merge.add_argument("--head", required=True, help="the develop commit being merged")
-    merge.add_argument("--api-url", required=True)
+    merge.add_argument("--api-url", help="public registry endpoint; production's in config/registry.json when omitted")
 
     authorize = subcommands.add_parser(
         "authorize-runner-matrix",
@@ -728,14 +728,14 @@ def _example_apps(args: argparse.Namespace) -> int:
 
 
 def _plan_stages(args: argparse.Namespace) -> int:
-    from .registry import SigV4RegistryClient, _public_registry_json
+    from .registry_api.transport import SigV4RegistryClient, read_registry_json
 
     if args.offline == bool(args.read_api_url):
         raise ModelRegistryError("pass exactly one of --read-api-url or --offline")
     result = plan_stages(
         args.repository,
         compiler_version=args.compiler_version,
-        read=None if args.offline else _public_registry_json,
+        read=None if args.offline else read_registry_json,
         read_api_url=args.read_api_url,
         branch=args.branch,
         base_branches=_branch_list(args.base_branches),
@@ -751,10 +751,12 @@ def _plan_stages(args: argparse.Namespace) -> int:
 
 
 def _check_main_merge(args: argparse.Namespace) -> int:
-    from .registry import _public_registry_json
+    from .registry_api.config import public_url
+    from .registry_api.transport import read_registry_json
 
+    read_api_url = args.api_url or public_url(args.repository, "production")
     result = find_main_merge_blockers(
-        args.repository, head=args.head, read=_public_registry_json, read_api_url=args.api_url,
+        args.repository, head=args.head, read=read_registry_json, read_api_url=read_api_url,
     )
     for warning in result["warnings"]:
         print(f"warning: {warning}")
@@ -1152,7 +1154,8 @@ def _main(argv: Sequence[str] | None, *, author_safe: bool) -> int:
             return 0
         if args.command == "publish-conversion":
             from .conversion import publish_conversion
-            from .registry import S3ArtifactStore, SigV4RegistryClient
+            from .registry_api.storage import S3ArtifactStore
+            from .registry_api.transport import SigV4RegistryClient
 
             result = publish_conversion(
                 args.repository.resolve(), args.model_id, args.output_dir.resolve(),
@@ -1187,11 +1190,11 @@ def _main(argv: Sequence[str] | None, *, author_safe: bool) -> int:
         if args.command == "plan-stages":
             return _plan_stages(args)
         if args.command == "plan-promoted-benchmarks":
-            from .registry import _public_registry_json
+            from .registry_api.transport import read_registry_json
 
             print(json.dumps(plan_promoted_benchmarks(
                 branch=args.branch, stages=args.stages.split(","),
-                read=_public_registry_json, read_api_url=args.api_url,
+                read=read_registry_json, read_api_url=args.api_url,
             ), sort_keys=True))
             return 0
         if args.command == "check-main-merge":
