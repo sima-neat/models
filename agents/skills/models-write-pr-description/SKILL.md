@@ -218,8 +218,9 @@ Refs #<issue>
 
 - Name runners by class and DevKit type, never by host name.
 - Each list item, field line, and table row stays on one source line.
-- Leave out AI attribution, internal host names, private links, board addresses, and customer
-  information. The repository is public.
+- Leave out AI attribution, private links, and customer information, and name no specific
+  machine, as [`rules.md` "Machine-specific values"](../../rules.md#machine-specific-values)
+  says. The repository is public.
 
 ## Writing
 

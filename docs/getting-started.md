@@ -228,7 +228,7 @@ Set `devkit` to your DevKit's user and address, then copy the model folder, the 
 shared modules its scripts import, and the MPK:
 
 ```bash
-devkit=sima@192.168.1.20
+devkit=sima@<devkit-ip>
 tar -czf - models/yolo26n tools/model_report tools/model_inputs build/yolo26n/w8a8/model \
   | ssh "$devkit" 'mkdir -p /media/nvme/neat-tests/yolo26n && tar -xzf - -C /media/nvme/neat-tests/yolo26n'
 ```
