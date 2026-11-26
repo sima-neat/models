@@ -1,5 +1,9 @@
 name: Model branch lifecycle
 
+# Delete/create workflows run from the default branch; keep the actual target in the run title.
+run-name: >-
+  ${{ (github.event_name == 'delete' || inputs.operation == 'purge') && 'Purge' || 'Restore' }} branch ${{ inputs.branch || github.event.ref }}
+
 on:
   delete:
   create:
