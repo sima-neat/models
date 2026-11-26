@@ -47,6 +47,7 @@ with `sima-`, because Claude Code lets a personal skill of the same name hide a 
 | change shared tooling under `tools/` | [agents/references/architecture.md](agents/references/architecture.md) |
 | change a workflow, job, trigger, or runner | [agents/references/ci-flow.md](agents/references/ci-flow.md) |
 | change what a run publishes or how results are stored | [agents/references/publication.md](agents/references/publication.md) |
+| add or change a registry request, or ask which endpoints this repository calls | [agents/references/registry-api.md](agents/references/registry-api.md) | the two endpoints, where each setting comes from, how a request is signed, every endpoint with its caller |
 | touch branch catalogs or merge behavior | [agents/references/branch-catalogs.md](agents/references/branch-catalogs.md) |
 | set `build-on-demand` or publish a candidate | [agents/references/on-demand-builds.md](agents/references/on-demand-builds.md) |
 | change the LLiMa runner or deployment folder | [agents/references/llima-builds.md](agents/references/llima-builds.md) |

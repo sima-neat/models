@@ -1963,15 +1963,18 @@ def test_private_conversion_reader_keeps_dataset_credentials_separate(monkeypatc
     for name in ("ACCESS_KEY_ID", "SECRET_ACCESS_KEY", "SESSION_TOKEN"):
         monkeypatch.setenv("AWS_" + name, "dataset-" + name)
         monkeypatch.setenv("MODEL_REGISTRY_READ_AWS_" + name, "registry-" + name)
-    commands = []
+    commands, configs = [], []
     def request(command, **kwargs):
         commands.append(command)
+        configs.append(kwargs["input"])
         return subprocess.CompletedProcess(command, 0, '{"artifact": {}}\n200', '')
     monkeypatch.setattr(registry.subprocess, "run", request)
     assert registry._public_registry_json(base + "/v1/runs/run/artifacts/onnx") == {"artifact": {}}
-    assert "registry-ACCESS_KEY_ID:registry-SECRET_ACCESS_KEY" in commands[0]
-    assert "x-amz-security-token: registry-SESSION_TOKEN" in commands[0]
-    assert not any("dataset-" in argument for argument in commands[0])
+    assert 'user = "registry-ACCESS_KEY_ID:registry-SECRET_ACCESS_KEY"' in configs[0]
+    assert 'header = "x-amz-security-token: registry-SESSION_TOKEN"' in configs[0]
+    assert "dataset-" not in configs[0]
+    # Any process on the runner can read curl's arguments, so no credential appears in them.
+    assert not any("registry-" in argument or "dataset-" in argument for argument in commands[0])
     import os
     assert os.environ["AWS_ACCESS_KEY_ID"] == "dataset-ACCESS_KEY_ID"
 
