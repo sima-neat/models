@@ -1,8 +1,3 @@
----
-name: models-triage
-description: Classify sima-neat/models GitHub issues and identify missing evidence using the supplied issue context.
----
-
 # Models issue triage
 
 Models owns model definitions (`models/<model_id>/model.yaml` and each model's `scripts/` and `tests/`), how each build is compiled, benchmarked, and published, the shared lifecycle in `tools/`, the CI workflows, the model browser in `artifact-browser/`, the public docs in `docs/`, and the customer skills in `skills/`. Read the issue body and discussion together. Compare it with related reports in the available context before suggesting overlap. Flag a likely duplicate for maintainer review and explain the evidence; do not use a duplicate label.

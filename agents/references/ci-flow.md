@@ -433,7 +433,7 @@ its two fields and its no-store policy when you change the script.
 
 `issue-triage.yml` passes `.github/issue-triage` to the shared workflow, which reads `config.json` and every other text file in that folder as triage instructions. Keep only triage instructions there. `config.json` lists the labels triage may apply. The issue templates in `.github/ISSUE_TEMPLATE` apply their own label, and `tests/test_issue_triage.py` checks that each one is in that list.
 
-The shared workflow and GitHub's issue events both read the default branch, `main`. A change to the workflow, the config, or the skill takes effect only after it reaches `main`. The job skips an issue labeled `no-ai-triage`, `customer-confidential`, `security`, or `manual-triage`. A manual dispatch triages an older issue and defaults to a dry run that changes nothing. Triage only adds labels, so a maintainer removes `needs-repro` or a wrong category.
+The shared workflow and GitHub's issue events both read the default branch, `main`. A change to the workflow, `config.json`, or `instructions.md` takes effect only after it reaches `main`. The job skips an issue labeled `no-ai-triage`, `customer-confidential`, `security`, or `manual-triage`. A manual dispatch triages an older issue and defaults to a dry run that changes nothing. Triage only adds labels, so a maintainer removes `needs-repro` or a wrong category.
 
 ## Which environment a run targets
 

@@ -27,9 +27,9 @@ def template_labels(template: Path) -> set[str]:
     return {label.strip() for label in labels.split(",")} if isinstance(labels, str) else set(labels)
 
 
-def test_triage_reads_a_config_and_a_skill() -> None:
+def test_triage_reads_a_config_and_instructions() -> None:
     assert allowed_labels()
-    assert list((triage_path() / "skills").glob("*/SKILL.md"))
+    assert (triage_path() / "instructions.md").is_file()
 
 
 @pytest.mark.parametrize("template", TEMPLATES, ids=lambda template: template.name)
