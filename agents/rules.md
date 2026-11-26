@@ -184,6 +184,14 @@ later or never. Apply them while you write.
 - **Approval comes from the server.** Read `approved_deployments` and
   `branch_deployments` as Vulcan returns them. Never write or infer one.
 
+### Machine-specific values
+
+- **Name no specific machine.** Files, pull request text, and review comments hold no DevKit
+  or host IP address or hostname, no lab or site name, and no home directory or local path of
+  one person's machine, such as `/Users/<name>`. Code and configs read these values from the
+  config or the command line. Docs and logs write a placeholder, such as `<devkit-ip>` or
+  `<path>`, because each reader's values differ and the repository is public.
+
 ### Workflows
 
 - **Workflow YAML only orchestrates.** It holds triggers, jobs, permissions,

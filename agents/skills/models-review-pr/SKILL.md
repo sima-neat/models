@@ -76,6 +76,9 @@ each finding cites the owning file and section.
   compiler or runtime source that is not public, and each chosen value that lacks its reason
   ([`coding-style.md` "A comment leads with its
   point"](../../coding-style.md#a-comment-leads-with-its-point)).
+- **Machine-specific values.** Report a hardcoded address, hostname, lab name, or user path in
+  any changed file or in the description ([`rules.md` "Machine-specific
+  values"](../../rules.md#machine-specific-values)).
 - **Tests.** They follow `coding-style.md` "Tests" and the DevKit import rule in `rules.md`.
   `tests/tests.yaml` has one entry per stage, and its `expected` values follow published
   results under the shared limits in [`rules.md` "Limits"](../../rules.md#limits).
