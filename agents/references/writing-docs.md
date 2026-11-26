@@ -57,8 +57,6 @@ Headings stop at H3.
 
 - Define a term in `docs/concepts.md` and at its first use on the page. Then keep that
   name. The names are the ones in the `## Vocabulary` section of `AGENTS.md`.
-- Keep instructions within about 20 words and descriptions within about 25. These are
-  ceilings, not targets, and tables, commands, and identifiers are exempt.
 - Write full sentences with their articles and verbs, never fragments.
 - Give one action per sentence, with its condition first: "If the portal build fails,
   fix its first error."

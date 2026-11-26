@@ -235,5 +235,5 @@ Refs #<issue>
   or `Not verified`.
 - **Use the model README's name for each thing** and keep it the same in every section. Give a
   number with its unit, and a link with a short label where a bare URL or hash would run long.
-- **Follow the [language rules](../../references/writing-docs.md#language):** sentence length,
-  full sentences, the condition first, active voice, and the plain word.
+- **Follow the [language rules](../../references/writing-docs.md#language):** full sentences,
+  the condition first, active voice, and the plain word.
