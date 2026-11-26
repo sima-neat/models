@@ -1,0 +1,47 @@
+name: Model branch lifecycle failure notification
+
+# workflow_run listeners must be present on the default branch (main) to activate.
+on:
+  workflow_run:
+    workflows: ["Model branch lifecycle"]
+    types: [completed]
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: model-branch-lifecycle-notify-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}
+  cancel-in-progress: false
+
+jobs:
+  notify-failure:
+    if: >-
+      ${{
+        github.event.workflow_run.repository.full_name == github.repository &&
+        contains(fromJSON('["create", "delete", "workflow_dispatch"]'),
+                 github.event.workflow_run.event) &&
+        contains(fromJSON('["failure", "timed_out", "action_required", "startup_failure", "stale"]'),
+                 github.event.workflow_run.conclusion)
+      }}
+    uses: sima-neat/.github/.github/workflows/vulcan-notify-slack.yml@f9d6425fa649e4d116bf4c6790340300dde73718
+    with:
+      channel_id: C0BPFND35TN
+      run_id: ${{ github.event.workflow_run.id }}
+      repository: ${{ github.event.workflow_run.repository.full_name }}
+      workflow_name: ${{ github.event.workflow_run.name }}
+      # On delete, head_branch is main. The run title holds the operation and real target.
+      branch: >-
+        ${{
+          (startsWith(github.event.workflow_run.display_title, 'Purge branch ') ||
+           startsWith(github.event.workflow_run.display_title, 'Restore branch ')) &&
+          github.event.workflow_run.display_title || 'Target unavailable; see failed jobs'
+        }}
+      head_sha: ${{ github.event.workflow_run.head_sha }}
+      conclusion: ${{ github.event.workflow_run.conclusion }}
+      run_attempt: ${{ github.event.workflow_run.run_attempt }}
+      run_url: ${{ github.event.workflow_run.html_url }}
+      actor: ${{ github.event.workflow_run.actor.login }}
+      commit_message: ${{ github.event.workflow_run.head_commit.message || '' }}
+    secrets:
+      slack_bot_token: ${{ secrets.SLACK_BOT_TOKEN }}

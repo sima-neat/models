@@ -418,6 +418,21 @@ for a created one, then waits up to 15 minutes for a purge to complete. It refus
 registry and once for the production registry, each in its own GitHub environment. A
 failure in one registry does not stop the other.
 
+A polling timeout means the wait ended, not that the asynchronous purge failed. Read the
+durable job's status, attempts, error, and retained/deleted counters before retrying. A
+completed purge may retain protected runs and shared object versions. Check that the
+branch is still deleted before retrying a purge; a recreated branch needs operator review.
+
+`model-branch-lifecycle-failure.yml` observes completed lifecycle workflows and sends
+failure notifications through the shared Slack notifier. It covers create, delete, and
+manual requests, including cancellation-job and registry-job failures, without registry
+credentials or checking out the failed revision. Its source must be on the default branch
+before GitHub activates the listener. The repository must have access to `SLACK_BOT_TOKEN`,
+and that bot must be able to post to the configured channel. The run title records the
+operation and requested branch: `workflow_run.head_branch` is the workflow's execution
+ref, not the deleted branch. Older runs without a target title direct readers to the failed
+jobs instead. Successful, skipped, and cancelled runs do not send failure notifications.
+
 ### Registry release state
 
 `state.json` holds `current_state` (`GA`, `Beta`, or `Alpha`) and `default_branch`
