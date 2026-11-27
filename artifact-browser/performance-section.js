@@ -321,7 +321,6 @@ export function generativeBenchmark(performance, run, method) {
   const subset = datasets.some(workload => measured(workload) < workload.dataset.available_samples);
   const requests = workload => subset
     ? `${measured(workload).toLocaleString()} of ${workload.dataset.available_samples.toLocaleString()}` : measured(workload);
-  const baselineRequests = Math.max(0, ...datasets.map(workload => measured(workload.baseline)));
   const datasetTable = (kind, title) => {
     const workloads = benchmark.workloads.filter(workload => workload.kind === kind);
     if (!workloads.length) return "";
@@ -353,7 +352,7 @@ export function generativeBenchmark(performance, run, method) {
     <div class="benchmark-measurements-wrap"><table aria-label="Text performance"><thead><tr>
     <th scope="col">Workload</th><th scope="col">${ttftHeading}</th><th scope="col">Prefill (tokens/s)</th><th scope="col">Generation (tokens/s)</th>
     </tr></thead><tbody>${rows}</tbody></table></div></div>` : ""}${images}
-    ${speculative ? `<p>Baseline: ${escapeHtml(benchmark.baseline?.display_name || benchmark.baseline?.model_id)}, without speculative decoding. ${subset ? `It measures the first ${escapeHtml(baselineRequests)} prompts of each subset, with the same output budget.` : "Both use identical prompts and output budgets."}</p>` : ""}
+    ${speculative ? `<p>Baseline: ${escapeHtml(benchmark.baseline?.display_name || benchmark.baseline?.model_id)}, without speculative decoding. Both use identical prompts and output budgets.</p>` : ""}
     ${datasetTable("text_dataset", "Text datasets")}${datasetTable("image_dataset", "Image + text datasets")}
     <p class="benchmark-context">${speculative ? `${subset ? "Seeded random subset of each dataset" : "Full datasets"} · one measurement per prompt · one excluded warmup per dataset and deployment`
       : `1 warmup · ${escapeHtml(benchmark.settings?.repetitions)} measured runs`} · empty cache · up to 256 output tokens${speculative ? "" : " (text buckets: first token plus 256 decode steps)"}</p>

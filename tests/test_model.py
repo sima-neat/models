@@ -57,17 +57,14 @@ def test_benchmark_baseline_references_an_existing_build(tmp_path: Path, case: s
             validate_model(directory, model, SCHEMA)
 
 
-@pytest.mark.parametrize("case", ["subset", "full", "no_baseline", "baseline_too_large"])
-def test_performance_samples_need_a_baseline_that_measures_a_prefix(case: str) -> None:
+@pytest.mark.parametrize("case", ["subset", "full", "no_baseline"])
+def test_performance_samples_need_a_benchmark_baseline(case: str) -> None:
     directory = ROOT / "models/gemma_4_e2b_it_mtp"
     model = _authored(directory)
-    samples = model["performance"]["samples"]
     if case == "full":
         model["performance"].pop("samples")
     elif case == "no_baseline":
         model["build_profiles"]["w4a16"].pop("benchmark_baseline")
-    elif case == "baseline_too_large":
-        samples["baseline"] = samples["image"] + 1
     if case in ("subset", "full"):
         validate_model(directory, model, SCHEMA)
     else:

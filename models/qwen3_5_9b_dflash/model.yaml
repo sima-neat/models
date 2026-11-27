@@ -65,4 +65,3 @@ performance:
   samples:
     text: 50
     image: 25
-    baseline: 10

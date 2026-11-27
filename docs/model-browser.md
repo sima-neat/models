@@ -201,7 +201,7 @@ in this order:
    Speculative models compare **Baseline** with **MTP**, **DFlash** or **EAGLE3**
    when the compiled build identifies its method. The baseline is the target
    model without speculative decoding. A run that measured a subset shows each
-   dataset's prompts as "50 of 1,319" and says how many prompts the baseline measured.
+   dataset's prompts as "50 of 1,319".
    Generation speedup excludes prompt
    processing and the first token; draft contribution is the percentage of
    generated tokens accepted from the draft model. Measurement details show

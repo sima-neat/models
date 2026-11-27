@@ -59,4 +59,3 @@ build_profiles:
 performance:
   samples:
     text: 50
-    baseline: 10

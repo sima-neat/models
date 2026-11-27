@@ -275,16 +275,6 @@ def test_comparison_rejects_unmatched_or_speculative_baselines(damage):
         bench.workload_metrics(workload)
 
 
-def test_baseline_measures_the_first_prompts_of_the_target_subset():
-    workload = dataset_workload()
-    workload["baseline"] = dataset_workload(ordinary=True, measured=2)
-    assert bench.workload_metrics(workload)["decode_speedup"]["value"] == pytest.approx(2)
-    workload["baseline"]["requests"][1]["sample_id"] = "2"
-    workload["baseline"]["metrics"] = bench.workload_metrics(workload["baseline"])
-    with pytest.raises(ValueError, match="same dataset, prompts"):
-        bench.workload_metrics(workload)
-
-
 def archive_share(tmp_path, name, files):
     import hashlib
     import tarfile
@@ -318,7 +308,7 @@ def test_text_subset_reaches_mole_through_the_offline_hugging_face_cache(monkeyp
         "BFCL_v3_multiple.json": "".join(json.dumps(row) + "\n" for row in multiple)})
     monkeypatch.setitem(bench.DATASET_ARCHIVES, "bfcl-v3", ("bfcl-v3", digest, size))
     monkeypatch.setenv("SHARED_DATASET_ARCHIVES", str(share))
-    prepared = bench._prepare_datasets(("bfcl-v3",), tmp_path / "work", {"text": 4, "baseline": 2})
+    prepared = bench._prepare_datasets(("bfcl-v3",), tmp_path / "work", {"text": 4})
     assert prepared["bfcl-v3"] == bench.DatasetSubset(manifest=None, available_samples=6, samples=4)
     # hf_hub_download resolves revision "main" through refs/main to this snapshot when offline.
     repository = tmp_path / "work/huggingface/hub/datasets--gorilla-llm--Berkeley-Function-Calling-Leaderboard"
@@ -426,7 +416,7 @@ def test_dataset_runner_limits_mole_to_the_subset_and_excludes_warmup(monkeypatc
     monkeypatch.setattr(bench, "BoardTelemetry", Telemetry)
     subset = bench.DatasetSubset(manifest=None, available_samples=7, samples=3)
     prepared = dict.fromkeys(bench.TEXT_DATASETS, subset)
-    workloads = bench._datasets(None, tmp_path, tmp_path, 4096, prepared, None)
+    workloads = bench._datasets(None, tmp_path, tmp_path, 4096, prepared)
     assert limits == [3, 3, 3]
     assert all(workload["dataset"]["available_samples"] == 7 for workload in workloads)
     assert phases == [False, True, True, True] * 3

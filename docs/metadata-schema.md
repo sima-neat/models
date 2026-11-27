@@ -496,11 +496,10 @@ performance:
   samples:
     text: 50       # prompts per text dataset
     image: 25      # prompts per image dataset; omit to measure every image prompt
-    baseline: 10   # the first prompts of each subset that the baseline measures
 ```
 
-`text` and `baseline` are required, and `baseline` is no larger than `text` or
-`image`. Omitted, both deployments measure every prompt. Changing it measures
+`text` is required. The baseline measures the same prompts. Omitted, both
+deployments measure every prompt. Changing it measures
 that model's performance again.
 
 See [Accuracy and fidelity](local-accuracy-development.md) and [DevKit

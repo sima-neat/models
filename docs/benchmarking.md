@@ -496,10 +496,9 @@ first token plus 256 decode steps.
 Speculative profiles declare an ordinary model/profile in `benchmark_baseline`.
 Both deployments measure every prompt, with the same dataset sources, context
 and output budgets, unless the model declares
-[`performance.samples`](metadata-schema.md#performance). Then the speculative
-deployment measures a seeded random subset of each dataset, and the baseline
-measures the first prompts of each subset, because ordinary decoding runs at a
-steady rate. The report records each dataset's full and measured counts. The datasets come from
+[`performance.samples`](metadata-schema.md#performance). Then both measure the
+same seeded random subset of each dataset, and the report records each
+dataset's full and measured counts. The datasets come from
 their Dataset Registry archives, which `generation_benchmark.py` pins and reads
 from the DevKit dataset share, and MoLE reads them with Hugging Face offline. BFCL is skipped for both deployments if either lacks a native tool
 template; the reason is recorded in the log and JSON report.

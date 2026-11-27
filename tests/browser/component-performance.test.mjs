@@ -123,7 +123,7 @@ test('a speculative subset shows each dataset as measured of available prompts',
     `return (${performanceSource.slice(begin)}\n);`)(() => ({markup: ''}), () => '', String, () => '');
   const markup = render(performance, {id: 'run'}, 'gemma4_mtp');
   assert.match(markup, /<td>5 of 1,319<\/td>/);
-  assert.match(markup, /It measures the first 5 prompts of each subset/);
+  assert.match(markup, /Both use identical prompts and output budgets/);
   assert.match(markup, /Seeded random subset of each dataset/);
   const full = render(readPerformance({run: {id: 'run', metadata: {}}, report: {...report, generation: {
     ...report.generation, workloads: fixture.preview_speculative_workloads}}}).value, {id: 'run'}, 'gemma4_mtp');

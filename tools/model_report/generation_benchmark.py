@@ -108,12 +108,9 @@ def workload_metrics(workload: dict[str, Any]) -> dict[str, dict[str, Any]]:
         def identity(row):
             return (row.get("sample_id"), row["input_tokens"], row.get("prompt_sha256"),
                     row.get("output_budget"), row.get("images"))
-        def dataset_identity(dataset):
-            return {key: value for key, value in dataset.items() if key != "measured_samples"}
-        reference = [identity(row) for row in baseline["requests"] if row["phase"] == "measure"]
-        # The baseline measures the first prompts of the target's subset.
-        if (dataset_identity(workload["dataset"]) != dataset_identity(baseline["dataset"])
-            or [identity(row) for row in measured][:len(reference)] != reference):
+        if (workload["dataset"] != baseline["dataset"]
+            or [identity(row) for row in measured] != [identity(row) for row in baseline["requests"]
+                                                     if row["phase"] == "measure"]):
             raise ValueError("baseline must use the same dataset, prompts and output budgets")
         if any(row.get("accepted_draft_tokens") is not None for row in baseline["requests"]):
             raise ValueError("benchmark baseline must use ordinary decoding")
@@ -445,9 +442,8 @@ def _prepare_datasets(names: tuple, work: Path, samples: dict | None) -> dict[st
     return prepared
 
 
-def _datasets(board, deployment: Path, output: Path, context: int, prepared: dict[str, DatasetSubset],
-              limit: int | None) -> list[dict]:
-    """Measure each prepared dataset with MoLE: every prompt of its subset, or only the first ``limit``."""
+def _datasets(board, deployment: Path, output: Path, context: int, prepared: dict[str, DatasetSubset]) -> list[dict]:
+    """Measure every prompt of each prepared dataset with MoLE."""
     from sima_lmm.mole.perf_runner import PerformanceOptions, run_performance
 
     workloads = []
@@ -456,13 +452,12 @@ def _datasets(board, deployment: Path, output: Path, context: int, prepared: dic
         directory.mkdir(parents=True, exist_ok=True)
         image = name in IMAGE_DATASETS
         kind = "image_dataset" if image else "text_dataset"
-        measured_samples = subset.samples if limit is None else min(limit, subset.samples)
         telemetry = BoardTelemetry(name)
         with _client(board, deployment, context, image=image) as lm:
             measured = _MeasuredClient(lm, telemetry)
             config = SimpleNamespace(performance=PerformanceOptions(dataset=name, manifest=subset.manifest),
                 model_id=deployment.name, output_path=directory, board=board, do_start_server=True,
-                max_num_tokens=context, max_new_tokens=NEW_TOKENS, limit=measured_samples, random_seed=SAMPLE_SEED,
+                max_num_tokens=context, max_new_tokens=NEW_TOKENS, limit=subset.samples, random_seed=SAMPLE_SEED,
                 input_lengths=None)
             result = run_performance(measured, config)
         requests = result["requests"]
@@ -470,12 +465,9 @@ def _datasets(board, deployment: Path, output: Path, context: int, prepared: dic
             for row, prompt in zip(requests, measured.prompts, strict=True):
                 row["prompt_sha256"] = prompt
         dataset = result["dataset"]
-        # MoLE sees only the subset, and counts its own prompts per run in each source's "selected".
-        for source in dataset["sources"]:
-            source.pop("selected", None)
         subset_selection = {"selection": "seeded_random", "seed": SAMPLE_SEED} if (
             subset.samples < subset.available_samples) else {"selection": "all"}
-        dataset.update(available_samples=subset.available_samples, measured_samples=measured_samples,
+        dataset.update(available_samples=subset.available_samples, measured_samples=subset.samples,
                        **subset_selection)
         workload = {"id": f"dataset_{name}", "kind": kind,
                     "dataset": dataset, "requests": requests, "evaluator": result["evaluator"]}
@@ -519,7 +511,7 @@ def run_benchmark(deployment: Path, output: Path, baseline: Path | None = None, 
         torch.set_num_threads(1)
         with _server(deployment, output / "target") as board:
             if speculative:
-                workloads = _datasets(board, deployment, output / "target", context, prepared, None)
+                workloads = _datasets(board, deployment, output / "target", context, prepared)
             else:
                 with _client(board, deployment, context) as lm:
                     workloads = _text(lm, context)
@@ -528,8 +520,7 @@ def run_benchmark(deployment: Path, output: Path, baseline: Path | None = None, 
                         workloads.append(_image(lm, size))
         if speculative:
             with _server(baseline_deployment, output / "baseline") as board:
-                ordinary = _datasets(board, baseline_deployment, output / "baseline", context, prepared,
-                                     (samples or {}).get("baseline"))
+                ordinary = _datasets(board, baseline_deployment, output / "baseline", context, prepared)
             for workload, reference in zip(workloads, ordinary, strict=True):
                 workload["baseline"] = reference
                 workload["metrics"] = workload_metrics(workload)
