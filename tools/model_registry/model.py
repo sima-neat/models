@@ -322,6 +322,14 @@ def validate_model(
                 "whose main_file is config.json"
             )
     available_calibrations = {item["id"] for item in model["calibrations"]}
+    samples = authored.get("performance", {}).get("samples")
+    if samples:
+        if not any(profile.get("benchmark_baseline") for profile in authored["build_profiles"].values()):
+            raise ValidationError(f"{directory}: performance.samples needs a build profile with a benchmark_baseline")
+        if samples["baseline"] > min(samples["text"], samples.get("image", samples["text"])):
+            raise ValidationError(
+                f"{directory}: performance.samples baseline {samples['baseline']} exceeds the text or image samples"
+            )
     for profile_id, profile in authored["build_profiles"].items():
         baseline = profile.get("benchmark_baseline")
         if baseline:

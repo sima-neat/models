@@ -58,4 +58,8 @@ build_profiles:
           speculative_method: gemma4_mtp
           draft_precision: a16w8
 
-performance: {}
+performance:
+  samples:
+    text: 50
+    image: 25
+    baseline: 10

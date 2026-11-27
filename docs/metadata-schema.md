@@ -487,7 +487,21 @@ scopes write one report per build profile. Core reports must hold the metrics
 customers can copy and run with PyNeat; YAML does not duplicate them.
 
 LLMs and VLMs use [MoLE workloads](benchmarking.md#llima-text-and-image-performance)
-with TTFT and token rates.
+with TTFT and token rates. A model whose build profiles declare a
+`benchmark_baseline` may measure a seeded random subset of each speculative
+benchmark dataset instead of every prompt:
+
+```yaml
+performance:
+  samples:
+    text: 50       # prompts per text dataset
+    image: 25      # prompts per image dataset; omit to measure every image prompt
+    baseline: 10   # the first prompts of each subset that the baseline measures
+```
+
+`text` and `baseline` are required, and `baseline` is no larger than `text` or
+`image`. Omitted, both deployments measure every prompt. Changing it measures
+that model's performance again.
 
 See [Accuracy and fidelity](local-accuracy-development.md) and [DevKit
 performance](benchmarking.md) for the scripts and reports, and [what a change

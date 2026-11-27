@@ -36,10 +36,7 @@ DATASET_ARCHIVES = {
     "docvqa_val": ("docvqa", "2022d437881f4031146093868538fc8eb0016b8659f90da9af3f1646b052b226", 3562057274),
     "chartqa": ("chartqa", "1c8281cd25c4e1b795f083a2544d9afa5b92bb821549ebb382c1ebbfa8e686cc", 96209712),
 }
-# A seeded random subset of each dataset gives a stable decode rate and draft contribution in a fraction of a full
-# pass. Ordinary decoding runs at a steady rate, so the baseline measures only the first prompts of that subset.
-SAMPLES = {"text_dataset": 50, "image_dataset": 25}
-BASELINE_SAMPLES = 10
+# The seed of the random subset a model's performance.samples selects from each dataset.
 SAMPLE_SEED = 42
 IMAGE_PROMPT = "Describe what you see in the image."
 TEXT = (
@@ -363,8 +360,11 @@ class DatasetSubset:
     samples: int
 
 
-def _subset_indices(available: int, count: int) -> list[int]:
-    return random.Random(SAMPLE_SEED).sample(range(available), min(count, available))
+def _subset_indices(available: int, count: int | None) -> list[int]:
+    """Every row in its upstream order, or a seeded random subset of ``count`` rows."""
+    if count is None or count >= available:
+        return list(range(available))
+    return random.Random(SAMPLE_SEED).sample(range(available), count)
 
 
 def _read_rows(path: Path) -> list:
@@ -392,7 +392,7 @@ def _write_rows(source: Path, target: Path, rows: list) -> None:
         target.write_text("".join(json.dumps(row) + "\n" for row in rows))
 
 
-def _text_subset(unpacked: Path, source: dict, count: int, work: Path) -> DatasetSubset:
+def _text_subset(unpacked: Path, source: dict, count: int | None, work: Path) -> DatasetSubset:
     """Write the subset where MoLE's offline Hugging Face download finds the upstream files at the pinned revision."""
     revision = source["revision"]
     repository = work / "huggingface" / "hub" / f"datasets--{source['repository'].replace('/', '--')}"
@@ -410,23 +410,28 @@ def _text_subset(unpacked: Path, source: dict, count: int, work: Path) -> Datase
     return DatasetSubset(manifest=None, available_samples=available, samples=len(chosen))
 
 
-def _image_subset(name: str, unpacked: Path, source: dict, count: int, work: Path) -> DatasetSubset:
-    """Write the subset as a prepared dataset with the manifest that points MoLE at it."""
+def _image_subset(name: str, unpacked: Path, source: dict, count: int | None, work: Path) -> DatasetSubset:
+    """Write the subset as a prepared dataset with the manifest that points MoLE at it. A full dataset is read
+    where it was unpacked."""
     from datasets import DatasetDict, load_from_disk
 
     split = source["split"]
-    rows = load_from_disk(str(unpacked / source["prepared"]))[split]
+    prepared = unpacked / source["prepared"]
+    rows = load_from_disk(str(prepared))[split]
     chosen = _subset_indices(len(rows), count)
-    prepared = work / "prepared" / name
-    DatasetDict({split: rows.select(chosen)}).save_to_disk(str(prepared))
+    if len(chosen) < len(rows):
+        prepared = work / "prepared" / name
+        DatasetDict({split: rows.select(chosen)}).save_to_disk(str(prepared))
     manifest = work / f"{name}.json"
     manifest.write_text(json.dumps({"schema_version": 1, "tasks": {
         name: {"revision": source["revision"], "local_path": str(prepared)}}}))
     return DatasetSubset(manifest=manifest, available_samples=len(rows), samples=len(chosen))
 
 
-def _prepare_datasets(names: tuple, work: Path) -> dict[str, DatasetSubset]:
-    """Unpack each dataset's pinned archive and write the subset MoLE measures, keyed by dataset name."""
+def _prepare_datasets(names: tuple, work: Path, samples: dict | None) -> dict[str, DatasetSubset]:
+    """Unpack each dataset's pinned archive and write the part MoLE measures: the prompts per text and image dataset
+    that ``samples`` declares, or every prompt. Keyed by dataset name."""
+    samples = samples or {}
     share = Path(os.environ.get("SHARED_DATASET_ARCHIVES", "/mnt/dataset-private/current")).resolve()
     archives = json.loads((share / "_release.json").read_text())["archives"]
     prepared = {}
@@ -434,14 +439,15 @@ def _prepare_datasets(names: tuple, work: Path) -> dict[str, DatasetSubset]:
         unpacked = _unpack(share, archives, name, work / "archives")
         source = json.loads((unpacked / "source.json").read_text())
         if name in IMAGE_DATASETS:
-            prepared[name] = _image_subset(name, unpacked, source, SAMPLES["image_dataset"], work)
+            prepared[name] = _image_subset(name, unpacked, source, samples.get("image"), work)
         else:
-            prepared[name] = _text_subset(unpacked, source, SAMPLES["text_dataset"], work)
+            prepared[name] = _text_subset(unpacked, source, samples.get("text"), work)
     return prepared
 
 
-def _datasets(board, deployment: Path, output: Path, context: int, prepared: dict[str, DatasetSubset], *,
-              baseline: bool) -> list[dict]:
+def _datasets(board, deployment: Path, output: Path, context: int, prepared: dict[str, DatasetSubset],
+              limit: int | None) -> list[dict]:
+    """Measure each prepared dataset with MoLE: every prompt of its subset, or only the first ``limit``."""
     from sima_lmm.mole.perf_runner import PerformanceOptions, run_performance
 
     workloads = []
@@ -450,13 +456,13 @@ def _datasets(board, deployment: Path, output: Path, context: int, prepared: dic
         directory.mkdir(parents=True, exist_ok=True)
         image = name in IMAGE_DATASETS
         kind = "image_dataset" if image else "text_dataset"
-        limit = min(BASELINE_SAMPLES if baseline else SAMPLES[kind], subset.samples)
+        measured_samples = subset.samples if limit is None else min(limit, subset.samples)
         telemetry = BoardTelemetry(name)
         with _client(board, deployment, context, image=image) as lm:
             measured = _MeasuredClient(lm, telemetry)
             config = SimpleNamespace(performance=PerformanceOptions(dataset=name, manifest=subset.manifest),
                 model_id=deployment.name, output_path=directory, board=board, do_start_server=True,
-                max_num_tokens=context, max_new_tokens=NEW_TOKENS, limit=limit, random_seed=SAMPLE_SEED,
+                max_num_tokens=context, max_new_tokens=NEW_TOKENS, limit=measured_samples, random_seed=SAMPLE_SEED,
                 input_lengths=None)
             result = run_performance(measured, config)
         requests = result["requests"]
@@ -467,8 +473,10 @@ def _datasets(board, deployment: Path, output: Path, context: int, prepared: dic
         # MoLE sees only the subset, and counts its own prompts per run in each source's "selected".
         for source in dataset["sources"]:
             source.pop("selected", None)
-        dataset.update(available_samples=subset.available_samples, measured_samples=limit,
-                       selection="seeded_random", seed=SAMPLE_SEED)
+        subset_selection = {"selection": "seeded_random", "seed": SAMPLE_SEED} if (
+            subset.samples < subset.available_samples) else {"selection": "all"}
+        dataset.update(available_samples=subset.available_samples, measured_samples=measured_samples,
+                       **subset_selection)
         workload = {"id": f"dataset_{name}", "kind": kind,
                     "dataset": dataset, "requests": requests, "evaluator": result["evaluator"]}
         workload["metrics"] = workload_metrics(workload)
@@ -477,10 +485,10 @@ def _datasets(board, deployment: Path, output: Path, context: int, prepared: dic
     return workloads
 
 
-def run_benchmark(deployment: Path, output: Path, baseline: Path | None = None,
-                  work: Path | None = None) -> dict[str, Any]:
-    """Measure ordinary buckets/images, or speculative dataset subsets, prepared in ``work``, against an ordinary
-    deployment."""
+def run_benchmark(deployment: Path, output: Path, baseline: Path | None = None, work: Path | None = None,
+                  samples: dict | None = None) -> dict[str, Any]:
+    """Measure ordinary buckets/images, or speculative datasets against an ordinary deployment. The datasets are
+    prepared in ``work``, as the model's performance.samples selects."""
     import torch
 
     from model_report import from_generation
@@ -504,14 +512,14 @@ def run_benchmark(deployment: Path, output: Path, baseline: Path | None = None,
     names, skipped = _speculative_datasets(deployment, baseline_deployment, bool(vision)) if speculative else ((), {})
     for name, reason in skipped.items():
         print(f"Skipping {name} for both deployments: {reason}", flush=True)
-    prepared = _prepare_datasets(names, work) if speculative else {}
+    prepared = _prepare_datasets(names, work, samples) if speculative else {}
     stop_active_recording()
     threads = torch.get_num_threads()
     try:
         torch.set_num_threads(1)
         with _server(deployment, output / "target") as board:
             if speculative:
-                workloads = _datasets(board, deployment, output / "target", context, prepared, baseline=False)
+                workloads = _datasets(board, deployment, output / "target", context, prepared, None)
             else:
                 with _client(board, deployment, context) as lm:
                     workloads = _text(lm, context)
@@ -520,7 +528,8 @@ def run_benchmark(deployment: Path, output: Path, baseline: Path | None = None,
                         workloads.append(_image(lm, size))
         if speculative:
             with _server(baseline_deployment, output / "baseline") as board:
-                ordinary = _datasets(board, baseline_deployment, output / "baseline", context, prepared, baseline=True)
+                ordinary = _datasets(board, baseline_deployment, output / "baseline", context, prepared,
+                                     (samples or {}).get("baseline"))
             for workload, reference in zip(workloads, ordinary, strict=True):
                 workload["baseline"] = reference
                 workload["metrics"] = workload_metrics(workload)
@@ -538,8 +547,8 @@ def run_benchmark(deployment: Path, output: Path, baseline: Path | None = None,
                    "decode_speedup": "aggregate speculative decode TPS / aggregate ordinary decode TPS",
                    "excluded": "model loading, network transport and dataset preparation"}}
     if speculative:
-        report["settings"]["samples"] = {**SAMPLES, "baseline": BASELINE_SAMPLES, "selection": "seeded_random",
-                                         "seed": SAMPLE_SEED}
+        if samples:
+            report["settings"]["samples"] = {**samples, "seed": SAMPLE_SEED}
         report["baseline"] = baseline_identity
         if skipped:
             report["skipped_workloads"] = skipped
@@ -550,7 +559,9 @@ def run_benchmark(deployment: Path, output: Path, baseline: Path | None = None,
     return report
 
 
-def main() -> None:
+def main(model_dir: Path | None = None) -> None:
+    """Run the benchmark for the model whose performance.py calls this. A speculative model passes its folder, whose
+    model.yaml may declare the performance.samples to measure."""
     parser = argparse.ArgumentParser(description="Measure a compiled LLM/VLM with MoLE performance workloads.")
     parser.add_argument("--deployment", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
@@ -563,8 +574,13 @@ def main() -> None:
         return
     # The datasets go under the job's dataset folder, never into the uploaded output. MoLE reads its text datasets
     # through Hugging Face, so the cache must be set before any import reads it, and offline mode keeps it off the Hub.
+    if model_dir is None:
+        raise ValueError("a speculative benchmark needs its model folder, passed by the model's performance.py")
+    import yaml
+
+    samples = yaml.safe_load((model_dir / "model.yaml").read_text())["performance"].get("samples")
     root = Path(os.environ.get("DATASET_DIR") or args.output)
     root.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=root, prefix="speculative-datasets-") as work:
         os.environ.update(HF_HOME=str(Path(work) / "huggingface"), HF_HUB_OFFLINE="1")
-        run_benchmark(args.deployment, args.output, args.baseline, Path(work))
+        run_benchmark(args.deployment, args.output, args.baseline, Path(work), samples)

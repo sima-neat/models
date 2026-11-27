@@ -483,8 +483,8 @@ MoLE from the LLiMa revision that `deps/manifest.json` pins.
 | --- | --- |
 | Ordinary LLM | Text input buckets |
 | Ordinary VLM | Text buckets, plus one encoder-sized image with “Describe what you see in the image.” |
-| Speculative LLM | 50 prompts each from GSM8K, BFCL v3 simple/multiple and AlpacaEval |
-| Speculative VLM | Those text prompts, plus 25 prompts each from RealWorldQA, DocVQA validation and ChartQA at dataset image resolution |
+| Speculative LLM | GSM8K, BFCL v3 simple/multiple and AlpacaEval |
+| Speculative VLM | Those text datasets, plus RealWorldQA, DocVQA validation and ChartQA at dataset image resolution |
 
 Text buckets double from 128 through `max_context - 1024`, including that
 boundary: 128, 256, 512, 1024, 2048 and 3072 for 4K context. Ordinary workloads
@@ -494,10 +494,12 @@ dataset requests allow up to 256 generated tokens; ordinary text measures the
 first token plus 256 decode steps.
 
 Speculative profiles declare an ordinary model/profile in `benchmark_baseline`.
-The speculative deployment measures a seeded random subset of each dataset, and
-the report records it with each dataset's full size. Ordinary decoding runs at a
-steady rate, so the baseline measures the first 10 prompts of each subset, with
-the same dataset sources, context and output budgets. The datasets come from
+Both deployments measure every prompt, with the same dataset sources, context
+and output budgets, unless the model declares
+[`performance.samples`](metadata-schema.md#performance). Then the speculative
+deployment measures a seeded random subset of each dataset, and the baseline
+measures the first prompts of each subset, because ordinary decoding runs at a
+steady rate. The report records each dataset's full and measured counts. The datasets come from
 their Dataset Registry archives, which `generation_benchmark.py` pins and reads
 from the DevKit dataset share, and MoLE reads them with Hugging Face offline. BFCL is skipped for both deployments if either lacks a native tool
 template; the reason is recorded in the log and JSON report.

@@ -54,4 +54,7 @@ build_profiles:
           draft_precision: a16w8
           speculative_block_size: 16
 
-performance: {}
+performance:
+  samples:
+    text: 50
+    baseline: 10

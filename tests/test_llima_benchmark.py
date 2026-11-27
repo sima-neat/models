@@ -317,9 +317,8 @@ def test_text_subset_reaches_mole_through_the_offline_hugging_face_cache(monkeyp
         "BFCL_v3_simple.json": "".join(json.dumps(row) + "\n" for row in simple),
         "BFCL_v3_multiple.json": "".join(json.dumps(row) + "\n" for row in multiple)})
     monkeypatch.setitem(bench.DATASET_ARCHIVES, "bfcl-v3", ("bfcl-v3", digest, size))
-    monkeypatch.setitem(bench.SAMPLES, "text_dataset", 4)
     monkeypatch.setenv("SHARED_DATASET_ARCHIVES", str(share))
-    prepared = bench._prepare_datasets(("bfcl-v3",), tmp_path / "work")
+    prepared = bench._prepare_datasets(("bfcl-v3",), tmp_path / "work", {"text": 4, "baseline": 2})
     assert prepared["bfcl-v3"] == bench.DatasetSubset(manifest=None, available_samples=6, samples=4)
     # hf_hub_download resolves revision "main" through refs/main to this snapshot when offline.
     repository = tmp_path / "work/huggingface/hub/datasets--gorilla-llm--Berkeley-Function-Calling-Leaderboard"
@@ -329,6 +328,7 @@ def test_text_subset_reaches_mole_through_the_offline_hugging_face_cache(monkeyp
     chosen = bench._subset_indices(6, 4)
     assert sorted(picked) == sorted([*simple, *multiple][index]["id"] for index in chosen)
     assert bench._subset_indices(6, 4) == chosen
+    assert bench._subset_indices(6, None) == bench._subset_indices(6, 9) == list(range(6))
 
 
 def test_dataset_archive_must_match_its_pin(monkeypatch, tmp_path):
@@ -426,7 +426,7 @@ def test_dataset_runner_limits_mole_to_the_subset_and_excludes_warmup(monkeypatc
     monkeypatch.setattr(bench, "BoardTelemetry", Telemetry)
     subset = bench.DatasetSubset(manifest=None, available_samples=7, samples=3)
     prepared = dict.fromkeys(bench.TEXT_DATASETS, subset)
-    workloads = bench._datasets(None, tmp_path, tmp_path, 4096, prepared, baseline=False)
+    workloads = bench._datasets(None, tmp_path, tmp_path, 4096, prepared, None)
     assert limits == [3, 3, 3]
     assert all(workload["dataset"]["available_samples"] == 7 for workload in workloads)
     assert phases == [False, True, True, True] * 3
