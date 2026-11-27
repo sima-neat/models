@@ -128,6 +128,8 @@ numerical_fidelity:
 accuracy:
   datasets:
   - {id: coco-2017, variant: val, sha256: a40de1caf42b47c5a8976eb97efe3c83f3a41337c4d16d318eb15d65c293f2da, size_bytes: 898368520}
+  # A seeded 2,000 of the 5,000 val images keeps the family's benchmark jobs inside 45 minutes.
+  samples: 2000
 
 performance: {}
 
