@@ -453,7 +453,7 @@ accuracy:
 | Field | Meaning |
 | --- | --- |
 | `datasets` | Dataset Registry pins; the stage resolves each on the DevKit and evaluates the model on all of them in one run. Each goes by its source ID, such as `imagenet-2012-val`. |
-| `samples` | Optional. A positive whole number. CI passes it to `accuracy.py` as `--limit`, so the script evaluates at most that many samples of each dataset. Keep it no larger than the smallest dataset the model evaluates, because most `accuracy.py` scripts draw that many samples at random and stop with an error when a dataset holds fewer. Omitted, the script evaluates every sample. Changing it measures accuracy again. |
+| `samples` | Optional. A positive whole number. CI passes it to `accuracy.py` as `--limit`, so the script evaluates at most that many samples of each dataset. Keep it no larger than the smallest dataset the model evaluates, because most `accuracy.py` scripts draw that many samples at random and stop with an error when a dataset holds fewer. Omitted, the script evaluates every sample. Set it when the full split would keep the benchmark job past its 45-minute limit, which `benchmark-job` in `tools/model_registry/cli.py` sets for a compiled model. Changing it measures accuracy again. |
 | `build_profiles` | Optional; the profiles measured. Omitted, every profile is measured. |
 
 The metrics each dataset's result must hold come from
