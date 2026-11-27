@@ -83,7 +83,7 @@ def test_buckets_cover_headroom_boundary(context, expected):
 def test_a_terminated_benchmark_exits_through_its_finally_blocks(monkeypatch, tmp_path):
     stopped = []
 
-    def run_benchmark(deployment, output, baseline):
+    def run_benchmark(deployment, output, baseline=None, work=None):
         try:
             os.kill(os.getpid(), signal.SIGTERM)
         finally:
@@ -218,9 +218,9 @@ def test_generation_publication_uses_native_inputs_and_keeps_workload_dimensions
     }
 
 
-def dataset_workload(name="gsm8k", *, image=False, ordinary=False):
+def dataset_workload(name="gsm8k", *, image=False, ordinary=False, measured=3):
     requests = []
-    for index in (0, 0, 1, 2):
+    for index in (0, *range(measured)):
         durations = [0.1, 0.04, 0.08] if ordinary else [0.1, 0.02, 0.04]
         requests.append({
             "phase": "warmup" if not requests else "measure", "status": "ok",
@@ -232,7 +232,7 @@ def dataset_workload(name="gsm8k", *, image=False, ordinary=False):
         })
     workload = {
         "id": f"dataset_{name}", "kind": "image_dataset" if image else "text_dataset",
-        "dataset": {"name": name, "available_samples": 3, "selection": "all",
+        "dataset": {"name": name, "available_samples": 7, "measured_samples": measured, "selection": "seeded_random",
                     "sources": [{"repository": "example/dataset", "revision": "a" * 40}]},
         "requests": requests,
         "telemetry": generation_report()["generation"]["workloads"][0]["telemetry"],
@@ -275,6 +275,76 @@ def test_comparison_rejects_unmatched_or_speculative_baselines(damage):
         bench.workload_metrics(workload)
 
 
+def test_baseline_measures_the_first_prompts_of_the_target_subset():
+    workload = dataset_workload()
+    workload["baseline"] = dataset_workload(ordinary=True, measured=2)
+    assert bench.workload_metrics(workload)["decode_speedup"]["value"] == pytest.approx(2)
+    workload["baseline"]["requests"][1]["sample_id"] = "2"
+    workload["baseline"]["metrics"] = bench.workload_metrics(workload["baseline"])
+    with pytest.raises(ValueError, match="same dataset, prompts"):
+        bench.workload_metrics(workload)
+
+
+def archive_share(tmp_path, name, files):
+    import hashlib
+    import tarfile
+
+    dataset_id = bench.DATASET_ARCHIVES[name][0]
+    folder = tmp_path / "source" / dataset_id
+    for relative, text in files.items():
+        (folder / relative).parent.mkdir(parents=True, exist_ok=True)
+        (folder / relative).write_text(text)
+    share = tmp_path / "share"
+    archive = share / dataset_id / "val" / f"{dataset_id}.tgz"
+    archive.parent.mkdir(parents=True)
+    with tarfile.open(archive, "w:gz") as tar:
+        tar.add(folder, dataset_id)
+    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+    (share / "_release.json").write_text(json.dumps({"archives": [{
+        "key": f"datasets/artifactory/{dataset_id}/val/{dataset_id}.tgz", "sha256": digest,
+        "size": archive.stat().st_size}]}))
+    return share, digest, archive.stat().st_size
+
+
+def test_text_subset_reaches_mole_through_the_offline_hugging_face_cache(monkeypatch, tmp_path):
+    revision = "c" * 40
+    simple = [{"id": f"simple_{index}"} for index in range(4)]
+    multiple = [{"id": f"multiple_{index}"} for index in range(2)]
+    source = {"repository": "gorilla-llm/Berkeley-Function-Calling-Leaderboard", "revision": revision, "files": [
+        {"file": "BFCL_v3_simple.json"}, {"file": "BFCL_v3_multiple.json"}]}
+    share, digest, size = archive_share(tmp_path, "bfcl-v3", {
+        "source.json": json.dumps(source),
+        "BFCL_v3_simple.json": "".join(json.dumps(row) + "\n" for row in simple),
+        "BFCL_v3_multiple.json": "".join(json.dumps(row) + "\n" for row in multiple)})
+    monkeypatch.setitem(bench.DATASET_ARCHIVES, "bfcl-v3", ("bfcl-v3", digest, size))
+    monkeypatch.setitem(bench.SAMPLES, "text_dataset", 4)
+    monkeypatch.setenv("SHARED_DATASET_ARCHIVES", str(share))
+    prepared = bench._prepare_datasets(("bfcl-v3",), tmp_path / "work")
+    assert prepared["bfcl-v3"] == bench.DatasetSubset(manifest=None, available_samples=6, samples=4)
+    # hf_hub_download resolves revision "main" through refs/main to this snapshot when offline.
+    repository = tmp_path / "work/huggingface/hub/datasets--gorilla-llm--Berkeley-Function-Calling-Leaderboard"
+    assert (repository / "refs/main").read_text() == revision
+    picked = [json.loads(line)["id"] for file in ("BFCL_v3_simple.json", "BFCL_v3_multiple.json")
+              for line in (repository / "snapshots" / revision / file).read_text().splitlines()]
+    chosen = bench._subset_indices(6, 4)
+    assert sorted(picked) == sorted([*simple, *multiple][index]["id"] for index in chosen)
+    assert bench._subset_indices(6, 4) == chosen
+
+
+def test_dataset_archive_must_match_its_pin(monkeypatch, tmp_path):
+    share, digest, size = archive_share(tmp_path, "gsm8k", {"source.json": "{}"})
+    archives = json.loads((share / "_release.json").read_text())["archives"]
+    monkeypatch.setitem(bench.DATASET_ARCHIVES, "gsm8k", ("gsm8k", "d" * 64, size))
+    with pytest.raises(RuntimeError, match="does not hold the gsm8k archive"):
+        bench._unpack(share, archives, "gsm8k", tmp_path / "missing")
+    archives[0]["sha256"] = "d" * 64
+    with pytest.raises(RuntimeError, match="does not match its SHA-256"):
+        bench._unpack(share, archives, "gsm8k", tmp_path / "damaged")
+    monkeypatch.setitem(bench.DATASET_ARCHIVES, "gsm8k", ("gsm8k", digest, size))
+    archives[0]["sha256"] = digest
+    assert (bench._unpack(share, archives, "gsm8k", tmp_path / "good") / "source.json").read_text() == "{}"
+
+
 def test_image_dataset_uses_native_decode_timings_without_a_text_prefill_rate():
     workload = dataset_workload("chartqa", image=True)
     metrics = bench.workload_metrics(workload)
@@ -307,7 +377,7 @@ def test_bfcl_requires_native_tool_support_in_both_deployments(monkeypatch, tmp_
         assert skipped["bfcl-v3"] == f"{'baseline' if target_tools else 'target'} tokenizer has no native tool template"
 
 
-def test_dataset_runner_reuses_mole_with_no_sample_limit_and_excludes_warmup(monkeypatch, tmp_path):
+def test_dataset_runner_limits_mole_to_the_subset_and_excludes_warmup(monkeypatch, tmp_path):
     import sys
     from contextlib import contextmanager
     from types import SimpleNamespace
@@ -354,8 +424,11 @@ def test_dataset_runner_reuses_mole_with_no_sample_limit_and_excludes_warmup(mon
         PerformanceOptions=lambda **kwargs: SimpleNamespace(**kwargs), run_performance=run))
     monkeypatch.setattr(bench, "_client", client)
     monkeypatch.setattr(bench, "BoardTelemetry", Telemetry)
-    workloads = bench._datasets(None, tmp_path, tmp_path, 4096, bench.TEXT_DATASETS)
-    assert limits == [None, None, None]
+    subset = bench.DatasetSubset(manifest=None, available_samples=7, samples=3)
+    prepared = dict.fromkeys(bench.TEXT_DATASETS, subset)
+    workloads = bench._datasets(None, tmp_path, tmp_path, 4096, prepared, baseline=False)
+    assert limits == [3, 3, 3]
+    assert all(workload["dataset"]["available_samples"] == 7 for workload in workloads)
     assert phases == [False, True, True, True] * 3
     assert all(len(row["prompt_sha256"]) == 64 for workload in workloads for row in workload["requests"])
 

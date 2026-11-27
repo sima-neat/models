@@ -110,3 +110,23 @@ test('the Performance info mark names the runtime that ran the model', () => {
     'Measured on the Modalix DevKit, running the compiled model with LLiMa.');
   assert.equal(performanceMethod({performance: null}), '');
 });
+
+test('a speculative subset shows each dataset as measured of available prompts', () => {
+  const fixture = JSON.parse(readFileSync(new URL('../../artifact-browser/fixtures/genai-model-report.json', import.meta.url), 'utf8'));
+  const subset = workload => ({...workload, dataset: {...workload.dataset, available_samples: 1319}});
+  const report = {...fixture, generation: {...fixture.generation,
+    settings: {...fixture.generation.settings, decoding: 'speculative'}, baseline: {model_id: 'baseline'},
+    workloads: fixture.preview_speculative_workloads.map(subset)}};
+  const performance = readPerformance({run: {id: 'run', metadata: {}}, report}).value;
+  const begin = performanceSource.indexOf('function generativeBenchmark(');
+  const render = new Function('performanceDetails', 'infoMark', 'escapeHtml', 'disclosure',
+    `return (${performanceSource.slice(begin)}\n);`)(() => ({markup: ''}), () => '', String, () => '');
+  const markup = render(performance, {id: 'run'}, 'gemma4_mtp');
+  assert.match(markup, /<td>5 of 1,319<\/td>/);
+  assert.match(markup, /It measures the first 5 prompts of each subset/);
+  assert.match(markup, /Seeded random subset of each dataset/);
+  const full = render(readPerformance({run: {id: 'run', metadata: {}}, report: {...report, generation: {
+    ...report.generation, workloads: fixture.preview_speculative_workloads}}}).value, {id: 'run'}, 'gemma4_mtp');
+  assert.match(full, /Full datasets/);
+  assert.doesNotMatch(full, /<td>[0-9,]+ of [0-9,]+<\/td>/);
+});
