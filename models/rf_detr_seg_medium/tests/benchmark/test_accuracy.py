@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -12,6 +13,11 @@ from model_registry.model_tests import measured_shortfalls
 
 QUERY = 3
 CATEGORY = 18
+# The tests' stand-in for a missing faster_coco_eval would pass importorskip, so its absence is read first.
+NEEDS_DECODE = pytest.mark.skipif(
+    any(importlib.util.find_spec(name) is None for name in ("cv2", "faster_coco_eval")),
+    reason="needs cv2 and faster_coco_eval",
+)
 
 
 def _outputs(accuracy: ModuleType) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -26,9 +32,8 @@ def _outputs(accuracy: ModuleType) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     return dets, labels, masks
 
 
+@NEEDS_DECODE
 def test_decode_scales_the_box_and_encodes_the_resized_mask(load_script: Callable[[str], ModuleType]) -> None:
-    pytest.importorskip("cv2")
-    pytest.importorskip("faster_coco_eval")
     accuracy = load_script("accuracy")
     valid = np.ones(accuracy.CLASSES, bool)
 
@@ -43,11 +48,10 @@ def test_decode_scales_the_box_and_encodes_the_resized_mask(load_script: Callabl
     np.testing.assert_array_equal(accuracy.mask_util.decode(result["segmentation"]), expected)
 
 
+@NEEDS_DECODE
 def test_decode_drops_unused_coco_slots_and_rejects_another_mask_layout(
     load_script: Callable[[str], ModuleType],
 ) -> None:
-    pytest.importorskip("cv2")
-    pytest.importorskip("faster_coco_eval")
     accuracy = load_script("accuracy")
     dets, labels, masks = _outputs(accuracy)
     valid = np.ones(accuracy.CLASSES, bool)
