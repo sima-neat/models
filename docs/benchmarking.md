@@ -190,7 +190,10 @@ not the MPK alone:
    also stretch, and set their own mean and standard deviation (0.5 for
    ViT-B/16) in `preprocess.normalize.mean` and `stddev` with
    `normalize.has_explicit_stats = True`. Without a preset or explicit
-   statistics, Neat applies no mean or standard deviation.
+   statistics, Neat applies no mean or standard deviation. The MNIST digit
+   classifiers pick one test digit from the dataset's IDX file, letterbox it as
+   an RGB image, and have Neat convert the frame to grayscale
+   (`PreprocessColorFormat.GRAY8`) and stretch it to 28x28 with no preset.
 
 The report's `workload` names the dataset, the image, the frame, and the
 decoder settings. Preprocessing is part of the measurement and can bound

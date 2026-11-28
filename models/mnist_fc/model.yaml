@@ -1,0 +1,77 @@
+display_name: MNIST FC
+description: Classifies a handwritten digit in a 28x28 grayscale image as 0 to 9 with a three-layer fully connected network.
+model_type: vision
+tasks: [handwriting_classification]
+
+modalities:
+  inputs: [image]
+  outputs: [class_scores]
+
+architecture: mlp
+
+license:
+  spdx: Apache-2.0
+  redistribution: allowed
+  attribution: MNIST-MLP by David Corvoysier (dacorvo), distributed under Apache-2.0.
+
+upstream:
+  repository: https://huggingface.co/dacorvo/mnist-mlp
+  revision: 7ed1e96d182395fd7380ea8495b9eb2364ce9dc1
+
+resources:
+  license:
+    # dacorvo/mnist-mlp omits LICENSE. Google's BERT repository carries the standard Apache-2.0 text.
+    source:
+      repository: google-bert/bert-base-uncased
+      revision: 86b5e0934494bd15c9632b12f734a8a67f723594
+      files:
+        LICENSE: {sha256: 43070e2d4e532684de521b885f385d0841030efa2b1a20bafb76133a5e1379c1, size_bytes: 11356}
+    install_path: licenses
+
+conversion:
+  source:
+    repository: dacorvo/mnist-mlp
+    revision: 7ed1e96d182395fd7380ea8495b9eb2364ce9dc1
+    main_file: config.json
+    files:
+      config.json: {sha256: f80ec7ed191e6fd0146c8b5201c5b3ced536be364afb6a2205b3f99c02fa88ea, size_bytes: 296}
+      model.safetensors: {sha256: 59dfd2968fc0c60192c8e41ecff29f9271ec625684c9c3368ceae4166d089aec, size_bytes: 1077824}
+
+compilation:
+  format: onnx
+  # Vulcan Model Convert run 41783190168: the 4D export of convert.py.
+  source:
+    uri: https://artifacts.stg.neat.sima.ai/models-onnx/mnist_fc/79819d9bcae38cc6a689f785636f34d9198a1aa79e2e5e4e4a4081536736501e/41783190168-1/model.onnx
+    sha256: 79819d9bcae38cc6a689f785636f34d9198a1aa79e2e5e4e4a4081536736501e
+    size_bytes: 1078063
+
+# The MNIST IDX files: 60,000 training digits (calibration) and the 10,000 test digits (accuracy).
+calibrations:
+- id: mnist-default
+  dataset: {id: mnist, variant: default, sha256: 9f362a9b0c6b9237ca379a2f9cd541b0f71b06d0b31a8134e7845fa43ef88eca, size_bytes: 11595829}
+
+build_profiles:
+  w16a16:
+    components:
+      model:
+        parameters:
+          precision: w16a16
+          input_name: image
+          input_shape: [1, 1, 28, 28]
+
+  # INT8 scores within 0.02% of w16a16 on the 10,000 test digits on a DevKit.
+  w8a8:
+    calibration_dataset: mnist-default
+    components:
+      model:
+        parameters:
+          precision: w8a8
+          input_name: image
+          input_shape: [1, 1, 28, 28]
+          calibration_samples: 500
+
+accuracy:
+  datasets:
+  - {id: mnist, variant: default, sha256: 9f362a9b0c6b9237ca379a2f9cd541b0f71b06d0b31a8134e7845fa43ef88eca, size_bytes: 11595829}
+
+performance: {}

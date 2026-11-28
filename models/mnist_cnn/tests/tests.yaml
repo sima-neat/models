@@ -1,0 +1,13 @@
+compile:
+  run_tests: true
+accuracy:
+  run_tests: true
+  expected:
+    w8a8:
+      mnist-default:
+        top1_accuracy: 0.9888
+performance:
+  run_tests: true
+  expected:
+    w8a8:
+      throughput_fps: 3821.2

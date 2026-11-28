@@ -1,0 +1,4 @@
+# What every model evaluating its accuracy on MNIST must report, by the model's task.
+name: MNIST
+required_metrics:
+  handwriting_classification: [top1_accuracy]
