@@ -1,9 +1,9 @@
 """Classical Model Compiler build: BF16 CLIP and a mostly INT8 image detector.
 
 CLIP uses SkipCalibration and no calibration samples. Only detector INT8
-activation ranges are calibrated, using 64 images from the pinned Dataset
-Registry COCO calibration archive with all 80 COCO prompts. The build profile
-declares the detector calibration method and BF16 regions.
+activation ranges are calibrated, on images from the pinned Dataset Registry
+COCO calibration archive with all 80 COCO prompts. The build profile declares
+the detector's calibration sample count, calibration method, and BF16 regions.
 """
 import argparse
 import json
@@ -22,6 +22,7 @@ from calibration import calibration_inputs
 from model_registry.fetch import sha256_file
 from model_registry.model import build_profile_for, load_model as load_metadata
 from surgery import COMPONENTS, prepare_model
+from model_registry.compile_script import compiler_log_level
 
 MODEL_DIR = Path(__file__).resolve().parents[1]
 
@@ -111,7 +112,7 @@ def compile_prepared(directory, output, profile_id, dataset=None, quantized_outp
         loaded = load_model(onnx_source(str(directory / "text_calibration.onnx"), layout="NCHW", flexible_batch_size=False),
                             target=gen2_target)
         return loaded.quantize(calibration_data=None, quantization_config=quantization("text_encoder", parameters["text_encoder"]),
-                               model_name="yolo_world_text_calibration", log_level=logging.INFO)
+                               model_name="yolo_world_text_calibration", log_level=compiler_log_level())
 
     with tempfile.TemporaryDirectory(prefix=metadata["id"] + "-compile-") as temporary:
         build = Path(temporary)
@@ -124,12 +125,12 @@ def compile_prepared(directory, output, profile_id, dataset=None, quantized_outp
                                        create_text_calibrator, detector["calibration_samples"])
                     if component == "detector" else None)
             quantized = loaded.quantize(calibration_data=data, quantization_config=quantization(component, parameters[component]),
-                                        model_name=name, log_level=logging.INFO)
+                                        model_name=name, log_level=compiler_log_level())
             if quantized_output is not None:
                 quantized.save(model_name=name, output_directory=str(quantized_output / component),
                                include_unquantized_net=False)
             quantized.compile(output_path=str(build / component), batch_size=1,
-                              log_level=logging.INFO, layer_norm_use_fp32_intermediates=True)
+                              log_level=compiler_log_level(), layer_norm_use_fp32_intermediates=True)
             (archive,) = (build / component).glob("*_mpk.tar.gz")
             audit_mpk(archive)
             destination = output / component

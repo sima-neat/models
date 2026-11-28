@@ -3,19 +3,17 @@
 
 from __future__ import annotations
 
-import argparse
 import json
 import logging
 import math
 import multiprocessing
 import os
 import shutil
-import tarfile
 import tempfile
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -36,7 +34,9 @@ from afe.core.configs import QuantizationPrecision
 from afe.core.utils import convert_data_generator_to_iterable
 from afe.load.importers.general_importer import onnx_source
 from calibration import load_images, select_images, select_top_proposals, to_afe_layout
+from model_registry.compile_script import compiler_log_level, parse_arguments, read_mpk_manifest
 from model_registry.fetch import sha256_file
+from model_registry.fidelity import write_fidelity_report
 from model_registry.model import load_model as load_metadata
 from sima_utils.data.data_generator import DataGenerator
 from surgery import (
@@ -180,7 +180,7 @@ def _quantize_component(
         calibration_data=data,
         quantization_config=_quantization_config(parameters),
         model_name=name,
-        log_level=logging.INFO,
+        log_level=compiler_log_level(),
     )
 
 
@@ -201,26 +201,9 @@ def _require_bf16_regions(quantized: Any, component_id: str, regions: list[str])
         raise RuntimeError(f"expected BF16 operations including {softmaxes} softmaxes, found {dict(counts)}")
 
 
-def _read_mpk_manifest(archive: Path) -> tuple[list[str], dict[str, Any]]:
-    with tarfile.open(archive, "r:gz") as stream:
-        members = stream.getmembers()
-        for member in members:
-            path = PurePosixPath(member.name)
-            if path.is_absolute() or ".." in path.parts or member.issym() or member.islnk():
-                raise RuntimeError(f"unsafe MPK member: {member.name}")
-        names = [member.name for member in members]
-        manifests = [name for name in names if name.endswith("_mpk.json")]
-        if len(manifests) != 1:
-            raise RuntimeError(f"expected one MPK manifest, found {manifests}")
-        source = stream.extractfile(manifests[0])
-        if source is None:
-            raise RuntimeError(f"cannot read MPK manifest: {manifests[0]}")
-        return names, json.load(source)
-
-
 def audit_mpk(archive: Path, component_id: str) -> dict[str, Any]:
     contract = COMPONENT_INTERFACES[component_id]
-    names, manifest = _read_mpk_manifest(archive)
+    names, manifest = read_mpk_manifest(archive)
     elfs = [name for name in names if name.endswith(".elf")]
     shared_objects = [name for name in names if name.endswith(".so") or ".so." in name]
     plugins = sorted(manifest.get("plugins", []), key=lambda item: item.get("sequence", 0))
@@ -260,19 +243,12 @@ def _compile_component(
         output_path=str(build_dir),
         batch_size=1,
         compress=True,
-        log_level=logging.INFO,
+        log_level=compiler_log_level(),
         tessellate_parameters=None,
         l2_caching_mode=L2CachingMode.NONE,
         preserve=True,
-        deployable=True,
-        retained_temporary_directory_name=None,
-        use_power_limits=False,
-        max_mla_power=None,
         # The option applies to every layer norm and INT8 ones reject it, so BF16 regions keep BF16 intermediates.
         layer_norm_use_fp32_intermediates=precision in A16_PRECISIONS,
-        rms_norm_use_fp32_intermediates=False,
-        enable_filter_sharing=False,
-        layout_search_effort_level=0,
     )
     archive = _find_mpk(build_dir, component_id)
     audit_mpk(archive, component_id)
@@ -337,49 +313,6 @@ class _BackboneOutputs:
             return cls(**saved)
 
 
-@dataclass
-class _OutputError:
-    """Running sums of one output's error against the original ONNX, over every fidelity image."""
-
-    name: str
-    count: int = 0
-    dot: float = 0.0
-    expected_squared: float = 0.0
-    actual_squared: float = 0.0
-    error_squared: float = 0.0
-    error_absolute: float = 0.0
-    max_absolute_error: float = 0.0
-
-    def add(self, expected: np.ndarray, actual: np.ndarray) -> None:
-        expected = np.asarray(expected, dtype=np.float64)
-        actual = np.asarray(actual, dtype=np.float64)
-        if expected.shape != actual.shape:
-            raise RuntimeError(f"{self.name} shape mismatch: {expected.shape} != {actual.shape}")
-        if not np.isfinite(expected).all() or not np.isfinite(actual).all():
-            raise RuntimeError(f"{self.name} contains non-finite values")
-        error = actual - expected
-        absolute = np.abs(error)
-        self.count += expected.size
-        self.dot += float(np.dot(expected.ravel(), actual.ravel()))
-        self.expected_squared += float(np.sum(np.square(expected)))
-        self.actual_squared += float(np.sum(np.square(actual)))
-        self.error_squared += float(np.sum(np.square(error)))
-        self.error_absolute += float(np.sum(absolute))
-        self.max_absolute_error = max(self.max_absolute_error, float(np.max(absolute)))
-
-    def summary(self) -> dict[str, Any]:
-        expected_rms = max(np.sqrt(self.expected_squared / self.count), np.finfo(np.float64).eps)
-        norm = np.sqrt(self.expected_squared * self.actual_squared)
-        cosine = self.dot / norm if norm else float(self.expected_squared == self.actual_squared)
-        return {
-            "name": self.name,
-            "cosine_similarity": float(np.clip(cosine, -1.0, 1.0)),
-            "normalized_rmse": float(np.sqrt(self.error_squared / self.count) / expected_rms),
-            "mean_absolute_error": float(self.error_absolute / self.count),
-            "max_absolute_error": self.max_absolute_error,
-        }
-
-
 def _precision_label(parameters: dict[str, Any]) -> str:
     """Name a component's precision, such as W8A16 per-token or W8A8 mixed (BF16 residual)."""
     label = parameters["precision"].upper() + (" per-token" if parameters.get("per_token") else "")
@@ -420,32 +353,6 @@ def _calibration_names(
     return select_images(calibration_dataset, int(selection["seed"]), 0, count)
 
 
-def _write_fidelity(
-    output_dir: Path,
-    profile_id: str,
-    config: dict[str, Any],
-    candidate: str,
-    metrics: list[dict[str, Any]],
-) -> None:
-    selection = config["selection"]
-    report = {
-        "schema_version": 1,
-        "model_id": MODEL_ID,
-        "build_profile_id": profile_id,
-        "status": config["status"],
-        "reference": "Original full ONNX (ONNX Runtime)",
-        "candidate": candidate,
-        "dataset": {key: config["dataset"][key] for key in ("id", "variant", "sha256")},
-        "selection": selection,
-        "samples": selection["samples"],
-        "metrics": metrics,
-    }
-    (output_dir / FIDELITY_REPORT).write_text(
-        json.dumps(report, allow_nan=False, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-
-
 def _reference_outputs(source: Path, images: np.ndarray) -> dict[str, np.ndarray]:
     """Run the original ONNX on the fidelity images."""
     session = ort.InferenceSession(str(source), providers=["CPUExecutionProvider"])
@@ -460,9 +367,9 @@ def _measure_fidelity(
     decoder: Any,
     backbone_outputs: _BackboneOutputs,
     reference: dict[str, np.ndarray],
-) -> list[dict[str, Any]]:
-    """Compare the compiled pipeline's outputs on each fidelity image with the original ONNX's."""
-    errors = [_OutputError(name) for name in OUTPUTS]
+) -> list[dict[str, tuple[np.ndarray, np.ndarray]]]:
+    """Pair the compiled pipeline's outputs on each fidelity image with the original ONNX's."""
+    compared = []
     for index, (features, scores, boxes) in enumerate(
         zip(
             backbone_outputs.evaluation_features,
@@ -475,10 +382,13 @@ def _measure_fidelity(
             InputName(FEATURES): to_afe_layout(features[None]),
             InputName(PROPOSALS): select_top_proposals(scores[None], boxes[None]),
         }
-        dets, labels, masks = (np.asarray(output) for output in decoder.execute(inputs=inputs, use_jax=True))
-        for error, output in zip(errors, (dets, labels, _masks_to_nchw(masks)), strict=True):
-            error.add(reference[error.name][index][None], output)
-    return [error.summary() for error in errors]
+        # Copied, because the compiler may reuse an output's storage on the next execute.
+        dets, labels, masks = (np.array(output) for output in decoder.execute(inputs=inputs, use_jax=True))
+        outputs = (dets, labels, _masks_to_nchw(masks))
+        compared.append(
+            {name: (reference[name][index][None], output) for name, output in zip(OUTPUTS, outputs, strict=True)}
+        )
+    return compared
 
 
 def _prepare_phase(
@@ -554,7 +464,6 @@ def _decoder_phase(
     temporary_dir: Path,
     profile_id: str,
     parameters: dict[str, Any],
-    fidelity_config: dict[str, Any],
     candidate: str,
 ) -> None:
     """Compile the decoder, then measure the whole pipeline's fidelity and write its report."""
@@ -580,8 +489,15 @@ def _decoder_phase(
         _require_bf16_regions(decoder, "decoder", parameters["bf16_regions"])
     _compile_component(decoder, temporary_dir / name, "decoder", parameters["precision"])
 
-    metrics = _measure_fidelity(decoder, backbone_outputs, reference)
-    _write_fidelity(temporary_dir, profile_id, fidelity_config, candidate, metrics)
+    compared = _measure_fidelity(decoder, backbone_outputs, reference)
+    write_fidelity_report(
+        MODEL_DIR,
+        profile_id,
+        compared,
+        temporary_dir,
+        reference="Original full ONNX (ONNX Runtime)",
+        candidate=candidate,
+    )
 
 
 def _execute_phase(target: Callable[..., None], arguments: dict[str, Any]) -> None:
@@ -651,8 +567,7 @@ def compile_model(
     metadata = load_metadata(MODEL_DIR)
     component_parameters = _component_parameters(metadata, profile_id)
     bf16_regions = _bf16_regions(profile_id, component_parameters)
-    fidelity_config = metadata["numerical_fidelity"]
-    selection = fidelity_config["selection"]
+    selection = metadata["numerical_fidelity"]["selection"]
     calibration_names = _calibration_names(component_parameters, calibration_dataset, fidelity_dataset, selection)
     evaluation_names = select_images(
         fidelity_dataset,
@@ -701,7 +616,6 @@ def compile_model(
             temporary_dir=temporary_dir,
             profile_id=profile_id,
             parameters=component_parameters["decoder"],
-            fidelity_config=fidelity_config,
             candidate=_pipeline_description(component_parameters),
         )
 
@@ -713,34 +627,10 @@ def compile_model(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model", type=Path, required=True)
-    parser.add_argument("--dataset", type=Path, help="calibration images; required when a component calibrates")
-    parser.add_argument("--fidelity-dataset", type=Path, required=True)
-    parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--build-profile", required=True)
-    parser.add_argument("--compile-invocation", required=True)
-    args = parser.parse_args()
-    if args.compile_invocation != args.build_profile:
-        parser.error("a build profile compiles in one invocation named after it")
-    source = args.model.expanduser().resolve()
-    dataset = args.dataset.expanduser().resolve() if args.dataset else None
-    fidelity_dataset = args.fidelity_dataset.expanduser().resolve()
-    if source.suffix != ".onnx":
-        parser.error("--model must be the verified ONNX from the manual conversion workflow")
-    if not source.is_file():
-        parser.error(f"source does not exist: {source}")
-    if dataset is not None and not dataset.exists():
-        parser.error(f"dataset does not exist: {dataset}")
-    if not fidelity_dataset.exists():
-        parser.error(f"fidelity dataset does not exist: {fidelity_dataset}")
+    arguments = parse_arguments(__doc__, MODEL_DIR)
     logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
     outputs = compile_model(
-        source,
-        args.build_profile,
-        dataset,
-        fidelity_dataset,
-        args.output_dir.expanduser().resolve(),
+        arguments.model, arguments.build_profile, arguments.dataset, arguments.fidelity_dataset, arguments.output_dir
     )
     for component_id, archive in outputs.items():
         logging.info("Compiled %s MPK: %s", component_id, archive)

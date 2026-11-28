@@ -4,10 +4,11 @@
 # Usage: run_model_performance.sh <model_dir> <build_profile> <compiled_dir> <output_dir>
 #
 # <compiled_dir> holds <model_id>/<build_profile>/compile-outputs.json and the MPKs it lists. The model's first
-# accuracy dataset, already in DATASET_CACHE, supplies the benchmark input. A model whose CPU work reads its package
-# resources gets them as --resources, and scripts/requirements-performance.txt adds the wheels that work needs. The
-# script writes model-report.json into <output_dir> with tools/model_report; check-report then holds it to model.yaml
-# and records the board in environment.json.
+# accuracy dataset supplies the benchmark input. unpack_benchmark_datasets.sh unpacks it into DATASET_DIR, or reuses
+# the folder an earlier step of the job unpacked there. A model whose CPU work reads its package resources gets them
+# as --resources, and scripts/requirements-performance.txt adds the wheels that work needs. The script writes
+# model-report.json into <output_dir> with tools/model_report; check-report then holds it to model.yaml and records
+# the board in environment.json.
 
 set -euo pipefail
 
@@ -22,12 +23,10 @@ OUTPUT_DIR="$4"
 REGISTRY_PYTHON="${REGISTRY_PYTHON:-python3}"
 PYNEAT_PYTHON="${PYNEAT_PYTHON:-$HOME/pyneat/bin/python}"
 LLIMA_MOLE_PYTHON="${LLIMA_MOLE_PYTHON:-${SIMA_MOLE_VENV_PATH:-/media/nvme/llima/mole-venv}/bin/python}"
-DATASET_CACHE="${DATASET_CACHE:-/media/nvme/datasets/artifacts}"
-DATASET_LOCK="${DATASET_LOCK:-/media/nvme/datasets/locks/prepare.lock}"
-DATASET_LOCK_SECONDS="${DATASET_LOCK_SECONDS:-1200}"
-RESOLVE_TIMEOUT_SECONDS="${RESOLVE_TIMEOUT_SECONDS:-600}"
-# Scratch space for the extracted dataset, resources and wheels; removed on exit. NVMe keeps it off the root filesystem.
+# Scratch space for resources and wheels; removed on exit. NVMe keeps it off the root filesystem.
 WORK_DIR="${WORK_DIR:-/media/nvme/neat-tests/model-performance-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}}"
+# The unpacked datasets, inside WORK_DIR unless the caller shares them between steps.
+DATASET_DIR="${DATASET_DIR:-$WORK_DIR/datasets}"
 REQUIREMENTS="$MODEL_DIR/scripts/requirements-performance.txt"
 REPOSITORY="$(cd "$MODEL_DIR/../.." && pwd)"
 MODEL_ID="$(basename "$MODEL_DIR")"
@@ -49,33 +48,24 @@ json_field() {
   "$REGISTRY_PYTHON" -c 'import json, sys; print(json.load(sys.stdin)[sys.argv[1]])' "$1"
 }
 
-backend="$("$REGISTRY_PYTHON" -c '
+# backend is how the build is packaged: "llima" for a deployment folder, "core" for MPKs. runner is the Python
+# that measures it: "mole" for a deployment that generates text, "pyneat" for every other model.
+read -r backend runner < <("$REGISTRY_PYTHON" -c '
 import sys
+from model_registry.benchmark_declarations import benchmark_runner
 from model_registry.model import load_model
-print("llima" if load_model(sys.argv[1])["components"][0]["interface"]["format"] == "huggingface" else "core")
-' "$MODEL_DIR")"
+model = load_model(sys.argv[1])
+print("llima" if model["components"][0]["interface"]["format"] == "huggingface" else "core", benchmark_runner(model))
+' "$MODEL_DIR")
 
-# The script takes the first accuracy dataset as <name>=<path>, unpacked and looking through a single top-level
-# directory, and picks its input from it. A model without an accuracy dataset gets none.
+# The script takes the first accuracy dataset as <name>=<path> and picks its input from it. A model without an
+# accuracy dataset gets none.
 dataset=()
-if [[ "$backend" == core ]]; then
-mkdir -p "$DATASET_CACHE" "$(dirname "$DATASET_LOCK")"
-resolutions="$(flock --wait "$DATASET_LOCK_SECONDS" --close "$DATASET_LOCK" \
-  timeout --signal=TERM --kill-after=30s "$RESOLVE_TIMEOUT_SECONDS" "$REGISTRY_PYTHON" -m model_registry resolve-devkit-accuracy "$MODEL_DIR" \
-  --build-profile "$BUILD_PROFILE_ID" --cache-dir "$DATASET_CACHE")"
-dataset=()
-if [[ -n "$resolutions" ]]; then
-  resolution="${resolutions%%$'\n'*}"
-  name="$(json_field name <<< "$resolution")"
-  directory="$WORK_DIR/datasets/$name"
-  rm -rf "$directory"
-  mkdir -p "$directory"
-  tar -xzf "$(json_field path <<< "$resolution")" -C "$directory"
-  entries=("$directory"/*)
-  if [[ ${#entries[@]} -eq 1 && -d "${entries[0]}" ]]; then
-    directory="${entries[0]}"
-  fi
-  dataset=(--dataset "$name=$directory")
+if [[ "$runner" == pyneat ]]; then
+resolution="$("$(dirname "${BASH_SOURCE[0]}")/unpack_benchmark_datasets.sh" "$MODEL_DIR" "$BUILD_PROFILE_ID" \
+  "$DATASET_DIR" --first)"
+if [[ -n "$resolution" ]]; then
+  dataset=(--dataset "$(json_field name <<< "$resolution")=$(json_field directory <<< "$resolution")")
 fi
 
 # The model's pinned resources, laid out as its package installs them. A model without resources gets none.
@@ -123,8 +113,9 @@ if (( cpu_frequency_khz != CPU_FREQUENCY_KHZ )); then
 fi
 
 mkdir -p "$OUTPUT_DIR"
-if [[ "$backend" == llima ]]; then
-  deployment="$(dirname "${inputs[0]#*=}")/deployment"
+# Where a build that is packaged as a deployment folder keeps it: beside its manifest.
+deployment="$(dirname "${inputs[0]#*=}")/deployment"
+if [[ "$runner" == mole ]]; then
   export HF_HOME="${HF_HOME:-/media/nvme/huggingface}"
   baseline=()
   if [[ -f "$COMPILED_DIR/benchmark-baseline.json" ]]; then
@@ -132,6 +123,10 @@ if [[ "$backend" == llima ]]; then
   fi
   PYTHONPATH="$REPOSITORY/tools" PYTHONDONTWRITEBYTECODE=1 "$LLIMA_MOLE_PYTHON" "$MODEL_DIR/scripts/performance.py" \
     --deployment "$deployment" "${baseline[@]}" --output "$OUTPUT_DIR" 2>&1 | tee "$OUTPUT_DIR/performance.log"
+elif [[ "$backend" == llima ]]; then
+  # A speech model is a deployment folder that PyNeat's speech server runs.
+  PYTHONPATH="$REPOSITORY/tools:$site" PYTHONDONTWRITEBYTECODE=1 "$PYNEAT_PYTHON" "$MODEL_DIR/scripts/performance.py" \
+    --deployment "$deployment" "${dataset[@]}" --output "$OUTPUT_DIR" 2>&1 | tee "$OUTPUT_DIR/performance.log"
 else
   PYTHONPATH="$REPOSITORY/tools:$site" PYTHONDONTWRITEBYTECODE=1 "$PYNEAT_PYTHON" "$MODEL_DIR/scripts/performance.py" \
     "${mpks[@]}" "${dataset[@]}" "${resources[@]}" --output "$OUTPUT_DIR" 2>&1 | tee "$OUTPUT_DIR/performance.log"

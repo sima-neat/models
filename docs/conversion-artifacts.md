@@ -24,6 +24,12 @@ the package ships, from the model's input to the final outputs the package keeps
 simplify the ONNX with `onnxsim.simplify`, including constant folding, when that keeps
 the same inputs, outputs, and computation.
 
+Every model exports at one ONNX opset, which
+[`deps/manifest.json`](../deps/manifest.json) sets as `onnx.opset`. The export passes
+`onnx_opset_version()` from `model_registry.dependencies`, and `validate_export` checks
+the written file with `require_onnx_opset_version(model)`. A `surgery.py` that exports
+a graph does the same.
+
 Every other change made for the compiler belongs in `surgery.py`, even one that leaves
 the results exactly the same. That includes a cut: an export that ends at an inner
 tensor, such as the raw heads before the official decode step, or one that starts after
@@ -119,6 +125,8 @@ converted files:
 - any other file directly in `scripts/` that is not a `.py` file, such as
   `requirements-convert.txt` or an exporter patch
 - any file in a subfolder of `scripts/`
+- the ONNX opset, `onnx.opset` in `deps/manifest.json`, which changes every
+  conversion-backed model at once
 
 Three files never count, wherever they sit: `requirements-compile.txt`,
 `requirements-accuracy.txt`, and `requirements-performance.txt`.
@@ -127,7 +135,7 @@ Everything else leaves the conversion valid, including shared tooling, tests,
 compile and benchmark code, and the taxonomy. A changed conversion test runs the
 next time Convert runs.
 
-Shared tooling is not on the list because the checkpoint is verified against its
+No shared file is on the list because the checkpoint is verified against its
 pinned SHA-256: where it is hosted and how it is fetched cannot change the output.
 When a shared change does alter converted output, such as a new Python version in
 `scripts/run_model_conversion.sh` or a new bundle layout, raise

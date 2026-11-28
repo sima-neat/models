@@ -7,6 +7,9 @@ from types import ModuleType
 import numpy as np
 import onnx
 import pytest
+from model_registry.dependencies import onnx_opset_version
+
+OPSET = onnx_opset_version()
 
 
 @pytest.fixture
@@ -99,7 +102,7 @@ def test_fixed_onnx_interface(tmp_path: Path, case: str, converter: ModuleType) 
     values = [helper.make_tensor_value_info(name, onnx.TensorProto.FLOAT, shape)
               for name, shape in zip(names, interface.values())]
     nodes = [helper.make_node("Identity", [names[0]], [name]) for name in names[1:]]
-    opset = 13 if case == "opset" else converter.OPSET
+    opset = OPSET + 1 if case == "opset" else OPSET
     model = helper.make_model(
         helper.make_graph(nodes, "fixture", values[:1], values[1:]), opset_imports=[helper.make_opsetid("", opset)]
     )

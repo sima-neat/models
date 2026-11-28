@@ -461,10 +461,6 @@ jobs:
             --github-run-attempt "$GITHUB_RUN_ATTEMPT" \
             --github-run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
             --json > "$RUNNER_TEMP/package-publication.json"
-          # The benchmarks measure the profile's package, so its receipt travels with the build.
-          receipt="$MODEL_ID/$BUILD_PROFILE_ID/packages/default/registry-publication.json"
-          mkdir -p "$(dirname "_compiled/$receipt")"
-          cp "_packages/$receipt" "_compiled/$receipt"
 
       - name: Publish this build in the catalog
         if: inputs.publishable && !fromJSON(inputs.entry).build_on_demand
@@ -497,18 +493,7 @@ jobs:
             sleep "$(( 1 + RANDOM % ceiling ))"
           done
 
-      # After the catalog step: a rerun of a failed Publish job then uploads this artifact once, and the
-      # benchmark requires exactly one.
-      - name: Retain the published model output for the benchmarks
-        if: inputs.publishable && !fromJSON(inputs.entry).build_on_demand
-        uses: actions/upload-artifact@v7
-        with:
-          name: compiled-model-${{ fromJSON(inputs.entry).model_id }}-${{ fromJSON(inputs.entry).build_profile_id }}-${{ fromJSON(inputs.entry).compile_invocation_id }}
-          path: _compiled
-          if-no-files-found: error
-          retention-days: 14
-
-  # The benchmarks start as soon as this build publishes, while other builds may still compile.
+  # The benchmarks start as soon as this build publishes in the catalog, while other builds may still compile.
   benchmark:
     name: Benchmark
     needs: publish
@@ -524,7 +509,6 @@ jobs:
     uses: ./.github/workflows/vulcan-model-benchmarking.yml
     with:
       environment: ${{ inputs.vulcan_environment }}
-      source_run_id: ${{ github.run_id }}
       source_sha: ${{ github.sha }}
       source_branch: ${{ github.ref_name }}
       model_id: ${{ fromJSON(inputs.entry).model_id }}

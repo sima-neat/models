@@ -14,11 +14,10 @@ import math
 import multiprocessing
 import os
 import shutil
-import tarfile
 import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -36,6 +35,7 @@ from afe.apis.loaded_net import load_model
 from afe.apis.model import L2CachingMode
 from afe.load.importers.general_importer import onnx_source
 from calibration import load_images, select_names
+from model_registry.compile_script import compiler_log_level, read_mpk_manifest
 from model_registry.fetch import sha256_file
 from model_registry.model import load_model as load_metadata
 from surgery import COMPONENT_GRAPHS, FIDELITY_PROMPTS, RUNTIME_FILES, prepare_model
@@ -98,30 +98,13 @@ def _quantize_component(graph: Path, name: str, component_id: str, parameters: d
         calibration_data=None,
         quantization_config=_quantization_config(parameters),
         model_name=name,
-        log_level=logging.INFO,
+        log_level=compiler_log_level(),
     )
-
-
-def _read_mpk_manifest(archive: Path) -> tuple[list[str], dict[str, Any]]:
-    with tarfile.open(archive, "r:gz") as stream:
-        members = stream.getmembers()
-        for member in members:
-            path = PurePosixPath(member.name)
-            if path.is_absolute() or ".." in path.parts or member.issym() or member.islnk():
-                raise RuntimeError(f"unsafe MPK member: {member.name}")
-        names = [member.name for member in members]
-        manifests = [name for name in names if name.endswith("_mpk.json")]
-        if len(manifests) != 1:
-            raise RuntimeError(f"expected one MPK manifest, found {manifests}")
-        source = stream.extractfile(manifests[0])
-        if source is None:
-            raise RuntimeError(f"cannot read MPK manifest: {manifests[0]}")
-        return names, json.load(source)
 
 
 def audit_mpk(archive: Path, component_id: str) -> dict[str, Any]:
     """Require one MLA plugin, no CPU plugins and the component's input."""
-    names, manifest = _read_mpk_manifest(archive)
+    names, manifest = read_mpk_manifest(archive)
     elfs = [name for name in names if name.endswith(".elf")]
     shared_objects = [name for name in names if name.endswith(".so") or ".so." in name]
     plugins = manifest.get("plugins", [])
@@ -152,19 +135,12 @@ def _compile_component(quantized: Any, build_dir: Path, component_id: str) -> Pa
         output_path=str(build_dir),
         batch_size=1,
         compress=True,
-        log_level=logging.INFO,
+        log_level=compiler_log_level(),
         tessellate_parameters=None,
         l2_caching_mode=L2CachingMode.NONE,
         preserve=True,
-        deployable=True,
-        retained_temporary_directory_name=None,
-        use_power_limits=False,
-        max_mla_power=None,
         # Keep FP32 LayerNorm intermediates in both BF16-activation profiles.
         layer_norm_use_fp32_intermediates=True,
-        rms_norm_use_fp32_intermediates=False,
-        enable_filter_sharing=False,
-        layout_search_effort_level=0,
     )
     archive = _find_mpk(build_dir, component_id)
     audit_mpk(archive, component_id)

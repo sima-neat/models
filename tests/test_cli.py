@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import io
 import json
 import subprocess
 import sys
@@ -10,6 +12,8 @@ import pytest
 import yaml
 from model_registry import cli
 from model_registry.cli import main
+from model_registry.fetch import BuildFile, StagedBuildFiles
+from model_registry.model import load_and_validate_model, load_models
 
 from tests.test_stage_plan import repository_without_w16a16_accuracy
 
@@ -23,15 +27,19 @@ def test_author_parser_exposes_only_supported_model_contributor_commands() -> No
     assert set(subcommands.choices) == cli.AUTHOR_COMMANDS
 
 
-@pytest.mark.parametrize("model,profile,stages,backend,baseline,timeout", [
-    ("resnet_50", "w8a8", "performance,accuracy", "core", "false", "45"),
-    ("qwen3_5_0_8b", "w4a16", "performance", "llima", "false", "90"),
-    ("gemma_4_e2b_it_mtp", "w4a16", "performance", "llima", "true", "4320"),
-    ("gemma_4_e2b_it_mtp", "w4a16", "accuracy", "llima", "false", "45"),
+@pytest.mark.parametrize("model,profile,stages,backend,runner,baseline,timeout", [
+    ("resnet_50", "w8a8", "performance,accuracy", "core", "pyneat", "false", "45"),
+    ("qwen3_5_0_8b", "w4a16", "performance", "llima", "mole", "false", "90"),
+    ("gemma_4_e2b_it_mtp", "w4a16", "performance", "llima", "mole", "true", "4320"),
+    ("gemma_4_e2b_it_mtp", "w4a16", "accuracy", "llima", "mole", "false", "45"),
+    # A speech model is packaged as a deployment folder, and PyNeat measures it.
+    ("whisper_small", "w8a16", "accuracy", "llima", "pyneat", "false", "45"),
 ])
-def test_benchmark_job_scopes_baseline_and_timeout(model, profile, stages, backend, baseline, timeout, capsys):
+def test_benchmark_job_scopes_baseline_and_timeout(model, profile, stages, backend, runner, baseline, timeout, capsys):
     assert main(["benchmark-job", str(ROOT / "models" / model), "--build-profile", profile, "--stages", stages]) == 0
-    assert capsys.readouterr().out == f"backend={backend}\nneeds_baseline={baseline}\ntimeout_minutes={timeout}\n"
+    assert capsys.readouterr().out == (
+        f"backend={backend}\nrunner={runner}\nneeds_baseline={baseline}\ntimeout_minutes={timeout}\n"
+    )
 
 
 @pytest.mark.parametrize(
@@ -47,11 +55,14 @@ def test_benchmark_job_scopes_baseline_and_timeout(model, profile, stages, backe
         "publish-branch-deployment",
         "publish-report",
         "publish-catalog",
+        "publish-selection",
         "resolve-base",
         "resolve-benchmark-runtime",
         "benchmark-job",
         "stage-registry-build",
+        "download-build",
         "plan-promoted-benchmarks",
+        "check-main-merge",
     ],
 )
 def test_author_cli_rejects_ci_only_commands(command: str, capsys: pytest.CaptureFixture[str]) -> None:
@@ -84,6 +95,26 @@ def test_promoted_benchmark_planning_command_reads_the_selected_catalog(monkeypa
     assert json.loads(capsys.readouterr().out) == {
         "source_branch": "main", "source_sha": "a" * 40, "include": [], "skipped": [],
     }
+
+
+@pytest.mark.parametrize(("blockers", "exit_code", "last_line"), [
+    ([], 0, "main takes every build and result from develop"),
+    (["x/w8a8 has no accuracy result on develop"], 1,
+     "blocked: this merge would change what customers see on main"),
+])
+def test_main_merge_check_command_prints_each_reason_and_fails_on_a_blocker(
+    blockers, exit_code, last_line, monkeypatch, capsys,
+):
+    def find(repository, *, head, read, read_api_url):
+        assert (repository, head, read_api_url) == (ROOT, "a" * 40, "https://registry.example.invalid")
+        return {"blockers": blockers, "warnings": ["y/w8a8 is promoted to another build on develop"]}
+
+    monkeypatch.setattr(cli, "find_main_merge_blockers", find)
+    arguments = ["--repository", str(ROOT), "--head", "a" * 40, "--api-url", "https://registry.example.invalid"]
+    assert main(["check-main-merge", *arguments]) == exit_code
+    assert capsys.readouterr().out.splitlines() == [
+        "warning: y/w8a8 is promoted to another build on develop", *blockers, last_line,
+    ]
 
 
 @pytest.mark.parametrize("entrypoint", [main, cli.author_main])
@@ -174,12 +205,41 @@ def test_validate_json_output(capsys) -> None:
 
 
 def test_validate_models_checks_every_manifest(capsys) -> None:
+    # This holds every declared profile in the checkout within 8% of its reference, as the orchestrator's select job
+    # does.
     result = main(["validate-models", "--repository", str(ROOT), "--json"])
-    assert result == 0
-    output = capsys.readouterr().out
+    captured = capsys.readouterr()
+    assert result == 0, captured.err
+    output = captured.out
     assert f'"model_count": {len(list((ROOT / "models").glob("*/model.yaml")))}' in output
     assert '"yolo26n"' in output
     assert '"valid": true' in output
+
+
+@pytest.mark.parametrize("command", ("validate", "validate-models"))
+def test_validation_rejects_a_profile_far_below_its_reference_that_loading_accepts(
+    command: str, tmp_path: Path, capsys
+) -> None:
+    repository = repository_without_w16a16_accuracy(tmp_path)
+    model_dir = repository / "models" / "resnet_50"
+    tests_yaml = model_dir / "tests" / "tests.yaml"
+    tests = yaml.safe_load(tests_yaml.read_text(encoding="utf-8"))
+    # 0.73 is 9.2% below the published top-1 of 0.80382.
+    tests["accuracy"]["expected"]["w8a8"]["imagenet-2012-val"]["top1_accuracy"] = 0.73
+    tests_yaml.write_text(yaml.safe_dump(tests, sort_keys=False), encoding="utf-8")
+    arguments = [str(model_dir)] if command == "validate" else ["--repository", str(repository)]
+
+    # Staging, planning, publication and promotion load another revision of a model this way.
+    loaded = load_and_validate_model(model_dir, repository / "schemas" / "model.schema.json")
+    result = main([command, *arguments])
+
+    assert [profile["id"] for profile in loaded["build_profiles"]] == ["w16a16", "w8a8", "w8a16"]
+    assert set(load_models(repository)) == {"resnet_50"}
+    assert result == 2
+    assert (
+        "accuracy.expected.w8a8.imagenet-2012-val: top1_accuracy 0.73 is below the reference 0.80382 by more than 8%; "
+        "comment the w8a8 profile out in model.yaml"
+    ) in capsys.readouterr().err
 
 
 def test_fetch_reports_file_set_root(monkeypatch, tmp_path: Path, capsys) -> None:
@@ -256,7 +316,7 @@ def test_fetch_calibration_skips_variant_that_does_not_require_it(monkeypatch, c
     [
         ("resnet_50", "w8a8", "model"),
         ("resnet_50", "w16a16", "model"),
-        ("rf_detr_small", "w8a8_w16a16", "backbone"),
+        ("rf_detr_small", "w8a8_mixed_w16a16", "backbone"),
     ],
 )
 def test_fetch_fidelity_dataset_resolves_declared_fidelity(
@@ -377,43 +437,151 @@ def test_dataset_names_writes_a_name_for_every_dataset_file(tmp_path: Path) -> N
     assert names["coco-2017"] == "COCO 2017"
 
 
-def test_low_accuracy_variants_writes_declared_build_profiles(tmp_path: Path) -> None:
-    output = tmp_path / "low-accuracy-variants.json"
-    assert main(["low-accuracy-variants", "--repository", str(ROOT), "--output", str(output)]) == 0
+def test_devkit_accuracy_datasets_prints_each_pin_without_reading_an_archive(monkeypatch, capsys) -> None:
+    def unexpected_read(*args, **kwargs):
+        raise AssertionError("listing the datasets must not read an archive")
 
-    models = cli.load_models(ROOT)
-    for model_id, profiles in json.loads(output.read_text(encoding="utf-8")).items():
-        assert profiles
-        assert set(profiles) <= {profile["id"] for profile in models[model_id]["build_profiles"]}
+    monkeypatch.setattr("model_registry.cli.resolve_dataset", unexpected_read)
+    monkeypatch.setattr("model_registry.cli.unpack_shared_dataset", unexpected_read)
 
-
-def test_resolve_devkit_accuracy_caches_each_accuracy_dataset_of_the_profile(
-    monkeypatch, tmp_path: Path, capsys
-) -> None:
-    dataset = tmp_path / "imagenet-mini.tgz"
-    monkeypatch.setattr("model_registry.cli.resolve_dataset", lambda *args, **kwargs: dataset)
-
-    assert main(["resolve-devkit-accuracy", str(ROOT / "models" / "resnet_50"), "--build-profile", "w8a8"]) == 0
+    assert main(["devkit-accuracy-datasets", str(ROOT / "models" / "resnet_50"), "--build-profile", "w8a8"]) == 0
 
     # One JSON line per dataset model.yaml's accuracy names.
     assert [json.loads(line) for line in capsys.readouterr().out.splitlines()] == [{
         "name": "imagenet-2012-val",
-        "path": str(dataset),
         "sha256": "018bf95eb75b8b7f1d7766303cdecf3c45ecb02ccf4cf161122ae885c4d7a36f",
         "size_bytes": 6666407650,
     }]
 
 
-def test_resolve_devkit_accuracy_skips_a_profile_without_accuracy(monkeypatch, capsys, tmp_path: Path) -> None:
-    def unexpected_resolve(*args, **kwargs):
-        raise AssertionError("a profile without accuracy must not resolve a dataset")
-
-    monkeypatch.setattr("model_registry.cli.resolve_dataset", unexpected_resolve)
-
+def test_devkit_accuracy_datasets_skips_a_profile_without_accuracy(capsys, tmp_path: Path) -> None:
     model_dir = repository_without_w16a16_accuracy(tmp_path) / "models" / "resnet_50"
-    assert main(["resolve-devkit-accuracy", str(model_dir), "--build-profile", "w16a16"]) == 0
+    assert main(["devkit-accuracy-datasets", str(model_dir), "--build-profile", "w16a16"]) == 0
 
     assert capsys.readouterr().out == ""
+
+
+def test_devkit_accuracy_datasets_passes_the_declared_sample_cap(tmp_path: Path, capsys) -> None:
+    model_dir = repository_without_w16a16_accuracy(tmp_path) / "models" / "resnet_50"
+    model_yaml = model_dir / "model.yaml"
+    model = yaml.safe_load(model_yaml.read_text(encoding="utf-8"))
+    model["accuracy"]["samples"] = 500
+    model_yaml.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
+
+    assert main(["devkit-accuracy-datasets", str(model_dir), "--build-profile", "w8a8"]) == 0
+
+    # The accuracy runner passes it to accuracy.py as --limit.
+    assert [json.loads(line)["samples"] for line in capsys.readouterr().out.splitlines()] == [500]
+
+
+RESNET_50_PIN = "018bf95eb75b8b7f1d7766303cdecf3c45ecb02ccf4cf161122ae885c4d7a36f"
+
+
+@pytest.mark.parametrize("unpacked", [True, False], ids=["unpacked", "not_on_share"])
+def test_unpack_shared_dataset_exits_1_when_the_share_cannot_give_the_dataset(
+    monkeypatch, tmp_path: Path, unpacked: bool
+) -> None:
+    calls = []
+
+    def unpack(dataset, shared_archives, destination):
+        calls.append((dataset["sha256"], shared_archives, destination))
+        return unpacked
+
+    monkeypatch.setattr("model_registry.cli.unpack_shared_dataset", unpack)
+
+    assert main([
+        "unpack-shared-dataset", str(ROOT / "models" / "resnet_50"), "--dataset", "imagenet-2012-val",
+        "--shared-archives", str(tmp_path / "share"), "--destination", str(tmp_path / "datasets" / "imagenet"),
+    ]) == (0 if unpacked else 1)
+    # The share is asked by the pin, and the shell falls back to the Dataset Registry on exit status 1.
+    assert calls == [(RESNET_50_PIN, tmp_path / "share", tmp_path / "datasets" / "imagenet")]
+
+
+def test_resolve_accuracy_dataset_prints_the_archive_the_dataset_registry_resolves(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    calls = []
+
+    def resolve(dataset, cache_dir):
+        calls.append((dataset["sha256"], cache_dir))
+        return tmp_path / "cache" / "val.tgz"
+
+    monkeypatch.setattr("model_registry.cli.resolve_dataset", resolve)
+
+    assert main([
+        "resolve-accuracy-dataset", str(ROOT / "models" / "resnet_50"), "--dataset", "imagenet-2012-val",
+        "--cache-dir", str(tmp_path / "cache"),
+    ]) == 0
+    assert calls == [(RESNET_50_PIN, tmp_path / "cache")]
+    assert capsys.readouterr().out == f"{tmp_path / 'cache' / 'val.tgz'}\n"
+
+
+STAGED_API = "https://registry.example.invalid"
+
+
+def _stage_build_files(compiled: Path, files: dict[str, bytes]) -> tuple[dict[str, dict], dict[str, bytes]]:
+    """Stage resnet_50/w8a8 as the stage job does; return the registry's artifact reads and the served bytes."""
+    profile_dir = compiled / "resnet_50" / "w8a8"
+    profile_dir.mkdir(parents=True)
+    reads, objects, staged = {}, {}, []
+    for index, (path, payload) in enumerate(files.items(), 1):
+        run_id = f"00000000-0000-4000-8000-{index:012d}"
+        digest = hashlib.sha256(payload).hexdigest()
+        staged.append(BuildFile(path, run_id, "mpk", digest, len(payload)))
+        url = f"https://objects.example.invalid/{run_id}"
+        reads[f"{STAGED_API}/v1/runs/{run_id}/artifacts/mpk"] = {
+            "artifact": {"sha256": digest, "size_bytes": len(payload), "download_url": url},
+        }
+        objects[url] = payload
+    StagedBuildFiles(STAGED_API, tuple(staged)).write(profile_dir)
+    return reads, objects
+
+
+def _serve_registry(monkeypatch, reads: dict[str, dict], objects: dict[str, bytes]) -> None:
+    monkeypatch.setattr("model_registry.fetch.read_registry_json_authenticated", reads.__getitem__)
+    monkeypatch.setattr("model_registry.fetch.urlopen", lambda request, timeout: io.BytesIO(objects[request.full_url]))
+
+
+def test_download_build_downloads_each_staged_file_by_compile_run(monkeypatch, tmp_path: Path, capsys) -> None:
+    compiled = tmp_path / "_compiled"
+    reads, objects = _stage_build_files(compiled, {"model/resnet_50_w8a8.tar.gz": b"mpk bytes"})
+    _serve_registry(monkeypatch, reads, objects)
+
+    assert main(["download-build", str(compiled), "--model", "resnet_50", "--build-profile", "w8a8"]) == 0
+
+    assert (compiled / "resnet_50/w8a8/model/resnet_50_w8a8.tar.gz").read_bytes() == b"mpk bytes"
+    assert capsys.readouterr().out == "Downloaded and verified 1 file(s) of resnet_50/w8a8\n"
+
+
+@pytest.mark.parametrize(("mismatch", "error"), [
+    ("registry_sha256", "does not record the SHA-256 and size staged for model/resnet_50_w8a8.tar.gz"),
+    ("registry_size", "does not record the SHA-256 and size staged for model/resnet_50_w8a8.tar.gz"),
+    ("served_bytes", "failed SHA-256 verification"),
+    ("served_size", "exceeds its declared size"),
+])
+def test_download_build_rejects_a_file_that_differs_from_the_staged_build(
+    monkeypatch, tmp_path: Path, capsys, mismatch: str, error: str
+) -> None:
+    compiled = tmp_path / "_compiled"
+    reads, objects = _stage_build_files(compiled, {"model/resnet_50_w8a8.tar.gz": b"mpk bytes"})
+    artifact = next(iter(reads.values()))["artifact"]
+    if mismatch == "registry_sha256":
+        artifact["sha256"] = "0" * 64
+    elif mismatch == "registry_size":
+        artifact["size_bytes"] += 1
+    elif mismatch == "served_bytes":
+        objects[artifact["download_url"]] = b"mpk byteZ"
+    else:
+        objects[artifact["download_url"]] = b"mpk bytes and more"
+    _serve_registry(monkeypatch, reads, objects)
+
+    assert main(["download-build", str(compiled), "--model", "resnet_50", "--build-profile", "w8a8"]) == 2
+
+    assert error in capsys.readouterr().err
+    # No file the benchmark could read is left behind.
+    assert sorted(path.name for path in (compiled / "resnet_50/w8a8").rglob("*") if path.is_file()) == [
+        "build-files.json"
+    ]
 
 
 def test_model_component_mpks_prints_one_component_mpk_per_line(monkeypatch, tmp_path: Path, capsys) -> None:
@@ -427,9 +595,9 @@ def test_model_component_mpks_prints_one_component_mpk_per_line(monkeypatch, tmp
 
     assert main([
         "model-component-mpks", str(tmp_path), "--repository", str(ROOT), "--model", "rf_detr_nano",
-        "--build-profile", "w8a8_w16a16",
+        "--build-profile", "w8a8_mixed_w16a16",
     ]) == 0  # fmt: skip
-    assert calls == [(tmp_path, ROOT, "rf_detr_nano", "w8a8_w16a16")]
+    assert calls == [(tmp_path, ROOT, "rf_detr_nano", "w8a8_mixed_w16a16")]
     assert capsys.readouterr().out == "backbone=/c/backbone.tar.gz\ndecoder=/c/decoder.tar.gz\n"
 
 

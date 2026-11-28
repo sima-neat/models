@@ -44,7 +44,7 @@ and `accuracy`. Every build compiles. The performance and accuracy stages run wh
 
 | Stage | Where it runs | Model script | What it produces |
 | --- | --- | --- | --- |
-| compile | Model Compiler | `scripts/compile.py` | one [MPK](#mpk) per [model component](#model-component), plus `fidelity.json` when `model.yaml` declares `numerical_fidelity`, a comparison of the compiled model's outputs with the original's |
+| compile | Model Compiler | `scripts/compile.py` | one [MPK](#mpk) per [model component](#model-component), plus `fidelity.json` when `model.yaml` declares `numerical_fidelity`, a comparison of the quantized graph's outputs, run in the Model Compiler, with the original's |
 | performance | Modalix DevKit | `scripts/performance.py` | a model report with the performance of the whole model |
 | accuracy | Modalix DevKit | `scripts/accuracy.py` | a model report with the accuracy on each declared dataset |
 
@@ -106,7 +106,7 @@ value ranges of an INT8 build. `model.yaml` pins each calibration dataset under
 `calibrations`, and a build profile names the one it uses.
 
 Example: the `w8a8` build profile of `resnet_50` sets
-`calibration_dataset: imagenet-2012-cal` and `calibration_samples: 50`. The `w8a16` and
+`calibration_dataset: imagenet-2012-cal` and `calibration_samples: 20`. The `w8a16` and
 `w16a16` build profiles use no calibration dataset.
 
 ## Fingerprint
@@ -148,6 +148,20 @@ A measurement is one measured value of a metric, for one build.
 Example: `models/resnet_50/tests/tests.yaml` records 1508.0 as the expected
 `throughput_fps` of the `w8a8` build. That number is a measurement of the metric
 `throughput_fps`.
+
+## Reference score
+
+A reference score is an accuracy of the source model before compilation, which
+`reference_metrics` in `model.yaml` records. The source model's authors published it, or
+the model's `scripts/fp32_baseline_accuracy.py` measured it as an FP32 baseline.
+Validation and the DevKit accuracy test compare each build profile with one reference
+score per dataset: the FP32 baseline, else the published score for the evaluated split.
+They fail a profile more than 8% below it
+([comment out a variant far below its reference score](adding-a-model.md#comment-out-a-variant-far-below-its-reference-score)).
+
+Example: `resnet_50` records a published top-1 accuracy of 0.80382 on the ImageNet
+validation split. Its `w8a8` build expects 0.7754, which is 3.5% below that reference
+score.
 
 ## On-demand build
 

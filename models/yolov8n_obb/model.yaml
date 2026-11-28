@@ -53,7 +53,7 @@ build_profiles:
     calibration_dataset: dota-v1-0-cal
     components:
       model:
-        parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 50}
+        parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 20}
 
   # Disabled after YOLOv8n OBB w8a16 failed the Model Compiler 3.0.0.1 simulator check ("Check FAILED").
   # Re-enable each size once compilation and its accuracy/performance checks pass.

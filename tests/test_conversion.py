@@ -26,8 +26,8 @@ ROOT = Path(__file__).resolve().parents[1]
 def repository(tmp_path):
     root = tmp_path / "repo"
     for name in (
-        "schemas", "taxonomies", "datasets", "scripts",
-        "tools/model_registry", "tools/model_report", ".github/workflows",
+        "schemas", "taxonomies", "datasets", "scripts", "deps",
+        "tools/model_registry", "tools/model_report", "tools/model_inputs", ".github/workflows",
     ):
         shutil.copytree(ROOT / name, root / name)
     for name in ("conftest.py", "pyproject.toml"):
@@ -640,6 +640,18 @@ def test_raising_the_fingerprint_version_invalidates_saved_selection(repository,
         conversion.apply_selection(model, {"yolo26x": {"conversion_fingerprint": original}}, root=repository)
 
 
+def test_another_onnx_opset_invalidates_saved_selection(repository):
+    model = load_and_validate_model(repository / "models/yolo26x")
+    original = conversion.conversion_fingerprint(repository, model)
+    path = repository / "deps/manifest.json"
+    manifest = json.loads(path.read_text())
+    manifest["onnx"]["opset"] += 1
+    path.write_text(json.dumps(manifest))
+    assert conversion.conversion_fingerprint(repository, model) != original
+    with pytest.raises(ValidationError, match="checkout's recipe"):
+        conversion.apply_selection(model, {"yolo26x": {"conversion_fingerprint": original}}, root=repository)
+
+
 def test_another_checkpoint_invalidates_saved_selection(repository):
     original = conversion.conversion_fingerprint(repository, load_and_validate_model(repository / "models/yolo26x"))
     path = repository / "models/yolo26x/model.yaml"
@@ -845,7 +857,6 @@ def test_bundle_closes_streams_when_archive_write_fails(tmp_path, monkeypatch):
 def test_offline_browser_preview_supports_conversion_models(repository, monkeypatch):
     import runpy
 
-    shutil.copytree(ROOT / "deps", repository / "deps")
     preview = runpy.run_path(str(ROOT / "artifact-browser/preview.py"))
     namespace = preview["_repository"].__wrapped__.__globals__
     monkeypatch.setitem(namespace, "ROOT", repository)

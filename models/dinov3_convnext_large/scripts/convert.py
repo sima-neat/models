@@ -14,6 +14,7 @@ from pathlib import Path
 import numpy as np
 import onnx
 from model_registry.conversion import conversion_outputs
+from model_registry.dependencies import onnx_opset_version, require_onnx_opset_version
 from model_registry.fetch import Fetcher
 from model_registry.model import load_and_validate_model
 
@@ -27,7 +28,6 @@ INTERFACE = {
     "patch_embeddings": [1, PATCHES, HIDDEN_SIZE],
 }
 OUTPUTS = ("class_embedding", "patch_embeddings")
-OPSET = 17
 SOURCE = ("file_set", "model.safetensors", ["model.safetensors", "config.json", "LICENSE.md"])
 SEEDS = range(123, 127)
 # ONNX Runtime and PyTorch round float32 sums differently: on the seeded inputs an output value differs by up to
@@ -51,8 +51,7 @@ def validate_config(directory):
 def validate_export(path):
     model = onnx.load(path, load_external_data=False)
     onnx.checker.check_model(model)
-    if [item.version for item in model.opset_import if not item.domain] != [OPSET]:
-        raise ValueError(f"The export requires opset {OPSET}")
+    require_onnx_opset_version(model)
     values = [*model.graph.input, *model.graph.output]
     if [value.name for value in values] != list(INTERFACE):
         raise ValueError(f"Expected the input pixel_values and the outputs {OUTPUTS}")
@@ -131,7 +130,7 @@ def convert(source, output_dir):
             str(reference),
             input_names=["pixel_values"],
             output_names=list(OUTPUTS),
-            opset_version=OPSET,
+            opset_version=onnx_opset_version(),
             dynamo=False,
         )
     fold_constants(reference)

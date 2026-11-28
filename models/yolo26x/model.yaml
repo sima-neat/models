@@ -52,7 +52,7 @@ build_profiles:
     calibration_dataset: coco-2017-cal
     components:
       model:
-        parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 50}
+        parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 20}
 
   w8a16:
     components:

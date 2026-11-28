@@ -133,14 +133,28 @@ def test_environment_selection_and_runner_mapping(tmp_path, environment) -> None
         ]
 
 
-def test_newer_pushes_supersede_runs_but_manual_dispatches_run_to_completion() -> None:
+@pytest.mark.parametrize(("event", "ref", "cancels"), [
+    ("push", "refs/heads/feat/new-model", True),
+    # A merge waits for the running run of develop or main instead of cancelling its compiles.
+    ("push", "refs/heads/develop", False),
+    ("push", "refs/heads/main", False),
+    ("workflow_dispatch", "refs/heads/feat/new-model", False),
+    ("workflow_dispatch", "refs/heads/develop", False),
+])
+def test_feature_pushes_supersede_runs_while_develop_main_and_dispatches_run_to_completion(
+    event: str, ref: str, cancels: bool
+) -> None:
     concurrency = load(WORKFLOW)["concurrency"]
 
-    assert concurrency["cancel-in-progress"] == "${{ github.event_name != 'workflow_dispatch' }}"
+    assert evaluate(concurrency["cancel-in-progress"].strip()[3:-3], {
+        "github.event_name": event, "github.ref": ref,
+    }) is cancels
     # Only dispatches get a per-run group, so they never cancel or replace one another.
     assert "github.event_name == 'workflow_dispatch' && format('-{0}', github.run_id)" in concurrency["group"]
     assert "github.ref" in concurrency["group"]
     assert "vars.VULCAN_ENV" in concurrency["group"]
+    # GitHub keeps one waiting run per group; a longer queue would compile revisions a newer push replaces.
+    assert "queue" not in concurrency
 
 
 # Job graph and pull-request isolation
@@ -164,6 +178,7 @@ def test_compile_workflow_has_independent_build_stages() -> None:
         "publish-candidates",
         "benchmark",
         "benchmark-without-compiles",
+        "publish-selection",
         "report-partial-publication",
     }
 
@@ -358,7 +373,8 @@ def test_portal_checks_gate_browser_publication_independently_of_model_processin
     assert "portal" in ancestors("publish-model-browser")
     for job_id in (
         "plan", "authorize-runner-classes", "initialize-catalog", "compile", "publish-candidates",
-        "publish-catalog", "benchmark", "benchmark-without-compiles", "report-partial-publication",
+        "publish-catalog", "benchmark", "benchmark-without-compiles", "publish-selection",
+        "report-partial-publication",
     ):
         assert "portal" not in ancestors(job_id), job_id
     # Model validation and registry configuration must still succeed before planning.
@@ -548,6 +564,21 @@ def test_catalog_snapshot_publishes_even_when_builds_fail(
     assert evaluate(job["if"], values) is expected
 
 
+@pytest.mark.parametrize("branch,catalog_result,expected", [
+    ("main", "success", True), ("develop", "success", False), ("main", "failure", False),
+])
+def test_main_publishes_its_selection_after_the_catalog_and_benchmarks(branch, catalog_result, expected) -> None:
+    job = load(WORKFLOW)["jobs"]["publish-selection"]
+    publish = step(job, "Publish the selection and the platform default")
+    values = {"!cancelled()": True, "github.ref_name": branch, "needs.publish-catalog.result": catalog_result}
+
+    assert {"publish-catalog", "benchmark", "benchmark-without-compiles"} <= set(job["needs"])
+    assert evaluate(job["if"], values) is expected
+    assert job["permissions"]["id-token"] == "write"
+    assert "model-registry publish-selection" in publish["run"]
+    assert '--git-sha "$GITHUB_SHA"' in publish["run"]
+
+
 def test_catalog_snapshot_carries_this_revision_without_build_outputs() -> None:
     job = load(WORKFLOW)["jobs"]["publish-catalog"]
     publish = step(job, "Publish and promote the catalog snapshot")
@@ -645,8 +676,7 @@ def test_reused_builds_are_benchmarked_one_call_per_build(job_id) -> None:
     assert job["secrets"] == "inherit"
     assert job["with"] == {
         "environment": "${{ needs.select.outputs.vulcan_environment }}",
-        # An empty source run restores each reused build from the registry at this catalog revision.
-        "source_run_id": "",
+        # Each benchmark stages its build from the registry at this catalog revision.
         "source_sha": "${{ github.sha }}",
         "source_branch": "${{ github.ref_name }}",
         "model_id": "${{ matrix.model_id }}",
@@ -987,34 +1017,22 @@ def test_build_publication_runner_and_steps(runner_script: str, runner_environme
             "Assemble the packages this build completes",
             "Publish the finalized packages",
             "Publish this build in the catalog",
-            # Last, so a rerun of a Publish job that failed in the catalog step uploads the artifact once.
-            "Retain the published model output for the benchmarks",
         )
     ]
     assert order == sorted(order)
 
 
-def test_published_output_is_the_artifact_the_benchmark_verifies() -> None:
-    publish = load(BUILD_WORKFLOW)["jobs"]["publish"]
-    retained = step(publish, "Retain the published model output for the benchmarks")
-    stage = load(BENCHMARK_WORKFLOW)["jobs"]["stage"]
-    verify = step(stage, "Verify the source run and compiled artifact")["run"]
+def test_no_model_file_reaches_the_benchmark_through_an_actions_artifact() -> None:
+    workflow = load(BUILD_WORKFLOW)
+    publish = workflow["jobs"]["publish"]
+    uploads = [item for item in publish["steps"] if item.get("uses", "").startswith("actions/upload-artifact")]
 
-    assert retained["with"]["name"] == (
-        "compiled-model-${{ fromJSON(inputs.entry).model_id }}-${{ fromJSON(inputs.entry).build_profile_id }}"
-        "-${{ fromJSON(inputs.entry).compile_invocation_id }}"
-    )
-    assert 'artifact_name="compiled-model-$MODEL_ID-$BUILD_PROFILE_ID-$COMPILE_INVOCATION_ID"' in verify
-    # Only a published build, with its package, is retained for the benchmarks.
-    assert retained["if"] == "inputs.publishable && !fromJSON(inputs.entry).build_on_demand"
-
-
-def test_published_package_receipt_travels_with_the_build() -> None:
-    packages = step(load(BUILD_WORKFLOW)["jobs"]["publish"], "Publish the finalized packages")["run"]
-
-    assert 'receipt="$MODEL_ID/$BUILD_PROFILE_ID/packages/default/registry-publication.json"' in packages
-    assert 'cp "_packages/$receipt" "_compiled/$receipt"' in packages
-    assert packages.index("model-registry publish-package") < packages.index('cp "_packages/$receipt"')
+    # The benchmark stages the build from the registry catalog this job publishes, so the job retains only the
+    # candidate receipts an on-demand rerun resumes from.
+    assert [item["name"] for item in uploads] == ["Retain candidate publication receipts"]
+    assert all('"_compiled/$receipt"' not in item.get("run", "") for item in publish["steps"])
+    assert "compiled-model-" not in BUILD_WORKFLOW.read_text(encoding="utf-8")
+    assert "source_run_id" not in workflow["jobs"]["benchmark"]["with"]
 
 
 @pytest.mark.parametrize(
@@ -1060,8 +1078,7 @@ def test_new_build_benchmarks_its_own_compile_output() -> None:
     assert benchmark["secrets"] == "inherit"
     assert benchmark["with"] == {
         "environment": "${{ inputs.vulcan_environment }}",
-        # The benchmark downloads this compile run's output.
-        "source_run_id": "${{ github.run_id }}",
+        # The benchmark stages this build from the catalog the publish job wrote at this revision.
         "source_sha": "${{ github.sha }}",
         "source_branch": "${{ github.ref_name }}",
         "model_id": "${{ fromJSON(inputs.entry).model_id }}",
@@ -1200,15 +1217,23 @@ def test_compile_runner_leaves_the_output_directory_to_the_recipe(tmp_path: Path
 
 
 def test_resnet_recipe_is_python_and_uses_the_standard_cli_contract() -> None:
-    recipe = ROOT / "models" / "resnet_50" / "scripts" / "compile.py"
-    tree = ast.parse(recipe.read_text(encoding="utf-8"))
+    recipe = ast.parse((ROOT / "models" / "resnet_50" / "scripts" / "compile.py").read_text(encoding="utf-8"))
+    imported = {
+        (node.module, alias.name)
+        for node in ast.walk(recipe)
+        if isinstance(node, ast.ImportFrom)
+        for alias in node.names
+    }
+    # The recipe's command line is the shared parser's.
+    parser = ast.parse((ROOT / "tools" / "model_registry" / "compile_script.py").read_text(encoding="utf-8"))
     option_strings = {
         value.value
-        for node in ast.walk(tree)
+        for node in ast.walk(parser)
         if isinstance(node, ast.Call)
         for value in node.args
         if isinstance(value, ast.Constant) and isinstance(value.value, str) and value.value.startswith("--")
     }
+    assert ("model_registry.compile_script", "parse_arguments") in imported
     assert {"--model", "--output-dir", "--build-profile", "--dataset"} <= option_strings
     assert "--accuracy-samples" not in option_strings
     assert "--accuracy-workers" not in option_strings

@@ -15,6 +15,7 @@ from typing import Any
 from urllib.parse import quote
 from urllib.request import urlopen
 
+from .dependencies import onnx_opset_version
 from .errors import ValidationError
 from .fetch import sha256_file
 from .model import _read_model, load_and_validate_model
@@ -24,10 +25,10 @@ REPOSITORY_PATH = "/v1/repositories/sima-neat/models"
 ARTIFACT = "onnx"
 FIELDS = ("s3_bucket", "s3_key", "s3_version_id", "sha256", "size_bytes", "media_type")
 
-# The conversion fingerprint holds a model's own inputs and no shared file, so editing shared tooling reconverts
-# nothing. Raise this in the change that makes shared tooling produce a different converted model from the same
-# inputs, such as a new Python version in scripts/run_model_conversion.sh or a new bundle layout. Every
-# conversion-backed model then needs Vulcan Model Convert again.
+# The conversion fingerprint holds a model's own inputs, the ONNX opset and no shared file, so editing shared
+# tooling reconverts nothing. Raise this in the change that makes shared tooling produce a different converted
+# model from the same inputs, such as a new Python version in scripts/run_model_conversion.sh or a new bundle
+# layout. Every conversion-backed model then needs Vulcan Model Convert again.
 FINGERPRINT_VERSION = 1
 # Other stages' dependencies, which never reach the conversion environment.
 OTHER_STAGE_REQUIREMENTS = {"requirements-compile.txt", "requirements-accuracy.txt", "requirements-performance.txt"}
@@ -96,6 +97,7 @@ def conversion_fingerprint(root: Path, model: dict) -> str:
             "model_id": model["id"],
             "source": source_identity(model["conversion"]["default"]["source"]),
             "outputs": conversion_outputs(scripts.parent),
+            "onnx_opset": onnx_opset_version(root),
             "files": files,
         }
     )

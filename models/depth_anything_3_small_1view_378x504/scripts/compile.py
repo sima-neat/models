@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import argparse
 import json
 import logging
 import math
@@ -20,10 +19,12 @@ from afe.apis.defines import (
 from afe.apis.loaded_net import load_model
 from afe.ir.tensor_type import ScalarType
 from afe.load.importers.general_importer import onnx_source
+from model_registry.compile_script import compiler_log_level, component_parameters, parse_arguments
 from model_registry.model import load_model as load_metadata
 from surgery import INPUT_SHAPES, prepare_model
 
 MODEL_DIR = Path(__file__).resolve().parents[1]
+COMPONENT_ID = "model"
 
 
 def quantization() -> QuantizationParams:
@@ -60,25 +61,23 @@ def audit_mpk(archive: Path) -> None:
 
 def compile_model(source: Path, output_dir: Path, profile_id: str) -> Path:
     metadata = load_metadata(MODEL_DIR)
-    profiles = [profile for profile in metadata["build_profiles"] if profile["id"] == profile_id]
-    if len(profiles) != 1:
-        raise ValueError(f"unknown build profile {profile_id!r}")
-    (component,) = profiles[0]["components"]
-    parameters = component["parameters"]
+    parameters = component_parameters(MODEL_DIR, profile_id, COMPONENT_ID)
     if parameters["precision"] != "w8a16" or parameters["input_shape"] != INPUT_SHAPES["image"]:
         raise ValueError("expected W8A16 at the model's single-view input shape")
 
-    component_dir = output_dir / "model"
+    component_dir = output_dir / COMPONENT_ID
     component_dir.mkdir(parents=True, exist_ok=False)
     prepared = prepare_model(source, output_dir / "prepared")
     importer = onnx_source(str(prepared), {"image": tuple(INPUT_SHAPES["image"])}, {"image": ScalarType.float32})
     name = f"{metadata['id']}_{profile_id}"
     try:
         model = load_model(importer, target=gen2_target).quantize(
-            calibration_data=None, quantization_config=quantization(), model_name=name
+            calibration_data=None, quantization_config=quantization(), model_name=name,
+            log_level=compiler_log_level(),
         )
         model.compile(
-            output_path=str(component_dir), batch_size=1, layer_norm_use_fp32_intermediates=True, deployable=True
+            output_path=str(component_dir), batch_size=1, layer_norm_use_fp32_intermediates=True,
+            log_level=compiler_log_level(),
         )
     except SystemExit as error:
         # The compiler can report a fatal error through SystemExit(0).
@@ -92,18 +91,9 @@ def compile_model(source: Path, output_dir: Path, profile_id: str) -> Path:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model", type=Path, required=True)
-    parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--build-profile", required=True)
-    parser.add_argument("--compile-invocation", required=True)
-    args = parser.parse_args()
-    if args.compile_invocation != args.build_profile:
-        parser.error("a build profile compiles in one invocation named after it")
-    if not args.model.is_file():
-        parser.error(f"model does not exist: {args.model}")
+    arguments = parse_arguments(__doc__, MODEL_DIR)
     logging.basicConfig(level=logging.INFO, force=True)
-    print(compile_model(args.model.resolve(), args.output_dir.resolve(), args.build_profile))
+    print(compile_model(arguments.model, arguments.output_dir, arguments.build_profile))
 
 
 if __name__ == "__main__":

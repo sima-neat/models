@@ -18,6 +18,8 @@ from .model import load_models
 
 REPOSITORY_API_PATH = "/v1/repositories/sima-neat/models"
 DEFAULT_BRANCH = "develop"
+# Customers read this branch's catalog, so it ships what the default branch built and measured.
+PRODUCTION_BRANCH = "main"
 # Besides the default branch, branches are cut only from release and integration branches.
 BASE_BRANCH_PREFIXES = ("release-", "integration/")
 
@@ -176,6 +178,16 @@ def _pending_fingerprints(document: dict[str, Any]) -> dict[tuple[str, str], dic
     }
 
 
+def _head_fingerprints(matrix: list[dict[str, Any]]) -> dict[tuple[str, str], dict[str, str]]:
+    """Each build profile the head declares, by (model, build profile): its compile fingerprint per component."""
+    fingerprints: dict[tuple[str, str], dict[str, str]] = {}
+    for entry in matrix:
+        profile_fingerprints = fingerprints.setdefault((entry["model_id"], entry["build_profile_id"]), {})
+        for component_id in entry["component_ids"]:
+            profile_fingerprints[component_id] = entry["compile_fingerprint"]
+    return fingerprints
+
+
 def _carries_fingerprints(profile: dict[str, Any], fingerprints: dict[str, str]) -> bool:
     """Whether the selected deployment or builds carry every component's head compile fingerprint."""
     published = {build.get("component_id"): build.get("compile_fingerprint") for build in profile["builds"]}
@@ -197,15 +209,9 @@ def merge_catalog_sources(documents: list[dict[str, Any]], matrix: list[dict[str
     """
     if not documents:
         return None
-    head_fingerprints: dict[tuple[str, str], dict[str, str]] = {}
-    for entry in matrix:
-        profile_fingerprints = head_fingerprints.setdefault((entry["model_id"], entry["build_profile_id"]), {})
-        for component_id in entry["component_ids"]:
-            profile_fingerprints[component_id] = entry["compile_fingerprint"]
-
     sources = [(_profiles(document), _pending_fingerprints(document)) for document in documents]
     models: dict[str, dict[str, Any]] = {}
-    for (model_id, profile_id), fingerprints in sorted(head_fingerprints.items()):
+    for (model_id, profile_id), fingerprints in sorted(_head_fingerprints(matrix).items()):
         present = [
             (profiles[(model_id, profile_id)], pending)
             for profiles, pending in sources
@@ -223,6 +229,41 @@ def merge_catalog_sources(documents: list[dict[str, Any]], matrix: list[dict[str
             if "benchmark_fingerprints" in chosen[0]:
                 model.setdefault("benchmark_fingerprints", {})[profile_id] = chosen[0]["benchmark_fingerprints"]
     return {"models": [{"id": model_id, **entries} for model_id, entries in sorted(models.items())]}
+
+
+def read_default_branch_builds(
+    read: ReadRequest, read_api_url: str, branch: str, matrix: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Return the catalog source the production branch takes finished builds from: none for any other branch.
+
+    The source holds each automatic build profile the default branch has built at the head compile
+    fingerprints. Placed ahead of the production branch's own catalog, it makes a merge list the runs the
+    default branch measured, so their results apply and nothing compiles again. An on-demand profile is
+    left out, because the registry rejects a snapshot that replaces the builds of a promoted profile. A
+    build stays in the source while the default branch compiles its replacement, so a push to the default
+    branch between this branch's plan and its publication does not take away a build the plan relied on.
+    """
+    if branch != PRODUCTION_BRANCH:
+        return []
+    record = _read_catalog(read, read_api_url, DEFAULT_BRANCH)
+    if record is None:
+        return []
+    document = _document(record)
+    profiles = _profiles(document)
+    on_demand = {entry["model_id"] for entry in matrix if entry.get("build_on_demand", False)}
+    models: dict[str, dict[str, Any]] = {}
+    for (model_id, profile_id), fingerprints in sorted(_head_fingerprints(matrix).items()):
+        profile = profiles.get((model_id, profile_id))
+        if model_id in on_demand or profile is None:
+            continue
+        if not _carries_fingerprints({"builds": profile["builds"]}, fingerprints):
+            continue
+        model = models.setdefault(model_id, {"builds": [], "packages": []})
+        model["builds"].extend(profile["builds"])
+        model["packages"].extend(profile["packages"])
+        if "benchmark_fingerprints" in profile:
+            model.setdefault("benchmark_fingerprints", {})[profile_id] = profile["benchmark_fingerprints"]
+    return [{"models": [{"id": model_id, **entries} for model_id, entries in sorted(models.items())]}]
 
 
 def stage_run_exists(read: ReadRequest, read_api_url: str, run_type: str, fingerprint: str) -> bool:
@@ -269,6 +310,94 @@ def plan_promoted_benchmarks(
                 skipped.append({"model_id": model["id"], "build_profile_id": profile,
                                 "reason": "already measured" if requested else "no requested benchmark references"})
     return {"source_branch": branch, "source_sha": document["catalog_revision"], "include": include, "skipped": skipped}
+
+
+def _missing_results(
+    read: ReadRequest, read_api_url: str, model: dict[str, Any], profile_id: str
+) -> list[str]:
+    """The benchmark stages of a catalog model's build profile whose fingerprint no completed run carries."""
+    fingerprints = (model.get("benchmark_fingerprints") or {}).get(profile_id, {})
+    return [
+        stage for stage in BENCHMARK_RUN_TYPES
+        if stage in fingerprints
+        and not stage_run_exists(read, read_api_url, BENCHMARK_RUN_TYPES[stage], fingerprints[stage])
+    ]
+
+
+def _promoted_on_production(
+    model: dict[str, Any], production_selections: dict[str, Any]
+) -> tuple[list[str], list[str]]:
+    """Split the profiles the production branch promotes: same deployment as this catalog model's, or another."""
+    selections = model.get("approved_deployments", {})
+    same = [
+        profile_id for profile_id, selection in sorted(production_selections.items())
+        if selections.get(profile_id, {}).get("deployment_id") == selection.get("deployment_id")
+    ]
+    return same, sorted(set(production_selections) - set(same))
+
+
+def find_main_merge_blockers(
+    repository: str | Path, *, head: str, read: ReadRequest, read_api_url: str
+) -> dict[str, list[str]]:
+    """Say why merging the default branch's `head` into the production branch would change what customers see.
+
+    `repository` is checked out at the merge result. A blocker means the production branch would compile,
+    would show a model without the results it shows today, or would keep offering a promoted build of a
+    build profile the merge result no longer declares. A warning names a promoted build the merge leaves
+    without results until it is promoted on the production branch too.
+    """
+    root = Path(repository).expanduser().resolve()
+    blockers: list[str] = []
+    warnings: list[str] = []
+    if _git(root, "rev-parse", "HEAD^{tree}") != _git(root, "rev-parse", f"{head}^{{tree}}"):
+        blockers.append(
+            f"the merge result differs from {DEFAULT_BRANCH}: merge {PRODUCTION_BRANCH} into {DEFAULT_BRANCH} first"
+        )
+    _, document = read_current_catalog(read, read_api_url, DEFAULT_BRANCH)
+    if document is None:
+        return {"blockers": [*blockers, f"{DEFAULT_BRANCH} has no catalog"], "warnings": warnings}
+    if document.get("catalog_revision") != head.lower():
+        blockers.append(
+            f"the {DEFAULT_BRANCH} catalog is at {document.get('catalog_revision')}, not at {head}: "
+            f"wait for the {DEFAULT_BRANCH} run of this commit"
+        )
+    blockers.extend(
+        f"{item['model_id']}/{item['build_profile_id']} is still compiling on {DEFAULT_BRANCH}"
+        for item in document.get("pending_builds", [])
+    )
+    _, production = read_current_catalog(read, read_api_url, PRODUCTION_BRANCH)
+    promoted = {
+        model["id"]: model.get("approved_deployments", {}) for model in (production or {}).get("models", [])
+    }
+    for model in document.get("models", []):
+        if model.get("build_on_demand", False):
+            shown, replaced = _promoted_on_production(model, promoted.get(model["id"], {}))
+            warnings.extend(
+                f"{model['id']}/{profile_id} is promoted to another build on {DEFAULT_BRANCH}: promote it on "
+                f"{PRODUCTION_BRANCH} after the merge, until then it has no results there"
+                for profile_id in replaced
+            )
+        else:
+            shown = sorted(model.get("benchmark_fingerprints") or {})
+        blockers.extend(
+            f"{model['id']}/{profile_id} has no {stage} result on {DEFAULT_BRANCH}"
+            for profile_id in shown
+            for stage in _missing_results(read, read_api_url, model, profile_id)
+        )
+    declared = {
+        model_id: {profile["id"] for profile in model["build_profiles"]}
+        for model_id, model in load_models(root).items()
+    }
+    # Only a withdrawal takes a promoted build out of a catalog, so the registry keeps offering this one.
+    blockers.extend(
+        f"{model['id']}/{profile_id} is promoted on {branch}, and model.yaml no longer declares it: "
+        f"withdraw the promotion on {branch}"
+        for branch, catalog in ((DEFAULT_BRANCH, document), (PRODUCTION_BRANCH, production or {}))
+        for model in catalog.get("models", [])
+        for profile_id in sorted(model.get("approved_deployments", {}))
+        if profile_id not in declared.get(model["id"], set())
+    )
+    return {"blockers": blockers, "warnings": warnings}
 
 
 def catalog_builds(document: dict[str, Any] | None) -> dict[tuple[str, str, str], dict[str, Any]]:
@@ -341,8 +470,13 @@ def plan_stages(
         if not read_api_url:
             raise ValidationError("a registry read URL is required to plan against published runs")
         record, sources = read_catalog_sources(read, read_api_url, branch, base_branches)
-        document = merge_catalog_sources(sources, head)
         base_sources = sources[1:] if record is not None else sources
+        default_branch_builds = read_default_branch_builds(read, read_api_url, branch, head)
+        revision = record.get("catalog_revision") if record is not None else None
+        if default_branch_builds and revision and revision == _git(root, "rev-parse", "HEAD"):
+            # Like publish_catalog, a second run of a revision keeps the builds its first snapshot listed.
+            default_branch_builds = []
+        document = merge_catalog_sources([*default_branch_builds, *sources], head)
         if base_sources and not is_long_lived(branch) and not force_rebuild_all:
             base = base_sources[0]
     builds = catalog_builds(document)

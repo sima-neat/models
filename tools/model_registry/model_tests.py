@@ -22,8 +22,9 @@ from .errors import ValidationError
 # How far a measured value may fall below the value tests.yaml expects and still pass, relative to that value.
 ACCURACY_ALLOWED_DROP = 0.05
 PERFORMANCE_ALLOWED_DROP = 0.10
-# How far a build profile's expected accuracy may fall below the source model's reference score, relative to that
-# score, before the model browser's customer view leaves the profile out.
+# How far a build profile's accuracy, expected or measured, may fall below the source model's reference score,
+# relative to that score. A profile further below fails model-registry validate and its DevKit accuracy test, so
+# model.yaml comments it out.
 ACCURACY_ALLOWED_REFERENCE_DROP = 0.08
 
 TESTS_DIR = "tests"
@@ -75,7 +76,8 @@ def skip_reason(tests: dict[str, Any], stage: str) -> str | None:
 
 def measured_shortfalls(model_dir: str | Path, stage: str, profile_id: str, report: dict[str, Any]) -> list[str]:
     """Each value tests.yaml expects of a build profile's report that it misses by more than the stage's allowed
-    drop. Accuracy expects values per dataset, named as in model.yaml."""
+    drop. Accuracy expects values per dataset, named as in model.yaml, and a dataset's measured score also misses
+    when it falls below the model's reference score by more than ACCURACY_ALLOWED_REFERENCE_DROP."""
     expected = load_model_tests(model_dir)[stage]["expected"].get(profile_id, {})
     if not expected:
         return [f"{TESTS_FILE} expects no {stage} values of {profile_id}"]
@@ -95,16 +97,22 @@ def measured_shortfalls(model_dir: str | Path, stage: str, profile_id: str, repo
                 )
             ]
         return _shortfalls("", expected, report["metrics"], PERFORMANCE_ALLOWED_DROP)
+
+    # model.py imports this module, so its loader is imported where the reference scores are needed.
+    from .model import load_model
+
+    model = load_model(model_dir)
     measured = report["datasets"]
-    return [
-        shortfall
-        for dataset, values in expected.items()
-        for shortfall in (
-            _shortfalls(f"{dataset}: ", values, measured[dataset]["metrics"], ACCURACY_ALLOWED_DROP)
-            if dataset in measured
-            else [f"{dataset} was not evaluated"]
-        )
-    ]
+    shortfalls = []
+    for dataset, values in expected.items():
+        if dataset not in measured:
+            shortfalls.append(f"{dataset} was not evaluated")
+            continue
+        metrics = measured[dataset]["metrics"]
+        shortfalls += _shortfalls(f"{dataset}: ", values, metrics, ACCURACY_ALLOWED_DROP)
+        if reference := _reference_shortfall(model, dataset, values, metrics):
+            shortfalls.append(f"{dataset}: {reference}")
+    return shortfalls
 
 
 def _shortfalls(label: str, expected: dict[str, float], metrics: dict[str, float], drop: float) -> list[str]:
@@ -113,42 +121,39 @@ def _shortfalls(label: str, expected: dict[str, float], metrics: dict[str, float
         measured = metrics.get(name)
         if measured is None:
             shortfalls.append(f"{label}{name} was not measured")
-        elif METRICS[name]["direction"] == "lower" and measured > value * (1 + drop):
-            shortfalls.append(f"{label}{name} {measured:g} is above {value:g} by more than {drop:.0%}")
-        elif METRICS[name]["direction"] != "lower" and measured < value * (1 - drop):
-            shortfalls.append(f"{label}{name} {measured:g} is below {value:g} by more than {drop:.0%}")
+        elif side := _missed_side(name, measured, value, drop):
+            shortfalls.append(f"{label}{name} {measured:g} is {side} {value:g} by more than {drop:.0%}")
     return shortfalls
 
 
-def low_accuracy_variants(repository: str | Path, models: dict[str, dict[str, Any]]) -> dict[str, list[str]]:
-    """Each model's build profiles whose expected accuracy misses a reference score by more than the allowed drop,
-    keyed by model ID, for the model browser.
-
-    A dataset's reference is the model's FP32 baseline on it, else the score published for the split the model
-    evaluates. A profile is compared on the first metric of that reference that tests.yaml expects, and a dataset
-    without such a reference decides nothing.
-    """
-    return {
-        model_id: profiles
-        for model_id, model in sorted(models.items())
-        if "accuracy" in model and (profiles := _low_accuracy_profiles(Path(repository) / "models" / model_id, model))
-    }
+def _missed_side(name: str, value: float, target: float, drop: float) -> str | None:
+    """The side, "above" or "below", on which a metric's value is worse than the target by more than the drop,
+    relative to the target and in the metric's better direction, or None when it is not."""
+    if METRICS[name]["direction"] == "lower":
+        return "above" if value > target * (1 + drop) else None
+    return "below" if value < target * (1 - drop) else None
 
 
-def _low_accuracy_profiles(model_dir: Path, model: dict[str, Any]) -> list[str]:
-    expected = load_model_tests(model_dir).get("accuracy", {}).get("expected", {})
-    return [
-        profile
-        for profile in benchmarked_profiles(model, "accuracy")
-        if any(
-            _shortfalls("", _reference_score(model, dataset, values), values, ACCURACY_ALLOWED_REFERENCE_DROP)
-            for dataset, values in expected.get(profile, {}).items()
-        )
-    ]
+def _reference_shortfall(
+    model: dict[str, Any], dataset_name: str, expected: dict[str, float], metrics: dict[str, float]
+) -> str | None:
+    """How a build profile's accuracy on one dataset falls below the dataset's reference score by more than
+    ACCURACY_ALLOWED_REFERENCE_DROP, or None. tests.yaml's `expected` values choose the metric, and `metrics` holds
+    the values compared: the expected ones themselves, or a report's. A dataset without a comparable reference, or
+    a metric `metrics` lacks, decides nothing."""
+    reference = _reference_score(model, dataset_name, expected)
+    if reference is None:
+        return None
+    name, score = reference
+    drop = ACCURACY_ALLOWED_REFERENCE_DROP
+    side = _missed_side(name, metrics[name], score, drop) if name in metrics else None
+    return f"{name} {metrics[name]:g} is {side} the reference {score:g} by more than {drop:.0%}" if side else None
 
 
-def _reference_score(model: dict[str, Any], dataset_name: str, expected: dict[str, float]) -> dict[str, float]:
-    """The reference metric a profile's expected values on one dataset are compared with, or none."""
+def _reference_score(model: dict[str, Any], dataset_name: str, expected: dict[str, float]) -> tuple[str, float] | None:
+    """The metric and reference score a build profile's accuracy on one dataset is compared with, or None. The
+    reference is the model's FP32 baseline on the dataset, else the score published for the split the model
+    evaluates, and the metric is the first of that reference that tests.yaml expects."""
     dataset = model["accuracy"]["datasets"][dataset_name]
     on_dataset = [entry for entry in model.get("reference_metrics", []) if entry["dataset"]["id"] == dataset["id"]]
     baselines = [entry for entry in on_dataset if entry.get("origin") == "fp32_baseline"]
@@ -159,10 +164,10 @@ def _reference_score(model: dict[str, Any], dataset_name: str, expected: dict[st
     ]
     reference = next(iter([*baselines, *published]), None)
     if reference is None:
-        return {}
+        return None
 
     name = next((name for name in reference["metrics"] if name in expected), None)
-    return {name: reference["metrics"][name]} if name else {}
+    return (name, reference["metrics"][name]) if name else None
 
 
 def validate_model_tests(model_dir: str | Path, model: dict[str, Any], schema_path: str | Path) -> None:
@@ -255,6 +260,28 @@ def _require_expected_values(path: Path, stage: str, expected: dict[str, Any], m
             _require_metric_values(
                 path, stage, f"accuracy.expected.{profile}.{name}", values.get(name, {}), dataset["required_metrics"]
             )
+
+
+def require_reference_accuracy(model_dir: str | Path, model: dict[str, Any]) -> None:
+    """Require every benchmarked build profile to expect accuracy within ACCURACY_ALLOWED_REFERENCE_DROP of each
+    dataset's reference score. model.yaml comments a profile further below out instead of shipping it.
+
+    `model` is the model validate_model_tests accepted. model-registry validate and validate-models apply this rule
+    to the checkout a contributor changes. Loading a model does not, so tooling still reads another revision of a
+    model that declares such a profile, such as the target branch's during promotion.
+    """
+    tests = load_model_tests(model_dir)
+    if "accuracy" not in model or skip_reason(tests, "accuracy") is not None:
+        return
+    path = Path(model_dir).expanduser().resolve() / TESTS_DIR / TESTS_FILE
+    expected = tests["accuracy"]["expected"]
+    for profile in benchmarked_profiles(model, "accuracy"):
+        for dataset, values in expected[profile].items():
+            if shortfall := _reference_shortfall(model, dataset, values, values):
+                raise ValidationError(
+                    f"{path}: accuracy.expected.{profile}.{dataset}: {shortfall}; "
+                    f"comment the {profile} profile out in model.yaml"
+                )
 
 
 def _require_metric_values(path: Path, stage: str, label: str, values: dict[str, Any], required: list[str]) -> None:

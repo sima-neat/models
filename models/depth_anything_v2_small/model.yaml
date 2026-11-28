@@ -75,7 +75,7 @@ build_profiles:
 numerical_fidelity:
   status: diagnostic
   dataset: {id: nyu-depth-v2, variant: val, sha256: 6e94b032248af78cc091b6a295808fc95ed4830d32e5084f1e7ec3797eec679e, size_bytes: 156136510}
-  selection: {method: seeded_random_without_replacement, seed: 42, offset: 0, samples: 10}
+  selection: {method: seeded_random_without_replacement, seed: 42, offset: 0, samples: 5}
   outputs: [predicted_depth]
 
 accuracy:

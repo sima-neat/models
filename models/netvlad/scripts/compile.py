@@ -9,11 +9,10 @@ import logging
 import math
 import os
 import shutil
-import tarfile
 import tempfile
 from collections import Counter
 from collections.abc import Callable
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -31,6 +30,8 @@ from afe.core.configs import QuantizationPrecision
 from afe.core.utils import convert_data_generator_to_iterable
 from afe.load.importers.general_importer import onnx_source
 from calibration import load_images, select_images
+from model_registry.compile_script import compiler_log_level, component_parameters, read_mpk_manifest
+from model_registry.fidelity import fidelity_report
 from model_registry.model import load_model as load_metadata
 from sima_utils.data.data_generator import DataGenerator
 from surgery import (
@@ -55,13 +56,6 @@ INPUT_SHAPE = INTERFACE[INPUT]
 INPUT_BYTES = {INPUT: math.prod(INPUT_SHAPE) * 4}
 OUTPUT_BYTES = [DESCRIPTOR_DIM * 4]
 ENCODER_CONVOLUTIONS = sum(item != "M" for item in ENCODER_CONFIG)
-
-
-def build_parameters(metadata: dict[str, Any], profile_id: str) -> dict[str, Any]:
-    profiles = [profile for profile in metadata["build_profiles"] if profile["id"] == profile_id]
-    if len(profiles) != 1:
-        raise ValueError(f"model.yaml declares no build profile {profile_id!r}")
-    return next(item["parameters"] for item in profiles[0]["components"] if item["id"] == COMPONENT_ID)
 
 
 def quantization(precision: str, calibration_bins: int) -> QuantizationParams:
@@ -127,26 +121,9 @@ def calibration_names(dataset: Path, selection: dict[str, Any], sample_count: in
     return select_images(dataset, int(selection["seed"]), 0, sample_count)
 
 
-def _read_mpk_manifest(archive: Path) -> tuple[list[str], dict[str, Any]]:
-    with tarfile.open(archive, "r:gz") as stream:
-        members = stream.getmembers()
-        for member in members:
-            path = PurePosixPath(member.name)
-            if path.is_absolute() or ".." in path.parts or member.issym() or member.islnk():
-                raise RuntimeError(f"unsafe MPK member: {member.name}")
-        names = [member.name for member in members]
-        manifests = [name for name in names if name.endswith("_mpk.json")]
-        if len(manifests) != 1:
-            raise RuntimeError(f"expected one MPK manifest, found {manifests}")
-        source = stream.extractfile(manifests[0])
-        if source is None:
-            raise RuntimeError(f"cannot read MPK manifest: {manifests[0]}")
-        return names, json.load(source)
-
-
 def audit_mpk(archive: Path) -> None:
     """Require the whole network on one MLA segment, with no host code, and the declared interface."""
-    names, manifest = _read_mpk_manifest(archive)
+    names, manifest = read_mpk_manifest(archive)
     elfs = [name for name in names if name.endswith(".elf")]
     shared_objects = [name for name in names if name.endswith(".so") or ".so." in name]
     plugins = sorted(manifest.get("plugins", []), key=lambda item: item.get("sequence", 0))
@@ -184,7 +161,7 @@ def compile_model(
             calibration_data=convert_data_generator_to_iterable(DataGenerator({InputName(INPUT): samples})),
             quantization_config=quantization(precision, int(parameters["calibration_bins"])),
             model_name=f"{MODEL_ID}_{profile_id}",
-            log_level=logging.INFO,
+            log_level=compiler_log_level(),
         )
         if parameters.get("bf16_regions"):
             require_bf16_pooling(quantized)
@@ -193,10 +170,9 @@ def compile_model(
                 output_path=str(build_dir / "mpk"),
                 batch_size=1,
                 compress=True,
-                log_level=logging.INFO,
+                log_level=compiler_log_level(),
                 tessellate_parameters=None,
                 l2_caching_mode=L2CachingMode.NONE,
-                deployable=True,
             )
         except SystemExit as exc:
             # AFE reports a compile error by raising SystemExit without a code, which would exit with status 0.
@@ -221,45 +197,20 @@ def measure_fidelity(
     """Compare the quantized graph's descriptors with Patch-NetVLAD's own forward on the declared images."""
     selection = config["selection"]
     names = select_images(dataset, int(selection["seed"]), int(selection["offset"]), int(selection["samples"]))
-    totals = {"count": 0, "dot": 0.0, "expected": 0.0, "actual": 0.0, "error": 0.0, "absolute": 0.0, "max": 0.0}
+    compared = []
     for index, (name, sample) in enumerate(zip(names, load_images(dataset, names), strict=True), start=1):
         LOG.info("Fidelity image %d/%d: %s", index, len(names), name)
         expected = reference(sample.transpose(2, 0, 1)[None])
         outputs = candidate.execute(inputs={InputName(INPUT): sample[None]}, use_jax=True)
-        actual = np.asarray(outputs[0], dtype=np.float64).reshape(expected.shape)
-        if not (np.isfinite(expected).all() and np.isfinite(actual).all()):
-            raise RuntimeError(f"descriptors for {name} contain non-finite values")
-        error = actual - expected
-        totals["count"] += expected.size
-        totals["dot"] += float(np.dot(expected, actual))
-        totals["expected"] += float(np.sum(expected**2))
-        totals["actual"] += float(np.sum(actual**2))
-        totals["error"] += float(np.sum(error**2))
-        totals["absolute"] += float(np.sum(np.abs(error)))
-        totals["max"] = max(totals["max"], float(np.max(np.abs(error))))
-    count = totals["count"]
-    expected_rms = max(np.sqrt(totals["expected"] / count), np.finfo(np.float64).eps)
-    norm = np.sqrt(totals["expected"] * totals["actual"])
-    return {
-        "schema_version": 1,
-        "model_id": MODEL_ID,
-        "build_profile_id": profile_id,
-        "status": config["status"],
-        "reference": "VGG16 encoder (PyTorch) and Patch-NetVLAD pooling in float64",
-        "candidate": "Quantized AFE graph (JAX execute)",
-        "dataset": {key: config["dataset"][key] for key in ("id", "variant", "sha256")},
-        "selection": selection,
-        "samples": len(names),
-        "metrics": [
-            {
-                "name": OUTPUT,
-                "cosine_similarity": float(np.clip(totals["dot"] / norm if norm else 1.0, -1.0, 1.0)),
-                "normalized_rmse": float(np.sqrt(totals["error"] / count) / expected_rms),
-                "mean_absolute_error": float(totals["absolute"] / count),
-                "max_absolute_error": totals["max"],
-            }
-        ],
-    }
+        compared.append({OUTPUT: (expected, np.asarray(outputs[0]).reshape(expected.shape))})
+    return fidelity_report(
+        MODEL_ID,
+        profile_id,
+        config,
+        compared,
+        reference="VGG16 encoder (PyTorch) and Patch-NetVLAD pooling in float64",
+        candidate="Quantized AFE graph (JAX execute)",
+    )
 
 
 def main() -> int:
@@ -285,10 +236,9 @@ def main() -> int:
     for dataset in (args.dataset, args.fidelity_dataset):
         if not dataset.exists():
             parser.error(f"dataset does not exist: {dataset}")
-    metadata = load_metadata(MODEL_DIR)
-    parameters = build_parameters(metadata, args.build_profile)
+    parameters = component_parameters(MODEL_DIR, args.build_profile, COMPONENT_ID)
     regions = bf16_regions(args.build_profile, parameters)
-    fidelity = metadata["numerical_fidelity"]
+    fidelity = load_metadata(MODEL_DIR)["numerical_fidelity"]
     dataset = args.dataset.expanduser().resolve()
     samples = load_images(
         dataset, calibration_names(dataset, fidelity["selection"], int(parameters["calibration_samples"]))

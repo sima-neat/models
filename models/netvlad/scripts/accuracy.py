@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 import time
 from collections import deque
 from collections.abc import Callable, Iterator, Sequence
@@ -16,6 +15,7 @@ import model_report
 import numpy as np
 import pyneat
 from calibration import preprocess_image
+from model_report import log
 
 # pitts30k-val holds the official test split; pitts30k_test.tsv lists role, image path, UTM easting and northing
 # in pitts30k_test.mat order.
@@ -72,10 +72,6 @@ def parse_mpks(values: list[str]) -> Path:
     if set(mpks) != {"model"}:
         raise SystemExit("--mpk must name exactly model=<path>")
     return Path(mpks["model"])
-
-
-def log(*values: object) -> None:
-    print(*values, file=sys.stderr, flush=True)
 
 
 def read_listing(dataset: Path) -> Listing:

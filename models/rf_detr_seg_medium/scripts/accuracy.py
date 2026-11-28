@@ -13,7 +13,6 @@ import io
 import json
 import multiprocessing
 import random
-import sys
 import time
 from collections import deque
 from collections.abc import Callable, Iterator, Sequence
@@ -26,6 +25,7 @@ import numpy as np
 from calibration import IMAGE_SIZE, MEAN, QUERY_COUNT, STD, select_top_proposals
 from faster_coco_eval import COCO, COCOeval_faster
 from faster_coco_eval.core import mask as mask_util
+from model_report import log
 from PIL import Image
 
 ANNOTATIONS = "annotations/instances_val2017.json"
@@ -251,16 +251,12 @@ def parse_mpks(values: list[str]) -> dict[str, Path]:
     return {name: Path(path) for name, path in mpks.items()}
 
 
-def log(*values: object) -> None:
-    print(*values, file=sys.stderr, flush=True)
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mpk", action="append", required=True, help="component=path, for backbone and decoder")
     parser.add_argument("--dataset", required=True, help="coco-2017-val=<extracted directory>")
     parser.add_argument("--output", type=Path, required=True, help="directory for model-report.json")
-    parser.add_argument("--limit", type=int, help="measure a seeded sample of images (local runs only)")
+    parser.add_argument("--limit", type=int, help="measure a seeded sample of images")
     args = parser.parse_args(argv)
     dataset_id, dataset_dir = args.dataset.split("=", 1)
     result = evaluate(board_pipeline(parse_mpks(args.mpk)), Path(dataset_dir), args.limit)

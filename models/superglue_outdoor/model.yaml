@@ -46,7 +46,7 @@ build_profiles:
         parameters:
           precision: w8a8
           calibration_bins: 2048
-          calibration_samples: 32
+          calibration_samples: 20
           bf16_regions: [attention, residual, encoder, outputs]
 
   w16a16:
@@ -61,7 +61,7 @@ build_profiles:
   #   calibration_dataset: yfcc100m-keypoints-cal
   #   components:
   #     model:
-  #       parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 32}
+  #       parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 20}
 
   # W8A16 passes the compile gate (96.9% of FP32's best matches), but Model Compiler 3.0.0's simulator check rejects
   # it ("Check FAILED", no MPK) with per-token quantization on, and every push would retry the failing compile.

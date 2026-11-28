@@ -11,6 +11,7 @@ import onnx
 import onnxruntime as ort
 from onnx import numpy_helper
 from precision import annotate, regions
+from model_registry.dependencies import onnx_opset_version
 
 SLOTS = 80
 COMPONENTS = ("text_encoder", "detector")
@@ -40,7 +41,7 @@ def export(module, inputs, outputs, output):
     example = tuple(torch.from_numpy(value) for value in inputs.values())
     with torch.inference_mode():
         torch.onnx.export(module, example, str(output), input_names=list(inputs), output_names=outputs,
-                          opset_version=13, dynamo=False, do_constant_folding=True)
+                          opset_version=onnx_opset_version(), dynamo=False, do_constant_folding=True)
     graph, valid = simplify(onnx.load(output))
     if not valid:
         raise RuntimeError("ONNX simplification failed")

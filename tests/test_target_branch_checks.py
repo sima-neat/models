@@ -43,6 +43,10 @@ def test_pull_requests_run_only_the_unprivileged_checks() -> None:
     assert {name: job["uses"] for name, job in workflow["jobs"].items()} == {
         "package": "./.github/workflows/model-registry-package.yml",
         "portal": "./.github/workflows/developer-docs.yml",
+        "main-merge": "./.github/workflows/main-merge-check.yml",
+    }
+    assert {name: job["if"] for name, job in workflow["jobs"].items() if "if" in job} == {
+        "main-merge": "github.base_ref == 'main'",
     }
 
 
@@ -57,7 +61,7 @@ def test_only_target_branch_checks_runs_for_pull_requests() -> None:
 
 
 def test_checked_workflows_run_only_on_hosted_runners() -> None:
-    for name in ("model-registry-package.yml", "developer-docs.yml"):
+    for name in ("model-registry-package.yml", "developer-docs.yml", "main-merge-check.yml"):
         jobs = load(WORKFLOWS / name)["jobs"]
         assert all(job["runs-on"] == "ubuntu-latest" for job in jobs.values()), name
 
@@ -87,3 +91,16 @@ def test_committed_file_check_rejects_forced_binaries_and_large_files(tmp_path: 
         "model.onnx: excluded by .gitignore",
         f"large.bin: {MAX_FILE_BYTES + 1} bytes, over {MAX_FILE_BYTES}",
     ]
+
+
+def test_main_merge_check_reads_the_merge_result_and_its_head_without_secrets() -> None:
+    text = (WORKFLOWS / "main-merge-check.yml").read_text(encoding="utf-8")
+    workflow = load(WORKFLOWS / "main-merge-check.yml")
+    steps = workflow["jobs"]["check"]["steps"]
+
+    assert workflow["permissions"] == {"contents": "read"}
+    assert "secrets" not in text and "environment:" not in text
+    # Depth 2 fetches both parents of the merge result, and the second one is the pull request head.
+    assert steps[0]["with"] == {"fetch-depth": "2"}
+    assert steps[-1]["env"] == {"HEAD_SHA": "${{ github.event.pull_request.head.sha }}"}
+    assert steps[-1]["run"] == 'scripts/check_main_merge.sh "$HEAD_SHA"'

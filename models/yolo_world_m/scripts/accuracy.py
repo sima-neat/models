@@ -12,7 +12,6 @@ import contextlib
 import io
 import json
 import random
-import sys
 import tarfile
 import time
 from collections import deque
@@ -24,6 +23,7 @@ import model_report
 import numpy as np
 from calibration import IMAGE_SIZE, letterbox_geometry, preprocess_image
 from faster_coco_eval import COCO, COCOeval_faster
+from model_report import log
 
 ANNOTATIONS = "annotations/instances_val2017.json"
 IMAGES = "val2017"
@@ -282,17 +282,13 @@ def coco_stats(scorer: COCOeval_faster) -> dict[str, float]:
     return stats
 
 
-def log(*values: object) -> None:
-    print(*values, file=sys.stderr, flush=True)
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mpk", action="append", required=True, help="component=<path>; text_encoder and detector")
     parser.add_argument("--dataset", required=True, help="coco-2017-val=<extracted directory>")
     parser.add_argument("--output", type=Path, required=True, help="directory for model-report.json")
     parser.add_argument("--resources", type=Path, help="package root; prompt_assets default to the MPK location")
-    parser.add_argument("--limit", type=int, help="measure a seeded sample of images (local runs only)")
+    parser.add_argument("--limit", type=int, help="measure a seeded sample of images")
     args = parser.parse_args(argv)
     dataset_id, dataset_dir = args.dataset.split("=", 1)
     dataset = Path(dataset_dir)

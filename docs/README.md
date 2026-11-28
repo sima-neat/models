@@ -27,14 +27,14 @@ locally, and submit it for review, and what CI does after the merge.
 | Phase | What runs | What it shows |
 | --- | --- | --- |
 | Local development | Validation, verified downloads, the compile of each build, MPK checks, and the performance and accuracy stages on a DevKit. | You have reproducible results for every build you submit. |
-| Pull request | `Target Branch Checks`: lint, the repository tests and model tests, the `model-registry` package build, and the model browser checks. | The committed files are valid on the merge result. Pull requests do **not** run recipe or surgery code to compile or measure a model. |
-| After the merge | CI compiles and benchmarks each changed build and publishes the results. | The published model and its measurements come from the reviewed revision. |
+| Pull request | `Target Branch Checks`: lint, the repository tests and model tests, the `model-registry` package build, and the model browser checks. `PR Sanitization`: the target branch, and a GitHub issue reference in the description. | The committed files are valid on the merge result. Pull requests do **not** run recipe or surgery code to compile or measure a model. |
+| After a push | On every push to this repository, CI compiles and benchmarks each changed build and publishes the results. | The results come from the pushed revision. Customers see the `main` catalog. |
 
 The pinned Model Compiler and a compatible Modalix DevKit are submission
 prerequisites, not optional CI substitutes. Do not open a model pull request
 until every submitted build has compiled, produced valid MPKs, and completed
 its declared performance and accuracy stages on a DevKit. CI repeats those
-stages after the merge. It does not replace local qualification.
+stages after a push. It does not replace local qualification.
 
 ### Workflow
 
@@ -72,7 +72,10 @@ Use these references when the model needs them:
 - [Concepts](concepts.md): build, build profile, stage, benchmark,
   fingerprint, model component, model package, and MPK.
 - [Model README](model-readme.md): the README and hero rules, with the README
-  template.
+  template. [Geometric comic illustrations](illustration-guide.md) gives the
+  hero's styles, palette, and prompts.
+- [Converted ONNX artifacts](conversion-artifacts.md): what `convert.py`
+  exports, what belongs in `surgery.py`, and what reruns a conversion.
 - [Datasets for local model development](datasets.md): Artifactory access,
   registered dataset resolution, and adding a dataset or variant.
 - [Accuracy and fidelity](local-accuracy-development.md): compile-time
@@ -84,6 +87,10 @@ Use these references when the model needs them:
   decide whether a model qualifies for an exception, prepare approval evidence,
   configure the request, and verify a build.
 - [Model taxonomy](model-taxonomy.md): sanctioned category IDs.
+
+To use a published model, see [Model browser](model-browser.md) for what each
+model page shows and [Download a model with sima-cli](downloading-models.md)
+for the `sima-cli models` commands.
 
 The JSON Schemas under
 [`schemas/`](https://github.com/sima-neat/models/tree/develop/schemas) and the

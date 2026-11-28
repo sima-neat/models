@@ -16,18 +16,24 @@ links with a blue active label. The catalog and contributor documentation share
 the portal's theme preference.
 Standalone previews retain local navigation when the shared header is unavailable.
 
-The browser has two views. The customer view shows the Main catalog and hides the
+The browser has two views. The customer view shows the catalog of a release that main
+published, one per platform and Neat Core version, and shows Main's catalog until main
+publishes one. It hides the
 branch and compiler filters, build history, the Details section and contributor
 navigation. It also leaves out the board's Linux memory, MLA Utilization, the
-**Raw result** download, and the commit and workflow links of each result. The
+**Raw result** download, and the commit and workflow links of each result. It leaves
+out each dataset's **Evaluation details** with the **Published scores** and
+**FP32 baseline** rows, and the branch in the copied CLI command. The
 developer view keeps all of them. Selecting a branch in the developer view changes
 the catalog, not the view.
 
-The customer view also leaves out a variant whose accuracy falls more than 8% below
-the source model's score. The comparison uses the FP32 baseline when the model has
-one, and otherwise the score its authors published for the same dataset split. A
-variant with neither score stays. A model whose every variant is left out does not
-appear.
+Neither view leaves out a variant because of its accuracy. CI does not build a
+variant more than 8% below its reference score, because its author comments the
+profile out of `model.yaml`
+([comment out a variant far below its reference score](adding-a-model.md#comment-out-a-variant-far-below-its-reference-score)).
+Both views keep listing a promoted build of such a variant while its promotion
+stands. To stop offering it, a maintainer withdraws it as
+[withdraw a promoted build](model-promotion.md#withdraw-a-promoted-build) describes.
 
 Cards appear when the catalog loads. In the developer view, compiler versions
 and newly completed builds can appear after the cards. A message that a branch
@@ -95,7 +101,11 @@ build, because none of them is part of a fingerprint.
 The search field matches model, build-profile, and component names and the taxonomy
 labels and family descriptions. Task and model family filters sit beside the cards. Developer view also
 shows Branch, Compiler and Build history directly in the filter panel. Customer
-view keeps only Task and Model family. Category filters list the values the
+view keeps Task and Model family, and adds Platform and Neat Core. They open on the newest
+platform and its default Core release, and a chosen release stays in the URL as `platform`
+and `core`. In the developer view the two filters show the one platform and Core version
+the selected branch's catalog was built with. Both filters are hidden when the catalog
+records neither. Category filters list the values the
 loaded builds use and are hidden when fewer than two remain. Selecting a task
 narrows Model family to the families with that task, and selecting a family
 narrows Task to that family's tasks; developer controls
@@ -140,7 +150,8 @@ The tags name what holds for every variant:
 tasks, model family, model type and license. The download dialog offers an outlined **Copy CLI command**
 button with a copy icon alongside browser downloads where available. The copied
 command names the selected branch in the developer view. In the customer view it
-names no branch, because `sima-cli` downloads from `main` by default. A package dialog names the model, summarizes the variant
+names no branch, because `sima-cli` downloads from `main` by default. It downloads from Main's
+current catalog, so for a release other than Main's newest it can fetch a different build. A package dialog names the model, summarizes the variant
 and size, and shows a quiet filename block and license line with a **Download**
 action, in both views. Dialogs and action buttons use softly rounded corners.
 The model's License section retains attribution in both views. Dialog actions

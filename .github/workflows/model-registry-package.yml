@@ -33,11 +33,17 @@ jobs:
       - name: Lint Python
         run: python -m ruff check .
 
+      - name: Check the pinned Core commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/check_neat_core_revision.sh
+
       - name: Install sima-cli
         run: scripts/install_sima_cli.sh
 
+      # One worker per runner core. A serial run of the suite took over 20 minutes.
       - name: Test model-registry contracts and each model's scripts
-        run: python -m pytest
+        run: python -m pytest -n auto
 
       # A plain run deselects the tests that check real stage output. Selecting them without running them
       # still imports each one and reads its tests.yaml entry.

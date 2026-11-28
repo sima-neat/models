@@ -27,6 +27,8 @@ fi
 REGISTRY_PYTHON="${REGISTRY_PYTHON:-python3}"
 # The model's own revision supplies its tests and the pytest configuration and fixtures they use.
 REPOSITORY="$(cd "$MODEL_DIR/../.." && pwd)"
+# Model scripts read shared pins, such as the ONNX opset, from this clone's deps/manifest.json.
+export MODEL_REGISTRY_ROOT="${MODEL_REGISTRY_ROOT:-$REPOSITORY}"
 
 case "$STAGE" in
   conversion) TEST_FILE="build/test_conversion.py" OPTION="--converted" ;;

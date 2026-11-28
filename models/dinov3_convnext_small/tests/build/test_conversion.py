@@ -8,8 +8,10 @@ from types import ModuleType
 import numpy as np
 import onnx
 import pytest
+from model_registry.dependencies import onnx_opset_version
 from model_registry.model import load_model as load_metadata
 
+OPSET = onnx_opset_version()
 MODEL_DIR = Path(__file__).resolve().parents[2]
 
 
@@ -43,7 +45,7 @@ def interface_fixture(converter: ModuleType, case: str) -> onnx.ModelProto:
         for value, shape in zip(values[1:], list(shapes.values())[1:])
     ]
     graph = helper.make_graph(nodes, "fixture", values[:1], values[1:])
-    return helper.make_model(graph, opset_imports=[helper.make_opsetid("", 18 if case == "opset" else 17)])
+    return helper.make_model(graph, opset_imports=[helper.make_opsetid("", OPSET + 1 if case == "opset" else OPSET)])
 
 
 def test_the_interface_is_the_one_surgery_exports(

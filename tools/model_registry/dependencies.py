@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from pathlib import Path
 from typing import Any
@@ -11,6 +12,8 @@ SEMANTIC_VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
 MODEL_COMPILER_VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:\.[0-9]+)?$")
 MODEL_COMPILER_CHANNEL = re.compile(r"^[a-z][a-z0-9-]*$")
 MODEL_COMPILER_REVISION = re.compile(r"^[0-9a-f]{12}$")
+CORE_RELEASE = re.compile(r"^core@v([0-9]+\.[0-9]+\.[0-9]+)$")
+GIT_COMMIT = re.compile(r"^[0-9a-f]{40}$")
 
 
 def _load_manifest(repository: str | Path) -> dict[str, Any]:
@@ -54,6 +57,34 @@ def resolve_model_compiler(repository: str | Path) -> dict[str, str]:
     }
 
 
+def _repository_root() -> Path:
+    """The clone that holds deps/manifest.json: MODEL_REGISTRY_ROOT, the working directory, or this package's."""
+    configured_root = os.environ.get("MODEL_REGISTRY_ROOT", "").strip()
+    here = Path(__file__).resolve()
+    candidates = [Path(configured_root).expanduser()] if configured_root else []
+    for candidate in (*candidates, Path.cwd(), *Path.cwd().parents, *here.parents):
+        if (candidate / "deps" / "manifest.json").is_file():
+            return candidate
+    raise ValidationError("could not locate deps/manifest.json; run inside the repository or set MODEL_REGISTRY_ROOT")
+
+
+def onnx_opset_version(repository: str | Path | None = None) -> int:
+    """The ONNX opset every model exports at, from deps/manifest.json."""
+    onnx = _load_manifest(repository or _repository_root()).get("onnx")
+    opset = onnx.get("opset") if isinstance(onnx, dict) else None
+    if not isinstance(opset, int) or isinstance(opset, bool) or opset < 1:
+        raise ValidationError("onnx.opset must be a whole number such as 17")
+    return opset
+
+
+def require_onnx_opset_version(model: Any) -> None:
+    """Raise unless the ONNX model uses the opset deps/manifest.json sets."""
+    opset = onnx_opset_version()
+    versions = [item.version for item in model.opset_import if not item.domain]
+    if versions != [opset]:
+        raise ValueError(f"The export requires opset {opset}, found {versions}")
+
+
 def resolve_benchmark_runtime(repository: str | Path) -> dict[str, Any]:
     manifest = _load_manifest(repository)
     devkit = manifest.get("devkit")
@@ -95,3 +126,24 @@ def resolve_benchmark_runtime(repository: str | Path) -> dict[str, Any]:
             raise ValidationError("llima.install_target must pin a runtime build revision")
         runtime["llima"] = llima
     return runtime
+
+
+def catalog_inputs(repository: str | Path) -> dict[str, str] | None:
+    """The platform and Neat Core release this checkout benchmarks on, as the registry records a catalog's inputs.
+
+    None when Core is pinned to a branch package, which has no release version to name.
+    """
+    runtime = resolve_benchmark_runtime(repository)
+    release = CORE_RELEASE.fullmatch(runtime["neat_core"]["install_target"])
+    if release is None:
+        return None
+    revision = _load_manifest(repository)["neat-core"].get("revision")
+    if not isinstance(revision, str) or GIT_COMMIT.fullmatch(revision) is None:
+        raise ValidationError(
+            f"neat-core.revision must be the full lowercase commit of Core {release.group(0)}, found {revision!r}"
+        )
+    return {
+        "platform_version": runtime["devkit"]["platform_version"],
+        "neat_core_version": release.group(1),
+        "neat_core_revision": revision,
+    }

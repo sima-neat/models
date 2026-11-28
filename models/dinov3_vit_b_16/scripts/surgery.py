@@ -30,6 +30,7 @@ from pathlib import Path
 
 import numpy as np
 import onnx
+from model_registry.dependencies import onnx_opset_version, require_onnx_opset_version
 
 IMAGE_SIZE = 224
 PATCH_SIZE = 16
@@ -47,7 +48,6 @@ ROTARY_EMBEDDING = "rope.embedding"
 INPUTS = {"pixel_values": [1, 3, IMAGE_SIZE, IMAGE_SIZE]}
 OUTPUTS = {"class_embedding": [1, HIDDEN_SIZE], "patch_embeddings": [1, PATCHES, HIDDEN_SIZE]}
 INTERFACE = {**INPUTS, **OUTPUTS}
-OPSET = 17
 SEEDS = range(123, 127)
 # GELU runs in its tanh form, x * sigmoid(GELU_SCALE (x + GELU_CUBIC x^3)): the compiler's BF16 erf keeps the
 # w16a16 class embedding at cosine 0.9951 with reference.onnx, the tanh form at 0.9998. It is written
@@ -196,8 +196,7 @@ def build_encoder(weights):
 def validate_export(path):
     model = onnx.load(path, load_external_data=False)
     onnx.checker.check_model(model)
-    if [item.version for item in model.opset_import if not item.domain] != [OPSET]:
-        raise ValueError(f"The DINOv3 export requires opset {OPSET}")
+    require_onnx_opset_version(model)
     values = [*model.graph.input, *model.graph.output]
     if [value.name for value in values] != list(INTERFACE):
         raise ValueError(f"Expected inputs and outputs {list(INTERFACE)}")
@@ -248,7 +247,7 @@ def export_encoder(weights, reference, output):
     with torch.inference_mode():
         torch.onnx.export(
             encoder, (torch.from_numpy(synthetic_pixels(SEEDS.start)),), str(output), input_names=list(INPUTS),
-            output_names=list(OUTPUTS), opset_version=OPSET, do_constant_folding=True, dynamo=False,
+            output_names=list(OUTPUTS), opset_version=onnx_opset_version(), do_constant_folding=True, dynamo=False,
         )
     fold_constants(output)
     validate_export(output)

@@ -17,6 +17,8 @@ from model_registry.fingerprints import (
     BENCHMARK_RUN_TYPES,
     BOARD_STAGE_TOOLING,
     COMPILE_TOOLING,
+    FIDELITY_TOOLING,
+    FRAME_TOOLING,
     PERFORMANCE_TOOLING,
     benchmark_fingerprint,
     compile_fingerprint,
@@ -24,10 +26,12 @@ from model_registry.fingerprints import (
 from model_registry.model import load_models
 from model_registry.registry import RegistryPublicationError, build_catalog_snapshot
 from model_registry.stage_plan import (
+    find_main_merge_blockers,
     is_long_lived,
     merge_catalog_sources,
     plan_promoted_benchmarks,
     plan_stages,
+    read_default_branch_builds,
     resolve_base_branches,
 )
 
@@ -90,6 +94,70 @@ def test_promoted_batch_rejects_wrong_scope_before_reading_registry():
     for branch, stages in [("feature/test", ["performance"]), ("develop", ["compile"]), ("main", [])]:
         with pytest.raises(ValidationError):
             plan_promoted_benchmarks(branch=branch, stages=stages, read=read, read_api_url="https://registry.example.invalid")
+
+
+def _develop_reader(document: dict, reads: list[str] | None = None):
+    def read(url: str) -> dict:
+        if reads is not None:
+            reads.append(url)
+        assert url.endswith("git_ref=refs%2Fheads%2Fdevelop")
+        return {"catalog": {"document": document}}
+
+    return read
+
+
+def test_main_takes_only_the_builds_develop_finished_at_the_head_fingerprints() -> None:
+    develop = _source(("p1", "k1", "develop"), ("p2", "stale", "develop"), ("gone", "k3", "develop"))
+    develop["models"][0]["benchmark_fingerprints"] = {"p1": {"accuracy": "a" * 64}, "p2": {"accuracy": "b" * 64}}
+
+    sources = read_default_branch_builds(_develop_reader(develop), "https://registry.example.invalid", "main",
+                                         MERGE_MATRIX)
+
+    assert _origins(sources[0]) == {("builds", "p1"): "develop", ("packages", "p1"): "develop"}
+    assert sources[0]["models"][0]["benchmark_fingerprints"] == {"p1": {"accuracy": "a" * 64}}
+
+
+@pytest.mark.parametrize("replacement", ["k2", "newer"])
+def test_main_keeps_a_finished_build_while_develop_compiles_its_replacement(replacement: str) -> None:
+    """A push to develop between main's plan and its publication must not take away a build the plan reused."""
+    develop = _source(("p1", "k1", "develop"), ("p2", "k2", "develop"))
+    develop["pending_builds"] = [{"model_id": "x", "build_profile_id": "p2", "component_ids": ["model"],
+                                  "compile_fingerprint": replacement}]
+
+    sources = read_default_branch_builds(_develop_reader(develop), "https://registry.example.invalid", "main",
+                                         MERGE_MATRIX)
+
+    assert set(_origins(sources[0])) == {("builds", "p1"), ("packages", "p1"), ("builds", "p2"), ("packages", "p2")}
+
+
+def test_main_keeps_its_own_entries_for_on_demand_models() -> None:
+    """Shaped like production: develop holds the raw builds of a promoted on-demand profile, and main does not."""
+    develop = _source(("p1", "k1", "develop"), ("p2", "k2", "develop"))
+    develop["models"][0].update(build_on_demand=True, approved_deployments={"p1": {"deployment_id": "d"}})
+    develop["models"].extend(_source(("p1", "k1", "develop"), model_id="y")["models"])
+    matrix = [{**entry, "build_on_demand": True} for entry in MERGE_MATRIX]
+    matrix.append({**MERGE_MATRIX[0], "model_id": "y"})
+
+    sources = read_default_branch_builds(_develop_reader(develop), "https://registry.example.invalid", "main", matrix)
+
+    assert [model["id"] for model in sources[0]["models"]] == ["y"]
+    assert "approved_deployments" not in sources[0]["models"][0]
+
+
+@pytest.mark.parametrize("branch", ["develop", "release-1.0", "integration/vision", "feat/a"])
+def test_only_main_takes_builds_from_develop(branch: str) -> None:
+    reads: list[str] = []
+
+    assert read_default_branch_builds(_develop_reader({}, reads), "https://registry.example.invalid", branch,
+                                      MERGE_MATRIX) == []
+    assert reads == []
+
+
+def test_main_without_a_develop_catalog_takes_nothing() -> None:
+    def read(url: str) -> dict:
+        raise RegistryPublicationError("public artifact registry HTTP 404 catalog_not_found")
+
+    assert read_default_branch_builds(read, "https://registry.example.invalid", "main", MERGE_MATRIX) == []
 
 
 @pytest.fixture
@@ -318,7 +386,7 @@ READ_API = "https://reader.example.invalid"
 def stage_repository(tmp_path: Path) -> Path:
     repository = repository_without_w16a16_accuracy(tmp_path)
     for relative in ("deps/manifest.json",
-                     *COMPILE_TOOLING, *PERFORMANCE_TOOLING, *ACCURACY_TOOLING):
+                     *COMPILE_TOOLING, FIDELITY_TOOLING, *PERFORMANCE_TOOLING, FRAME_TOOLING, *ACCURACY_TOOLING):
         destination = repository / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / relative, destination)
@@ -567,7 +635,7 @@ def test_accuracy_script_change_measures_accuracy_only(stage_repository: Path) -
 
 
 @pytest.mark.parametrize(
-    "relative", sorted(set(ACCURACY_TOOLING) - set(BOARD_STAGE_TOOLING) - {"scripts/run_model_accuracy.sh"})
+    "relative", sorted(set(ACCURACY_TOOLING) - set(PERFORMANCE_TOOLING) - {"scripts/run_model_accuracy.sh"})
 )
 def test_shared_accuracy_tooling_change_measures_accuracy_only(stage_repository: Path, relative: str) -> None:
     document = _published_catalog(stage_repository)
@@ -578,6 +646,48 @@ def test_shared_accuracy_tooling_change_measures_accuracy_only(stage_repository:
 
     assert plan["compile"]["include"] == []
     assert _selected(plan, "benchmark") == [("w8a16", ["accuracy"]), ("w8a8", ["accuracy"])]
+
+
+def test_shared_dataset_unpack_change_measures_both_stages(stage_repository: Path) -> None:
+    document = _published_catalog(stage_repository)
+    registry = FakeRegistry({BRANCH: document}, _published_runs(document))
+    _edit(stage_repository, "../../scripts/unpack_benchmark_datasets.sh")
+
+    plan = _plan(stage_repository, registry)
+
+    # Both stages read the datasets that one script unpacks for the job.
+    assert plan["compile"]["include"] == []
+    assert _selected(plan, "benchmark") == [
+        ("w16a16", ["performance"]),
+        ("w8a16", ["performance", "accuracy"]),
+        ("w8a8", ["performance", "accuracy"]),
+    ]
+
+
+def _set_accuracy_samples(repository: Path, samples: int) -> None:
+    model_yaml = repository / "models" / PLAN_MODEL / "model.yaml"
+    model = yaml.safe_load(model_yaml.read_text(encoding="utf-8"))
+    model["accuracy"]["samples"] = samples
+    model_yaml.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
+
+
+def test_accuracy_sample_cap_measures_accuracy_only(stage_repository: Path) -> None:
+    document = _published_catalog(stage_repository)
+    registry = FakeRegistry({BRANCH: document}, _published_runs(document))
+    _set_accuracy_samples(stage_repository, 500)
+
+    plan = _plan(stage_repository, registry)
+
+    # A capped evaluation is another measurement, so the accuracy results rerun and performance stays.
+    assert plan["compile"]["include"] == []
+    assert _selected(plan, "benchmark") == [("w8a16", ["accuracy"]), ("w8a8", ["accuracy"])]
+
+
+def test_accuracy_sample_cap_must_be_positive(stage_repository: Path) -> None:
+    _set_accuracy_samples(stage_repository, 0)
+
+    with pytest.raises(ValidationError, match="samples"):
+        load_models(stage_repository)
 
 
 def test_artifact_verification_change_reruns_nothing(stage_repository: Path) -> None:
@@ -661,10 +771,11 @@ def test_metric_vocabulary_change_reruns_nothing(stage_repository: Path) -> None
     assert plan["benchmark"]["include"] == []
 
 
-def test_performance_runner_change_measures_performance_only(stage_repository: Path) -> None:
+@pytest.mark.parametrize("relative", ["scripts/run_model_performance.sh", FRAME_TOOLING])
+def test_shared_performance_tooling_change_measures_performance_only(stage_repository: Path, relative: str) -> None:
     document = _published_catalog(stage_repository)
     registry = FakeRegistry({BRANCH: document}, _published_runs(document))
-    _edit(stage_repository, "../../scripts/run_model_performance.sh")
+    _edit(stage_repository, f"../../{relative}")
 
     plan = _plan(stage_repository, registry)
 
@@ -854,6 +965,238 @@ def test_long_lived_branch_first_push_inherits_from_the_closest_base(stage_repos
 
     assert _selected(plan, "compile") == [("w8a8", ["performance", "accuracy"])]
     assert _catalog_reads(registry) == ["release-1.0", "develop"]
+
+
+def _rebuilt(document: dict) -> dict:
+    """The catalog of a branch that compiled the same fingerprints itself, so its runs and results differ."""
+    rebuilt = copy.deepcopy(document)
+    for build in rebuilt["models"][0]["builds"]:
+        build["run_id"] = build["run_id"].replace("-4000-", "-4001-")
+        build["artifact_sha256"] = build["artifact_sha256"][::-1].replace("0", "f")
+    return rebuilt
+
+
+def test_main_takes_the_builds_develop_measured_instead_of_its_own(stage_repository: Path) -> None:
+    document = _published_catalog(stage_repository)
+    registry = FakeRegistry({"develop": document, "main": _rebuilt(document)}, _published_runs(document))
+
+    plan = _plan(stage_repository, registry, branch="main")
+
+    assert plan["compile"]["include"] == []
+    assert plan["benchmark"]["include"] == []
+    assert _catalog_reads(registry) == ["main", "develop"]
+
+
+@pytest.mark.parametrize("develop", [_stale, _compiling])
+def test_main_compiles_a_profile_develop_has_not_finished(stage_repository: Path, develop) -> None:
+    document = _published_catalog(stage_repository)
+    registry = FakeRegistry(
+        {"develop": develop(document, "w8a8"), "main": _stale(document, "w8a8")}, _published_runs(document)
+    )
+
+    plan = _plan(stage_repository, registry, branch="main")
+
+    assert _selected(plan, "compile") == [("w8a8", ["performance", "accuracy"])]
+    assert plan["benchmark"]["include"] == []
+
+
+def test_main_plans_a_second_run_of_a_revision_against_its_own_catalog(stage_repository: Path) -> None:
+    """publish_catalog keeps the builds a revision's first snapshot listed, so the plan must measure those."""
+    def git(*arguments: str) -> str:
+        return subprocess.run(["git", "-c", "user.email=models-test@example.invalid", "-c", "user.name=Models Test",
+                               *arguments], cwd=stage_repository, check=True, capture_output=True, text=True).stdout
+
+    git("init", "-q")
+    git("add", ".")
+    git("commit", "-qm", "released")
+    document = _published_catalog(stage_repository)
+    registry = FakeRegistry({"develop": document, "main": _rebuilt(document)}, _published_runs(document))
+
+    def read(url: str) -> dict:
+        payload = registry.read(url)
+        if url.endswith("git_ref=refs%2Fheads%2Fmain"):
+            payload["catalog"]["catalog_revision"] = git("rev-parse", "HEAD").strip()
+        return payload
+
+    plan = plan_stages(stage_repository, compiler_version=COMPILER_VERSION, read=read, read_api_url=READ_API,
+                       branch="main")
+
+    assert plan["compile"]["include"] == []
+    assert _selected(plan, "benchmark") == [
+        ("w16a16", ["performance"]), ("w8a16", ["performance", "accuracy"]), ("w8a8", ["performance", "accuracy"]),
+    ]
+
+
+def test_main_publishes_the_builds_and_benchmark_fingerprints_develop_measured(stage_repository: Path) -> None:
+    develop = _published_catalog(stage_repository)
+    main = _rebuilt(develop)
+    models = load_models(stage_repository)
+    matrix = build_matrix(models, sorted(models), repository=stage_repository,
+                          compiler_version=COMPILER_VERSION)["include"]
+    registry = FakeRegistry({"develop": develop}, set())
+    previous = merge_catalog_sources([*read_default_branch_builds(registry.read, READ_API, "main", matrix), main],
+                                     matrix)
+
+    published = build_catalog_snapshot(repository=stage_repository, branch="main", git_sha="b" * 40,
+                                       previous=previous)["models"][0]
+
+    assert published["builds"] == develop["models"][0]["builds"]
+    assert published["benchmark_fingerprints"] == develop["models"][0]["benchmark_fingerprints"]
+    own = build_catalog_snapshot(repository=stage_repository, branch="main", git_sha="b" * 40, previous=main)
+    assert published["benchmark_fingerprints"] != own["models"][0]["benchmark_fingerprints"]
+
+
+def test_main_keeps_its_own_on_demand_builds(stage_repository: Path) -> None:
+    document = _published_catalog(stage_repository)
+    _mark_on_demand(stage_repository)
+    main = _rebuilt(document)
+    registry = FakeRegistry({"develop": document, "main": main}, set())
+    models = load_models(stage_repository)
+    matrix = build_matrix(models, sorted(models), repository=stage_repository,
+                          compiler_version=COMPILER_VERSION)["include"]
+
+    sources = [*read_default_branch_builds(registry.read, READ_API, "main", matrix), main]
+
+    assert merge_catalog_sources(sources, matrix)["models"][0]["builds"] == main["models"][0]["builds"]
+
+
+@pytest.fixture
+def merge_repository(tmp_path: Path, monkeypatch):
+    """A checkout of the result of merging develop into main, and the develop commit. Its two models declare
+    the build profiles the merge catalogs name."""
+    monkeypatch.setattr("model_registry.stage_plan.load_models", lambda root: {
+        "automatic": {"build_profiles": [{"id": "w8a8"}, {"id": "w16a16"}]},
+        "on_demand": {"build_profiles": [{"id": "w8a8"}, {"id": "unpromoted"}]},
+    })
+    def git(*arguments: str) -> str:
+        return subprocess.run(["git", *arguments], cwd=tmp_path, check=True, capture_output=True, text=True).stdout
+
+    def commit(name: str) -> None:
+        (tmp_path / f"{name}.txt").write_text(f"{name}\n", encoding="utf-8")
+        git("add", ".")
+        git("commit", "-qm", name)
+
+    git("init", "-q", "-b", "main")
+    git("config", "user.email", "models-test@example.invalid")
+    git("config", "user.name", "Models Test")
+    commit("released")
+    git("switch", "-qc", "develop")
+    commit("change")
+    head = git("rev-parse", "HEAD").strip()
+    git("switch", "-q", "main")
+    git("merge", "-q", "--no-ff", "-m", "merge", "develop")
+    return tmp_path, head, commit
+
+
+def _merge_catalog(head: str, **entries) -> dict:
+    """A catalog at `head` with a measured automatic model and a promoted, measured on-demand model."""
+    return {"catalog_revision": head, "models": [
+        {"id": "automatic", "benchmark_fingerprints": {"w8a8": {"performance": "1" * 64, "accuracy": "2" * 64}}},
+        {"id": "on_demand", "build_on_demand": True, "approved_deployments": {"w8a8": {"deployment_id": "d1"}},
+         "benchmark_fingerprints": {"w8a8": {"performance": "3" * 64}, "unpromoted": {"accuracy": "4" * 64}}},
+    ], **entries}
+
+
+MERGE_RUNS = {("model_performance", "1" * 64), ("model_accuracy", "2" * 64), ("model_performance", "3" * 64)}
+
+
+def _merge_check(repository: Path, head: str, registry: FakeRegistry) -> dict:
+    return find_main_merge_blockers(repository, head=head, read=registry.read, read_api_url=READ_API)
+
+
+def test_merge_check_passes_when_develop_holds_every_result_main_shows(merge_repository) -> None:
+    repository, head, _ = merge_repository
+    catalog = _merge_catalog(head)
+    registry = FakeRegistry({"develop": catalog, "main": catalog}, MERGE_RUNS)
+
+    assert _merge_check(repository, head, registry) == {"blockers": [], "warnings": []}
+
+
+def test_merge_check_blocks_a_change_made_only_on_main(merge_repository) -> None:
+    repository, head, commit = merge_repository
+    commit("hotfix")
+    catalog = _merge_catalog(head)
+    registry = FakeRegistry({"develop": catalog, "main": catalog}, MERGE_RUNS)
+
+    assert _merge_check(repository, head, registry)["blockers"] == [
+        "the merge result differs from develop: merge main into develop first",
+    ]
+
+
+def test_merge_check_blocks_until_develop_has_published_the_merged_commit(merge_repository) -> None:
+    repository, head, _ = merge_repository
+    registry = FakeRegistry({"develop": _merge_catalog("b" * 40), "main": _merge_catalog(head)}, MERGE_RUNS)
+
+    assert _merge_check(repository, head, registry)["blockers"] == [
+        f"the develop catalog is at {'b' * 40}, not at {head}: wait for the develop run of this commit",
+    ]
+    assert _merge_check(repository, head, FakeRegistry({}, set()))["blockers"] == ["develop has no catalog"]
+
+
+def test_merge_check_blocks_while_develop_compiles(merge_repository) -> None:
+    repository, head, _ = merge_repository
+    catalog = _merge_catalog(head, pending_builds=[{"model_id": "automatic", "build_profile_id": "w16a16"}])
+    registry = FakeRegistry({"develop": catalog, "main": catalog}, MERGE_RUNS)
+
+    assert _merge_check(repository, head, registry)["blockers"] == [
+        "automatic/w16a16 is still compiling on develop",
+    ]
+
+
+@pytest.mark.parametrize(("missing", "blocker"), [
+    (("model_accuracy", "2" * 64), "automatic/w8a8 has no accuracy result on develop"),
+    (("model_performance", "3" * 64), "on_demand/w8a8 has no performance result on develop"),
+])
+def test_merge_check_blocks_a_result_main_would_lose(merge_repository, missing, blocker) -> None:
+    repository, head, _ = merge_repository
+    catalog = _merge_catalog(head)
+    registry = FakeRegistry({"develop": catalog, "main": catalog}, MERGE_RUNS - {missing})
+
+    assert _merge_check(repository, head, registry) == {"blockers": [blocker], "warnings": []}
+
+
+def test_merge_check_ignores_an_on_demand_build_main_does_not_promote(merge_repository) -> None:
+    repository, head, _ = merge_repository
+    main = _merge_catalog(head)
+    main["models"][1]["approved_deployments"] = {}
+    registry = FakeRegistry({"develop": _merge_catalog(head), "main": main}, MERGE_RUNS - {
+        ("model_performance", "3" * 64),
+    })
+
+    assert _merge_check(repository, head, registry) == {"blockers": [], "warnings": []}
+    assert _merge_check(repository, head, FakeRegistry({"develop": _merge_catalog(head)}, MERGE_RUNS)) == {
+        "blockers": [], "warnings": [],
+    }
+
+
+def test_merge_check_warns_about_a_build_promoted_differently_on_develop(merge_repository) -> None:
+    repository, head, _ = merge_repository
+    main = _merge_catalog(head)
+    main["models"][1]["approved_deployments"] = {"w8a8": {"deployment_id": "older"}}
+    registry = FakeRegistry({"develop": _merge_catalog(head), "main": main}, MERGE_RUNS - {
+        ("model_performance", "3" * 64),
+    })
+
+    assert _merge_check(repository, head, registry) == {"blockers": [], "warnings": [
+        "on_demand/w8a8 is promoted to another build on develop: promote it on main after the merge, "
+        "until then it has no results there",
+    ]}
+
+
+def test_merge_check_blocks_a_promoted_build_whose_profile_the_merge_no_longer_declares(merge_repository) -> None:
+    repository, head, _ = merge_repository
+    develop, main = _merge_catalog(head), _merge_catalog(head)
+    main["models"][1]["approved_deployments"]["commented_out"] = {"deployment_id": "d2"}
+    develop["models"].append({"id": "removed", "build_on_demand": True,
+                              "approved_deployments": {"w8a8": {"deployment_id": "d3"}}})
+    registry = FakeRegistry({"develop": develop, "main": main}, MERGE_RUNS)
+
+    assert _merge_check(repository, head, registry)["blockers"] == [
+        "removed/w8a8 is promoted on develop, and model.yaml no longer declares it: "
+        "withdraw the promotion on develop",
+        "on_demand/commented_out is promoted on main, and model.yaml no longer declares it: "
+        "withdraw the promotion on main",
+    ]
 
 
 @pytest.mark.parametrize("base_branches", [None, [], ["develop"]])

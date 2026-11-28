@@ -5,7 +5,10 @@ from urllib.parse import urlsplit
 import numpy as np
 import onnx
 import pytest
+from model_registry.dependencies import onnx_opset_version
 from model_registry.model import load_model
+
+OPSET = onnx_opset_version()
 
 
 @pytest.mark.parametrize("case", ["valid", "shape", "nan", "changed"])
@@ -69,7 +72,7 @@ def test_converted_interface_is_fixed(tmp_path, case, load_script):
         values[:1],
         values[1:],
     )
-    model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 14 if case == "opset" else 13)])
+    model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", OPSET + 1 if case == "opset" else OPSET)])
     path = tmp_path / "model.onnx"
     onnx.save(model, path)
     if case == "valid":

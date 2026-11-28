@@ -1,6 +1,6 @@
 import { heroImageSources } from "./hero-images.js";
 // Registry API requests, local caches, and catalog build selection.
-import { deploymentCatalog, runProfile, variantBuildKey, variantBuildRuns, withoutProfiles } from "./branch-builds.js";
+import { deploymentCatalog, runProfile, variantBuildKey, variantBuildRuns } from "./branch-builds.js";
 import { BENCHMARK_RUN_TYPES, customerPerformanceReport } from "./model-report.js";
 import { config, shows, DEFAULT_BRANCH, branchSelectionEnabled, state, elements, categoryFilters } from "./state.js";
 
@@ -26,12 +26,19 @@ export async function api(path) {
   return payload;
 }
 
-// Keep resolved reports by stage and fingerprint so Table, Compare, and model pages share their requests.
+// A selection pins its catalog and the benchmark run of each fingerprint. Without one, the catalog is the
+// branch's and the registry resolves each fingerprint to its newest run.
+export function selectionQuery() {
+  const selection = state.selection;
+  return selection ? { platform_version: selection.platform_version, neat_core_revision: selection.neat_core_revision } : {};
+}
+
+// Keep resolved reports by selection, stage, and fingerprint so Table, Compare, and model pages share their requests.
 const benchmarkRuns = new Map();
 
 function loadBenchmarkRun(stage, fingerprint) {
   if (!fingerprint) return null;
-  const key = `${stage}:${fingerprint}`;
+  const key = `${state.selection?.selection_id ?? "branch"}:${stage}:${fingerprint}`;
   if (!benchmarkRuns.has(key)) {
     const pending = fetchBenchmarkRun(stage, fingerprint).then((result) => {
       if (!result) benchmarkRuns.delete(key);
@@ -47,7 +54,7 @@ function loadBenchmarkRun(stage, fingerprint) {
 
 async function fetchBenchmarkRun(stage, benchmarkFingerprint) {
   const repo = state.repository;
-  const query = new URLSearchParams({ run_type: BENCHMARK_RUN_TYPES[stage], fingerprint: benchmarkFingerprint });
+  const query = new URLSearchParams({ run_type: BENCHMARK_RUN_TYPES[stage], fingerprint: benchmarkFingerprint, ...selectionQuery() });
   let resolved;
   try {
     ({ run: resolved } = await api(`/v1/repositories/${encodeURIComponent(repo.organization)}/${encodeURIComponent(repo.name)}/resolve?${query}`));
@@ -107,14 +114,14 @@ export function documentationHeroFallbackUrl(documentation) {
 function catalogCacheKey() {
   const repo = state.repository;
   const history = elements["history-filter"].checked ? "history" : "latest";
-  const branch = (state.preferredBranch ?? elements["branch-filter"].value) || "all";
+  const selection = state.selection && `selection:${state.selection.platform_version}:${state.selection.neat_core_revision}`;
+  const branch = selection || (state.preferredBranch ?? elements["branch-filter"].value) || "all";
   // Search, categories, and compiler filter a branch snapshot locally.
   const branchSnapshot = history === "latest" && branch !== "all";
   const categories = branchSnapshot ? [] : Object.entries(categoryFilters()).filter(([, value]) => value).sort();
   const search = branchSnapshot ? "" : elements.search.value.trim();
   const compiler = branchSnapshot ? "any" : elements["compiler-filter"].value || "any";
-  const audience = shows.lowAccuracyVariants ? "developer" : "customer";
-  return `sima-neat-model-catalog:v6:${audience}:${state.apiBase}:${repo.organization}/${repo.name}:${history}:${branch}:${compiler}:${search}:${JSON.stringify(categories)}`;
+  return `sima-neat-model-catalog:v6:${state.apiBase}:${repo.organization}/${repo.name}:${history}:${branch}:${compiler}:${search}:${JSON.stringify(categories)}`;
 }
 
 function branchCatalogCacheKey() {
@@ -313,18 +320,6 @@ function loadReferenceMetrics(modelId) {
   return referenceMetrics.then((reference) => reference[modelId] || []);
 }
 
-// The catalog an audience sees. The customer view leaves out the build profiles whose accuracy falls too far
-// below the source model's reference score, listed from model.yaml and tests.yaml when the portal is built.
-// Without the list every profile shows, so a failed fetch is not an error.
-let lowAccuracyVariants = null;
-export async function audienceCatalog(catalogModels) {
-  if (shows.lowAccuracyVariants) return catalogModels;
-  lowAccuracyVariants ||= fetch(new URL("./low-accuracy-variants.json", import.meta.url))
-    .then((response) => (response.ok ? response.json() : {}))
-    .catch(() => ({}));
-  return withoutProfiles(catalogModels, await lowAccuracyVariants);
-}
-
 // The name of each dataset by its Dataset Registry ID, from datasets/<id>.yaml when the portal is built.
 // Without the list the page names a dataset by its ID, so a failed fetch is not an error.
 let datasetNames = null;
@@ -376,8 +371,13 @@ export async function loadBenchmarkResults(model, profile) {
   return { performance, accuracy, reference };
 }
 
+// One build shows different benchmark results under different selections, so the cache keeps them apart.
+export function variantCacheKey(anchor) {
+  return `${state.selection?.selection_id ?? "branch"}:${variantBuildKey(anchor)}`;
+}
+
 export async function loadVariant(anchor) {
-  const key = variantBuildKey(anchor);
+  const key = variantCacheKey(anchor);
   if (state.variantCache.has(key)) return state.variantCache.get(key);
   const componentRuns = await variantRuns(anchor);
   const details = await mapWithConcurrency(componentRuns, 6, (run) => loadRunDetail(run.id));
@@ -400,7 +400,8 @@ export async function loadVariant(anchor) {
     accuracy: accuracy && { ...accuracy, datasetNames: names },
     packageSummary, packageTests, requestedPackageId: packageRun?.run_id || null, pipeline, reference, licenses, exampleApp,
   };
-  state.variantCache.set(key, variant);
+  // A load that outlived its selection keeps its result out of the cache.
+  if (variantCacheKey(anchor) === key) state.variantCache.set(key, variant);
   return variant;
 }
 

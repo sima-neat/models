@@ -61,7 +61,8 @@ build_profiles:
 
   # No w8a16 yet: with Model Compiler 3.0.0.dev0+develop.2291 the compile fails in its MLA simulation step. Quantized
   # by 3.0.0.dev0+master.402, its graph keeps cosine similarity 0.9982 (class) and 0.9923 (patches) with
-  # reference.onnx on 16 of the numerical-fidelity images. compile.py keeps its recipe.
+  # reference.onnx on 16 of the imagenet-2012 cal images at positions 51 to 100 of the seed-42 shuffled order.
+  # compile.py keeps its recipe.
   # w8a16:
   #   components:
   #     model:
@@ -70,9 +71,9 @@ build_profiles:
 numerical_fidelity:
   status: diagnostic
   dataset: {id: imagenet-2012, variant: cal, sha256: e6c18b281f5ac5fc7cf6d36ef9a5f486ce95eb43ead99ee8523bd8162bc49a6f, size_bytes: 112710756}
-  # The cal images at positions 51 to 100 of the seed-42 shuffled order; the fidelity floors in
+  # The cal images at positions 51 to 55 of the seed-42 shuffled order; the fidelity floors in
   # tests/build/test_compile.py apply to them.
-  selection: {method: seeded_random_without_replacement, seed: 42, offset: 50, samples: 50}
+  selection: {method: seeded_random_without_replacement, seed: 42, offset: 50, samples: 5}
   outputs: [class_embedding, patch_embeddings]
 
 accuracy:

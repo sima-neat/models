@@ -2,7 +2,7 @@ import { startAnalytics } from "./analytics.js";
 import { installHeroImageRecovery } from "./hero-images.js";
 import { mountDeveloperPortal } from "./portal-shell.js";
 import {
-  allPages, branchModels, catalogBuildRuns, runProfile, variantBuildKey, variantBuilds,
+  allPages, branchModels, catalogBuildRuns, runProfile, variantBuilds,
 } from "./branch-builds.js";
 import {
   config, shows, branchSelectionEnabled, DEFAULT_BRANCH, CATEGORY_QUERY_FIELDS, state, elements, categoryFilters,
@@ -10,13 +10,13 @@ import {
 } from "./state.js";
 import { icons, branchName, showToast, variantLabel } from "./ui.js";
 import {
-  api, audienceCatalog, snapshotModels, readBranchPreference, writeBranchPreference, readCachedBranches, readCachedCatalog,
+  api, snapshotModels, readBranchPreference, writeBranchPreference, readCachedBranches, readCachedCatalog,
   writeCachedBranches,
   runFromCatalogBuild, loadRunDetail, variantPackage, loadVariant, loadPackageRun, loadHistoricalCatalogModel,
-  selectedCatalogBuild,
+  selectedCatalogBuild, variantCacheKey,
 } from "./api.js";
 import {
-  populateCategoryFilters, fetchCatalogDocument, applyTaxonomy, activeFilterCount, setFilterDrawer,
+  populateCategoryFilters, fetchCatalogDocument, fetchSelections, chooseSelection, applyTaxonomy, activeFilterCount, setFilterDrawer,
   updateFilterIndicators, applyCatalog, loadBranches, renderRuns, renderCatalogLoading,
 } from "./catalog-view.js";
 import {
@@ -115,7 +115,7 @@ async function selectRun(runId, { updateUrl = true, expand = false } = {}) {
   if (updateUrl && catalogRun) writeVariantUrl(catalogRun);
   try {
     const anchor = (await loadRunDetail(runId)).summary.run;
-    const cached = state.variantCache.has(variantBuildKey(anchor));
+    const cached = state.variantCache.has(variantCacheKey(anchor));
     const variant = await loadVariant(anchor);
     const currentPackage = variantPackage(variant.runs);
     // A cached variant may gain package context later; avoid retrying a fetch from this selection.
@@ -151,6 +151,18 @@ async function loadRuns({ append = false, branch = elements["branch-filter"].val
   const snapshotBranch = branch || DEFAULT_BRANCH;
   const gitRef = `refs/heads/${snapshotBranch}`;
   const fetchSnapshot = async () => {
+    if (state.selection) {
+      try {
+        return await fetchCatalogDocument(snapshotBranch);
+      } catch (error) {
+        // A newer load owns the selection now, so this one changes nothing.
+        if (requestId !== state.runsRequestId) return null;
+        // A selection retired after the page listed it: show Main's branch catalog, as before selections existed.
+        state.selections = [];
+        state.selection = null;
+        showToast(`The selected release is unavailable, so the catalog shows Main. ${error.message}`, true);
+      }
+    }
     try {
       return await fetchCatalogDocument(snapshotBranch);
     } catch (error) {
@@ -180,19 +192,23 @@ async function loadRuns({ append = false, branch = elements["branch-filter"].val
       if (append && state.cursor) query.set("cursor", state.cursor);
       const payload = await api(`${base}/runs?${query}`);
       if (requestId !== state.runsRequestId) return;
+      // History and All branches mix catalogs, so they show no single platform and Core.
+      state.catalogInputs = null;
       state.catalogLoaded = true;
       applyCatalog(payload, { append });
       return;
     }
 
-    const runLists = shows.catalogRunMetadata ? Promise.allSettled(["model_compile", "model_package"].map((run_type) => {
+    // A selection pins its builds, so newer branch runs must not replace them.
+    const runLists = shows.catalogRunMetadata && !state.selection ? Promise.allSettled(["model_compile", "model_package"].map((run_type) => {
       const query = new URLSearchParams({ limit: "200", status: "completed", run_type, git_ref: gitRef });
       return allPages(api, `${base}/runs`, query, "runs");
     })) : null;
     const document = await fetchSnapshot();
-    const catalogDefinitions = document ? await audienceCatalog(snapshotModels(document)) : [];
+    const catalogDefinitions = document ? snapshotModels(document) : [];
     if (requestId !== state.runsRequestId) return;
     applyTaxonomy(document?.taxonomy || null, snapshotBranch);
+    state.catalogInputs = document?.catalog_inputs || null;
     const payload = { mode: "models", catalogDefinitions };
     state.catalogLoaded = !runLists;
     applyCatalog(payload);
@@ -291,6 +307,13 @@ async function initialize() {
     }
   }
   if (navigationId !== state.navigationId) return;
+  // Without branch selection, the page shows a selection main published, chosen before the cache is read
+  // because the cache keeps each selection's catalog apart.
+  if (!branchSelectionEnabled) {
+    state.selections = await fetchSelections();
+    if (navigationId !== state.navigationId) return;
+    state.selection = chooseSelection(state.selections, link.get("platform"), link.get("core"));
+  }
 
   const cached = readCachedCatalog();
   const cachedBranches = readCachedBranches();
@@ -406,11 +429,9 @@ elements.search.addEventListener("input", () => {
   if (branchSnapshotMode()) return;
   searchTimer = setTimeout(() => loadRuns({ branch: state.preferredBranch }).catch((error) => showToast(error.message, true)), 250);
 });
-elements["branch-filter"].addEventListener("change", async () => {
+// Clears the shown catalog and loads the one the filters now select, recording them in the URL.
+async function reloadCatalog(url) {
   state.navigationId += 1;
-  state.preferredBranch = elements["branch-filter"].value;
-  state.urlBranch = true;
-  writeBranchPreference(state.preferredBranch);
   state.selectedId = null;
   state.selectedVariantKey = null;
   state.models = [];
@@ -421,8 +442,6 @@ elements["branch-filter"].addEventListener("change", async () => {
   state.catalogLoaded = false;
   renderCatalogLoading();
   showEmptyDetail();
-  const url = new URL(location.href);
-  url.searchParams.set("branch", state.preferredBranch);
   deletePageParams(url);
   history.pushState({}, "", url);
   updateFilterIndicators();
@@ -432,7 +451,27 @@ elements["branch-filter"].addEventListener("change", async () => {
     elements["result-list"].innerHTML = errorPanel(error.message);
     elements["result-list"].setAttribute("aria-busy", "false");
   }
+}
+elements["branch-filter"].addEventListener("change", async () => {
+  state.preferredBranch = elements["branch-filter"].value;
+  state.urlBranch = true;
+  writeBranchPreference(state.preferredBranch);
+  const url = new URL(location.href);
+  url.searchParams.set("branch", state.preferredBranch);
+  await reloadCatalog(url);
 });
+// A branch catalog lists one platform and Core, so only a published selection changes with these filters.
+async function selectPlatformAndCore(platform, core) {
+  if (!state.selections.length) return;
+  state.selection = chooseSelection(state.selections, platform, core);
+  const url = new URL(location.href);
+  url.searchParams.set("platform", state.selection.platform_version);
+  url.searchParams.set("core", state.selection.neat_core_version);
+  await reloadCatalog(url);
+}
+elements["platform-filter"].addEventListener("change", () => selectPlatformAndCore(elements["platform-filter"].value, null));
+elements["core-filter"].addEventListener("change", () => (
+  selectPlatformAndCore(elements["platform-filter"].value, elements["core-filter"].value)));
 elements["compiler-filter"].addEventListener("change", async () => {
   updateFilterIndicators();
   if (branchSnapshotMode() && catalogMode()) {
@@ -488,8 +527,11 @@ elements["clear-filters"].addEventListener("click", async () => {
   state.preferredBranch = resetBranch;
   state.urlBranch = true;
   writeBranchPreference(state.preferredBranch);
+  if (state.selections.length) state.selection = chooseSelection(state.selections, null, null);
   const resetUrl = new URL(location.href);
   resetUrl.searchParams.set("branch", resetBranch);
+  resetUrl.searchParams.delete("platform");
+  resetUrl.searchParams.delete("core");
   deletePageParams(resetUrl);
   history.pushState({}, "", resetUrl);
   state.selectedId = null;

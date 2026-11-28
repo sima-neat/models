@@ -3,8 +3,22 @@ conversion:
 compile:
   run_tests: true
 accuracy:
-  run_tests: false
-  skip_reason: No build has a published report on develop to expect values from yet.
+  run_tests: true
+  expected:
+    w16a16_w8a16_w16a16_w8a8:
+      davis-2017-val:
+        f_mean: 0.8936
+        j_mean: 0.8279
+        jf_mean: 0.8608
+    # w8a8_w8a16_w16a16_w8a8:
+    #   davis-2017-val:
+    #     f_mean: 0.8295
+    #     j_mean: 0.7735
+    #     jf_mean: 0.8015
 performance:
-  run_tests: false
-  skip_reason: No build has a published report on develop to expect values from yet.
+  run_tests: true
+  expected:
+    w16a16_w8a16_w16a16_w8a8:
+      throughput_fps: 9.0
+    # w8a8_w8a16_w16a16_w8a8:
+    #   throughput_fps: 11.0

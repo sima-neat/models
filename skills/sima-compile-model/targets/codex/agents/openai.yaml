@@ -1,0 +1,4 @@
+interface:
+  display_name: "SiMa Compile Model"
+  short_description: "Audit, quantize and compile models for Modalix"
+  default_prompt: "Use $sima-compile-model to audit this model's operators and compile it into an MPK for a Modalix DevKit."

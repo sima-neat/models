@@ -37,6 +37,7 @@ from typing import NamedTuple
 
 import numpy as np
 import onnx
+from model_registry.dependencies import onnx_opset_version
 
 COMPONENTS = ["image_encoder", "memory_attention", "mask_decoder", "memory_encoder"]
 IMAGE_SIZE = 1024
@@ -98,7 +99,6 @@ INTERFACES = {
         "outputs": {"memory": [1, MEMORY_TOKENS, MEMORY_DIM]},
     },
 }
-OPSET = 17
 SEEDS = range(123, 126)
 # The largest difference check_graph accepts between the ONNX and transformers, relative to the output's range.
 MAX_RELATIVE_ERROR = 1e-3
@@ -636,7 +636,7 @@ def export_graph(module, component, output):
             output,
             input_names=list(interface["inputs"]),
             output_names=list(interface["outputs"]),
-            opset_version=OPSET,
+            opset_version=onnx_opset_version(),
             dynamo=False,
         )
     # Fold only: onnxsim's graph optimizations turn MatMul+Add into Reshape+Gemm+Reshape, which the compiler

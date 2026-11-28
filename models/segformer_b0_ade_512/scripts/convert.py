@@ -6,6 +6,7 @@ from pathlib import Path
 
 import numpy as np
 import onnx
+from model_registry.dependencies import onnx_opset_version, require_onnx_opset_version
 from model_registry.fetch import Fetcher
 from model_registry.model import load_and_validate_model
 
@@ -13,7 +14,6 @@ MODEL_DIR = Path(__file__).resolve().parents[1]
 
 FILES = ("config.json", "model.safetensors")
 EXPORTER = "4.57.1"
-OPSET = 17
 IMAGE_SIZE = 512
 CLASS_COUNT = 150
 # The decode head predicts at a quarter of the input resolution; the CPU upsamples the logits.
@@ -33,8 +33,7 @@ def validate_source(source):
 def validate_export(path):
     model = onnx.load(path, load_external_data=False)
     onnx.checker.check_model(model)
-    if [item.version for item in model.opset_import if not item.domain] != [OPSET]:
-        raise ValueError(f"SegFormer export requires opset {OPSET}")
+    require_onnx_opset_version(model)
     values = [*model.graph.input, *model.graph.output]
     if [value.name for value in values] != list(INTERFACE):
         raise ValueError("Expected input pixel_values and output logits")
@@ -104,7 +103,7 @@ def convert(source, output_dir):
             str(exported),
             input_names=["pixel_values"],
             output_names=["logits"],
-            opset_version=OPSET,
+            opset_version=onnx_opset_version(),
             do_constant_folding=True,
             dynamo=False,
         )

@@ -19,6 +19,8 @@ COMPILE_INVOCATION_ID="$3"
 OUTPUT_ROOT="$4"
 PYTHON="${MODEL_COMPILER_PYTHON:-python3}"
 REPOSITORY="$(cd "$MODEL_DIR/../.." && pwd)"
+# Model scripts read shared pins, such as the ONNX opset, from this clone's deps/manifest.json.
+export MODEL_REGISTRY_ROOT="${MODEL_REGISTRY_ROOT:-$REPOSITORY}"
 MODEL_ID="$(basename "$MODEL_DIR")"
 PROFILE_OUTPUT_DIR="$OUTPUT_ROOT/$MODEL_ID/$BUILD_PROFILE_ID"
 cache_args=()

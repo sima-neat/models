@@ -44,6 +44,37 @@ def test_lifecycle_uses_repository_scoped_oidc_publisher() -> None:
     assert "s3:" not in WORKFLOW.read_text(encoding="utf-8")
 
 
+def test_each_environment_takes_its_region_from_its_vulcan_config() -> None:
+    jobs = load_workflow()["jobs"]
+    job = jobs["update-registry"]
+    credentials = next(step for step in job["steps"] if step.get("uses", "").startswith("aws-actions/"))
+
+    for environment in ("staging", "production"):
+        resolve = jobs[f"resolve-{environment}"]
+        assert resolve["uses"] == "sima-neat/.github/.github/workflows/vulcan-resolve-config.yml@main"
+        assert resolve["with"] == {"vulcan_env": environment}
+        assert f"needs.resolve-{environment}.outputs.aws_region" in credentials["with"]["aws-region"]
+    assert job["needs"] == ["resolve-staging", "resolve-production"]
+    # A config that fails to resolve fails only its own environment.
+    assert job["if"].startswith("!cancelled()")
+    assert "us-west-2" not in WORKFLOW.read_text(encoding="utf-8")
+
+
+def test_curl_reads_the_credentials_from_stdin() -> None:
+    lifecycle = next(
+        step
+        for step in load_workflow()["jobs"]["update-registry"]["steps"]
+        if step.get("name") == "Update branch lifecycle in the model registry"
+    )
+    script = lifecycle["run"]
+
+    # Any process on the runner can read curl's arguments.
+    assert "--user" not in script
+    assert script.count("--config - ") == 2
+    assert script.count("< <(credentials)") == 2
+    assert '"aws:amz:${AWS_REGION}:execute-api"' in script
+
+
 def test_only_branch_events_run_and_protected_refs_are_rejected() -> None:
     workflow = load_workflow()
     job = workflow["jobs"]["update-registry"]
@@ -106,7 +137,7 @@ def test_cancel_job_holds_only_the_actions_permission_it_needs() -> None:
 def test_cancellation_does_not_gate_the_registry_purge() -> None:
     jobs = load_workflow()["jobs"]
 
-    assert "needs" not in jobs["update-registry"]
+    assert "cancel-branch-runs" not in jobs["update-registry"]["needs"]
     assert "needs" not in jobs["cancel-branch-runs"]
 
 

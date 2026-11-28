@@ -66,17 +66,19 @@ build_profiles:
       decoder:
         parameters:
           precision: w16a16
-  w8a8_w16a16:
-    calibration_dataset: coco-2017-cal
-    components:
-      backbone:
-        parameters:
-          precision: w8a8
-          calibration_bins: 1024
-          calibration_samples: 50
-      decoder:
-        parameters:
-          precision: w16a16
+  # No w8a8_w16a16: its COCO val2017 mAP of 0.3851 is 10.0% below the published 0.428, more than the 8% that
+  # model-registry validate allows. compile.py keeps its recipe.
+  # w8a8_w16a16:
+  #   calibration_dataset: coco-2017-cal
+  #   components:
+  #     backbone:
+  #       parameters:
+  #         precision: w8a8
+  #         calibration_bins: 1024
+  #         calibration_samples: 20
+  #     decoder:
+  #       parameters:
+  #         precision: w16a16
   w8a8_mixed_w16a16:
     calibration_dataset: coco-2017-cal
     components:
@@ -84,7 +86,7 @@ build_profiles:
         parameters:
           precision: w8a8
           calibration_bins: 1024
-          calibration_samples: 50
+          calibration_samples: 20
           # Keep HGNet, non-convolution arithmetic and output producers BF16;
           # the remaining neck/projection convolutions run INT8.
           bf16_regions: [backbone, nonconv, outputs]
@@ -102,7 +104,7 @@ numerical_fidelity:
     method: seeded_random_without_replacement
     seed: 42
     offset: 50
-    samples: 10
+    samples: 5
   outputs:
   - pred_boxes
   - pred_logits

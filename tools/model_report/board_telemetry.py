@@ -13,13 +13,16 @@ from contextlib import contextmanager
 from urllib.parse import quote
 
 SENTINEL_SOCKET = "/run/simaai-sentinel/api.sock"
+REQUEST_TIMEOUT_S = 5
+# Sentinel answers a stop only after it has written the recording, which takes longer the longer it recorded.
+STOP_TIMEOUT_S = 120
 
 
-def request(method: str, path: str, payload=None):
-    connection = http.client.HTTPConnection("localhost", timeout=5)
+def request(method: str, path: str, payload=None, timeout: float = REQUEST_TIMEOUT_S):
+    connection = http.client.HTTPConnection("localhost", timeout=timeout)
     try:
         connection.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        connection.sock.settimeout(5)
+        connection.sock.settimeout(timeout)
         connection.sock.connect(SENTINEL_SOCKET)
         connection.request(
             method,
@@ -36,12 +39,16 @@ def request(method: str, path: str, payload=None):
         connection.close()
 
 
+def stop_recording(trace_id: str) -> None:
+    request("POST", f"/v1/traces/{quote(trace_id, safe='')}/stop", timeout=STOP_TIMEOUT_S)
+
+
 def stop_active_recording() -> None:
-    """Stop any existing capture before an exclusive benchmark run."""
+    """Stop the recording Sentinel is making, if any: one an earlier benchmark left when it was killed."""
     trace = request("GET", "/v1/traces/active")["trace"]
     if trace is not None:
         print(f"Stopping existing Sentinel recording {trace['id']}", flush=True)
-        request("POST", f"/v1/traces/{quote(trace['id'], safe='')}/stop")
+        stop_recording(trace["id"])
 
 
 def summarize(run: dict) -> dict:
@@ -131,7 +138,7 @@ class BoardTelemetry:
         finally:
             if trace_id is not None:
                 self.duration_ms += (time.monotonic() - started) * 1000
-                request("POST", f"/v1/traces/{quote(trace_id, safe='')}/stop")
+                stop_recording(trace_id)
                 self.runs.append(request("GET", f"/v1/runs/{quote(trace_id, safe='')}"))
 
     def report(self) -> dict:

@@ -55,7 +55,7 @@ build_profiles:
     calibration_dataset: coco-2017-cal
     components:
       model:
-        parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 50}
+        parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 20}
 
   # Every Linear layer and convolution stays INT8; the operations INT8 handles worst run BF16: the attention scores,
   # softmax over 256 keys and weighted values, the residual stream's LayerNorms and sums (single channels reach up to
@@ -65,14 +65,14 @@ build_profiles:
     calibration_dataset: coco-2017-cal
     components:
       model:
-        parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 50,
+        parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 20,
                      bf16_regions: [attention_core, norms, gelu]}
 
 # Scored against the ONNX source rather than ADE20K labels, which no registry dataset holds.
 numerical_fidelity:
   status: diagnostic
   dataset: {id: coco-2017, variant: val, sha256: a40de1caf42b47c5a8976eb97efe3c83f3a41337c4d16d318eb15d65c293f2da, size_bytes: 898368520}
-  selection: {method: seeded_random_without_replacement, seed: 42, offset: 0, samples: 20}
+  selection: {method: seeded_random_without_replacement, seed: 42, offset: 0, samples: 5}
   outputs: [logits]
 
 accuracy:

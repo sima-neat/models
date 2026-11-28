@@ -3,8 +3,44 @@ conversion:
 compile:
   run_tests: true
 accuracy:
-  run_tests: false
-  skip_reason: "no develop report is published yet to set expected from"
+  run_tests: true
+  expected:
+    w8a16_w16a16:
+      coco-2017-val:
+        coco_box_ap50: 0.7205
+        coco_box_map: 0.5317
+        coco_mask_ap50: 0.6879
+        coco_mask_ap75: 0.4847
+        coco_mask_ap_large: 0.7034
+        coco_mask_ap_medium: 0.5061
+        coco_mask_ap_small: 0.2142
+        coco_mask_ar1: 0.3495
+        coco_mask_ar10: 0.5547
+        coco_mask_ar100: 0.5953
+        coco_mask_ar_large: 0.8234
+        coco_mask_ar_medium: 0.6662
+        coco_mask_ar_small: 0.3568
+        coco_mask_map: 0.4516
+    w8a16_w8a8_mixed:
+      coco-2017-val:
+        coco_box_ap50: 0.7031
+        coco_box_map: 0.4870
+        coco_mask_ap50: 0.6817
+        coco_mask_ap75: 0.4767
+        coco_mask_ap_large: 0.6988
+        coco_mask_ap_medium: 0.5028
+        coco_mask_ap_small: 0.2009
+        coco_mask_ar1: 0.3436
+        coco_mask_ar10: 0.5471
+        coco_mask_ar100: 0.5891
+        coco_mask_ar_large: 0.8213
+        coco_mask_ar_medium: 0.6654
+        coco_mask_ar_small: 0.3438
+        coco_mask_map: 0.4444
 performance:
-  run_tests: false
-  skip_reason: "no develop report is published yet to set expected from"
+  run_tests: true
+  expected:
+    w8a16_w16a16:
+      throughput_fps: 12.1
+    w8a16_w8a8_mixed:
+      throughput_fps: 32.1

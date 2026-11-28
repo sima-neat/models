@@ -111,8 +111,8 @@ supported by this browser** instead of guessing at an incompatible structure.
 ## Rules for changing the browser
 
 Read [DESIGN.md](DESIGN.md), [How the page is built](#how-the-page-is-built), and
-[model browser code](../knowledge/model-browser.md) before you change a file here. Update
-[docs/model-browser.md](../docs/model-browser.md) in the same change as anything a
+[model browser code](../agents/references/model-browser.md) before you change a file here.
+Update [docs/model-browser.md](../docs/model-browser.md) in the same change as anything a
 visitor can see.
 
 **Page structure**
@@ -241,8 +241,7 @@ a module imports a file missing from its `fingerprintedAssets` list.
 It also writes `component-pipelines.<revision>.json` from the `pipeline` field
 of each `model.yaml`, which draws the component order on a multi-component
 model page, `reference-metrics.<revision>.json` from each
-`reference_metrics`, `low-accuracy-variants.<revision>.json`, the variants
-the customer view leaves out, `dataset-names.<revision>.json` from the `name`
+`reference_metrics`, `dataset-names.<revision>.json` from the `name`
 of each `datasets/<id>.yaml`, and `example-apps.<revision>.json` from each
 `example_app`; `preview.py` serves the same data from the checkout.
 It copies `licenses.json` to `licenses.<revision>.json`. That file names each
@@ -261,8 +260,8 @@ them.
 
 The customer catalog reads Main's `/catalogs/current` snapshot in one registry
 request. The snapshot supplies model definitions, build and package IDs, and the
-taxonomy. The browser applies the customer visibility rules and renders cards
-from those definitions. Table and Compare retrieve measurements for their
+taxonomy. The browser renders cards from those definitions and leaves out no
+build profile the snapshot lists. Table and Compare retrieve measurements for their
 views, and the model page loads full run data on demand.
 
 The developer view discovers branches first, then requests the selected
@@ -354,8 +353,8 @@ cards or replace a selection. Develop and Main show approved selections.
 Completed candidates also remain in build history.
 Approved package membership comes from the profile's `build_requirements`. Only
 packages covering every shown component are offered as full-model downloads.
-[knowledge/on-demand-builds.md](../knowledge/on-demand-builds.md) defines these
-catalog fields.
+[agents/references/on-demand-builds.md](../agents/references/on-demand-builds.md)
+defines these catalog fields.
 
 The following confirmation flow applies to archive deployments, including
 previously published LLiMa ZIPs.
@@ -461,13 +460,20 @@ publishes that portal to the staging docs bucket under `models/`. The
 Developer Center CloudFront distribution routes that prefix to the docs bucket,
 making the browser available at <https://developer-stg.sima.ai/models>.
 
+A push there waits while an earlier push run of the same branch runs, and a
+newer push replaces a waiting run, which then publishes nothing. A browser change
+merged during a running run therefore reaches staging after that run ends, when
+the next run publishes its portal. To publish it sooner, run
+[**Deploy Model Browser & Docs**](#deploy-from-github-actions) with `staging`
+and the `developer` audience.
+
 A manual dispatch of the orchestrator on either branch also republishes it.
 The frontend build and publication always use staging, independently of
 `VULCAN_ENV` and the selected model build/registry environment. The separate
 `resolve-staging-browser-config` job resolves the bucket, publisher role, KMS key,
 and CloudFront distribution from the shared staging Vulcan configuration.
-[knowledge/ci-flow.md](../knowledge/ci-flow.md#model-browser-publication) lists the
-jobs of both publication paths.
+[agents/references/ci-flow.md](../agents/references/ci-flow.md#model-browser-publication)
+lists the jobs of both publication paths.
 
 Every push and pull request builds the developer view,
 so staging always shows it after a push to Main or Develop. Only a manual

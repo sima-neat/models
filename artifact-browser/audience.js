@@ -1,7 +1,8 @@
 // What each audience of the Model Browser sees. The build selects the audience; the customer view is the
 // developer view without the parts below. Page code asks for one of these facts by name, so this list is
 // the whole difference between the two views, together with three rules outside it: styles.css hides
-// `.developer-only` markup and the branch and compiler tags, and environment.js keeps customers on Main.
+// `.developer-only` markup and the branch and compiler tags, and environment.js keeps customers on Main,
+// where app.js shows a selection main published when one exists.
 export function audienceFacts(uiMode) {
   const developer = uiMode !== "customer";
   return {
@@ -24,8 +25,6 @@ export function audienceFacts(uiMode) {
     // How an accuracy run was evaluated, and the tables of published and FP32 baseline scores.
     evaluationDetails: developer,
     referenceTables: developer,
-    // Variants whose accuracy falls more than 8% below the source model's reference score.
-    lowAccuracyVariants: developer,
     // The branch in the copied CLI command. Customers download from main, the sima-cli default.
     commandBranch: developer,
   };

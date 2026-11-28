@@ -1,5 +1,9 @@
 name: Model branch lifecycle
 
+# Delete/create workflows run from the default branch; keep the actual target in the run title.
+run-name: >-
+  ${{ (github.event_name == 'delete' || inputs.operation == 'purge') && 'Purge' || 'Restore' }} branch ${{ inputs.branch || github.event.ref }}
+
 on:
   delete:
   create:
@@ -45,19 +49,43 @@ jobs:
           BRANCH: ${{ github.event.ref }}
         run: scripts/cancel_branch_runs.sh "$BRANCH" >> "$GITHUB_STEP_SUMMARY"
 
+  # Each environment's region comes from its Vulcan config. A matrix call would leave one leg's outputs.
+  resolve-staging:
+    name: Resolve the staging Vulcan config
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.ref_type == 'branch'
+    uses: sima-neat/.github/.github/workflows/vulcan-resolve-config.yml@main
+    with:
+      vulcan_env: staging
+    secrets: inherit
+
+  resolve-production:
+    name: Resolve the production Vulcan config
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.ref_type == 'branch'
+    uses: sima-neat/.github/.github/workflows/vulcan-resolve-config.yml@main
+    with:
+      vulcan_env: production
+    secrets: inherit
+
   update-registry:
     name: >-
       ${{ github.event_name == 'delete' && 'Purge deleted branch' || 'Restore branch' }}
       (${{ matrix.environment }})
+    # Each registry keeps its own branches, so one that fails, or whose config fails to resolve, must not stop
+    # the other.
     if: >-
+      !cancelled() && (
       github.event_name == 'workflow_dispatch' ||
-      github.event.ref_type == 'branch'
-    # Each registry keeps its own branches, so one that fails must not stop the other.
+      github.event.ref_type == 'branch')
     strategy:
       fail-fast: false
       matrix:
         environment: [staging, production]
     environment: ${{ matrix.environment }}
+    needs: [resolve-staging, resolve-production]
     runs-on: ubuntu-latest
     steps:
       - name: Resolve and validate lifecycle request
@@ -109,7 +137,10 @@ jobs:
         if: steps.request.outputs.proceed == 'true'
         uses: aws-actions/configure-aws-credentials@v6
         with:
-          aws-region: us-west-2
+          aws-region: >-
+            ${{ matrix.environment == 'staging'
+            && needs.resolve-staging.outputs.aws_region
+            || needs.resolve-production.outputs.aws_region }}
           role-to-assume: ${{ vars.VULCAN_ARTIFACT_REGISTRY_PUBLISHER_ROLE_ARN }}
           role-session-name: models-branch-${{ github.run_id }}-${{ github.run_attempt }}
 
@@ -125,16 +156,21 @@ jobs:
           set -euo pipefail
           : "${API_URL:?VULCAN_ARTIFACT_REGISTRY_API_URL is required}"
 
+          # curl reads the credentials from its config on stdin, because any process on the runner can read its
+          # arguments. The credentials action exports AWS_REGION.
+          credentials() {
+            printf 'user = "%s:%s"\nheader = "x-amz-security-token: %s"\n' \
+              "$AWS_ACCESS_KEY_ID" "$AWS_SECRET_ACCESS_KEY" "$AWS_SESSION_TOKEN"
+          }
+
           body="$(jq -cn --arg ref "refs/heads/${BRANCH}" '{git_ref:$ref}')"
           endpoint="${API_URL%/}/v1/repositories/${REPOSITORY}/branches/${OPERATION}"
           response="$(curl --fail-with-body --retry 5 --retry-connrefused \
-            --aws-sigv4 aws:amz:us-west-2:execute-api \
-            --user "${AWS_ACCESS_KEY_ID}:${AWS_SECRET_ACCESS_KEY}" \
-            --header "x-amz-security-token: ${AWS_SESSION_TOKEN}" \
+            --config - --aws-sigv4 "aws:amz:${AWS_REGION}:execute-api" \
             --header 'content-type: application/json' \
             --header "idempotency-key: ${IDEMPOTENCY_KEY}" \
             --data "$body" \
-            "$endpoint")"
+            "$endpoint" < <(credentials))"
 
           if [[ "$OPERATION" == restore ]]; then
             jq -e '.status == "active"' <<< "$response" >/dev/null
@@ -146,10 +182,8 @@ jobs:
           # The production registry takes longer than five minutes to purge a branch.
           for attempt in {1..60}; do
             status="$(curl --fail-with-body --retry 3 --retry-connrefused \
-              --aws-sigv4 aws:amz:us-west-2:execute-api \
-              --user "${AWS_ACCESS_KEY_ID}:${AWS_SECRET_ACCESS_KEY}" \
-              --header "x-amz-security-token: ${AWS_SESSION_TOKEN}" \
-              "${API_URL%/}/v1/purge-jobs/${job_id}")"
+              --config - --aws-sigv4 "aws:amz:${AWS_REGION}:execute-api" \
+              "${API_URL%/}/v1/purge-jobs/${job_id}" < <(credentials))"
             state="$(jq -er '.status' <<< "$status")"
             case "$state" in
               completed)

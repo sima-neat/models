@@ -30,6 +30,7 @@ import cv2
 import model_report
 import numpy as np
 import pyneat
+from model_inputs.frame import read_rgb
 
 COMPONENTS = ["image_encoder", "memory_attention", "mask_decoder", "memory_encoder"]
 # surgery.py's interfaces, channels last as the MPKs take and return them.
@@ -66,13 +67,6 @@ def sample_image(dataset: Path) -> Path:
     if not frames:
         raise SystemExit(f"{dataset} has no frames under {SPLIT}/")
     return frames[0]
-
-
-def read_rgb(path: Path) -> np.ndarray:
-    image = cv2.imread(str(path), cv2.IMREAD_COLOR | cv2.IMREAD_IGNORE_ORIENTATION)
-    if image is None:
-        raise SystemExit(f"could not read {path}")
-    return cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
 
 def letterbox(width: int, height: int) -> tuple[float, int, int]:

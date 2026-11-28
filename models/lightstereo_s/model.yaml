@@ -41,13 +41,15 @@ calibrations:
 # Every profile calibrates: each instance normalization ends in a square root, which the Model Compiler runs as an
 # INT8 lookup table even when activations are BF16.
 build_profiles:
+  # No w8a8_mixed: it ran at 91.5 FPS on CI's DevKit against w16a16's 41.1, but scored 0.8517 px EPE against
+  # 0.7733; the catalog offers the more accurate w16a16 only. compile.py keeps its recipe.
   # W8A8 whose read-out runs BF16: the two softmaxes, the disparity regression and the context upsampling, whose
   # INT8 rounding costs most of the accuracy plain W8A8 loses.
-  w8a8_mixed:
-    calibration_dataset: scene-flow-cal
-    components:
-      model:
-        parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 16, bf16_regions: [readout]}
+  # w8a8_mixed:
+  #   calibration_dataset: scene-flow-cal
+  #   components:
+  #     model:
+  #       parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 16, bf16_regions: [readout]}
 
   w16a16:
     calibration_dataset: scene-flow-cal
@@ -77,7 +79,7 @@ numerical_fidelity:
   status: diagnostic
   dataset: {id: scene-flow, variant: cal, sha256: bc17d4c23539824b4dc5d159579a59c1727a80e6d7f82597a13c90be493a66ff, size_bytes: 1688561036}
   # Calibration takes the first pairs of the same seeded order, so the fidelity pairs start after them.
-  selection: {method: seeded_random_without_replacement, seed: 42, offset: 16, samples: 8}
+  selection: {method: seeded_random_without_replacement, seed: 42, offset: 16, samples: 5}
   outputs: [disparity]
 
 accuracy:

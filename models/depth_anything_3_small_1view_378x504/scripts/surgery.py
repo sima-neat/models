@@ -11,6 +11,7 @@ from pathlib import Path
 
 import numpy as np
 import onnx
+from model_registry.dependencies import require_onnx_opset_version
 from onnx import helper, numpy_helper
 from preprocess import HEIGHT, WIDTH
 
@@ -294,7 +295,7 @@ def validate_export(path):
     model = onnx.load(path)
     onnx.checker.check_model(model, full_check=True)
     _validate_interface(model)
-    _require([op.version for op in model.opset_import if not op.domain] == [17], "ONNX opset 17")
+    require_onnx_opset_version(model)
     values = [*model.graph.input, *model.graph.output]
     _require(all(value.type.tensor_type.elem_type == onnx.TensorProto.FLOAT for value in values), "float32 interface")
     forbidden = {"Constant", "Shape", "Range", "ScatterND", "Einsum", "Sin", "Cos", "Gather"}

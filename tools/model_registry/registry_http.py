@@ -5,6 +5,7 @@ import json
 import os
 import random
 import subprocess
+import tempfile
 import time
 from collections.abc import Callable
 from typing import Any
@@ -17,6 +18,10 @@ Request = Callable[[str, str, JsonObject | None, str], JsonObject]
 
 class RegistryPublicationError(ModelRegistryError):
     """A model compilation could not be published to the artifact registry."""
+
+
+def _curl_config_value(value: str) -> str:
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
 class SigV4RegistryClient:
@@ -41,16 +46,20 @@ class SigV4RegistryClient:
         if not access_key or not secret_key or not session_token:
             raise RegistryPublicationError("AWS session credentials are required for registry publication")
 
+        # curl reads the credentials from its config on stdin, because any process on the runner can read its
+        # arguments.
+        credentials = (
+            f"user = {_curl_config_value(f'{access_key}:{secret_key}')}\n"
+            f"header = {_curl_config_value(f'x-amz-security-token: {session_token}')}\n"
+        )
         command = [
             "curl",
+            "--config",
+            "-",
             "--silent",
             "--show-error",
             "--aws-sigv4",
             f"aws:amz:{self.region}:execute-api",
-            "--user",
-            f"{access_key}:{secret_key}",
-            "--header",
-            f"x-amz-security-token: {session_token}",
             "--header",
             "content-type: application/json",
             "--header",
@@ -61,13 +70,18 @@ class SigV4RegistryClient:
             "\n%{http_code}",
             f"{self.api_url}{path}",
         ]
-        payload = None
-        if body is not None:
-            command.extend(["--data-binary", "@-"])
-            payload = json.dumps(body, sort_keys=True, separators=(",", ":"))
+        if body is None:
+            return self._send(command, credentials)
+        # stdin carries the credentials, so the body goes through a file only this user can read.
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".json") as payload:
+            payload.write(json.dumps(body, sort_keys=True, separators=(",", ":")))
+            payload.flush()
+            return self._send([*command, "--data-binary", f"@{payload.name}"], credentials)
 
+    @staticmethod
+    def _send(command: list[str], credentials: str) -> JsonObject:
         for attempt in range(1, 6):
-            completed = subprocess.run(command, input=payload, text=True, capture_output=True, check=False)
+            completed = subprocess.run(command, input=credentials, text=True, capture_output=True, check=False)
             if completed.returncode != 0:
                 if attempt == 5:
                     raise RegistryPublicationError(
@@ -98,12 +112,17 @@ class SigV4RegistryClient:
 
 
 
+def iam_read_api_url() -> str:
+    """The registry API whose reads read_registry_json_authenticated signs, or "" when it signs none."""
+    return os.environ.get("MODEL_REGISTRY_IAM_READ_API_URL", "").rstrip("/")
+
+
 def read_registry_json_authenticated(url: str) -> JsonObject:
     from .errors import FetchError
     from .fetch import read_registry_json
 
     # Sign only the explicitly configured API, never artifact download URLs.
-    iam_api = os.environ.get("MODEL_REGISTRY_IAM_READ_API_URL", "").rstrip("/")
+    iam_api = iam_read_api_url()
     if iam_api and url.startswith(iam_api + "/v1/"):
         region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION")
         if not region:

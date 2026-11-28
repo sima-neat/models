@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Restore the current deployment (when no Actions artifact was supplied) and its ordinary benchmark baseline.
+# Stage the current build's metadata, and its ordinary benchmark baseline's, for the DevKit to download by
+# compile run.
 # Usage: stage_benchmark_inputs.sh <source_checkout> <compiled_dir>
 # Requires REGISTRY_API_URL, SOURCE_BRANCH, SOURCE_SHA, MODEL_ID, BUILD_PROFILE_ID,
-# COMPILE_INVOCATION_ID, SOURCE_RUN_ID and STAGES from the benchmark dispatch.
+# COMPILE_INVOCATION_ID and STAGES from the benchmark dispatch.
 # Optional DEPLOYMENT_BRANCH selects another catalog for the compiled deployments.
 set -euo pipefail
 if [[ $# -ne 2 ]]; then
@@ -15,9 +16,7 @@ args=(--repository "$1" --output-dir "$2" --api-url "$REGISTRY_API_URL"
 if [[ -n "${DEPLOYMENT_BRANCH:-}" ]]; then
   args+=(--deployment-branch "$DEPLOYMENT_BRANCH")
 fi
-if [[ -z "$SOURCE_RUN_ID" ]]; then
-  model-registry stage-registry-build "${args[@]}"
-fi
+model-registry stage-registry-build "${args[@]}"
 if [[ ",$STAGES," == *,performance,* ]]; then
   model-registry stage-registry-build "${args[@]}" --benchmark-baseline
 fi

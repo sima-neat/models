@@ -101,6 +101,14 @@ def test_benchmark_start_stops_an_existing_recording_if_present(trace):
     ]
 
 
+def test_a_stop_waits_longer_than_other_requests_for_sentinel_to_write_the_recording():
+    with patch.object(board, "request", return_value={}) as request:
+        board.stop_recording("owned")
+
+    request.assert_called_once_with("POST", "/v1/traces/owned/stop", timeout=board.STOP_TIMEOUT_S)
+    assert board.STOP_TIMEOUT_S > board.REQUEST_TIMEOUT_S
+
+
 def test_busy_sentinel_fails_before_generation_without_stopping_another_trace():
     sampler = board.BoardTelemetry("image")
     with patch.object(board, "request", side_effect=RuntimeError("another trace is active")) as request:

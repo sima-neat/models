@@ -5,11 +5,10 @@ from __future__ import annotations
 import io
 import json
 import random
-import tarfile
-from collections.abc import Iterable
 from pathlib import Path, PurePosixPath
 
 import numpy as np
+from model_inputs.images import image_names
 from PIL import Image
 
 # The checkpoint's declared preprocessing (its preprocessor_config.json): a bilinear resize straight to 224x224,
@@ -33,19 +32,9 @@ def preprocess_image(content: bytes) -> np.ndarray:
     return (np.asarray(image, dtype=np.float32) * RESCALE - MEAN) / STD
 
 
-def _image_names(dataset: Path) -> list[str]:
-    """Image paths relative to the dataset root, from an archive or an extracted directory."""
-    if dataset.is_dir():
-        names = [path.relative_to(dataset).as_posix() for path in dataset.rglob("*") if path.is_file()]
-    else:
-        with tarfile.open(dataset, "r:gz") as archive:
-            names = [member.name.removeprefix("./") for member in archive.getmembers() if member.isfile()]
-    return sorted(name for name in names if name.lower().endswith(IMAGE_SUFFIXES))
-
-
 def split_names(dataset: Path, split: str) -> list[str]:
     """The split's images; an archive holds them under its top-level directory."""
-    names = [name for name in _image_names(dataset) if PurePosixPath(name).parent.name == split]
+    names = [name for name in image_names(dataset, IMAGE_SUFFIXES) if PurePosixPath(name).parent.name == split]
     if not names:
         raise ValueError(f"{dataset} has no images under {split}/")
     return names
@@ -58,25 +47,6 @@ def validation_labels(dataset: Path) -> dict[str, int]:
         raise ValueError(f"expected {CLASSES} validation classes, found {len(labels['categories'])}")
     names = {image["id"]: f"{VALIDATION_SPLIT}/{image['file_name']}" for image in labels["images"]}
     return {names[annotation["image_id"]]: annotation["category_id"] for annotation in labels["annotations"]}
-
-
-def read_images(dataset: Path, names: Iterable[str]) -> dict[str, bytes]:
-    """Read the requested images; an archive is scanned once rather than seeked per image."""
-    wanted = set(names)
-    if dataset.is_dir():
-        return {name: (dataset / name).read_bytes() for name in wanted}
-    found: dict[str, bytes] = {}
-    with tarfile.open(dataset, "r|gz") as archive:
-        for member in archive:
-            name = member.name.removeprefix("./")
-            if name in wanted and member.isfile():
-                stream = archive.extractfile(member)
-                if stream is not None:
-                    found[name] = stream.read()
-    missing = wanted - set(found)
-    if missing:
-        raise ValueError(f"{dataset} is missing {len(missing)} requested images, such as {sorted(missing)[0]}")
-    return found
 
 
 def fidelity_names(dataset: Path, seed: int, offset: int, samples: int) -> list[str]:

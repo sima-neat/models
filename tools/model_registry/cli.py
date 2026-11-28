@@ -9,12 +9,18 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 from .artifact import record_compile_outputs, validate_compile_outputs, verify_artifact, verify_mpk
-from .benchmark_declarations import BENCHMARK_STAGES, benchmarked_profiles, dataset_names, reference_metrics_by_model
+from .benchmark_declarations import (
+    BENCHMARK_STAGES,
+    benchmark_runner,
+    benchmarked_profiles,
+    dataset_names,
+    reference_metrics_by_model,
+)
 from .compile_matrix import build_matrix
 from .dependencies import resolve_benchmark_runtime, resolve_model_compiler
 from .documentation import example_apps, load_model_documentation
 from .errors import ModelRegistryError
-from .fetch import Fetcher, resolve_dataset
+from .fetch import Fetcher, download_build, resolve_dataset, unpack_shared_dataset
 from .mla_stage_simulation import write_mla_stage_simulation
 from .model import (
     build_profile_for,
@@ -24,9 +30,9 @@ from .model import (
     load_models,
     profile_component_for,
 )
-from .model_tests import TEST_OUTCOMES, low_accuracy_variants
+from .model_tests import TEST_OUTCOMES, require_reference_accuracy
 from .runner_approval import authorize_runner_matrix
-from .stage_plan import plan_promoted_benchmarks, plan_stages, resolve_base_branches
+from .stage_plan import find_main_merge_blockers, plan_promoted_benchmarks, plan_stages, resolve_base_branches
 
 AUTHOR_COMMANDS = frozenset(
     {
@@ -141,13 +147,6 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     reference.add_argument("--repository", type=Path, default=Path.cwd())
     reference.add_argument("--output", type=Path, required=True)
 
-    low_accuracy = subcommands.add_parser(
-        "low-accuracy-variants",
-        help="write each model's build profiles the model browser hides from customers for low accuracy",
-    )
-    low_accuracy.add_argument("--repository", type=Path, default=Path.cwd())
-    low_accuracy.add_argument("--output", type=Path, required=True)
-
     names = subcommands.add_parser(
         "dataset-names", help="write the name of each dataset in datasets/, for the model browser"
     )
@@ -184,6 +183,13 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     promoted.add_argument("--branch", required=True, choices=("develop", "main"))
     promoted.add_argument("--stages", default="performance,accuracy")
 
+    merge = subcommands.add_parser(
+        "check-main-merge", help="check that merging develop into main changes nothing customers see (CI only)"
+    )
+    merge.add_argument("--repository", type=Path, default=Path.cwd(), help="a checkout of the merge result")
+    merge.add_argument("--head", required=True, help="the develop commit being merged")
+    merge.add_argument("--api-url", required=True)
+
     authorize = subcommands.add_parser(
         "authorize-runner-matrix",
         help="authorize compile runner requests against a Terraform-published Vulcan specification",
@@ -217,12 +223,30 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     core.add_argument("--artifacts-base-url", help="Core artifact index for the selected environment")
 
     devkit_accuracy = subcommands.add_parser(
-        "resolve-devkit-accuracy", help="resolve each DevKit accuracy dataset of a build profile into the cache"
+        "devkit-accuracy-datasets", help="print the pin of each DevKit accuracy dataset of a build profile"
     )
     devkit_accuracy.add_argument("model_dir", type=Path)
     devkit_accuracy.add_argument("--schema", type=Path)
-    devkit_accuracy.add_argument("--cache-dir", type=Path)
     devkit_accuracy.add_argument("--build-profile", required=True)
+
+    shared_dataset = subcommands.add_parser(
+        "unpack-shared-dataset",
+        help="unpack an accuracy dataset from the shared dataset archive share, read once and checked against its "
+        "pin. It exits 1 when the share cannot give the dataset",
+    )
+    shared_dataset.add_argument("model_dir", type=Path)
+    shared_dataset.add_argument("--schema", type=Path)
+    shared_dataset.add_argument("--dataset", required=True, help="the dataset's name, such as imagenet-2012-val")
+    shared_dataset.add_argument("--shared-archives", type=Path, required=True)
+    shared_dataset.add_argument("--destination", type=Path, required=True)
+
+    accuracy_dataset = subcommands.add_parser(
+        "resolve-accuracy-dataset", help="resolve an accuracy dataset's archive through the Dataset Registry"
+    )
+    accuracy_dataset.add_argument("model_dir", type=Path)
+    accuracy_dataset.add_argument("--schema", type=Path)
+    accuracy_dataset.add_argument("--dataset", required=True, help="the dataset's name, such as imagenet-2012-val")
+    accuracy_dataset.add_argument("--cache-dir", type=Path)
 
     inputs = subcommands.add_parser(
         "model-component-mpks", aliases=["model-component-artifacts"],
@@ -431,21 +455,45 @@ def _parser(*, author_safe: bool = False) -> argparse.ArgumentParser:
     publish_catalog_parser.add_argument("--github-run-url")
     publish_catalog_parser.add_argument("--json", action="store_true", dest="json_output")
 
+    publish_selection_parser = subcommands.add_parser(
+        "publish-selection",
+        help="publish the branch's complete catalog as its platform and Core selection and the platform's default",
+    )
+    publish_selection_parser.add_argument("--repository", type=Path, default=Path.cwd())
+    publish_selection_parser.add_argument("--api-url", required=True)
+    publish_selection_parser.add_argument("--read-api-url", required=True)
+    publish_selection_parser.add_argument("--aws-region", default="us-west-2")
+    publish_selection_parser.add_argument("--bucket", required=True)
+    publish_selection_parser.add_argument("--kms-key-id")
+    publish_selection_parser.add_argument("--environment", required=True)
+    publish_selection_parser.add_argument("--branch", required=True)
+    publish_selection_parser.add_argument("--git-sha", required=True)
+    publish_selection_parser.add_argument("--github-run-url")
+
     stage_registry = subcommands.add_parser(
-        "stage-registry-build", help="restore a current catalog build from durable registry MPKs"
+        "stage-registry-build",
+        help="stage a current catalog build's receipts and file list for a benchmark, without its files",
     )
     stage_registry.add_argument("--repository", type=Path, default=Path.cwd())
     stage_registry.add_argument("--output-dir", type=Path, required=True)
     stage_registry.add_argument("--api-url", required=True)
     stage_registry.add_argument("--branch", required=True)
-    stage_registry.add_argument("--deployment-branch", help="restore deployments from another branch's current catalog")
+    stage_registry.add_argument("--deployment-branch", help="stage deployments from another branch's current catalog")
     stage_registry.add_argument("--catalog-revision", required=True)
     stage_registry.add_argument("--model-id", required=True)
     stage_registry.add_argument("--build-profile-id", required=True)
     stage_registry.add_argument("--compile-invocation-id", required=True)
     stage_registry.add_argument("--benchmark-baseline", action="store_true",
-                                help="restore only the declared ordinary benchmark baseline")
+                                help="stage only the declared ordinary benchmark baseline")
     stage_registry.add_argument("--json", action="store_true", dest="json_output")
+
+    staged_download = subcommands.add_parser(
+        "download-build",
+        help="download and verify every file of a staged build, and of its benchmark baseline, by compile run",
+    )
+    staged_download.add_argument("compiled_dir", type=Path, help="root holding the staged <model>/<profile>")
+    staged_download.add_argument("--model", required=True)
+    staged_download.add_argument("--build-profile", required=True)
 
     if not author_safe:
         from .promotions import add_parser
@@ -467,6 +515,7 @@ def _validate(args: argparse.Namespace) -> int:
 
     model = load_and_validate_model(args.model_dir, args.schema)
     validate_package_resources(model)
+    require_reference_accuracy(args.model_dir, model)
     result = {"model_id": model["id"], "model_dir": str(args.model_dir.resolve()), "valid": True}
     print(json.dumps(result, sort_keys=True) if args.json_output else f"Valid model: {model['id']}")
     return 0
@@ -479,6 +528,7 @@ def _validate_models(args: argparse.Namespace) -> int:
     models = load_models(repository)
     for model_id, model in sorted(models.items()):
         validate_package_resources(model)
+        require_reference_accuracy(repository / "models" / model_id, model)
         load_model_documentation(
             repository / "models" / model_id,
             model["display_name"],
@@ -665,12 +715,6 @@ def _reference_metrics(args: argparse.Namespace) -> int:
     return 0
 
 
-def _low_accuracy_variants(args: argparse.Namespace) -> int:
-    variants = low_accuracy_variants(args.repository, load_models(args.repository))
-    args.output.write_text(json.dumps(variants, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")
-    return 0
-
-
 def _dataset_names(args: argparse.Namespace) -> int:
     names = dataset_names(args.repository)
     args.output.write_text(json.dumps(names, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")
@@ -703,6 +747,23 @@ def _plan_stages(args: argparse.Namespace) -> int:
         conversion_client=SigV4RegistryClient(args.api_url, args.aws_region) if args.api_url else None,
     )
     print(json.dumps(result, sort_keys=True, separators=(",", ":")))
+    return 0
+
+
+def _check_main_merge(args: argparse.Namespace) -> int:
+    from .registry import _public_registry_json
+
+    result = find_main_merge_blockers(
+        args.repository, head=args.head, read=_public_registry_json, read_api_url=args.api_url,
+    )
+    for warning in result["warnings"]:
+        print(f"warning: {warning}")
+    for blocker in result["blockers"]:
+        print(blocker)
+    if result["blockers"]:
+        print("blocked: this merge would change what customers see on main")
+        return 1
+    print("main takes every build and result from develop")
     return 0
 
 
@@ -749,6 +810,7 @@ def _benchmark_job(args: argparse.Namespace) -> int:
     )
     baseline = performance and bool(profile.get("benchmark_baseline"))
     print(f"backend={'llima' if native else 'core'}")
+    print(f"runner={benchmark_runner(model)}")
     print(f"needs_baseline={str(baseline).lower()}")
     print(f"timeout_minutes={4320 if native and baseline else 90 if native and performance else 45}")
     return 0
@@ -908,19 +970,28 @@ def _publish_candidate(args: argparse.Namespace) -> int:
     return 0
 
 
-def _resolve_devkit_accuracy(args: argparse.Namespace) -> int:
-    """Print one JSON line per dataset the profile's accuracy evaluates, in model.yaml order; none without one."""
+def _devkit_accuracy_datasets(args: argparse.Namespace) -> int:
+    """Print one JSON line per dataset the profile's accuracy evaluates, in model.yaml order; none without one.
+
+    A line holds the dataset's name and archive pin, and ``samples`` when model.yaml caps the samples accuracy.py
+    evaluates on each dataset. It reads no archive."""
     model = load_and_validate_model(args.model_dir, args.schema)
     if args.build_profile not in benchmarked_profiles(model, "accuracy"):
         return 0
+    samples = model["accuracy"].get("samples")
     for name, dataset in model["accuracy"]["datasets"].items():
         print(json.dumps({
             "name": name,
-            "path": str(resolve_dataset(dataset, args.cache_dir)),
             "sha256": dataset["sha256"],
             "size_bytes": dataset["size_bytes"],
+            **({"samples": samples} if samples is not None else {}),
         }, sort_keys=True))
     return 0
+
+
+def _load_accuracy_dataset(args: argparse.Namespace) -> dict:
+    """Return the pin of the accuracy dataset ``--dataset`` names in the model at ``model_dir``."""
+    return load_and_validate_model(args.model_dir, args.schema)["accuracy"]["datasets"][args.dataset]
 
 
 def _check_report(args: argparse.Namespace) -> int:
@@ -974,6 +1045,28 @@ def _publish_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def _publish_selection(args: argparse.Namespace) -> int:
+    from .catalog_selection import publish_selection
+
+    result = publish_selection(
+        repository=args.repository,
+        api_url=args.api_url,
+        read_api_url=args.read_api_url,
+        aws_region=args.aws_region,
+        bucket=args.bucket,
+        kms_key_id=args.kms_key_id,
+        environment=args.environment,
+        branch=args.branch,
+        git_sha=args.git_sha,
+        github_run_url=args.github_run_url,
+    )
+    print(
+        f"Published selection {result['selection_id']} of catalog {result['catalog_id']} for platform "
+        f"{result['platform_version']}, Core {result['neat_core_version']}, as the platform's default"
+    )
+    return 0
+
+
 def _publish_catalog(args: argparse.Namespace) -> int:
     from .registry import publish_catalog
 
@@ -1018,7 +1111,14 @@ def _stage_registry_build(args: argparse.Namespace) -> int:
         build_profile_id=args.build_profile_id,
         **({} if args.benchmark_baseline else {"compile_invocation_id": args.compile_invocation_id}),
     )
-    print(json.dumps(result, sort_keys=True) if args.json_output else f"Staged {result['count']} registry MPK(s)")
+    print(json.dumps(result, sort_keys=True) if args.json_output
+          else f"Staged {result['count']} component(s) of {args.model_id}/{args.build_profile_id} for the DevKit")
+    return 0
+
+
+def _download_build(args: argparse.Namespace) -> int:
+    for profile, count in download_build(args.compiled_dir, args.model, args.build_profile).items():
+        print(f"Downloaded and verified {count} file(s) of {profile}")
     return 0
 
 
@@ -1080,8 +1180,6 @@ def _main(argv: Sequence[str] | None, *, author_safe: bool) -> int:
             return _component_pipelines(args)
         if args.command == "reference-metrics":
             return _reference_metrics(args)
-        if args.command == "low-accuracy-variants":
-            return _low_accuracy_variants(args)
         if args.command == "dataset-names":
             return _dataset_names(args)
         if args.command == "example-apps":
@@ -1096,6 +1194,8 @@ def _main(argv: Sequence[str] | None, *, author_safe: bool) -> int:
                 read=_public_registry_json, read_api_url=args.api_url,
             ), sort_keys=True))
             return 0
+        if args.command == "check-main-merge":
+            return _check_main_merge(args)
         if args.command == "authorize-runner-matrix":
             return _authorize_runner_matrix(args)
         if args.command == "resolve-base":
@@ -1113,8 +1213,14 @@ def _main(argv: Sequence[str] | None, *, author_safe: bool) -> int:
                 args.repository, environment=args.environment, artifacts_base_url=args.artifacts_base_url,
             )
             return 0
-        if args.command == "resolve-devkit-accuracy":
-            return _resolve_devkit_accuracy(args)
+        if args.command == "devkit-accuracy-datasets":
+            return _devkit_accuracy_datasets(args)
+        if args.command == "unpack-shared-dataset":
+            unpacked = unpack_shared_dataset(_load_accuracy_dataset(args), args.shared_archives, args.destination)
+            return 0 if unpacked else 1
+        if args.command == "resolve-accuracy-dataset":
+            print(resolve_dataset(_load_accuracy_dataset(args), args.cache_dir))
+            return 0
         if args.command in ("model-component-mpks", "model-component-artifacts"):
             from .report_publication import model_component_artifacts, model_component_mpks
 
@@ -1152,8 +1258,12 @@ def _main(argv: Sequence[str] | None, *, author_safe: bool) -> int:
             return _publish_report(args)
         if args.command == "publish-catalog":
             return _publish_catalog(args)
+        if args.command == "publish-selection":
+            return _publish_selection(args)
         if args.command == "stage-registry-build":
             return _stage_registry_build(args)
+        if args.command == "download-build":
+            return _download_build(args)
         parser.error(f"unsupported command: {args.command}")
     except ModelRegistryError as exc:
         print(f"error: {exc}", file=sys.stderr)

@@ -2,9 +2,16 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
-from model_registry.dependencies import resolve_benchmark_runtime, resolve_model_compiler
+from model_registry.dependencies import (
+    catalog_inputs,
+    onnx_opset_version,
+    require_onnx_opset_version,
+    resolve_benchmark_runtime,
+    resolve_model_compiler,
+)
 from model_registry.errors import ValidationError
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -26,9 +33,41 @@ def test_repository_benchmark_runtime_uses_source_revision_package() -> None:
 
     runtime = resolve_benchmark_runtime(ROOT)
     assert runtime["devkit"] == {**manifest["devkit"], "platform_version": manifest["platform-version"]}
-    assert runtime["neat_core"] == manifest["neat-core"]
+    # The Core commit is not a benchmark fingerprint input, so pinning it reruns no benchmark.
+    assert runtime["neat_core"] == {"install_target": manifest["neat-core"]["install_target"]}
     assert runtime["llima"] == manifest["llima"]
     assert "benchmarker" not in runtime
+
+
+def repository_with_core(directory: Path, **neat_core: object) -> Path:
+    manifest = json.loads((ROOT / "deps" / "manifest.json").read_text(encoding="utf-8"))
+    manifest["neat-core"] = neat_core
+    path = directory / "deps" / "manifest.json"
+    path.parent.mkdir()
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+    return directory
+
+
+def test_catalog_inputs_name_the_pinned_platform_and_core_release() -> None:
+    manifest = json.loads((ROOT / "deps" / "manifest.json").read_text(encoding="utf-8"))
+
+    assert catalog_inputs(ROOT) == {
+        "platform_version": manifest["platform-version"],
+        "neat_core_version": manifest["neat-core"]["install_target"].removeprefix("core@v"),
+        "neat_core_revision": manifest["neat-core"]["revision"],
+    }
+
+
+def test_catalog_inputs_are_left_out_for_a_core_branch_package(tmp_path: Path) -> None:
+    assert catalog_inputs(repository_with_core(tmp_path, install_target="core@develop:abcdef123456")) is None
+
+
+@pytest.mark.parametrize("revision", [None, "b1f9556caec1", "B" * 40])
+def test_catalog_inputs_require_the_full_core_commit(tmp_path: Path, revision: object) -> None:
+    repository = repository_with_core(tmp_path, install_target="core@v0.6.2", revision=revision)
+
+    with pytest.raises(ValidationError, match="neat-core.revision"):
+        catalog_inputs(repository)
 
 
 def test_benchmark_runtime_requires_a_package_name(tmp_path: Path) -> None:
@@ -116,3 +155,46 @@ def test_missing_model_compiler_dependency_fails(tmp_path: Path) -> None:
 
     with pytest.raises(ValidationError, match="must define model-compiler"):
         resolve_model_compiler(tmp_path)
+
+
+def _opset_manifest(root: Path, onnx: object) -> None:
+    path = root / "deps" / "manifest.json"
+    path.parent.mkdir()
+    path.write_text(json.dumps({"onnx": onnx}), encoding="utf-8")
+
+
+def test_onnx_opset_version_reads_the_manifest_of_the_working_directory(tmp_path, monkeypatch) -> None:
+    _opset_manifest(tmp_path, {"opset": 15})
+    monkeypatch.delenv("MODEL_REGISTRY_ROOT", raising=False)
+    monkeypatch.chdir(tmp_path)
+
+    assert onnx_opset_version() == 15
+    assert onnx_opset_version(ROOT) == json.loads((ROOT / "deps" / "manifest.json").read_text())["onnx"]["opset"]
+
+
+def test_onnx_opset_version_prefers_the_configured_repository(tmp_path, monkeypatch) -> None:
+    _opset_manifest(tmp_path, {"opset": 15})
+    monkeypatch.setenv("MODEL_REGISTRY_ROOT", str(tmp_path))
+
+    assert onnx_opset_version() == 15
+
+
+@pytest.mark.parametrize("onnx", [None, {}, {"opset": "17"}, {"opset": 17.0}, {"opset": True}, {"opset": 0}])
+def test_onnx_opset_version_requires_a_whole_number(tmp_path: Path, onnx: object) -> None:
+    _opset_manifest(tmp_path, onnx)
+
+    with pytest.raises(ValidationError, match="onnx.opset"):
+        onnx_opset_version(tmp_path)
+
+
+def test_require_onnx_opset_version_rejects_another_opset(tmp_path, monkeypatch) -> None:
+    _opset_manifest(tmp_path, {"opset": 15})
+    monkeypatch.setenv("MODEL_REGISTRY_ROOT", str(tmp_path))
+
+    def model(*opsets: tuple[str, int]) -> SimpleNamespace:
+        imports = [SimpleNamespace(domain=domain, version=version) for domain, version in opsets]
+        return SimpleNamespace(opset_import=imports)
+
+    require_onnx_opset_version(model(("", 15), ("ai.sima", 1)))
+    with pytest.raises(ValueError, match="requires opset 15, found \\[17\\]"):
+        require_onnx_opset_version(model(("", 17)))

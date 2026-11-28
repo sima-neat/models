@@ -197,6 +197,15 @@ def _preview(root: Path) -> Iterator[str]:
         server.kill()
 
 
+@pytest.fixture(scope="module")
+def preview(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
+    """The address of one preview server for the tests that only read from it: starting one loads every model."""
+    root = tmp_path_factory.mktemp("preview")
+    (root / "index.html").write_text("portal", encoding="utf-8")
+    with _preview(root) as base:
+        yield base
+
+
 def _get_json(url: str) -> dict | list:
     with urllib.request.urlopen(url) as response:
         return json.load(response)
@@ -210,14 +219,13 @@ def _get_status(url: str) -> int:
         return error.code
 
 
-def test_preview_serves_the_models_this_repository_declares(tmp_path: Path) -> None:
+def test_preview_serves_the_models_this_repository_declares(preview: str) -> None:
     models = load_models(ROOT)
     api = "/v1/repositories/sima-neat/models"
-    with _preview(tmp_path) as base:
-        entries = _get_json(f"{base}{api}/models")["models"]
-        catalog = _get_json(f"{base}{api}/catalogs/current?git_ref=refs/heads/develop")
-        build = entries[0]["builds"][0]
-        provenance = _get_json(f"{base}/v1/runs/{build['run_id']}/provenance")
+    entries = _get_json(f"{preview}{api}/models")["models"]
+    catalog = _get_json(f"{preview}{api}/catalogs/current?git_ref=refs/heads/develop")
+    build = entries[0]["builds"][0]
+    provenance = _get_json(f"{preview}/v1/runs/{build['run_id']}/provenance")
 
     assert sorted(entry["model_id"] for entry in entries) == sorted(models)
     for entry in entries:
@@ -231,24 +239,23 @@ def test_preview_serves_the_models_this_repository_declares(tmp_path: Path) -> N
     assert provenance["run"]["metadata"]["build_profile_id"] == build["build_profile_id"]
 
 
-def test_preview_serves_full_packages_as_the_publisher_records_them(tmp_path: Path) -> None:
+def test_preview_serves_full_packages_as_the_publisher_records_them(preview: str) -> None:
     api = "/v1/repositories/sima-neat/models"
-    with _preview(tmp_path) as base:
-        catalog = _get_json(f"{base}{api}/catalogs/current?git_ref=refs/heads/develop")
-        packages = {
-            model["id"]: package
-            for model in catalog["catalog"]["document"]["models"]
-            for package in model.get("packages", [])
-        }
-        artifacts = {
-            model_id: _get_json(f"{base}/v1/runs/{package['run_id']}")["artifacts"]
-            for model_id, package in packages.items()
-            if model_id in {"resnet_50", "rf_detr_nano"}
-        }
-        links = {
-            model_id: _get_json(f"{base}/v1/runs/{packages[model_id]['run_id']}/artifacts/package")["artifact"]
-            for model_id in artifacts
-        }
+    catalog = _get_json(f"{preview}{api}/catalogs/current?git_ref=refs/heads/develop")
+    packages = {
+        model["id"]: package
+        for model in catalog["catalog"]["document"]["models"]
+        for package in model.get("packages", [])
+    }
+    artifacts = {
+        model_id: _get_json(f"{preview}/v1/runs/{package['run_id']}")["artifacts"]
+        for model_id, package in packages.items()
+        if model_id in {"resnet_50", "rf_detr_nano"}
+    }
+    links = {
+        model_id: _get_json(f"{preview}/v1/runs/{packages[model_id]['run_id']}/artifacts/package")["artifact"]
+        for model_id in artifacts
+    }
 
     # The browser's Download finds the full package by this type, as the registry publisher writes it.
     for model_id, items in artifacts.items():
@@ -258,7 +265,7 @@ def test_preview_serves_full_packages_as_the_publisher_records_them(tmp_path: Pa
     assert artifacts["resnet_50"][0]["media_type"] == "application/zip"
     assert links["resnet_50"]["s3_key"].endswith("/resnet_50_w8a8_default.zip")
     assert artifacts["rf_detr_nano"][0]["media_type"] == "application/zip"
-    assert links["rf_detr_nano"]["s3_key"].endswith("/rf_detr_nano_w8a8_w16a16_default.zip")
+    assert links["rf_detr_nano"]["s3_key"].endswith("/rf_detr_nano_w8a8_mixed_w16a16_default.zip")
     assert 'item.artifact_type === "model-package"' in _browser_source("app.js", "download-dialog.js")
 
 
@@ -283,15 +290,14 @@ def _benchmark_run(base: str, model_id: str, profile: str, stage: str) -> dict |
     return {"fingerprint": fingerprint, "run": summary, "parameters": parameters, "tests": tests, "model": model}
 
 
-def test_preview_resolves_each_benchmark_fingerprint_to_a_model_report(tmp_path: Path) -> None:
+def test_preview_resolves_each_benchmark_fingerprint_to_a_model_report(preview: str) -> None:
     validator = Draft202012Validator(json.loads((ROOT / "schemas" / "model-report.schema.json").read_text("utf-8")))
-    with _preview(tmp_path) as base:
-        performance = _benchmark_run(base, "resnet_50", "w8a8", "performance")
-        accuracy = _benchmark_run(base, "resnet_50", "w8a8", "accuracy")
-        wrong_type = _get_status(
-            f"{base}/v1/repositories/sima-neat/models/resolve?run_type=model_accuracy"
-            f"&fingerprint={performance['fingerprint']}"
-        )
+    performance = _benchmark_run(preview, "resnet_50", "w8a8", "performance")
+    accuracy = _benchmark_run(preview, "resnet_50", "w8a8", "accuracy")
+    wrong_type = _get_status(
+        f"{preview}/v1/repositories/sima-neat/models/resolve?run_type=model_accuracy"
+        f"&fingerprint={performance['fingerprint']}"
+    )
 
     for stage, measured in (("performance", performance), ("accuracy", accuracy)):
         run = measured["run"]
@@ -314,12 +320,11 @@ def test_preview_resolves_each_benchmark_fingerprint_to_a_model_report(tmp_path:
     assert wrong_type == 404
 
 
-def test_preview_measures_a_multi_component_model_as_one_report(tmp_path: Path) -> None:
-    with _preview(tmp_path) as base:
-        measured = _benchmark_run(base, "rf_detr_nano", "w8a8_w16a16", "performance")
+def test_preview_measures_a_multi_component_model_as_one_report(preview: str) -> None:
+    measured = _benchmark_run(preview, "rf_detr_nano", "w8a8_mixed_w16a16", "performance")
 
     report = measured["tests"][0]["summary"]
-    builds = [build for build in measured["model"]["builds"] if build["build_profile_id"] == "w8a8_w16a16"]
+    builds = [build for build in measured["model"]["builds"] if build["build_profile_id"] == "w8a8_mixed_w16a16"]
     # One report for the whole model, its components in the jsonb key order the registry returns.
     assert list(report["components"]) == ["decoder", "backbone"]
     assert all(component["mla_layer_stats"]["layers"] and component["mla_stage_stats"]["stages"]
@@ -331,24 +336,22 @@ def test_preview_measures_a_multi_component_model_as_one_report(tmp_path: Path) 
     }
 
 
-def test_preview_leaves_a_profile_without_a_benchmark_run(tmp_path: Path) -> None:
-    with _preview(tmp_path) as base:
-        unmeasured = _benchmark_run(base, "yolo26n", "w16a16", "performance")
-        on_demand = _benchmark_run(base, "whisper_small", "w8a16", "performance")
+def test_preview_leaves_a_profile_without_a_benchmark_run(preview: str) -> None:
+    unmeasured = _benchmark_run(preview, "yolo26n", "w16a16", "performance")
+    on_demand = _benchmark_run(preview, "whisper_small", "w8a16", "performance")
 
     # A fingerprint without a run reads as not measured at this revision.
     assert unmeasured["run"] is None
     assert on_demand is None
 
 
-def test_preview_package_runs_carry_numerical_fidelity_and_mla_stage_simulation(tmp_path: Path) -> None:
+def test_preview_package_runs_carry_numerical_fidelity_and_mla_stage_simulation(preview: str) -> None:
     api = "/v1/repositories/sima-neat/models"
-    with _preview(tmp_path) as base:
-        catalog = _get_json(f"{base}{api}/catalogs/current?git_ref=refs/heads/develop")
-        model = next(model for model in catalog["catalog"]["document"]["models"] if model["id"] == "resnet_50")
-        package = model["packages"][0]
-        tests = _get_json(f"{base}/v1/runs/{package['run_id']}/test-results")["test_results"]
-        compile_tests = _get_json(f"{base}/v1/runs/{model['builds'][0]['run_id']}/test-results")["test_results"]
+    catalog = _get_json(f"{preview}{api}/catalogs/current?git_ref=refs/heads/develop")
+    model = next(model for model in catalog["catalog"]["document"]["models"] if model["id"] == "resnet_50")
+    package = model["packages"][0]
+    tests = _get_json(f"{preview}/v1/runs/{package['run_id']}/test-results")["test_results"]
+    compile_tests = _get_json(f"{preview}/v1/runs/{model['builds'][0]['run_id']}/test-results")["test_results"]
 
     fidelity, simulation = tests
     assert (fidelity["suite"], fidelity["name"]) == ("correctness", "numerical-fidelity")
@@ -361,22 +364,20 @@ def test_preview_package_runs_carry_numerical_fidelity_and_mla_stage_simulation(
     assert "numerical-fidelity" not in {test["name"] for test in compile_tests}
 
 
-def test_preview_serves_fixture_paths_only_inside_the_fixtures(tmp_path: Path) -> None:
-    (tmp_path / "index.html").write_text("portal", encoding="utf-8")
-    with _preview(tmp_path) as base:
-        status = {}
-        for request in (
-            "/fixtures/model-report-performance.json",
-            "/fixtures/../../README.md",
-            "/fixtures/%2e%2e/%2e%2e/README.md",
-            "/fixtures/../../../../../../etc/hosts",
-        ):
-            # Raw request lines keep the ".." that an HTTP client would normalize away.
-            response = subprocess.run(
-                ["curl", "-s", "--path-as-is", "-o", os.devnull, "-w", "%{http_code}", f"{base}{request}"],
-                capture_output=True, text=True, check=True,
-            )
-            status[request] = response.stdout
+def test_preview_serves_fixture_paths_only_inside_the_fixtures(preview: str) -> None:
+    status = {}
+    for request in (
+        "/fixtures/model-report-performance.json",
+        "/fixtures/../../README.md",
+        "/fixtures/%2e%2e/%2e%2e/README.md",
+        "/fixtures/../../../../../../etc/hosts",
+    ):
+        # Raw request lines keep the ".." that an HTTP client would normalize away.
+        response = subprocess.run(
+            ["curl", "-s", "--path-as-is", "-o", os.devnull, "-w", "%{http_code}", f"{preview}{request}"],
+            capture_output=True, text=True, check=True,
+        )
+        status[request] = response.stdout
 
     assert status == {
         "/fixtures/model-report-performance.json": "200",
@@ -467,16 +468,11 @@ def test_assembled_portal_ships_the_model_data_api_fetches(tmp_path: Path) -> No
     licenses = json.loads((portal / "licenses.aaaaaaaaaaaa.json").read_text(encoding="utf-8"))
     assert licenses == json.loads((BROWSER / "licenses.json").read_text(encoding="utf-8"))
     api = (portal / "api.aaaaaaaaaaaa.js").read_text(encoding="utf-8")
-    hidden = json.loads((portal / "low-accuracy-variants.aaaaaaaaaaaa.json").read_text(encoding="utf-8"))
-    assert all(isinstance(profiles, list) and profiles for profiles in hidden.values())
     names = json.loads((portal / "dataset-names.aaaaaaaaaaaa.json").read_text(encoding="utf-8"))
     assert names["imagenet-2012"] == "ImageNet 2012"
     apps = json.loads((portal / "example-apps.aaaaaaaaaaaa.json").read_text(encoding="utf-8"))
     assert apps["rf_detr_nano"] == "https://developer.sima.ai/examples/app/object-detection%2Frfdetr-detection-segmentation"
-    model_data = (
-        "component-pipelines", "reference-metrics", "low-accuracy-variants", "dataset-names", "example-apps",
-        "licenses",
-    )
+    model_data = ("component-pipelines", "reference-metrics", "dataset-names", "example-apps", "licenses")
     for name in model_data:
         assert f'"./{name}.aaaaaaaaaaaa.json"' in api
         assert f'"./{name}.json"' not in api
@@ -1117,7 +1113,8 @@ def test_browser_loads_taxonomy_from_the_current_catalog_and_exposes_category_fa
     for removed in ("model-type-filter", "paradigm-filter", "input-modality-filter"):
         assert f'id="{removed}"' not in html
         assert removed not in script
-    assert "/catalogs/current?git_ref=" in script
+    assert "/catalogs/current?${query}" in script
+    assert "{ git_ref: `refs/heads/${branch}` }" in script
     assert "applyTaxonomy(document?.taxonomy || null, snapshotBranch)" in script
     assert '"task-filter": "task"' in script
     assert '"architecture-filter": "architecture_id"' in script
@@ -1947,20 +1944,19 @@ def test_variant_page_shows_build_facts_once_and_one_row_per_component() -> None
     assert 'disclosure(`parameters:${run.id}`, "Compile parameters"' in component_row
 
 
-def test_preview_native_deployments_use_manifest_and_path_preserving_files(tmp_path: Path) -> None:
+def test_preview_native_deployments_use_manifest_and_path_preserving_files(preview: str) -> None:
     api = "/v1/repositories/sima-neat/models"
-    with _preview(tmp_path) as base:
-        catalog = _get_json(f"{base}{api}/catalogs/current?git_ref=refs/heads/develop")
-        # A LLiMa model; a vision-language model such as CLIP can be an ONNX model with MPKs instead.
-        model = next(model for model in catalog["catalog"]["document"]["models"] if model["builds"] and _get_json(
-            f"{base}/v1/runs/{model['builds'][0]['run_id']}")["run"]["metadata"]["artifact_kind"] == "llima")
-        for record in [model["builds"][0], model["packages"][0]]:
-            artifacts = _get_json(f"{base}/v1/runs/{record['run_id']}")["artifacts"]
-            manifest, *files = artifacts
-            assert manifest["media_type"] == "application/json"
-            assert manifest["metadata"]["layout"] == "directory"
-            assert manifest["metadata"]["storage_backend"] == "s3"
-            assert manifest["metadata"]["file_count"] == len(files)
-            assert manifest["metadata"]["deployment_size_bytes"] == sum(file["size_bytes"] for file in files)
-            assert manifest["size_bytes"] < manifest["metadata"]["deployment_size_bytes"]
-            assert all(file["artifact_type"] == "model-file" and file["metadata"]["path"] for file in files)
+    catalog = _get_json(f"{preview}{api}/catalogs/current?git_ref=refs/heads/develop")
+    # A LLiMa model; a vision-language model such as CLIP can be an ONNX model with MPKs instead.
+    model = next(model for model in catalog["catalog"]["document"]["models"] if model["builds"] and _get_json(
+        f"{preview}/v1/runs/{model['builds'][0]['run_id']}")["run"]["metadata"]["artifact_kind"] == "llima")
+    for record in [model["builds"][0], model["packages"][0]]:
+        artifacts = _get_json(f"{preview}/v1/runs/{record['run_id']}")["artifacts"]
+        manifest, *files = artifacts
+        assert manifest["media_type"] == "application/json"
+        assert manifest["metadata"]["layout"] == "directory"
+        assert manifest["metadata"]["storage_backend"] == "s3"
+        assert manifest["metadata"]["file_count"] == len(files)
+        assert manifest["metadata"]["deployment_size_bytes"] == sum(file["size_bytes"] for file in files)
+        assert manifest["size_bytes"] < manifest["metadata"]["deployment_size_bytes"]
+        assert all(file["artifact_type"] == "model-file" and file["metadata"]["path"] for file in files)
