@@ -255,6 +255,11 @@ architectures:
     description: Classifies images with vision transformers operating on image patches.
     paradigm: transformer
     allowed_model_types: [vision]
+  swin:
+    display_name: Swin Transformer
+    description: Classifies images with hierarchical vision transformers using shifted-window attention.
+    paradigm: transformer
+    allowed_model_types: [vision]
   whisper:
     display_name: Whisper
     description: Transcribes speech recordings into text.
