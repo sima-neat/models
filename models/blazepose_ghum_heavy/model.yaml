@@ -1,0 +1,73 @@
+display_name: BlazePose GHUM Heavy 3D
+description: MediaPipe BlazePose GHUM Heavy landmark model with image-space and world-space 3D pose outputs.
+model_type: vision
+tasks: [pose_estimation]
+
+modalities:
+  inputs: [image]
+  outputs: [landmarks]
+
+architecture: blaze_pose
+
+license:
+  spdx: Apache-2.0
+  redistribution: allowed
+  attribution: BlazePose GHUM Heavy was created by the MediaPipe authors and is distributed under Apache-2.0.
+
+upstream:
+  repository: https://github.com/google-ai-edge/mediapipe
+  # MediaPipe v0.8.9, whose tree holds the TFLite that conversion.source copies.
+  revision: e6c19885c6d3c6f410c730952aeed2852790d306
+  model_card: https://developers.google.com/ml-kit/images/vision/pose-detection/pose_model_card.pdf
+  derived_from: https://github.com/google-ai-edge/mediapipe/blob/e6c19885c6d3c6f410c730952aeed2852790d306/mediapipe/modules/pose_landmark/pose_landmark_heavy.tflite
+
+conversion:
+  # A Hugging Face copy of MediaPipe's file: the same git blob as derived_from, and the SHA-256 that
+  # MediaPipe's third_party/external_files.bzl pins for pose_landmark_heavy.tflite.
+  source:
+    uri: hf://models/Pictorial/mediapipe@c89ffb465643886fe8a86d9ce771ac3bd239606a/modules/pose_landmark/pose_landmark_heavy.tflite
+    sha256: 59e42d71bcd44cbdbabc419f0ff76686595fd265419566bd4009ef703ea8e1fe
+    size_bytes: 27709200
+
+compilation:
+  # compile.py compares the quantized graph with the converted ONNX on seeded inputs before it packages.
+  format: onnx
+  source: conversion
+
+calibrations:
+- id: coco-2017-cal
+  dataset: {id: coco-2017, variant: cal, sha256: 54c64d84122eba371ac014d7b43849a461551c2e6c5c430b5ead90ec1dec12b1, size_bytes: 187510866}
+
+build_profiles:
+  w16a16:
+    components:
+      model:
+        parameters: {precision: w16a16}
+
+  # No w8a8: it compiles to one MLA segment, but its landmarks are not usable. Calibrated locally on 50 val2017
+  # people standing in for cal2017 (Model Compiler 3.0.0.1), its 17 COCO landmarks sat a mean 36.6 px (median
+  # 34.4) from the FP32 ONNX's in the 256 px crop on 411 other val2017 people, and it scored 0.000 keypoint AP
+  # where FP32 scored 0.181. On 97 of those people w16a16 sat 4.7 px away (median 2.0) and scored 0.244 to
+  # FP32's 0.226. compile.py keeps its recipe.
+  # w8a8:
+  #   calibration_dataset: coco-2017-cal
+  #   components:
+  #     model:
+  #       parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 50}
+
+accuracy:
+  # MediaPipe scores single-person Yoga, Dance and HIIT sets it has not released. accuracy.py crops each labelled
+  # COCO val2017 person as a square 1.25 times the longer side of the ground-truth box. MediaPipe builds its square
+  # from two keypoints of its person detector and rotates it upright; the box crop is not rotated, and the package
+  # leaves out the heatmap refinement.
+  datasets:
+  - {id: coco-2017, variant: val, sha256: a40de1caf42b47c5a8976eb97efe3c83f3a41337c4d16d318eb15d65c293f2da, size_bytes: 898368520}
+
+performance: {}
+
+reference_metrics:
+- origin: fp32_baseline
+  script: scripts/fp32_baseline_accuracy.py
+  dataset: {id: coco-2017, split: val}
+  conditions: FP32 ONNX on ONNX Runtime CPU; each of the 6352 labelled non-crowd val2017 people cropped from its ground-truth box as a square 1.25 times its longer side, edge pixels repeated, resized to 256x256 in [0, 1]; scored by pose presence
+  metrics: {coco_keypoint_map: 0.2037, coco_keypoint_ap50: 0.4269, coco_keypoint_ap75: 0.1759, coco_keypoint_ar: 0.3174}

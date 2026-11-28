@@ -1,0 +1,24 @@
+conversion:
+  run_tests: true
+compile:
+  run_tests: true
+accuracy:
+  run_tests: true
+  expected:
+    w16a16:
+      coco-2017-val:
+        coco_keypoint_map: 0.2004
+        coco_keypoint_ap50: 0.4198
+        coco_keypoint_ap75: 0.1734
+        coco_keypoint_ap_medium: 0.1963
+        coco_keypoint_ap_large: 0.2146
+        coco_keypoint_ar: 0.3163
+        coco_keypoint_ar50: 0.5291
+        coco_keypoint_ar75: 0.3219
+        coco_keypoint_ar_medium: 0.2941
+        coco_keypoint_ar_large: 0.3475
+performance:
+  run_tests: true
+  expected:
+    w16a16:
+      throughput_fps: 411.5

@@ -45,6 +45,11 @@ architecture_paradigms:
 # A family is the upstream model line, named without size (YOLO26-det, not
 # YOLO26n-det). The model's id and display_name carry the size.
 architectures:
+  blaze_pose:
+    display_name: BlazePose
+    description: Finds one person's body landmarks in 3D from a crop around that person.
+    paradigm: cnn
+    allowed_model_types: [vision]
   yolo_world:
     display_name: YOLO-World
     description: Detects objects described by text prompts in images.
