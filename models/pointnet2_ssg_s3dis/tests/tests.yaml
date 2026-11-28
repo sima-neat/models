@@ -1,0 +1,17 @@
+conversion:
+  run_tests: true
+compile:
+  run_tests: true
+accuracy:
+  run_tests: true
+  expected:
+    w16a16:
+      s3dis-val:
+        miou: 0.5319
+        overall_accuracy: 0.8433
+        mean_class_accuracy: 0.6328
+performance:
+  run_tests: true
+  expected:
+    w16a16:
+      throughput_fps: 18.8

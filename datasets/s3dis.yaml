@@ -1,0 +1,4 @@
+# What every model evaluating its accuracy on S3DIS must report, by the model's task.
+name: S3DIS
+required_metrics:
+  semantic_segmentation: [miou, overall_accuracy]
