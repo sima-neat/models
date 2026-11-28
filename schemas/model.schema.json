@@ -151,7 +151,15 @@
       "type": "object", "additionalProperties": false,
       "properties": {
         "build_profiles": {"$ref": "#/$defs/profileIds"},
-        "scope": {"enum": ["model", "components"], "default": "model"}
+        "scope": {"enum": ["model", "components"], "default": "model"},
+        "samples": {
+          "description": "Optional, for a model whose build profiles declare a benchmark_baseline: how many prompts of each speculative benchmark dataset to measure, as a seeded random subset. text and image cap each text and image dataset, and the baseline measures the same prompts. Omitted, every prompt is measured on both deployments.",
+          "type": "object", "additionalProperties": false, "required": ["text"],
+          "properties": {
+            "text": {"type": "integer", "minimum": 1},
+            "image": {"type": "integer", "minimum": 1}
+          }
+        }
       }
     },
     "reference_metrics": {

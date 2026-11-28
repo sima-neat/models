@@ -816,6 +816,8 @@ def test_speculative_compile_fingerprint_tracks_weights_not_benchmark_baseline(t
     compiler = "3.0.0+develop.000000000000"
     before = compile_fingerprint(tmp_path, model_id, "w4a16", "w4a16", compiler)
     model["build_profiles"]["w4a16"].pop("benchmark_baseline")
+    # Subset sizes measure a speculative build against its baseline, so they leave with it.
+    model["performance"].pop("samples")
     manifest.write_text(yaml.safe_dump(model, sort_keys=False))
     assert compile_fingerprint(tmp_path, model_id, "w4a16", "w4a16", compiler) == before
     draft = model["build_profiles"]["w4a16"]["components"]["model"]["parameters"]["draft_model_path"]
@@ -836,6 +838,14 @@ def test_benchmark_baseline_changes_only_its_profiles_performance_fingerprint():
     assert benchmark_fingerprint(ROOT, model, "w8a16_w16a16", builds, "accuracy") == accuracy
     model["build_profiles"][0].pop("benchmark_baseline")
     assert benchmark_fingerprint(ROOT, model, "w8a16_w16a16", builds, "performance") == before
+
+
+def test_performance_samples_change_only_that_models_performance_fingerprint():
+    model = load_and_validate_model(ROOT / "models/gemma_4_e2b_it_textonly_mtp")
+    builds = {"model": {"run_id": "compiled-target"}}
+    before = benchmark_fingerprint(ROOT, model, "w4a16", builds, "performance")
+    model["performance"]["samples"]["text"] += 1
+    assert benchmark_fingerprint(ROOT, model, "w4a16", builds, "performance") != before
 
 
 @pytest.mark.parametrize("dependency", ["neat-core", "llima"])

@@ -483,8 +483,8 @@ MoLE from the LLiMa revision that `deps/manifest.json` pins.
 | --- | --- |
 | Ordinary LLM | Text input buckets |
 | Ordinary VLM | Text buckets, plus one encoder-sized image with “Describe what you see in the image.” |
-| Speculative LLM | Full GSM8K, BFCL v3 simple/multiple and AlpacaEval datasets |
-| Speculative VLM | Those text datasets, plus full RealWorldQA, DocVQA validation and ChartQA at dataset image resolution |
+| Speculative LLM | GSM8K, BFCL v3 simple/multiple and AlpacaEval |
+| Speculative VLM | Those text datasets, plus RealWorldQA, DocVQA validation and ChartQA at dataset image resolution |
 
 Text buckets double from 128 through `max_context - 1024`, including that
 boundary: 128, 256, 512, 1024, 2048 and 3072 for 4K context. Ordinary workloads
@@ -494,8 +494,13 @@ dataset requests allow up to 256 generated tokens; ordinary text measures the
 first token plus 256 decode steps.
 
 Speculative profiles declare an ordinary model/profile in `benchmark_baseline`.
-Both deployments use the same dataset sources, prompts, context and output
-budgets. BFCL is skipped for both deployments if either lacks a native tool
+Both deployments measure every prompt, with the same dataset sources, context
+and output budgets, unless the model declares
+[`performance.samples`](metadata-schema.md#performance). Then both measure the
+same seeded random subset of each dataset, and the report records each
+dataset's full and measured counts. The datasets come from
+their Dataset Registry archives, which `generation_benchmark.py` pins and reads
+from the DevKit dataset share, and MoLE reads them with Hugging Face offline. BFCL is skipped for both deployments if either lacks a native tool
 template; the reason is recorded in the log and JSON report.
 Reports include TTFT (time to first token), text prefill TPS, decode TPS excluding the first
 token, draft contribution (accepted draft/generated tokens) and generation speedup (aggregate
@@ -508,5 +513,6 @@ Sentinel recording once at startup.
 
 For local runs, use MoLE with `PYTHONPATH=tools` and the model's `performance.py`
 with `--deployment`, `--output` and, for speculative models, `--baseline` pointing
-to the staged baseline receipt. Results use `model-report.json`; raw reports
+to the staged baseline receipt. A speculative run needs the dataset share at
+`SHARED_DATASET_ARCHIVES`. Results use `model-report.json`; raw reports
 retain request and token timings.

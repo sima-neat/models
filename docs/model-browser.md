@@ -200,7 +200,9 @@ in this order:
    in a separate table. TTFT headings explain time to first token in a tooltip.
    Speculative models compare **Baseline** with **MTP**, **DFlash** or **EAGLE3**
    when the compiled build identifies its method. The baseline is the target
-   model without speculative decoding. Generation speedup excludes prompt
+   model without speculative decoding. A run that measured a subset shows each
+   dataset's prompts as "50 of 1,319".
+   Generation speedup excludes prompt
    processing and the first token; draft contribution is the percentage of
    generated tokens accepted from the draft model. Measurement details show
    each workload's telemetry for both deployments. Each CSV identifies its own
