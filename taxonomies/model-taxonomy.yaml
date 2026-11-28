@@ -160,6 +160,11 @@ architectures:
     description: Answers visual questions and generates descriptions from images and text.
     paradigm: transformer
     allowed_model_types: [vlm]
+  mask2former:
+    display_name: Mask2Former
+    description: Segments images into instances with masked-attention mask transformers.
+    paradigm: transformer
+    allowed_model_types: [vision]
   mistral:
     display_name: Mistral
     description: Generates text for conversational and instruction-following tasks.

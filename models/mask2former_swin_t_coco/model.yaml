@@ -1,0 +1,114 @@
+display_name: Mask2Former Swin-T COCO
+description: Finds every COCO object in an image and returns its class and mask, with a masked-attention transformer.
+model_type: vision
+tasks: [instance_segmentation]
+
+modalities:
+  inputs: [image]
+  outputs: [class_scores, masks]
+
+architecture: mask2former
+
+# The code is MIT; Mask2Former's model zoo releases the trained weights, which this checkpoint converts, under
+# CC BY-NC 4.0 (MODEL_ZOO.md at the derived_from commit), so they may be used only noncommercially.
+license:
+  spdx: CC-BY-NC-4.0
+  redistribution: restricted
+  attribution: Mask2Former by Bowen Cheng et al. (Meta AI), weights under CC BY-NC 4.0 (https://github.com/facebookresearch/Mask2Former/blob/9b0651c6c1d5b3af2e6da0589b719c514ec0d69a/MODEL_ZOO.md); code under MIT.
+
+upstream:
+  repository: https://huggingface.co/facebook/mask2former-swin-tiny-coco-instance
+  revision: 22c4a2f15dc88149b8b8d9f4d42c54431fbd66f6
+  derived_from: https://github.com/facebookresearch/Mask2Former/tree/9b0651c6c1d5b3af2e6da0589b719c514ec0d69a
+
+conversion:
+  source:
+    repository: facebook/mask2former-swin-tiny-coco-instance
+    revision: 22c4a2f15dc88149b8b8d9f4d42c54431fbd66f6
+    main_file: config.json
+    files:
+      config.json: {sha256: 86e17340334de554d19f0ed176ca97ada069b72a40dfc880db6d07043e9a56ec, size_bytes: 79763}
+      model.safetensors: {sha256: 3550e8b21381d082c4d12b06a4b7c5f0f4a530125eee4c5f264b1e5f43dfab80, size_bytes: 189998168}
+
+compilation:
+  format: onnx
+  source:
+    uri: https://artifacts.stg.neat.sima.ai/models-onnx/mask2former_swin_t_coco/aed70d203241d55926326fa141f35ad523c7ad7797fcdc781c81ac392d1b09ce/41450724183-1/model.onnx
+    sha256: aed70d203241d55926326fa141f35ad523c7ad7797fcdc781c81ac392d1b09ce
+    size_bytes: 227346436
+  # Each part compiles apart, one MLA segment each; the CPU only prepares the image and decodes the instances. The
+  # backbone compiles as two components; the pixel decoder as two per deformable attention layer (four heads each),
+  # plus one for its 1/4 level. Compiled whole, the backbone and the pixel decoder each took 25-30 GiB, and the CI
+  # runner (32 GiB) lost contact compiling them; it did again with one deformable layer per component, once the
+  # compiler's check simulation ran beside it. A four-head half compiles locally at 13 GiB.
+  components: [backbone_0, backbone_1, pixel_decoder_0, pixel_decoder_1, pixel_decoder_2, pixel_decoder_3,
+    pixel_decoder_4, pixel_decoder_5, pixel_decoder_6, pixel_decoder_7, pixel_decoder_8, pixel_decoder_9,
+    pixel_decoder_10, pixel_decoder_11, pixel_decoder_12, transformer_decoder]
+
+build_profiles:
+  w16a16:
+    components:
+      backbone_0:
+        parameters: {precision: w16a16}
+      backbone_1:
+        parameters: {precision: w16a16}
+      pixel_decoder_0:
+        parameters: {precision: w16a16}
+      pixel_decoder_1:
+        parameters: {precision: w16a16}
+      pixel_decoder_2:
+        parameters: {precision: w16a16}
+      pixel_decoder_3:
+        parameters: {precision: w16a16}
+      pixel_decoder_4:
+        parameters: {precision: w16a16}
+      pixel_decoder_5:
+        parameters: {precision: w16a16}
+      pixel_decoder_6:
+        parameters: {precision: w16a16}
+      pixel_decoder_7:
+        parameters: {precision: w16a16}
+      pixel_decoder_8:
+        parameters: {precision: w16a16}
+      pixel_decoder_9:
+        parameters: {precision: w16a16}
+      pixel_decoder_10:
+        parameters: {precision: w16a16}
+      pixel_decoder_11:
+        parameters: {precision: w16a16}
+      pixel_decoder_12:
+        parameters: {precision: w16a16}
+      transformer_decoder:
+        parameters: {precision: w16a16}
+
+pipeline:
+- {cpu: "Stretch to 384x384 and normalize"}
+- {component: backbone_0}
+- {component: backbone_1}
+- {component: pixel_decoder_0}
+- {component: pixel_decoder_1}
+- {component: pixel_decoder_2}
+- {component: pixel_decoder_3}
+- {component: pixel_decoder_4}
+- {component: pixel_decoder_5}
+- {component: pixel_decoder_6}
+- {component: pixel_decoder_7}
+- {component: pixel_decoder_8}
+- {component: pixel_decoder_9}
+- {component: pixel_decoder_10}
+- {component: pixel_decoder_11}
+- {component: pixel_decoder_12}
+- {component: transformer_decoder}
+- {cpu: "Top 100 (query, class) pairs; upsample their masks to the image and threshold at 0"}
+
+accuracy:
+  datasets:
+  - {id: coco-2017, variant: val, sha256: a40de1caf42b47c5a8976eb97efe3c83f3a41337c4d16d318eb15d65c293f2da, size_bytes: 898368520}
+
+performance: {}
+
+reference_metrics:
+- source: https://github.com/facebookresearch/Mask2Former/blob/9b0651c6c1d5b3af2e6da0589b719c514ec0d69a/MODEL_ZOO.md
+  dataset: {id: coco-2017, split: val}
+  conditions: Swin-T, 50 epochs, shorter side 800 (detectron2 evaluation)
+  metrics: {coco_mask_map: 0.45}
