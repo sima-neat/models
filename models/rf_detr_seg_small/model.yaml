@@ -74,8 +74,9 @@ build_profiles:
       decoder:
         parameters: {precision: w16a16, calibration_bins: 2048, calibration_samples: 20}
 
-  # No w8a8_mixed_w16a16: w8a16_w8a8_mixed scores 0.4276 mask mAP at 74.1 FPS on CI's DevKit against its
-  # 0.4217 at 75.7 FPS, so it offers no trade-off. compile.py keeps its recipe.
+  # No w8a8_mixed_w16a16: it ran 2% faster than w8a16_w8a8_mixed on CI's DevKit, 75.7 FPS against 74.1, but scored
+  # 0.0059 lower mask mAP, 0.4217 against 0.4276, too small a gain to offer as its own variant. compile.py keeps its
+  # recipe.
   # w8a8_mixed_w16a16:
   #   calibration_dataset: coco-2017-cal
   #   runner_market: on-demand
