@@ -1,0 +1,81 @@
+display_name: YuNet-n
+description: Finds faces in an image, with a box, a score and five landmarks for each face.
+model_type: vision
+tasks: [face_detection, face_landmark_detection]
+
+modalities:
+  inputs: [image]
+  outputs: [bounding_boxes, class_scores, landmarks]
+
+architecture: yunet
+
+license:
+  spdx: BSD-3-Clause
+  redistribution: allowed
+  attribution: >-
+    YuNet by Shiqi Yu and contributors (libfacedetection.train), under BSD-3-Clause. It is trained on WIDER FACE,
+    whose images are under CC BY-NC-ND 4.0, with annotations released for non-commercial research.
+
+upstream:
+  repository: https://github.com/ShiqiYu/libfacedetection.train
+  revision: dca340aa082c71081a68d17db8e58b33a58a914b
+  model_card: https://github.com/ShiqiYu/libfacedetection.train/blob/dca340aa082c71081a68d17db8e58b33a58a914b/README.md
+
+resources:
+  license:
+    source:
+      uri: https://raw.githubusercontent.com/ShiqiYu/libfacedetection.train/dca340aa082c71081a68d17db8e58b33a58a914b/LICENSE
+      sha256: e8afd9575f1cebfd20752e1f0c0981042a5526a99a5df3b926c5e05035ec4136
+      size_bytes: 1542
+    install_path: licenses/LICENSE
+
+compilation:
+  format: onnx
+  source:
+    # Not on Hugging Face, where OpenCV Zoo publishes only YuNet-s: libfacedetection.train's own ONNX at the revision
+    # above.
+    uri: https://raw.githubusercontent.com/ShiqiYu/libfacedetection.train/dca340aa082c71081a68d17db8e58b33a58a914b/onnx/yunet_n_640_640.onnx
+    sha256: 25a606a145a5b6d7271ae138fbd00eba91dad8b83222ae3f2c7ecd0f4a7b0e31
+    size_bytes: 317466
+
+calibrations:
+- id: wider-face-cal
+  dataset: {id: wider-face, variant: cal, sha256: 1c81bfd340f0c56185afa891d801db8a22c28add383aa1e3d4a9ba5e9e9de472, size_bytes: 55679672}
+
+build_profiles:
+  w16a16:
+    components:
+      model:
+        parameters: {precision: w16a16}
+
+  w8a8:
+    calibration_dataset: wider-face-cal
+    components:
+      model:
+        parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 100}
+
+# Scored against the upstream ONNX on WIDER FACE training images after the calibration draw, the calibration archive's
+# split, so no fidelity image calibrates the model.
+numerical_fidelity:
+  status: diagnostic
+  dataset: {id: wider-face, variant: cal, sha256: 1c81bfd340f0c56185afa891d801db8a22c28add383aa1e3d4a9ba5e9e9de472, size_bytes: 55679672}
+  selection: {method: seeded_random_without_replacement, seed: 42, offset: 100, samples: 8}
+  outputs: [cls_8, cls_16, cls_32, obj_8, obj_16, obj_32, bbox_8, bbox_16, bbox_32, kps_8, kps_16, kps_32]
+
+accuracy:
+  datasets:
+  - {id: wider-face, variant: val, sha256: 65c76aa48df0cb187dfcef497073265f0a00b68d5ea3ccba21d33d34a8fe0998, size_bytes: 364891439}
+
+performance: {}
+
+reference_metrics:
+- origin: fp32_baseline
+  script: scripts/fp32_baseline_accuracy.py
+  dataset: {id: wider-face, split: val}
+  conditions: FP32 ONNX on ONNX Runtime CPU; each image letterboxed to 640x640, centered and zero-padded; score threshold 0.3, NMS IoU 0.45, top 5000; 3,226 images
+  metrics: {widerface_ap_easy: 0.8973, widerface_ap_medium: 0.8649, widerface_ap_hard: 0.6809}
+- source: https://github.com/ShiqiYu/libfacedetection.train/blob/dca340aa082c71081a68d17db8e58b33a58a914b/README.md
+  dataset: {id: wider-face, split: val}
+  conditions: the released YuNet_n PyTorch checkpoint, each image at its own size (eval_widerface --mode origin); score threshold 0.02, NMS IoU 0.45, no limit on detections
+  note: libfacedetection.train's evaluation of its released checkpoint. This package differs in two ways. It compiles the repository's fixed 640x640 ONNX file, which shrinks the small faces of WIDER FACE's 1024-pixel-wide images, and it scores with OpenCV Zoo's YuNet settings (score threshold 0.3, top 5000), which drop the low-score detections the reference keeps. Both lower its scores, most of all on the hard subset.
+  metrics: {widerface_ap_easy: 0.892, widerface_ap_medium: 0.883, widerface_ap_hard: 0.811}

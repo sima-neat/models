@@ -310,6 +310,11 @@ architectures:
     description: Detects objects and their bounding boxes in images.
     paradigm: cnn
     allowed_model_types: [vision]
+  yunet:
+    display_name: YuNet
+    description: Detects faces and five landmarks per face with a very small network.
+    paradigm: cnn
+    allowed_model_types: [vision]
 
 tasks:
   automatic_speech_recognition:
