@@ -15,6 +15,8 @@ from model_registry.errors import ValidationError
 from model_registry.fingerprints import (
     COMPILE_TOOLING,
     FIDELITY_TOOLING,
+    SPEECH_ACCURACY_TOOLING,
+    SPEECH_METRICS,
     benchmark_fingerprint,
     compile_fingerprint,
 )
@@ -423,6 +425,31 @@ def _copy_repository(repository: Path, model_id: str) -> Path:
                      f"models/{model_id}"):
         shutil.copytree(ROOT / relative, repository / relative, ignore=shutil.ignore_patterns("__pycache__"))
     return repository / "models" / model_id
+
+
+@pytest.mark.parametrize("metric", sorted(SPEECH_METRICS))
+@pytest.mark.parametrize("scorer", SPEECH_ACCURACY_TOOLING)
+def test_only_speech_accuracy_reruns_when_the_transcript_scorer_changes(
+    tmp_path: Path, scorer: str, metric: str
+) -> None:
+    """A scoring change reruns the accuracy of models reporting any speech metric, and no other model's."""
+    model_dir = _copy_repository(tmp_path, "rf_detr_small")
+    detector = load_and_validate_model(model_dir, tmp_path / "schemas" / "model.schema.json")
+    transcriber = copy.deepcopy(detector)
+    for dataset in transcriber["accuracy"]["datasets"].values():
+        dataset["required_metrics"] = [metric]
+
+    def fingerprints() -> list[str]:
+        return [benchmark_fingerprint(tmp_path, model, "w8a8_w16a16", RF_DETR_BUILDS, "accuracy")
+                for model in (detector, transcriber)]
+
+    before = fingerprints()
+    path = tmp_path / scorer
+    path.write_text(path.read_text(encoding="utf-8") + "# newer\n", encoding="utf-8")
+    after = fingerprints()
+
+    assert after[0] == before[0]
+    assert after[1] != before[1]
 
 
 def test_accuracy_fingerprint_covers_the_model_datasets_and_their_requirements(tmp_path: Path) -> None:

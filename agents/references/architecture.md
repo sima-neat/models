@@ -127,6 +127,8 @@ no compiler dependency.
 | `__init__.py` | Building `model-report.json` from what Core returned: `from_performance`, `from_component_performance`, `from_accuracy`, and `from_generation` for LLiMa. Also `log`, which a benchmark script prints its progress with. |
 | `board_telemetry.py` | Sentinel traces around measured inference, summarized like Core's telemetry, and stopping a recording a killed benchmark left active (`stop_active_recording`). |
 | `generation_benchmark.py` | MoLE timings, dataset comparisons, and telemetry for deployed LLiMa models. |
+| `speech.py` | Scoring speech recognition transcripts: one text normalization per language, then corpus word and character error rates (`wer`, `wer_as_written`, `cer`). Hashed only into the accuracy fingerprints of models that must report `wer`, `wer_as_written` or `cer`. |
+| `english_normalizer.py`, `english_spelling.json` | Whisper's English text normalizer and its British-American spelling map, which `speech.py` scores English with. Hashed with it. |
 | `metrics.json` | The one metric vocabulary: each metric's stage, label, unit, direction, Vulcan measurement name (`registry_name`), and whether a performance report requires it. |
 
 ### `tools/model_inputs`
@@ -160,7 +162,7 @@ the truth for what each fingerprint hashes:
 | --- | --- |
 | ONNX compile | The profile's projection of `model.yaml` (sources, parameters, calibration pin, `numerical_fidelity`, `resources`), the compiler identity, the files in `COMPILE_TOOLING`, `fidelity.py` for a model that declares `numerical_fidelity`, and every `.py` and `.sh` file under the model's `scripts/` that is not in `NON_COMPILE_SCRIPTS`. |
 | LLiMa compile | Checkpoint content, target, the component's `parameters`, and the compiler identity. No script or shared file. |
-| benchmark | Each component's compile run ID, plus its MPK SHA-256 for an ONNX build. The stage's `model.yaml` declaration without `build_profiles`. For accuracy it includes the metrics each dataset's `datasets/<id>.yaml` requires for the model's tasks. The stage script and its optional requirements file. `PERFORMANCE_TOOLING` or `ACCURACY_TOOLING`. Performance adds `LLIMA_PERFORMANCE_TOOLING` for a model MoLE measures and `tools/model_inputs/frame.py` for a model PyNeat measures. The DevKit runtime pins. A performance fingerprint adds the profile's `benchmark_baseline` with that baseline's compile fingerprint. |
+| benchmark | Each component's compile run ID, plus its MPK SHA-256 for an ONNX build. The stage's `model.yaml` declaration without `build_profiles`. For accuracy it includes the metrics each dataset's `datasets/<id>.yaml` requires for the model's tasks. The stage script and its optional requirements file. `PERFORMANCE_TOOLING` or `ACCURACY_TOOLING`. Performance adds `LLIMA_PERFORMANCE_TOOLING` for a model MoLE measures and `tools/model_inputs/frame.py` for a model PyNeat measures. Accuracy adds `SPEECH_ACCURACY_TOOLING` for a model whose accuracy datasets require `wer`, `wer_as_written` or `cer`. The DevKit runtime pins. A performance fingerprint adds the profile's `benchmark_baseline` with that baseline's compile fingerprint. |
 | conversion | `conversion.source`, `conversion.outputs`, `FINGERPRINT_VERSION`, and the model's conversion files under `scripts/`. No shared file. |
 
 [What a change reruns](../../docs/adding-a-model.md#9-know-what-a-change-reruns) lists each

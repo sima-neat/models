@@ -44,7 +44,7 @@ where = ["tools"]
 
 [tool.setuptools.package-data]
 model_registry = ["py.typed"]
-model_report = ["metrics.json"]
+model_report = ["metrics.json", "english_spelling.json"]
 
 [tool.pytest.ini_options]
 addopts = "-ra --import-mode=importlib"

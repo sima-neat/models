@@ -73,6 +73,15 @@ ACCURACY_TOOLING = (
     "scripts/unpack_benchmark_datasets.sh",
     "scripts/run_model_accuracy.sh",
 )
+# The shared transcript scorer, hashed only for models whose accuracy datasets require a speech metric, so a
+# scoring change reruns their accuracy and no other model's. Every metric the scorer computes belongs here:
+# wer_as_written reads the same module, so leaving it out would reuse a result from an older implementation.
+SPEECH_METRICS = {"wer", "wer_as_written", "cer"}
+SPEECH_ACCURACY_TOOLING = (
+    "tools/model_report/english_normalizer.py",
+    "tools/model_report/english_spelling.json",
+    "tools/model_report/speech.py",
+)
 
 
 def _hash_files(digest: Any, root: Path, paths: set[Path] | list[Path]) -> None:
@@ -271,6 +280,10 @@ def benchmark_fingerprint(
     native = model["components"][0]["interface"]["format"] == "huggingface"
     if stage == "performance":
         required.extend(LLIMA_PERFORMANCE_TOOLING if benchmark_runner(model) == "mole" else [FRAME_TOOLING])
+    if stage == "accuracy" and any(
+        SPEECH_METRICS.intersection(dataset["required_metrics"]) for dataset in model[stage]["datasets"].values()
+    ):
+        required.extend(SPEECH_ACCURACY_TOOLING)
     runtime = resolve_benchmark_runtime(root)
     if not native:
         runtime.pop("llima", None)
