@@ -252,4 +252,7 @@ not as a shortcut around an unresolved failure. A profile whose accuracy is
 more than 8% below its reference score counts as unusable, as [comment out a
 variant far below its reference
 score](adding-a-model.md#comment-out-a-variant-far-below-its-reference-score)
-describes.
+describes. A working profile may also be commented out when another declared
+profile makes it redundant. Its comment in `model.yaml` then gives both
+profiles' measured accuracy and throughput, and why the difference does not
+justify a separate variant.
