@@ -1,0 +1,91 @@
+display_name: FCN-HRNet-W18
+description: The lighter FCN-HRNet, labeling every pixel of a scene with one of the 150 ADE20K classes.
+model_type: vision
+tasks: [semantic_segmentation]
+
+modalities:
+  inputs: [image]
+  outputs: [masks]
+
+architecture: fcn_hrnet
+
+license:
+  spdx: Apache-2.0
+  redistribution: allowed
+  attribution: FCN-HRNet-W18 by the MMSegmentation authors (open-mmlab/mmsegmentation), under Apache-2.0. Its backbone was initialized from the HRNet authors' ImageNet weights (HRNet/HRNet-Image-Classification), under MIT.
+
+upstream:
+  repository: https://github.com/open-mmlab/mmsegmentation
+  revision: b040e147adfa027bbc071b624bedf0ae84dfc922
+  model_card: https://github.com/open-mmlab/mmsegmentation/blob/b040e147adfa027bbc071b624bedf0ae84dfc922/configs/hrnet/README.md
+  derived_from: https://github.com/HRNet/HRNet-Semantic-Segmentation/tree/0bbb2880446ddff2d78f8dd7e8c4c610151d5a51
+
+conversion:
+  source:
+    # MMSegmentation publishes its checkpoints only on this host: no Hugging Face copy and no GitHub release assets.
+    # The file name ends with the first eight hex digits of its SHA-256.
+    uri: https://download.openmmlab.com/mmsegmentation/v0.5/hrnet/fcn_hr18_512x512_160k_ade20k/fcn_hr18_512x512_160k_ade20k_20200614_214426-ca961836.pth
+    sha256: ca961836861a7b88d4f351f44bdc6c014b7257c9b8f53c68a486c6c4a7fb4cc8
+    size_bytes: 39200293
+
+resources:
+  license:
+    source:
+      uri: https://raw.githubusercontent.com/open-mmlab/mmsegmentation/b040e147adfa027bbc071b624bedf0ae84dfc922/LICENSE
+      sha256: 98b89585ea28b480797870476cd82584425432d1badbe01ac2b9b9bc9cbc2a9b
+      size_bytes: 11422
+    install_path: licenses/LICENSE
+  license_hrnet:
+    # The checkpoint's backbone started from the HRNet authors' ImageNet weights, which carry MIT.
+    source:
+      uri: https://raw.githubusercontent.com/HRNet/HRNet-Image-Classification/f760c988482cdb8a1f69b10b219d669721144582/LICENSE
+      sha256: 285c174bc9a991f013d2f205c63f1d7ec90bb91e7acb428151f119a76cfd6d00
+      size_bytes: 1078
+    install_path: licenses/LICENSE-HRNet
+
+compilation:
+  format: onnx
+  source: conversion
+
+calibrations:
+- id: ade20k-cal
+  dataset: {id: ade20k, variant: cal, sha256: c990f59c732fb27f97063bca2647661c307a29a9499d48282d18c92d1bb4a10b, size_bytes: 19557782}
+
+build_profiles:
+  w16a16:
+    components:
+      model:
+        parameters: {precision: w16a16}
+
+  w8a8:
+    calibration_dataset: ade20k-cal
+    components:
+      model:
+        parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 50}
+
+# Scored against the ONNX source on ADE20K training images, the calibration archive's split.
+numerical_fidelity:
+  status: diagnostic
+  dataset: {id: ade20k, variant: cal, sha256: c990f59c732fb27f97063bca2647661c307a29a9499d48282d18c92d1bb4a10b, size_bytes: 19557782}
+  selection: {method: seeded_random_without_replacement, seed: 42, offset: 0, samples: 8}
+  outputs: [logits]
+
+accuracy:
+  # ADE20K's 2,000 SceneParse150 validation images and label maps, scored single scale on the package's 512x512 stretch
+  # (see accuracy.py).
+  datasets:
+  - {id: ade20k, variant: val, sha256: b98b1c9c66fe7d4531e34de3256d54a192ee123e8b0fa5b81dfc81fb0a27c453, size_bytes: 87700104}
+
+performance: {}
+
+reference_metrics:
+- origin: fp32_baseline
+  script: scripts/fp32_baseline_accuracy.py
+  dataset: {id: ade20k, split: val}
+  conditions: FP32 ONNX on ONNX Runtime CPU with host OpenCV preprocessing; each image stretched to 512x512, ImageNet-normalized; single scale; 2000 images
+  metrics: {miou: 0.3612}
+- source: https://github.com/open-mmlab/mmsegmentation/blob/b040e147adfa027bbc071b624bedf0ae84dfc922/configs/hrnet/README.md
+  dataset: {id: ade20k, split: val}
+  conditions: 512x512 training crops, 160k iterations; evaluation resizes each image to fit 2048x512 keeping the aspect ratio; single scale
+  note: The ADE20K table's FCN HRNetV2p-W18 160000-iteration row. This package stretches every image to 512x512 instead, so its scores are not directly comparable.
+  metrics: {miou: 0.3679}

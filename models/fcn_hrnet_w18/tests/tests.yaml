@@ -1,0 +1,10 @@
+conversion:
+  run_tests: true
+compile:
+  run_tests: true
+accuracy:
+  run_tests: false
+  skip_reason: The expected ADE20K values come from this model's first published CI run.
+performance:
+  run_tests: false
+  skip_reason: The expected throughput comes from this model's first published CI run.

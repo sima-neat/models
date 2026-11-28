@@ -105,6 +105,11 @@ architectures:
     description: Segments an object through a video from a click or a box on one frame, with a memory of earlier frames.
     paradigm: transformer
     allowed_model_types: [vision]
+  fcn_hrnet:
+    display_name: FCN-HRNet
+    description: Labels every pixel of an image while preserving features at multiple resolutions.
+    paradigm: cnn
+    allowed_model_types: [vision]
   gemma4:
     display_name: Gemma4
     description: Generates text and supports conversational tasks with text and multimodal inputs.
