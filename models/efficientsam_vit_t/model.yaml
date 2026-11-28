@@ -1,0 +1,83 @@
+display_name: EfficientSAM ViT-T
+description: Segments the object that a box or a few clicked points mark in an image.
+model_type: vision
+tasks: [promptable_segmentation]
+
+modalities:
+  inputs: [image]
+  outputs: [masks]
+
+architecture: sam
+
+license:
+  spdx: Apache-2.0
+  redistribution: allowed
+  attribution: EfficientSAM by Yunyang Xiong et al. (Meta AI), distributed under Apache-2.0.
+
+upstream:
+  repository: https://huggingface.co/yunyangx/EfficientSAM
+  revision: 1cf49585c39567bfc49e991ab8eb31f491ad4877
+  derived_from: https://github.com/yformer/EfficientSAM/tree/d525f622e6f640acf5a0fc37c7ca1f243da5bde0
+
+resources:
+  license:
+    # yunyangx/EfficientSAM on Hugging Face has no LICENSE; the authors' repository carries the Apache-2.0 text.
+    source:
+      uri: https://raw.githubusercontent.com/yformer/EfficientSAM/d525f622e6f640acf5a0fc37c7ca1f243da5bde0/LICENSE
+      sha256: c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4
+      size_bytes: 11357
+    install_path: licenses/LICENSE
+
+compilation:
+  format: onnx
+  # The authors' ONNX export of the image encoder and the prompt decoder; compile.py makes both graphs static.
+  source:
+    repository: yunyangx/EfficientSAM
+    revision: 1cf49585c39567bfc49e991ab8eb31f491ad4877
+    main_file: efficientsam_ti_encoder.onnx
+    files:
+      efficientsam_ti_encoder.onnx: {sha256: 84ed466ffcc5c1f8d08409bc34a23bb364ab2c15e402cb12d4335a42be0e0951, size_bytes: 24799761}
+      efficientsam_ti_decoder.onnx: {sha256: a62f8fa5ea080447c0689418d69e58f1e83e0b7adf9c142e2bd9bcc8045c0b11, size_bytes: 16565728}
+  # The encoder runs once per image; the decoder once per prompt on its embedding.
+  components: [image_encoder, prompt_decoder]
+
+calibrations:
+- id: coco-2017-cal
+  dataset: {id: coco-2017, variant: cal, sha256: 54c64d84122eba371ac014d7b43849a461551c2e6c5c430b5ead90ec1dec12b1, size_bytes: 187510866}
+
+# Both precisions calibrate: the encoder on seeded coco-2017 cal images, and the decoder on the float32 encoder's
+# embeddings of the same images, each prompted with the box of its largest annotated object.
+build_profiles:
+  w16a16:
+    calibration_dataset: coco-2017-cal
+    components:
+      image_encoder:
+        parameters: {precision: w16a16, calibration_bins: 2048, calibration_samples: 16}
+      prompt_decoder:
+        parameters: {precision: w16a16, calibration_bins: 2048}
+
+  w8a8:
+    calibration_dataset: coco-2017-cal
+    components:
+      image_encoder:
+        parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 32}
+      prompt_decoder:
+        parameters: {precision: w8a8, calibration_bins: 2048}
+
+# Display only: Neat stretches the frame to the encoder's 1024x1024 input; the CPU turns the prompt into the decoder's
+# inputs, and the best of the decoder's masks into the image's mask.
+pipeline:
+- {component: image_encoder}
+- {cpu: Normalize the prompt points}
+- {component: prompt_decoder}
+- {cpu: Upsample the best mask}
+
+numerical_fidelity:
+  status: diagnostic
+  dataset: {id: coco-2017, variant: cal, sha256: 54c64d84122eba371ac014d7b43849a461551c2e6c5c430b5ead90ec1dec12b1, size_bytes: 187510866}
+  # The 8 annotated images after the calibration images, each prompted with the box of its largest object. The
+  # quantized encoder feeds the quantized decoder.
+  selection: {method: seeded_random_without_replacement, seed: 42, offset: 50, samples: 8}
+  outputs: [image_embeddings, iou_predictions, low_res_masks]
+
+performance: {}

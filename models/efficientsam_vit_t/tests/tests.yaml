@@ -1,0 +1,9 @@
+compile:
+  run_tests: true
+performance:
+  run_tests: true
+  expected:
+    w16a16:
+      throughput_fps: 5.0
+    w8a8:
+      throughput_fps: 8.7
