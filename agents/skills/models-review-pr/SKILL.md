@@ -90,9 +90,11 @@ each finding cites the owning file and section.
   including the fingerprint lists, rerun tables, and tests a shared tooling change needs.
 - **Variants.** A profile is commented out, as `rules.md` says, only after it is proven
   unusable ([review and merge
-  expectations](../../../docs/contributing.md#review-and-merge-expectations)), or because its
-  accuracy is more than 8% below its reference score. Its comment then gives the metric, both
-  values, and the gap. While `accuracy` in `tests/tests.yaml` sets `run_tests: false`, no
+  expectations](../../../docs/contributing.md#review-and-merge-expectations)), because its
+  accuracy is more than 8% below its reference score, or because another declared profile
+  makes it redundant. Its comment then gives the metric, both values, and the gap; for a
+  redundant profile, both profiles' measured accuracy and throughput and why the difference
+  does not justify a separate variant. While `accuracy` in `tests/tests.yaml` sets `run_tests: false`, no
   check applies the 8% rule, so compare each profile's measured accuracy with its reference
   score yourself.
 

@@ -433,7 +433,7 @@ def test_every_precision_calibrates_its_histogram_ranges(
 def test_model_calibrates_every_profile_and_compares_disparity_on_scene_flow() -> None:
     model = load_metadata(MODEL_DIR)
     assert model["components"][0]["interface"]["format"] == "onnx"
-    assert [profile["id"] for profile in model["build_profiles"]] == ["w8a8_mixed", "w16a16"]
+    assert [profile["id"] for profile in model["build_profiles"]] == ["w16a16"]
     assert {profile["components"][0]["calibration"] for profile in model["build_profiles"]} == {"scene-flow-cal"}
     largest = max(profile["components"][0]["parameters"]["calibration_samples"] for profile in model["build_profiles"])
     fidelity = model["numerical_fidelity"]

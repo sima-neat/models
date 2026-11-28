@@ -69,18 +69,20 @@ build_profiles:
         parameters: {precision: w16a16, calibration_bins: 2048, calibration_samples: 20}
       memory_encoder:
         parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 20}
-  # The same build with an INT8 image encoder: faster, at a lower J&F.
-  w8a8_w8a16_w16a16_w8a8:
-    calibration_dataset: davis-2017-cal
-    components:
-      image_encoder:
-        parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 20}
-      memory_attention:
-        parameters: {precision: w8a16, calibration_bins: 2048, calibration_samples: 20}
-      mask_decoder:
-        parameters: {precision: w16a16, calibration_bins: 2048, calibration_samples: 20}
-      memory_encoder:
-        parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 20}
+  # No w8a8_w8a16_w16a16_w8a8, the same build with an INT8 image encoder: it ran at 11.0 FPS on CI's DevKit against
+  # 9.0, but its DAVIS 2017 val J&F of 0.8015 is 8.6% below the published 0.877, more than the 8% that
+  # model-registry validate allows. compile.py keeps its recipe.
+  # w8a8_w8a16_w16a16_w8a8:
+  #   calibration_dataset: davis-2017-cal
+  #   components:
+  #     image_encoder:
+  #       parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 20}
+  #     memory_attention:
+  #       parameters: {precision: w8a16, calibration_bins: 2048, calibration_samples: 20}
+  #     mask_decoder:
+  #       parameters: {precision: w16a16, calibration_bins: 2048, calibration_samples: 20}
+  #     memory_encoder:
+  #       parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 20}
   # Every component with INT8 weights and BF16 activations. Not built yet: the image encoder fails the compiler's
   # simulator check.
   # w8a16:

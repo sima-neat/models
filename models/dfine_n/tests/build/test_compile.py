@@ -32,7 +32,7 @@ def surgery(load_script):
 
 
 @pytest.mark.parametrize(
-    ("profile", "backbone"),
+    ("profile_id", "backbone"),
     [
         ("w16a16", {"precision": "w16a16"}),
         ("w8a8_w16a16", {"precision": "w8a8", "calibration_bins": 1024, "calibration_samples": 20}),
@@ -47,8 +47,11 @@ def surgery(load_script):
         ),
     ],
 )
-def test_compile_reads_each_declared_build_profile(compiler, model_dir, profile, backbone):
-    assert compiler._component_parameters(load_model(model_dir), profile) == {"backbone": backbone, "decoder": DECODER}
+def test_compile_reads_each_declared_build_profile(compiler, model_dir, profile_id, backbone):
+    assert compiler._component_parameters(load_model(model_dir), profile_id) == {
+        "backbone": backbone,
+        "decoder": DECODER,
+    }
 
 
 def test_only_int8_backbones_calibrate(compiler, model_dir):

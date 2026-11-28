@@ -41,13 +41,15 @@ calibrations:
 # Every profile calibrates: each instance normalization ends in a square root, which the Model Compiler runs as an
 # INT8 lookup table even when activations are BF16.
 build_profiles:
+  # No w8a8_mixed: it ran at 82.0 FPS on CI's DevKit against w16a16's 33.3, but scored 0.7128 px EPE against
+  # 0.6630; the catalog offers the more accurate w16a16 only. compile.py keeps its recipe.
   # W8A8 whose read-out runs BF16: the two softmaxes, the disparity regression and the context upsampling. Their
   # INT8 rounding cost LightStereo-S most of the accuracy its plain W8A8 build lost, and every size shares them.
-  w8a8_mixed:
-    calibration_dataset: scene-flow-cal
-    components:
-      model:
-        parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 16, bf16_regions: [readout]}
+  # w8a8_mixed:
+  #   calibration_dataset: scene-flow-cal
+  #   components:
+  #     model:
+  #       parameters: {precision: w8a8, calibration_bins: 2048, calibration_samples: 16, bf16_regions: [readout]}
 
   w16a16:
     calibration_dataset: scene-flow-cal
