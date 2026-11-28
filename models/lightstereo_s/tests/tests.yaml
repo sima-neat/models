@@ -3,8 +3,20 @@ conversion:
 compile:
   run_tests: true
 accuracy:
-  run_tests: false
-  skip_reason: "no develop report is published yet to set expected from"
+  run_tests: true
+  expected:
+    # w8a8_mixed:
+    #   scene-flow-val:
+    #     epe: 0.8517
+    #     d1_all: 3.0803
+    w16a16:
+      scene-flow-val:
+        epe: 0.7733
+        d1_all: 2.8048
 performance:
-  run_tests: false
-  skip_reason: "no develop report is published yet to set expected from"
+  run_tests: true
+  expected:
+    # w8a8_mixed:
+    #   throughput_fps: 91.5
+    w16a16:
+      throughput_fps: 41.1

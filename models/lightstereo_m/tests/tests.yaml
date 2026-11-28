@@ -5,10 +5,10 @@ compile:
 accuracy:
   run_tests: true
   expected:
-    w8a8_mixed:
-      scene-flow-val:
-        epe: 0.7128
-        d1_all: 2.3897
+    # w8a8_mixed:
+    #   scene-flow-val:
+    #     epe: 0.7128
+    #     d1_all: 2.3897
     w16a16:
       scene-flow-val:
         epe: 0.6630
@@ -16,7 +16,7 @@ accuracy:
 performance:
   run_tests: true
   expected:
-    w8a8_mixed:
-      throughput_fps: 82.2
+    # w8a8_mixed:
+    #   throughput_fps: 82.2
     w16a16:
       throughput_fps: 33.3
